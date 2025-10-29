@@ -1,0 +1,1 @@
+# auto-bedrock-chat-fastapi
