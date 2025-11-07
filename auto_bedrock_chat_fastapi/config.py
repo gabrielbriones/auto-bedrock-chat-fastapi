@@ -89,6 +89,13 @@ class ChatConfig(BaseSettings):
         description="Maximum tool calls per conversation turn"
     )
     
+    max_tool_call_rounds: int = Field(
+        default=10,
+        alias="BEDROCK_MAX_TOOL_CALL_ROUNDS",
+        gt=0,
+        description="Maximum rounds of recursive tool calls"
+    )
+    
     timeout: int = Field(
         default=30,
         alias="BEDROCK_TIMEOUT",
@@ -190,6 +197,12 @@ class ChatConfig(BaseSettings):
         default=True,
         alias="BEDROCK_LOG_ERRORS",
         description="Log errors"
+    )
+    
+    suppress_third_party_logs: bool = Field(
+        default=True,
+        alias="BEDROCK_SUPPRESS_THIRD_PARTY_LOGS",
+        description="Suppress verbose logging from botocore, httpcore, urllib3"
     )
     
     # Error Handling Configuration

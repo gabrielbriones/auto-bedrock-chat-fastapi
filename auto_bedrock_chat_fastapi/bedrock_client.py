@@ -4,6 +4,7 @@ import boto3
 import json
 import asyncio
 import logging
+import traceback
 from typing import Dict, List, Any, Optional, Union
 from botocore.exceptions import BotoCoreError, ClientError
 from datetime import datetime
@@ -38,10 +39,10 @@ class BedrockClient:
             # Import botocore config for timeout settings
             from botocore.config import Config
             
-            # Create client config with timeout
+            # Create client config with increased timeout for large models
             client_config = Config(
-                read_timeout=self.config.timeout,
-                connect_timeout=10,
+                read_timeout=max(120, self.config.timeout),  # At least 2 minutes
+                connect_timeout=30,  # Increased connection timeout
                 retries={'max_attempts': 3}
             )
             
@@ -96,6 +97,7 @@ class BedrockClient:
             await self._handle_rate_limiting()
             
             # Prepare the request based on model family
+            # logger.debug(f"Sending messages to model {model_id}: {messages}")
             request_body = self._prepare_request_body(
                 messages=messages,
                 model_id=model_id,
@@ -107,6 +109,7 @@ class BedrockClient:
             
             # Make the API call with retries
             response = await self._make_request_with_retries(model_id, request_body)
+            # logger.debug(f"Bedrock response: {response}")
             
             # Parse and format the response
             formatted_response = self._parse_response(response, model_id)
@@ -122,7 +125,7 @@ class BedrockClient:
             return formatted_response
             
         except Exception as e:
-            logger.error(f"Chat completion error: {str(e)}")
+            logger.exception(f"Chat completion error: {str(e)}")
             
             # Try fallback model if configured
             if self.config.fallback_model and model_id != self.config.fallback_model:
@@ -137,7 +140,7 @@ class BedrockClient:
                         **kwargs
                     )
                 except Exception as fallback_error:
-                    logger.error(f"Fallback model also failed: {str(fallback_error)}")
+                    logger.exception(f"Fallback model also failed: {str(fallback_error)}")
             
             # Handle graceful degradation
             if self.config.graceful_degradation:
@@ -389,7 +392,11 @@ class BedrockClient:
                 
             except (BotoCoreError, ClientError) as e:
                 last_exception = e
-                error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+                # Safely extract error code, handling None response
+                response = getattr(e, 'response', None)
+                error_code = ''
+                if response and isinstance(response, dict):
+                    error_code = response.get('Error', {}).get('Code', '')
                 
                 # Don't retry on certain errors
                 if error_code in ['ValidationException', 'AccessDeniedException']:
@@ -407,7 +414,22 @@ class BedrockClient:
             
             except Exception as e:
                 last_exception = e
-                # Don't retry on unexpected errors
+                
+                # Check if it's a timeout error that we can retry
+                is_timeout = (
+                    'ReadTimeoutError' in str(type(e)) or
+                    'timeout' in str(e).lower() or
+                    'timed out' in str(e).lower()
+                )
+                
+                # Retry timeout errors, but not on last attempt
+                if is_timeout and attempt < self.config.max_retries:
+                    delay = self._calculate_retry_delay(attempt)
+                    logger.warning(f"Timeout error (attempt {attempt + 1}), retrying in {delay}s: {str(e)}")
+                    await asyncio.sleep(delay)
+                    continue
+                
+                # Don't retry other unexpected errors
                 break
         
         raise BedrockClientError(f"Request failed after {self.config.max_retries + 1} attempts: {str(last_exception)}")
@@ -463,7 +485,7 @@ class BedrockClient:
                 return self._parse_generic_response(response)
                 
         except Exception as e:
-            logger.error(f"Failed to parse response: {str(e)}")
+            logger.exception(f"Failed to parse response: {str(e)}")
             logger.error(f"Response content: {response}")
             return {
                 "content": "I encountered an error processing the response.",

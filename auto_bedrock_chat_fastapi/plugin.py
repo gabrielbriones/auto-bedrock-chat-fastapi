@@ -47,6 +47,19 @@ def _setup_logging(config: ChatConfig):
     
     # Set level for our specific loggers
     logging.getLogger('auto_bedrock_chat_fastapi').setLevel(log_level)
+    
+    # Suppress verbose logging from third-party libraries if enabled
+    if config.suppress_third_party_logs:
+        logging.getLogger('botocore').setLevel(logging.WARNING)
+        logging.getLogger('botocore.hooks').setLevel(logging.WARNING)
+        logging.getLogger('botocore.regions').setLevel(logging.WARNING)
+        logging.getLogger('botocore.endpoint').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('httpcore.connection').setLevel(logging.WARNING)
+        logging.getLogger('httpcore.http11').setLevel(logging.WARNING)
+        logging.getLogger('httpx').setLevel(logging.INFO)  # Keep INFO for httpx (less verbose)
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 
 
 class BedrockChatPlugin:
@@ -640,7 +653,7 @@ class BedrockChatPlugin:
                         break;
                     
                     case 'typing':
-                        this.showTypingIndicator();
+                        this.showTypingIndicator(data.message || 'AI is typing...');
                         break;
                     
                     case 'ai_response':
@@ -709,7 +722,8 @@ class BedrockChatPlugin:
                 this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
             }}
             
-            showTypingIndicator() {{
+            showTypingIndicator(message = 'AI is typing...') {{
+                this.typingIndicator.textContent = message;
                 this.typingIndicator.style.display = 'block';
             }}
             
@@ -750,7 +764,7 @@ class BedrockChatPlugin:
             }}
             
             // Remove <reasoning>...</reasoning> blocks (case insensitive, multiline)
-            return content.replace(/<reasoning[^>]*>.*?<\/reasoning>/gis, '').trim();
+            return content.replace(/<reasoning[^>]*>.*?<\\/reasoning>/gis, '').trim();
         }}
         
         /**

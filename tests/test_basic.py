@@ -169,10 +169,11 @@ class TestBedrockClient:
         
         # Should initialize boto3 session and client
         mock_session.assert_called_once()
-        mock_session_instance.client.assert_called_once_with(
-            'bedrock-runtime',
-            region_name=config.aws_region
-        )
+        # Check that client was called with expected parameters (including config)
+        call_args = mock_session_instance.client.call_args
+        assert call_args[0] == ('bedrock-runtime',)  # First positional arg
+        assert call_args[1]['region_name'] == config.aws_region  # region_name kwarg
+        assert 'config' in call_args[1]  # config kwarg should be present
     
     @patch('boto3.Session')
     async def test_health_check(self, mock_session):

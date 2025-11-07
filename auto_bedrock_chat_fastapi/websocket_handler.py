@@ -174,55 +174,30 @@ class WebSocketChatHandler:
             )
             logger.debug(f"Bedrock response: {response.get('content', '')}")
             
-            # Process tool calls if any
-            tool_results = []
-            if response.get("tool_calls"):
-                logger.debug(f"Processing tool calls: {response['tool_calls']}")
-                tool_results = await self._execute_tool_calls(response["tool_calls"])
-                
-                # If tool calls were made, get another response with the results
-                if tool_results:
-                    # Add tool results to context
-                    tool_message = ChatMessage(
-                        role="tool",
-                        content="Tool results",
-                        tool_calls=response["tool_calls"],
-                        tool_results=tool_results
-                    )
-                    await self.session_manager.add_message(session.session_id, tool_message)
-                    
-                    # Get updated context
-                    updated_context = await self.session_manager.get_context_messages(session.session_id)
-                    updated_bedrock_messages = self._format_messages_for_bedrock(updated_context)
-                    
-                    # Get final response
-                    response = await self.bedrock_client.chat_completion(
-                        messages=updated_bedrock_messages,
-                        tools_desc=tools_desc,
-                        **self.config.get_bedrock_params()
-                    )
-                    logger.debug(f"Final Bedrock response after tools: {response.get('content', '')}")
-            
-            # Create AI response message
-            ai_message = ChatMessage(
-                role="assistant",
-                content=response.get("content", ""),
-                tool_calls=response.get("tool_calls", []),
-                tool_results=tool_results,
-                metadata=response.get("metadata", {})
+            # Process tool calls recursively if any
+            final_response, all_tool_results = await self._handle_tool_calls_recursively(
+                session.session_id, response, tools_desc, websocket
             )
             
-            # Add AI response to history
-            await self.session_manager.add_message(session.session_id, ai_message)
+            # Add the final AI response to history (if not already added)
+            if not final_response.get("tool_calls"):
+                ai_message = ChatMessage(
+                    role="assistant",
+                    content=final_response.get("content", ""),
+                    tool_calls=[],
+                    tool_results=all_tool_results,
+                    metadata=final_response.get("metadata", {})
+                )
+                await self.session_manager.add_message(session.session_id, ai_message)
             
-            # Send response to client
+            # Send response to client (use final response data)
             await self._send_message(websocket, {
                 "type": "ai_response",
-                "message": ai_message.content,
-                "tool_calls": ai_message.tool_calls,
-                "tool_results": tool_results,
-                "timestamp": ai_message.timestamp.isoformat(),
-                "metadata": ai_message.metadata
+                "message": final_response.get("content", ""),
+                "tool_calls": final_response.get("tool_calls", []),
+                "tool_results": all_tool_results,
+                "timestamp": datetime.now().isoformat(),
+                "metadata": final_response.get("metadata", {})
             })
             
         except Exception as e:
@@ -245,6 +220,7 @@ class WebSocketChatHandler:
         
         for tool_call in tool_calls[:self.config.max_tool_calls]:
             try:
+                logger.debug(f"Executing tool call: {tool_call}")
                 self._total_tool_calls_executed += 1
                 
                 function_name = tool_call.get("name")
@@ -253,6 +229,74 @@ class WebSocketChatHandler:
                 # Get tool metadata
                 tool_metadata = self.tools_generator.get_tool_metadata(function_name)
                 if not tool_metadata:
+                    logger.warning(f"Unknown tool requested: {function_name}")
+                    results.append({
+                        "tool_call_id": tool_call.get("id"),
+                        "name": function_name,
+                        "error": f"Unknown tool: {function_name}"
+                    })
+                    continue
+                
+                # Validate arguments
+                if not self.tools_generator.validate_tool_call(function_name, arguments):
+                    logger.warning(f"Invalid arguments for tool {function_name}: {arguments}")
+                    results.append({
+                        "tool_call_id": tool_call.get("id"),
+                        "name": function_name,
+                        "error": "Invalid arguments"
+                    })
+                    continue
+                
+                # Execute tool call
+                result = await self._execute_single_tool_call(tool_metadata, arguments)
+                logger.debug(f"Tool call result for {function_name}: {result}")
+                
+                results.append({
+                    "tool_call_id": tool_call.get("id"),
+                    "name": function_name,
+                    "result": result
+                })
+                
+            except Exception as e:
+                logger.error(f"Error executing tool call {function_name}: {str(e)}")
+                results.append({
+                    "tool_call_id": tool_call.get("id"),
+                    "name": function_name,
+                    "error": str(e)
+                })
+        
+        return results
+    
+    async def _execute_tool_calls_with_progress(
+        self, 
+        tool_calls: List[Dict[str, Any]], 
+        websocket: WebSocket, 
+        round_number: int
+    ) -> List[Dict[str, Any]]:
+        """Execute tool calls with progress updates to the UI"""
+        
+        results = []
+        total_tools = len(tool_calls[:self.config.max_tool_calls])
+        
+        for i, tool_call in enumerate(tool_calls[:self.config.max_tool_calls], 1):
+            try:
+                logger.debug(f"Executing tool call {i}/{total_tools}: {tool_call}")
+                self._total_tool_calls_executed += 1
+                
+                function_name = tool_call.get("name")
+                arguments = tool_call.get("arguments", {})
+                
+                # Send progress update
+                await self._send_message(websocket, {
+                    "type": "typing",
+                    "message": f"Calling {function_name}... ({i}/{total_tools})",
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+                # Get tool metadata
+                tool_metadata = self.tools_generator.get_tool_metadata(function_name)
+                if not tool_metadata:
+                    logger.warning(f"Unknown tool requested: {function_name}")
                     results.append({
                         "tool_call_id": tool_call.get("id"),
                         "name": function_name,
@@ -271,6 +315,7 @@ class WebSocketChatHandler:
                 
                 # Execute tool call
                 result = await self._execute_single_tool_call(tool_metadata, arguments)
+                logger.debug(f"Tool call result for {function_name}: {result}")
                 
                 results.append({
                     "tool_call_id": tool_call.get("id"),
@@ -285,6 +330,13 @@ class WebSocketChatHandler:
                     "name": function_name,
                     "error": str(e)
                 })
+        
+        # Final progress update
+        await self._send_message(websocket, {
+            "type": "typing",
+            "message": f"Processing results... (Round {round_number} complete)",
+            "timestamp": datetime.now().isoformat()
+        })
         
         return results
     
@@ -371,6 +423,95 @@ class WebSocketChatHandler:
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
     
+    async def _handle_tool_calls_recursively(
+        self, 
+        session_id: str, 
+        initial_response: Dict[str, Any], 
+        tools_desc: Optional[Dict],
+        websocket: WebSocket
+    ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """
+        Handle tool calls recursively until AI provides a final response without more tool calls.
+        
+        Args:
+            session_id: The chat session ID
+            initial_response: The initial AI response that may contain tool calls
+            tools_desc: Available tools description
+            
+        Returns:
+            Tuple of (final_response, all_tool_results)
+        """
+        current_response = initial_response
+        all_tool_results = []
+        round_count = 0
+        max_rounds = self.config.max_tool_call_rounds
+        
+        # If no initial tool calls, return the response as-is
+        if not current_response.get("tool_calls"):
+            logger.debug("No tool calls in response, returning directly")
+            return current_response, all_tool_results
+        
+        while current_response.get("tool_calls") and round_count < max_rounds:
+            round_count += 1
+            
+            await self._send_message(websocket, {
+                "type": "typing",
+                "message": current_response.get("content", "Working on your request..."),
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            logger.debug(f"Tool call round {round_count}, processing {len(current_response['tool_calls'])} tool calls")
+            
+            # Add the assistant message with tool calls to history
+            tool_assistant_message = ChatMessage(
+                role="assistant",
+                content=current_response.get("content", ""),
+                tool_calls=current_response.get("tool_calls", []),
+                metadata=current_response.get("metadata", {})
+            )
+            await self.session_manager.add_message(session_id, tool_assistant_message)
+            
+            # Execute the tool calls
+            tool_results = await self._execute_tool_calls(
+                current_response["tool_calls"]
+            )
+            all_tool_results.extend(tool_results)
+            
+            # Add tool results to context
+            tool_message = ChatMessage(
+                role="tool",
+                content=f"Tool results (round {round_count})",
+                tool_calls=current_response["tool_calls"],
+                tool_results=tool_results
+            )
+            await self.session_manager.add_message(session_id, tool_message)
+            
+            # Get updated context and make another request
+            updated_context = await self.session_manager.get_context_messages(session_id)
+            updated_bedrock_messages = self._format_messages_for_bedrock(updated_context)
+            
+            # Get next response from AI
+            current_response = await self.bedrock_client.chat_completion(
+                messages=updated_bedrock_messages,
+                tools_desc=tools_desc,
+                **self.config.get_bedrock_params()
+            )
+            
+            if current_response.get("tool_calls"):
+                logger.debug(f"AI requested {len(current_response['tool_calls'])} more tool calls in round {round_count + 1}")
+            else:
+                logger.debug(f"AI provided final response after {round_count} tool call rounds")
+        
+        if round_count >= max_rounds and current_response.get("tool_calls"):
+            logger.warning(f"Reached maximum tool call rounds ({max_rounds}), stopping recursion")
+            # Add a note to the response about hitting the limit
+            content = current_response.get("content", "")
+            content += f"\n\n[Note: Reached maximum tool call limit of {max_rounds} rounds]"
+            current_response["content"] = content
+            current_response["tool_calls"] = []  # Stop further tool calls
+        
+        return current_response, all_tool_results
+    
     def _format_messages_for_bedrock(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         """Convert chat messages to Bedrock API format"""
         
@@ -386,6 +527,12 @@ class WebSocketChatHandler:
                 "content": self.config.get_system_prompt()
             })
         
+        # Determine if we're using Claude or OpenAI GPT format
+        is_claude_model = (
+            self.config.model_id.startswith("anthropic.claude") or
+            self.config.model_id.startswith("us.anthropic.claude")
+        )
+        
         for msg in messages:
             # Only include valid Bedrock message roles and content
             if msg.role in ["user", "assistant", "system"]:
@@ -395,22 +542,116 @@ class WebSocketChatHandler:
                 }
                 bedrock_messages.append(bedrock_msg)
             
-            # Handle tool result messages by converting them to user messages
+            # Handle tool result messages - format based on model type
             elif msg.role == "tool" and msg.tool_results:
-                tool_content = "Tool execution results:\n"
-                for tool_result in msg.tool_results:
-                    name = tool_result.get("name", "unknown")
-                    if "error" in tool_result:
-                        tool_content += f"- {name}: Error - {tool_result['error']}\n"
-                    else:
-                        tool_content += f"- {name}: {tool_result.get('result', 'No result')}\n"
-                
-                bedrock_messages.append({
-                    "role": "user",
-                    "content": tool_content
-                })
+                if is_claude_model:
+                    # Claude format: structured content with tool_use and tool_result
+                    self._add_claude_tool_messages(bedrock_messages, msg)
+                else:
+                    # OpenAI GPT format: assistant message with tool_calls + tool messages
+                    self._add_gpt_tool_messages(bedrock_messages, msg)
         
         return bedrock_messages
+    
+    def _add_claude_tool_messages(self, bedrock_messages: List[Dict], msg: ChatMessage):
+        """Add tool messages in Claude format"""
+        
+        # First, add the assistant message that made the tool calls
+        if msg.tool_calls:
+            # Create content array for assistant message with tool calls
+            assistant_content = []
+            
+            # Add any text content if present
+            if hasattr(msg, 'content') and msg.content and msg.content.strip():
+                assistant_content.append({
+                    "type": "text",
+                    "text": msg.content
+                })
+            
+            # Add tool use blocks
+            for tool_call in msg.tool_calls:
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tool_call.get("id"),
+                    "name": tool_call.get("name"),
+                    "input": tool_call.get("arguments", {})
+                })
+            
+            if assistant_content:
+                bedrock_messages.append({
+                    "role": "assistant",
+                    "content": assistant_content
+                })
+        
+        # Now add the user message with tool results
+        tool_result_content = []
+        for i, tool_result in enumerate(msg.tool_results):
+            tool_call_id = msg.tool_calls[i].get("id") if i < len(msg.tool_calls) else f"tool_call_{i}"
+            
+            if "error" in tool_result:
+                # Tool error result
+                tool_result_content.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": f"Error: {tool_result['error']}"
+                })
+            else:
+                # Successful tool result
+                result_text = str(tool_result.get('result', 'No result'))
+                tool_result_content.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": result_text
+                })
+        
+        if tool_result_content:
+            bedrock_messages.append({
+                "role": "user",
+                "content": tool_result_content
+            })
+    
+    def _add_gpt_tool_messages(self, bedrock_messages: List[Dict], msg: ChatMessage):
+        """Add tool messages in OpenAI GPT format"""
+        
+        # First, add the assistant message that made the tool calls
+        if msg.tool_calls:
+            # Convert tool calls to GPT format
+            gpt_tool_calls = []
+            for tool_call in msg.tool_calls:
+                gpt_tool_calls.append({
+                    "id": tool_call.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.get("name"),
+                        "arguments": json.dumps(tool_call.get("arguments", {}))
+                    }
+                })
+            
+            assistant_msg = {
+                "role": "assistant",
+                "content": msg.content if msg.content else None
+            }
+            
+            # Only add tool_calls if there are any
+            if gpt_tool_calls:
+                assistant_msg["tool_calls"] = gpt_tool_calls
+            
+            bedrock_messages.append(assistant_msg)
+        
+        # Add individual tool result messages
+        for i, tool_result in enumerate(msg.tool_results):
+            tool_call_id = msg.tool_calls[i].get("id") if i < len(msg.tool_calls) else f"tool_call_{i}"
+            
+            if "error" in tool_result:
+                content = f"Error: {tool_result['error']}"
+            else:
+                content = str(tool_result.get('result', 'No result'))
+            
+            bedrock_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content
+            })
     
     async def _handle_ping(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle ping message"""
