@@ -361,9 +361,9 @@ class BedrockChatPlugin:
         }}
         
         .chat-container {{
-            width: 90%;
-            max-width: 800px;
-            height: 80vh;
+            width: 95%;
+            max-width: 1400px;
+            height: 90vh;
             background: white;
             border-radius: 10px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
@@ -617,15 +617,14 @@ class BedrockChatPlugin:
     <div class="chat-container">
         <div class="chat-header">
             <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
-            <h1>AI Assistant</h1>
+            <h1>{self.config.ui_title}</h1>
             <p>Powered by {self.config.model_id}</p>
         </div>
         
         <div class="chat-messages" id="chatMessages">
             <div class="message system">
                 <div class="message-content">
-                    Welcome! I'm your AI assistant. I can help you interact with the API endpoints. 
-                    Try asking me to retrieve data, create resources, or explain what operations are available.
+                    {self.config.ui_welcome_message}
                 </div>
             </div>
         </div>

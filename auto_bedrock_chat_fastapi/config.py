@@ -216,6 +216,18 @@ class ChatConfig(BaseSettings):
         description="Enable built-in chat UI"
     )
     
+    ui_title: str = Field(
+        default="AI Assistant",
+        alias="BEDROCK_UI_TITLE",
+        description="Title displayed in the chat UI header"
+    )
+
+    ui_welcome_message: str = Field(
+        default="Welcome! I'm your AI assistant. I can help you interact with the API endpoints. Try asking me to retrieve data, create resources, or explain what operations are available.",
+        alias="BEDROCK_UI_WELCOME_MESSAGE",
+        description="Welcome message displayed when chat UI first loads"
+    )
+
     # Security Configuration
     auth_dependency: Optional[Callable] = Field(
         default=None,
