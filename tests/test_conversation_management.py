@@ -282,13 +282,12 @@ class TestMessageChunking:
         
         # Should be chunked into multiple messages
         assert len(result) > 1
-        
-        # Each chunk should have metadata
+
+        # Each chunk should have chunk indicators in content
         for i, msg in enumerate(result):
-            assert msg["metadata"]["is_chunk"] is True
-            assert msg["metadata"]["chunk_number"] == i + 1
-            assert msg["metadata"]["total_chunks"] == len(result)
             assert "[CHUNK" in msg["content"]
+            # Check that chunk number is in content (e.g., [CHUNK 1/3])
+            assert f"[CHUNK {i + 1}/{len(result)}]" in msg["content"]
 
     def test_chunking_disabled(self):
         """Test that chunking can be disabled"""
@@ -366,39 +365,41 @@ class TestMessageChunking:
         # Should have more messages due to chunking the large tool response
         assert len(result) > len(messages)
         
-        # Find the chunked messages (tool messages with chunk metadata)
-        chunked_messages = [msg for msg in result if msg.get("metadata", {}).get("is_chunk", False)]
+        # Find the chunked messages (tool messages with chunk indicators)
+        chunked_messages = [msg for msg in result if "[CHUNK" in msg.get("content", "")]
         assert len(chunked_messages) > 1
         
         # Verify all chunked messages are from the tool role
         for msg in chunked_messages:
             assert msg["role"] == "tool"
 
-    def test_chunk_metadata_structure(self):
-        """Test that chunk metadata is properly structured"""
+    def test_chunk_message_structure(self):
+        """Test that chunked messages have proper structure without metadata"""
         config = ChatConfig()
         config.max_message_size = 1000
         config.chunk_size = 800
         config.enable_message_chunking = True
         client = BedrockClient(config)
         
-        large_message = {"role": "user", "content": "X" * 2000, "metadata": {"original": "value"}}
+        large_message = {"role": "user", "content": "X" * 2000}
         chunked = client._chunk_large_message(large_message)
         
         assert len(chunked) > 1
         
         for i, chunk in enumerate(chunked):
-            metadata = chunk["metadata"]
+            # Should have standard message fields only (no metadata to avoid API errors)
+            assert "role" in chunk
+            assert "content" in chunk
+            assert chunk["role"] == "user"
             
-            # Should preserve original metadata
-            assert metadata["original"] == "value"
+            # Should not have metadata field that causes ValidationException
+            assert "metadata" not in chunk
             
-            # Should have chunk metadata
-            assert metadata["is_chunk"] is True
-            assert metadata["chunk_number"] == i + 1
-            assert metadata["total_chunks"] == len(chunked)
-            assert metadata["original_size"] == 2000
-            assert isinstance(metadata["chunk_size"], int)
+            # Should have chunk information embedded in content
+            if len(chunked) > 1:
+                assert f"[CHUNK {i + 1}/{len(chunked)}]" in chunk["content"]
+                if i == 0:  # First chunk should have explanation
+                    assert "This message was too large and has been split into chunks" in chunk["content"]
 
     def test_tool_response_chunking_scenario(self):
         """Test realistic scenario of chunking a large tool response (like a log file)"""
@@ -429,18 +430,15 @@ class TestMessageChunking:
         
         # First message (user request) should be unchanged
         assert result[0]["content"] == "Show me the application logs"
-        assert not result[0].get("metadata", {}).get("is_chunk", False)
-        
+        assert "[CHUNK" not in result[0]["content"]
+
         # Tool messages should be chunked
         tool_messages = [msg for msg in result[1:] if msg["role"] == "tool"]
         assert len(tool_messages) > 1
-        
+
         # Each tool chunk should indicate it's part of a series
         for msg in tool_messages:
             assert "[CHUNK" in msg["content"]
-            assert msg["metadata"]["is_chunk"] is True
-
-
 class TestChunkingConfiguration:
     """Test chunking configuration validation"""
 

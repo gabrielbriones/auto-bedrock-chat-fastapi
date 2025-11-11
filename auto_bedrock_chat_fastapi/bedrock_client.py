@@ -108,19 +108,10 @@ class BedrockClient:
             if len(messages) > original_message_count:
                 logger.info(f"Large messages chunked: {original_message_count} -> {len(messages)} messages")
             
-            # Prepare the request based on model family
-            # logger.debug(f"Sending messages to model {model_id}: {messages}")
-            request_body = self._prepare_request_body(
-                messages=messages,
-                model_id=model_id,
-                tools_desc=tools_desc,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **kwargs
+            # Try making the request with current messages
+            response = await self._try_request_with_fallback(
+                messages, model_id, tools_desc, temperature, max_tokens, **kwargs
             )
-            
-            # Make the API call with retries
-            response = await self._make_request_with_retries(model_id, request_body)
             # logger.debug(f"Bedrock response: {response}")
             
             # Parse and format the response
@@ -258,9 +249,39 @@ class BedrockClient:
         # Add all conversation messages
         formatted_messages.extend(messages)
         
+        # For GPT models with very large inputs, we need to ensure max_tokens stays positive
+        # Estimate input size roughly and adjust max_tokens accordingly
+        total_input_chars = sum(len(str(msg.get("content", ""))) for msg in formatted_messages)
+        
+        # Rough estimation: 1 token ≈ 4 characters (conservative estimate)
+        estimated_input_tokens = total_input_chars // 4
+        
+        # GPT OSS models seem to have a lower context limit than expected
+        # Use very conservative limits to prevent Bedrock service from calculating negative tokens
+        gpt_context_limit = 100000  # Conservative limit for GPT OSS
+        min_response_tokens = 1      # Absolute minimum
+        safe_response_tokens = 10    # Very conservative safe amount
+        
+        if estimated_input_tokens > gpt_context_limit * 0.9:  # Very large input (90% of context)
+            # Use absolute minimum for very large inputs
+            adjusted_max_tokens = min_response_tokens
+            logger.warning(f"Very large input ({estimated_input_tokens} est. tokens), using absolute minimal max_tokens: {adjusted_max_tokens}")
+        elif estimated_input_tokens > gpt_context_limit * 0.8:  # Large input (80% of context)
+            # Use very safe small amount
+            adjusted_max_tokens = safe_response_tokens  
+            logger.warning(f"Large input ({estimated_input_tokens} est. tokens), using minimal max_tokens: {adjusted_max_tokens}")
+        elif estimated_input_tokens + max_tokens > gpt_context_limit:  # Approaching context limit
+            # Calculate remaining safely
+            remaining_tokens = gpt_context_limit - estimated_input_tokens
+            adjusted_max_tokens = max(min_response_tokens, min(remaining_tokens - 1000, max_tokens))  # Leave 1000 token buffer
+            logger.info(f"Input approaching limit, adjusting max_tokens from {max_tokens} to {adjusted_max_tokens}")
+        else:
+            # Use original max_tokens for normal-sized inputs
+            adjusted_max_tokens = max_tokens
+        
         request_body = {
             "messages": formatted_messages,
-            "max_tokens": max_tokens,
+            "max_tokens": adjusted_max_tokens,
             "temperature": temperature,
             "top_p": kwargs.get("top_p", self.config.top_p),
         }
@@ -458,7 +479,163 @@ class BedrockClient:
                 break
         
         raise BedrockClientError(f"Request failed after {self.config.max_retries + 1} attempts: {str(last_exception)}")
-    
+
+    async def _try_request_with_fallback(
+        self, messages, model_id, tools_desc, temperature, max_tokens, **kwargs
+    ):
+        """
+        Try making a request with automatic fallback for context window issues
+        """
+        # First attempt with current messages
+        try:
+            request_body = self._prepare_request_body(
+                messages=messages,
+                model_id=model_id,
+                tools_desc=tools_desc,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
+            
+            # Debug log for GPT models to track max_tokens issue
+            if model_id.startswith("openai.gpt-oss"):
+                logger.debug(f"GPT request max_tokens: {request_body.get('max_tokens')} (original: {max_tokens}, messages: {len(messages)})")
+            
+            return await self._make_request_with_retries(model_id, request_body)
+        
+        except BedrockClientError as e:
+            # Check if this is a context window issue, max_tokens error, or request body size issue
+            error_str = str(e)
+            is_context_issue = ('Input is too long' in error_str or 
+                              'max_tokens must be at least 1' in error_str or
+                              'got -' in error_str or  # Negative max_tokens
+                              'length limit exceeded' in error_str or  # Request body too large
+                              'Failed to buffer the request body' in error_str)  # Bedrock HTTP limits
+            
+            if is_context_issue:
+                logger.warning(f"Context/token issue detected: {error_str[:100]}...")
+                logger.warning("Trying aggressive fallback...")
+                
+                # Try with more aggressive conversation management
+                fallback_messages = self._aggressive_conversation_fallback(messages)
+                
+                if len(fallback_messages) < len(messages):
+                    logger.info(f"Aggressive fallback: reduced from {len(messages)} to {len(fallback_messages)} messages")
+                    
+                    try:
+                        # Use more conservative max_tokens for aggressive fallback
+                        fallback_max_tokens = min(max_tokens, 1000) if model_id.startswith("openai.gpt-oss") else max_tokens
+                        
+                        request_body = self._prepare_request_body(
+                            messages=fallback_messages,
+                            model_id=model_id,
+                            tools_desc=tools_desc,
+                            temperature=temperature,
+                            max_tokens=fallback_max_tokens,
+                            **kwargs
+                        )
+                        
+                        # Debug log for GPT fallback
+                        if model_id.startswith("openai.gpt-oss"):
+                            logger.debug(f"GPT fallback max_tokens: {request_body.get('max_tokens')} (fallback: {fallback_max_tokens}, messages: {len(fallback_messages)})")
+                        
+                        return await self._make_request_with_retries(model_id, request_body)
+                    except BedrockClientError as fallback_error:
+                        # If fallback also fails, provide helpful error message
+                        logger.error("Aggressive fallback also failed")
+                        
+                        if model_id.startswith("openai.gpt-oss"):
+                            if 'length limit exceeded' in str(e) or 'Failed to buffer' in str(e):
+                                raise BedrockClientError(
+                                    f"GPT OSS model request body size exceeded Bedrock limits. "
+                                    f"Tried {len(messages)} messages (1st attempt), then {len(fallback_messages)} messages (fallback). "
+                                    f"The conversation with chunked messages is too large for a single request. "
+                                    f"Recommendations: (1) Much smaller BEDROCK_CHUNK_SIZE (10000-20000), "
+                                    f"(2) Very low BEDROCK_MAX_CONVERSATION_MESSAGES (5-10), "
+                                    f"(3) Start new conversation for large inputs, or (4) use Claude models. "
+                                    f"Original error: {str(e)}"
+                                )
+                            else:
+                                raise BedrockClientError(
+                                    f"GPT OSS model context window exceeded even with aggressive trimming. "
+                                    f"Tried {len(messages)} messages (1st attempt), then {len(fallback_messages)} messages (fallback). "
+                                    f"For very large inputs, consider: (1) smaller BEDROCK_CHUNK_SIZE, "
+                                    f"(2) lower BEDROCK_MAX_CONVERSATION_MESSAGES, or (3) using Claude models which handle large contexts better. "
+                                    f"Original error: {str(e)}"
+                                )
+                        else:
+                            raise BedrockClientError(
+                                f"Input exceeds model context window even with aggressive conversation trimming. "
+                                f"Tried {len(messages)} messages, then {len(fallback_messages)} messages. "
+                                f"Consider using smaller chunks or fewer messages. Original error: {str(e)}"
+                            )
+                else:
+                    # No further reduction possible
+                    raise BedrockClientError(
+                        f"Input exceeds model context window and cannot be reduced further. "
+                        f"Current messages: {len(messages)}. Original error: {str(e)}"
+                    )
+            else:
+                # Re-raise non-context-window errors
+                raise
+
+    def _aggressive_conversation_fallback(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Apply aggressive conversation management when context window is exceeded
+        """
+        # Check if we have an extremely large conversation (likely from chunking)
+        total_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
+        
+        if len(messages) > 50 or total_chars > 500000:  # Very large conversation or content
+            # Ultra-aggressive fallback for request body size issues
+            logger.warning(f"Ultra-aggressive fallback triggered: {len(messages)} messages, {total_chars:,} chars")
+            aggressive_limit = min(3, max(1, self.config.max_conversation_messages // 10))
+        else:
+            # Standard aggressive fallback
+            aggressive_limit = max(5, self.config.max_conversation_messages // 3)
+        
+        result = []
+        
+        # Always preserve system message if present and configured
+        if self.config.preserve_system_message and messages and messages[0].get("role") == "system":
+            result.append(messages[0])
+            remaining_messages = messages[1:]
+            max_remaining = aggressive_limit - 1
+        else:
+            remaining_messages = messages
+            max_remaining = aggressive_limit
+        
+        # Filter out tool messages completely for context window issues
+        filtered_messages = []
+        for msg in remaining_messages:
+            role = msg.get("role", "")
+            if role not in ["tool", "function"] and "tool_call" not in msg:
+                filtered_messages.append(msg)
+        
+        # For ultra-aggressive mode, also filter out very long messages (likely chunked)
+        if len(messages) > 50:
+            logger.info("Filtering out very large messages in ultra-aggressive mode")
+            size_filtered = []
+            for msg in filtered_messages:
+                content_size = len(str(msg.get("content", "")))
+                if content_size < 10000:  # Only keep small messages
+                    size_filtered.append(msg)
+                else:
+                    # Keep a truncated version of large messages
+                    truncated_msg = msg.copy()
+                    truncated_msg["content"] = str(msg.get("content", ""))[:1000] + "...[truncated due to size]"
+                    size_filtered.append(truncated_msg)
+            filtered_messages = size_filtered
+        
+        # Take only the most recent messages
+        if len(filtered_messages) > max_remaining:
+            result.extend(filtered_messages[-max_remaining:])
+        else:
+            result.extend(filtered_messages)
+        
+        logger.info(f"Aggressive fallback: {len(messages)} -> {len(result)} messages")
+        return result
+
     def _calculate_retry_delay(self, attempt: int) -> float:
         """Calculate delay for retry with exponential backoff"""
         
@@ -739,7 +916,7 @@ class BedrockClient:
             message: The message to chunk
             
         Returns:
-            List of chunked messages with proper metadata
+            List of chunked messages with chunk information embedded in content
         """
         content = message.get("content", "")
         if not isinstance(content, str):
@@ -757,21 +934,12 @@ class BedrockClient:
         else:
             chunks = self._context_aware_chunk(content)  # Default fallback
         
-        # Create chunked messages with metadata
+        # Create chunked messages
         chunked_messages = []
         total_chunks = len(chunks)
         
         for i, chunk in enumerate(chunks):
             chunk_number = i + 1
-            
-            # Create chunk metadata
-            chunk_metadata = {
-                "is_chunk": True,
-                "chunk_number": chunk_number,
-                "total_chunks": total_chunks,
-                "original_size": len(content),
-                "chunk_size": len(chunk)
-            }
             
             # Add chunk context information to the content
             if total_chunks > 1:
@@ -782,13 +950,15 @@ class BedrockClient:
             else:
                 chunk_content = chunk
             
-            # Create new message with chunk
-            chunked_msg = message.copy()
-            chunked_msg["content"] = chunk_content
+            # Create new message with chunk (only keep standard message fields)
+            chunked_msg = {
+                "role": message.get("role", "user"),
+                "content": chunk_content
+            }
             
-            # Merge metadata properly (chunk metadata takes precedence)
-            original_metadata = chunked_msg.get("metadata", {})
-            chunked_msg["metadata"] = {**original_metadata, **chunk_metadata}
+            # Preserve any other standard message fields that might be needed
+            if "name" in message:
+                chunked_msg["name"] = message["name"]
             
             chunked_messages.append(chunked_msg)
         
