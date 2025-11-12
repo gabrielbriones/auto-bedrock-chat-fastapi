@@ -464,16 +464,23 @@ class BedrockChatPlugin:
             border-top: 1px solid #e2e8f0;
         }}
         
-        .chat-input input {{
+        .chat-input textarea {{
             flex: 1;
             padding: 12px 16px;
             border: 1px solid #e2e8f0;
-            border-radius: 25px;
+            border-radius: 15px;
             outline: none;
             font-size: 16px;
+            resize: none;
+            min-height: 48px;
+            max-height: 150px;
+            overflow-y: hidden;
+            font-family: inherit;
+            line-height: 1.5;
+            box-sizing: border-box;
         }}
         
-        .chat-input input:focus {{
+        .chat-input textarea:focus {{
             border-color: #667eea;
         }}
         
@@ -656,7 +663,7 @@ class BedrockChatPlugin:
         </div>
         
         <div class="chat-input">
-            <input type="text" id="messageInput" placeholder="Type your message..." disabled>
+            <textarea id="messageInput" placeholder="Type your message..." disabled rows="1"></textarea>
             <button id="sendButton" disabled>Send</button>
         </div>
     </div>
@@ -678,9 +685,25 @@ class BedrockChatPlugin:
             
             setupEventListeners() {{
                 this.sendButton.addEventListener('click', () => this.sendMessage());
-                this.messageInput.addEventListener('keypress', (e) => {{
-                    if (e.key === 'Enter') {{
+                this.messageInput.addEventListener('keydown', (e) => {{
+                    if (e.key === 'Enter' && !e.shiftKey) {{
+                        e.preventDefault();
                         this.sendMessage();
+                    }}
+                }});
+                
+                // Auto-resize textarea as user types
+                this.messageInput.addEventListener('input', () => {{
+                    this.messageInput.style.height = 'auto';
+                    this.messageInput.style.height = this.messageInput.scrollHeight + 'px';
+                    
+                    // Limit max height to prevent excessive growth
+                    const maxHeight = 150;
+                    if (this.messageInput.scrollHeight > maxHeight) {{
+                        this.messageInput.style.height = maxHeight + 'px';
+                        this.messageInput.style.overflowY = 'auto';
+                    }} else {{
+                        this.messageInput.style.overflowY = 'hidden';
                     }}
                 }});
             }}
@@ -739,8 +762,11 @@ class BedrockChatPlugin:
                     message: message
                 }}));
                 
-                // Clear input
+                // Clear input and reset height
                 this.messageInput.value = '';
+                this.messageInput.style.height = 'auto';
+                this.messageInput.style.height = '48px';  // Reset to min height
+                this.messageInput.style.overflowY = 'hidden';
             }}
             
             handleMessage(data) {{
