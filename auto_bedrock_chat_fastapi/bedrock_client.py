@@ -170,7 +170,7 @@ class BedrockClient:
             return self._prepare_titan_request(
                 messages, tools_desc, temperature, max_tokens, **kwargs
             )
-        elif model_id.startswith("meta.llama"):
+        elif model_id.startswith("meta.llama") or model_id.startswith("us.meta.llama"):
             return self._prepare_llama_request(
                 messages, tools_desc, temperature, max_tokens, **kwargs
             )
@@ -320,47 +320,110 @@ class BedrockClient:
         if not system_prompt:
             system_prompt = self.config.get_system_prompt()
         
-        # Combine messages into a single prompt for Titan
-        prompt = system_prompt + "\n\n" if system_prompt else ""
+        # Add tools information to system prompt if available (Titan doesn't support tool calling)
+        if tools_desc and tools_desc.get("functions"):
+            tools_info = f"\n\nIMPORTANT: I am using Amazon Titan Text model which does NOT support tool calling or API execution.\n"
+            tools_info += f"I can only provide text responses and cannot access real-time data from your API endpoints.\n\n"
+            tools_info += f"Your API has these available endpoints:\n"
+            for func in tools_desc.get("functions", []):
+                name = func.get("name", "unknown")
+                desc = func.get("description", "No description")
+                tools_info += f"- {desc}\n"
+            
+            tools_info += f"\nTo get real-time data from your API, please use a model that supports tool calling such as:\n"
+            tools_info += f"- Claude models (anthropic.claude-*)\n"
+            tools_info += f"- Llama models (meta.llama* or us.meta.llama*)\n"
+            tools_info += f"- OpenAI GPT OSS (openai.gpt-oss-*)\n\n"
+            tools_info += f"I can help explain how to use these endpoints or provide general guidance.\n"
+            system_prompt += tools_info
         
+        # Combine messages into a single prompt for Titan using the recommended format
+        prompt_parts = []
+        
+        # Add system prompt
+        if system_prompt:
+            prompt_parts.append(f"System: {system_prompt}")
+        
+        # Add conversation messages
         for msg in conversation_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            prompt += f"{role.title()}: {content}\n"
+            
+            if role == "user":
+                prompt_parts.append(f"User: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Bot: {content}")
         
-        prompt += "Assistant:"
+        # End with Bot: to prompt for assistant response
+        prompt_parts.append("Bot:")
         
-        return {
-            "inputText": prompt,
+        formatted_prompt = "\n".join(prompt_parts)
+        
+        # Prepare request following Titan Text Express format
+        request_body = {
+            "inputText": formatted_prompt,
             "textGenerationConfig": {
                 "maxTokenCount": max_tokens,
                 "temperature": temperature,
-                "topP": kwargs.get("top_p", self.config.top_p),
-                "stopSequences": ["User:", "Human:"]
+                "topP": kwargs.get("top_p", self.config.top_p)
             }
         }
+        
+        # Add empty stopSequences (Titan requires this field)
+        request_body["textGenerationConfig"]["stopSequences"] = []
+            
+        return request_body
     
     def _prepare_llama_request(
         self, messages, tools_desc, temperature, max_tokens, **kwargs
     ) -> Dict[str, Any]:
-        """Prepare request for Llama models"""
+        """Prepare request for Llama models using proper prompt format"""
         
-        # For Llama, check if system message is already in messages
-        has_system_message = any(msg.get("role") == "system" for msg in messages)
+        # Convert messages to Llama's prompt format with special tokens
+        prompt_parts = ["<|begin_of_text|>"]
         
-        formatted_messages = []
-        
-        if not has_system_message:
+        # Check if first message is system prompt
+        start_idx = 0
+        if messages and messages[0].get("role") == "system":
+            system_content = messages[0]["content"]
+            prompt_parts.extend([
+                "<|start_header_id|>system<|end_header_id|>",
+                f"\n{system_content}<|eot_id|>"
+            ])
+            start_idx = 1
+        else:
             # Add default system message if none present
-            formatted_messages.append({
-                "role": "system",
-                "content": self.config.get_system_prompt()
-            })
+            system_prompt = self.config.get_system_prompt()
+            if tools_desc:
+                system_prompt += f"\n\nYou have access to these tools: {json.dumps(tools_desc, indent=2)}"
+            prompt_parts.extend([
+                "<|start_header_id|>system<|end_header_id|>",
+                f"\n{system_prompt}<|eot_id|>"
+            ])
         
-        formatted_messages.extend(messages)
+        # Add conversation messages
+        for msg in messages[start_idx:]:
+            role = msg["role"]
+            content = msg["content"]
+            
+            if role == "user":
+                prompt_parts.extend([
+                    "<|start_header_id|>user<|end_header_id|>",
+                    f"\n{content}<|eot_id|>"
+                ])
+            elif role == "assistant":
+                prompt_parts.extend([
+                    "<|start_header_id|>assistant<|end_header_id|>",
+                    f"\n{content}<|eot_id|>"
+                ])
+        
+        # End with assistant header for completion
+        prompt_parts.append("<|start_header_id|>assistant<|end_header_id|>")
+        
+        formatted_prompt = "".join(prompt_parts)
         
         return {
-            "messages": formatted_messages,
+            "prompt": formatted_prompt,
             "max_gen_len": max_tokens,
             "temperature": temperature,
             "top_p": kwargs.get("top_p", self.config.top_p),
@@ -403,6 +466,9 @@ class BedrockClient:
         for attempt in range(self.config.max_retries + 1):
             try:
                 # Convert to async
+                # Debug logging for request
+                logger.debug(f"Bedrock request for {model_id}: {json.dumps(request_body, indent=2)}")
+                
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
                     None,
@@ -691,7 +757,7 @@ class BedrockClient:
                 return self._parse_claude_response(response)
             elif model_id.startswith("amazon.titan"):
                 return self._parse_titan_response(response)
-            elif model_id.startswith("meta.llama"):
+            elif model_id.startswith("meta.llama") or model_id.startswith("us.meta.llama"):
                 return self._parse_llama_response(response)
             elif model_id.startswith("openai.gpt-oss"):
                 return self._parse_openai_gpt_response(response)

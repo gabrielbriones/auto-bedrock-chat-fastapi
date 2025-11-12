@@ -1230,16 +1230,32 @@ ws.send(JSON.stringify({
 | Claude 3 Sonnet | `anthropic.claude-3-sonnet-20240229-v1:0` | Legacy - use 3.5 instead |
 | Claude 3 Haiku | `anthropic.claude-3-haiku-20240307-v1:0` | Legacy - use 3.5 instead |
 | **OpenAI GPT OSS** | `openai.gpt-oss-120b-1:0` | **120B parameter open-source model** |
-| Titan Text | `amazon.titan-text-express-v1` | Amazon's foundation model |
-| Llama 3.1 | `meta.llama3-1-70b-instruct-v1:0` | Meta's latest open-source model |
-| Llama 3.1 | `meta.llama3-1-8b-instruct-v1:0` | Smaller, faster version |
+| Titan Text | `amazon.titan-text-express-v1` | Amazon's foundation model ⚠️ **No tool calling** |
+| **Llama 3.2 90B** | `us.meta.llama3-2-90b-instruct-v1:0` | **🆕 Latest Llama, excellent for tool calling (cross-region)** |
+| Llama 3.1 70B | `meta.llama3-1-70b-instruct-v1:0` | Meta's open-source model, good for structured outputs |
+| Llama 3.1 8B | `meta.llama3-1-8b-instruct-v1:0` | Smaller, faster version |
 | Cohere Command R+ | `cohere.command-r-plus-v1:0` | Advanced reasoning model |
 | Mistral Large | `mistral.mistral-large-2402-v1:0` | Multilingual capabilities |
 
-### 🔥 Model Recommendations
+### � Tool Calling Support
+
+**✅ Models with Full Tool Calling Support:**
+- **Claude Models**: All versions (`anthropic.claude-*`, `us.anthropic.claude-*`)
+- **Llama Models**: All versions (`meta.llama*`, `us.meta.llama*`)  
+- **OpenAI GPT OSS**: All versions (`openai.gpt-oss-*`)
+- **Cohere Command**: All versions (`cohere.command-*`)
+
+**⚠️ Models with Limited/No Tool Calling:**
+- **Amazon Titan**: Text generation only, cannot call API endpoints
+- **Mistral**: Limited tool calling support (check model-specific docs)
+
+> **💡 For API Integration**: If you need the AI to call your FastAPI endpoints and retrieve real data, choose a model with full tool calling support. Titan models can only provide text responses and suggest which endpoints to call manually.
+
+### �🔥 Model Recommendations
 
 - **🚀 Best Overall**: `us.anthropic.claude-sonnet-4-5-20250929-v1:0` - Latest Claude 4.5 with advanced reasoning
-- **💰 Cost-Effective**: `anthropic.claude-3-5-haiku-20241022-v1:0` - Fast responses, lower cost
+- **� Best for Tool Calling**: `us.meta.llama3-2-90b-instruct-v1:0` - Llama 3.2 90B, excellent structured outputs
+- **�💰 Cost-Effective**: `anthropic.claude-3-5-haiku-20241022-v1:0` - Fast responses, lower cost
 - **🌐 Open Source**: `openai.gpt-oss-120b-1:0` - Transparent, OSS-based model
 - **⚡ High Throughput**: `us.anthropic.claude-3-5-sonnet-20241022-v2:0` - Inference profile optimized
 
@@ -1298,6 +1314,9 @@ Choose the right model for your use case:
 # For maximum capability and latest features
 BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
 
+# For best tool calling and structured outputs
+BEDROCK_MODEL_ID=us.meta.llama3-2-90b-instruct-v1:0
+
 # For cost-effective, fast responses
 BEDROCK_MODEL_ID=anthropic.claude-3-5-haiku-20241022-v1:0
 
@@ -1313,9 +1332,11 @@ BEDROCK_MODEL_ID=us.anthropic.claude-3-5-sonnet-20241022-v2:0
 The plugin automatically validates model IDs to ensure compatibility. Supported model families:
 
 - `anthropic.claude*` - Claude models (all versions)
+- `us.anthropic.claude*` - Claude inference profiles (cross-region)
 - `openai.gpt*` - OpenAI GPT OSS models  
 - `amazon.titan*` - Amazon Titan models
-- `meta.llama*` - Meta Llama models
+- `meta.llama*` - Meta Llama models (direct access)
+- `us.meta.llama*` - Meta Llama inference profiles (cross-region)
 - `cohere.command*` - Cohere Command models
 - `ai21.j2*` - AI21 Jurassic models
 - `test-*` or `custom-*` - Testing/custom model overrides
@@ -1666,7 +1687,25 @@ add_bedrock_chat(
 - Consider increasing timeout values: `timeout=60` for complex queries
 - Monitor token usage as the 120B model may consume more tokens per request
 
-#### 7. Memory/Performance Issues
+#### 7. Tool Calls Not Working
+
+**Check Model Compatibility:**
+```python
+# ✅ Models that support tool calling
+BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0  # Claude
+BEDROCK_MODEL_ID=us.meta.llama3-2-90b-instruct-v1:0         # Llama
+BEDROCK_MODEL_ID=openai.gpt-oss-120b-1:0                    # OpenAI GPT OSS
+
+# ❌ Models that DON'T support tool calling  
+BEDROCK_MODEL_ID=amazon.titan-text-express-v1               # Titan (text only)
+```
+
+**Titan Model Behavior:**
+- Amazon Titan models will inform users they cannot call APIs directly
+- They will suggest which endpoints to call manually
+- Switch to Claude, Llama, or OpenAI GPT models for automated tool calling
+
+#### 8. Memory/Performance Issues
 
 ```python
 # Configure resource limits
@@ -1707,6 +1746,7 @@ async def bedrock_health():
 - **Choose the Right Model**: 
   - **Claude 3.5 Haiku**: Fastest response times, cost-effective
   - **Claude 3.5 Sonnet**: Balanced performance and capabilities
+  - **Llama 3.2 90B**: Excellent tool calling and structured outputs
   - **OpenAI GPT OSS 120B**: Strong performance for open-source workloads
   - **Claude 3 Opus**: Most capable but slower
 - **Limit Tool Calls**: Set `max_tool_calls` to prevent infinite loops
@@ -1927,6 +1967,7 @@ AWS_DEFAULT_REGION=us-east-1
 
 # Model Configuration - Choose one:
 # BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0    # Latest Claude 4.5 (best performance)
+# BEDROCK_MODEL_ID=us.meta.llama3-2-90b-instruct-v1:0              # Llama 3.2 90B (excellent tool calling)
 # BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0       # Claude 3.5 Sonnet (recommended)
 # BEDROCK_MODEL_ID=anthropic.claude-3-5-haiku-20241022-v1:0        # Fast and cost-effective
 # BEDROCK_MODEL_ID=openai.gpt-oss-120b-1:0                         # Open-source focused deployments

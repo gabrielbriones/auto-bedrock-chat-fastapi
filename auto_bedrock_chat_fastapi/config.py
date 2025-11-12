@@ -331,10 +331,14 @@ class ChatConfig(BaseSettings):
         # Common Bedrock model patterns
         valid_patterns = [
             "anthropic.claude",
+            "us.anthropic.claude",  # Cross-region inference profiles
             "amazon.titan",
             "ai21.j2",
+            "ai21.jamba",  # Add Jamba support
             "cohere.command",
             "meta.llama2",
+            "meta.llama3",  # Add Llama 3.x support
+            "us.meta.llama3",  # Cross-region Llama 3.x inference profiles
             "openai.gpt"  # Add OpenAI support
         ]
         
@@ -477,7 +481,7 @@ def load_config(
                 if not model_val:
                     raise ConfigurationError("Model ID cannot be empty")
                 # Check for valid patterns
-                valid_patterns = ["anthropic.claude", "amazon.titan", "ai21.j2", "cohere.command", "meta.llama2", "openai.gpt"]
+                valid_patterns = ["anthropic.claude", "us.anthropic.claude", "amazon.titan", "ai21.j2", "ai21.jamba", "cohere.command", "meta.llama2", "meta.llama3", "us.meta.llama3", "openai.gpt"]
                 if not any(pattern in model_val for pattern in valid_patterns):
                     if not model_val.startswith(("test-", "custom-")):
                         raise ConfigurationError(f"Invalid model ID: {model_val}")
