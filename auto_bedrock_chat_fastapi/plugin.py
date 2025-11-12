@@ -434,8 +434,29 @@ class BedrockChatPlugin:
             font-style: italic;
             color: #718096;
             padding: 10px 20px;
+            align-items: center;
+            gap: 8px;
         }}
-        
+
+        .typing-indicator.active {{
+            display: flex;
+        }}
+
+        .spinner {{
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e2e8f0;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }}
+
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+
         .chat-input {{
             display: flex;
             padding: 20px;
@@ -629,7 +650,10 @@ class BedrockChatPlugin:
             </div>
         </div>
         
-        <div class="typing-indicator" id="typingIndicator">AI is typing...</div>
+        <div class="typing-indicator" id="typingIndicator">
+            <div class="spinner"></div>
+            <span id="typingText">AI is typing...</span>
+        </div>
         
         <div class="chat-input">
             <input type="text" id="messageInput" placeholder="Type your message..." disabled>
@@ -646,6 +670,7 @@ class BedrockChatPlugin:
                 this.chatMessages = document.getElementById('chatMessages');
                 this.connectionStatus = document.getElementById('connectionStatus');
                 this.typingIndicator = document.getElementById('typingIndicator');
+                this.typingText = document.getElementById('typingText');
                 
                 this.setupEventListeners();
                 this.connect();
@@ -795,12 +820,12 @@ class BedrockChatPlugin:
             }}
             
             showTypingIndicator(message = 'AI is typing...') {{
-                this.typingIndicator.textContent = message;
-                this.typingIndicator.style.display = 'block';
+                this.typingText.textContent = message;
+                this.typingIndicator.classList.add('active');
             }}
             
             hideTypingIndicator() {{
-                this.typingIndicator.style.display = 'none';
+                this.typingIndicator.classList.remove('active');
             }}
         }}
         
