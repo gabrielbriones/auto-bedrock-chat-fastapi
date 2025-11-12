@@ -504,13 +504,15 @@ class BedrockClient:
             return await self._make_request_with_retries(model_id, request_body)
         
         except BedrockClientError as e:
-            # Check if this is a context window issue, max_tokens error, or request body size issue
+            # Check if this is a context window issue, max_tokens error, request body size issue, or token parsing error
             error_str = str(e)
             is_context_issue = ('Input is too long' in error_str or 
                               'max_tokens must be at least 1' in error_str or
                               'got -' in error_str or  # Negative max_tokens
                               'length limit exceeded' in error_str or  # Request body too large
-                              'Failed to buffer the request body' in error_str)  # Bedrock HTTP limits
+                              'Failed to buffer the request body' in error_str or  # Bedrock HTTP limits
+                              'Unexpected token' in error_str or  # GPT tokenization issues
+                              'expecting start token' in error_str)  # GPT token parsing errors
             
             if is_context_issue:
                 logger.warning(f"Context/token issue detected: {error_str[:100]}...")
@@ -553,6 +555,16 @@ class BedrockClient:
                                     f"Recommendations: (1) Much smaller BEDROCK_CHUNK_SIZE (10000-20000), "
                                     f"(2) Very low BEDROCK_MAX_CONVERSATION_MESSAGES (5-10), "
                                     f"(3) Start new conversation for large inputs, or (4) use Claude models. "
+                                    f"Original error: {str(e)}"
+                                )
+                            elif 'Unexpected token' in str(e) or 'expecting start token' in str(e):
+                                raise BedrockClientError(
+                                    f"GPT OSS model tokenization error. "
+                                    f"This often occurs with longer conversations or special characters. "
+                                    f"Tried {len(messages)} messages (1st attempt), then {len(fallback_messages)} messages (fallback). "
+                                    f"Recommendations: (1) Start a new conversation, "
+                                    f"(2) Use lower BEDROCK_MAX_CONVERSATION_MESSAGES (5-10), "
+                                    f"(3) Switch to Claude models for more robust tokenization. "
                                     f"Original error: {str(e)}"
                                 )
                             else:

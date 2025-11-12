@@ -861,7 +861,13 @@ class BedrockChatPlugin:
             }}
             
             // Remove <reasoning>...</reasoning> blocks (case insensitive, multiline)
-            return content.replace(/<reasoning[^>]*>.*?<\\/reasoning>/gis, '').trim();
+            // Use a more robust regex that handles different variations
+            let cleaned = content.replace(/<reasoning[^>]*>[\\s\\S]*?<\\/reasoning>/gi, '');
+            
+            // Clean up any extra whitespace left behind
+            cleaned = cleaned.replace(/^\\s+|\\s+$/g, '').replace(/\\n\\s*\\n\\s*\\n/g, '\\n\\n');
+            
+            return cleaned;
         }}
         
         /**
