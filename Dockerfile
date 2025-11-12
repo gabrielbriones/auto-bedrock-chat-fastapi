@@ -1,5 +1,4 @@
-"""Docker configuration for auto-bedrock-chat-fastapi"""
-
+# Docker configuration for auto-bedrock-chat-fastapi
 # Multi-stage build for optimal image size
 FROM python:3.11-slim as builder
 
@@ -10,9 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential=12.9 \
+    curl=7.88.1-10+deb12u5 \
+    && apt-mark auto build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
@@ -21,8 +21,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy requirements and install dependencies
 COPY pyproject.toml /tmp/
-RUN pip install build && \
-    cd /tmp && \
+WORKDIR /tmp
+RUN pip install build==1.0.3 && \
     python -m build --wheel && \
     pip install dist/*.whl
 
@@ -33,6 +33,11 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl=7.88.1-10+deb12u5 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser

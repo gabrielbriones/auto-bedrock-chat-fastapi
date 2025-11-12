@@ -6,50 +6,51 @@ using Amazon Bedrock models with real-time WebSocket chat and automatic tool gen
 
 __version__ = "1.0.0"
 
-# Main exports
-from .plugin import add_bedrock_chat, BedrockChatPlugin, create_fastapi_with_bedrock_chat
+# Additional exports for advanced usage
+from .bedrock_client import BedrockClient
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import (
+    AuthenticationError,
     BedrockChatError,
     ConfigurationError,
     ModelError,
+    RateLimitError,
     SessionError,
     ToolError,
-    AuthenticationError,
-    RateLimitError
 )
 
-# Additional exports for advanced usage
-from .bedrock_client import BedrockClient
-from .session_manager import ChatSessionManager, ChatSession, ChatMessage
+# Main exports
+from .plugin import (
+    BedrockChatPlugin,
+    add_bedrock_chat,
+    create_fastapi_with_bedrock_chat,
+)
+from .session_manager import ChatMessage, ChatSession, ChatSessionManager
 from .tools_generator import ToolsGenerator
 from .websocket_handler import WebSocketChatHandler
 
 __all__ = [
     # Main plugin
     "add_bedrock_chat",
-    "BedrockChatPlugin", 
+    "BedrockChatPlugin",
     "create_fastapi_with_bedrock_chat",
-    
     # Configuration
-    "ChatConfig", 
+    "ChatConfig",
     "load_config",
     "validate_config",
-    
     # Core components (for advanced usage)
     "BedrockClient",
     "ChatSessionManager",
-    "ChatSession", 
+    "ChatSession",
     "ChatMessage",
     "ToolsGenerator",
     "WebSocketChatHandler",
-    
     # Exceptions
     "BedrockChatError",
-    "ConfigurationError", 
+    "ConfigurationError",
     "ModelError",
     "SessionError",
     "ToolError",
     "AuthenticationError",
-    "RateLimitError"
+    "RateLimitError",
 ]
