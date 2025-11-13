@@ -165,7 +165,7 @@ if __name__ == "__main__":
 - **WebSocket**: ws://localhost:8000/bedrock-chat/ws
 - **API Docs**: http://localhost:8000/docs
 
-## � Framework-Agnostic Usage
+## 🌐 Framework-Agnostic Usage
 
 **NEW!** Use with Express.js, Flask, Django, or any framework by providing OpenAPI specifications:
 
