@@ -141,7 +141,7 @@ class BedrockChatPlugin:
     def _detect_runtime_base_url(self) -> Optional[str]:
         """Try to detect the base URL from runtime environment"""
 
-        # Check common environment variables
+        # Priority 1: Check standard environment variables
         host_env = os.getenv("HOST")
         port_env = os.getenv("PORT")
         if host_env is not None and port_env is not None:
@@ -150,20 +150,74 @@ class BedrockChatPlugin:
             )
             return f"{scheme}://{host_env}:{port_env}"
 
-        # Check if we're running with uvicorn and can detect port
-        # This is a best-effort detection
+        # Priority 2: Try to detect from uvicorn server instance
         try:
-            import socket
+            import uvicorn
 
-            # Try to find if a common port is in use
-            for port in [8000, 8001, 8080, 3000, 5000]:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                try:
-                    result = sock.connect_ex(("localhost", port))
-                    if result == 0:  # Port is in use
-                        return f"http://localhost:{port}"
-                finally:
-                    sock.close()
+            # Check if uvicorn is running and has server config
+            # This works when uvicorn.run() is used
+            if hasattr(uvicorn, "_current_server") and uvicorn._current_server:
+                server = uvicorn._current_server
+                if hasattr(server, "config"):
+                    host = getattr(server.config, "host", "localhost")
+                    port = getattr(server.config, "port", None)
+                    if port:
+                        scheme = (
+                            "https"
+                            if getattr(server.config, "ssl_keyfile", None)
+                            else "http"
+                        )
+                        return f"{scheme}://{host}:{port}"
+        except (ImportError, AttributeError):
+            pass
+
+        # Priority 3: Check current process command line arguments
+        try:
+            import re
+            import sys
+
+            # Parse command line for uvicorn/gunicorn style arguments
+            cmd_args = " ".join(sys.argv)
+
+            # Look for --host and --port arguments
+            host_match = re.search(r"--host[=\s]+([^\s]+)", cmd_args)
+            port_match = re.search(r"--port[=\s]+(\d+)", cmd_args)
+
+            if port_match:
+                port = port_match.group(1)
+                host = host_match.group(1) if host_match else "localhost"
+                # Check for SSL indicators
+                ssl_indicators = ["--ssl-", "--keyfile", "--certfile"]
+                scheme = (
+                    "https"
+                    if any(ssl_arg in cmd_args for ssl_arg in ssl_indicators)
+                    else "http"
+                )
+                return f"{scheme}://{host}:{port}"
+
+        except Exception:
+            pass
+
+        # Priority 4: Try to find the actual server socket if available
+        try:
+            import asyncio
+
+            # Try to get the current event loop and find running servers
+            try:
+                loop = asyncio.get_running_loop()
+                # Look for server tasks in the current loop
+                for task in asyncio.all_tasks(loop):
+                    if hasattr(task, "_server") and hasattr(task._server, "sockets"):
+                        for socket in task._server.sockets:
+                            if socket.family.name in ["AF_INET", "AF_INET6"]:
+                                host, port = socket.getsockname()[:2]
+                                # Use localhost for 0.0.0.0 or :: bindings
+                                if host in ["0.0.0.0", "::"]:
+                                    host = "localhost"
+                                return f"http://{host}:{port}"
+            except RuntimeError:
+                # No running event loop
+                pass
         except Exception:
             pass
 
