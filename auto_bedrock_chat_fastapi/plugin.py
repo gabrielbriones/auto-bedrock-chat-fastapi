@@ -142,13 +142,13 @@ class BedrockChatPlugin:
         """Try to detect the base URL from runtime environment"""
 
         # Check common environment variables
-        if os.getenv("HOST") or os.getenv("PORT"):
-            host = os.getenv("HOST", "localhost")
-            port = os.getenv("PORT", "8000")
+        host_env = os.getenv("HOST")
+        port_env = os.getenv("PORT")
+        if host_env is not None and port_env is not None:
             scheme = (
                 "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
             )
-            return f"{scheme}://{host}:{port}"
+            return f"{scheme}://{host_env}:{port_env}"
 
         # Check if we're running with uvicorn and can detect port
         # This is a best-effort detection
