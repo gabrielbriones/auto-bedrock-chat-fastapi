@@ -277,49 +277,280 @@ add_bedrock_chat(
 const express = require('express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
+app.use(express.json());
+
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     User:
+ *       type: object
+ *       required:
+ *         - name
+ *         - email
+ *       properties:
+ *         id:
+ *           type: integer
+ *           description: User ID
+ *         name:
+ *           type: string
+ *           description: User's full name
+ *         email:
+ *           type: string
+ *           format: email
+ *           description: User's email address
+ *     Product:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *         name:
+ *           type: string
+ *         price:
+ *           type: number
+ *         description:
+ *           type: string
+ */
 
 /**
  * @swagger
  * /api/v1/users:
  *   get:
- *     summary: Get all users
+ *     summary: Retrieve a list of users
+ *     description: Get all users in the system with pagination support
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 10
+ *         description: Number of users to return
  *     responses:
  *       200:
  *         description: List of users
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/User'
+ *   post:
+ *     summary: Create a new user
+ *     description: Create a new user account
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *                 format: email
+ *     responses:
+ *       201:
+ *         description: User created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/User'
  */
 app.get('/api/v1/users', (req, res) => {
-    res.json([{ id: 1, name: 'John Doe' }]);
+    const limit = parseInt(req.query.limit) || 10;
+    const users = [
+        { id: 1, name: 'John Doe', email: 'john@example.com' },
+        { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+    ].slice(0, limit);
+    res.json(users);
 });
 
-// Generate and save OpenAPI spec
-const specs = swaggerJsdoc({
+app.post('/api/v1/users', (req, res) => {
+    const { name, email } = req.body;
+    const newUser = { id: Date.now(), name, email };
+    res.status(201).json(newUser);
+});
+
+/**
+ * @swagger
+ * /api/v1/users/{userId}:
+ *   get:
+ *     summary: Get user by ID
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: User details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/User'
+ *       404:
+ *         description: User not found
+ */
+app.get('/api/v1/users/:userId', (req, res) => {
+    const userId = parseInt(req.params.userId);
+    const user = { id: userId, name: 'John Doe', email: 'john@example.com' };
+    res.json(user);
+});
+
+/**
+ * @swagger
+ * /api/v1/products:
+ *   get:
+ *     summary: Get all products
+ *     responses:
+ *       200:
+ *         description: List of products
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Product'
+ */
+app.get('/api/v1/products', (req, res) => {
+    const products = [
+        { id: 1, name: 'Widget A', price: 29.99, description: 'A useful widget' },
+        { id: 2, name: 'Gadget B', price: 49.99, description: 'An amazing gadget' }
+    ];
+    res.json(products);
+});
+
+// Configure swagger-jsdoc with complete options
+const swaggerOptions = {
     definition: {
         openapi: '3.0.0',
-        info: { title: 'Express API', version: '1.0.0' },
-        servers: [{ url: 'http://localhost:3000' }]
+        info: {
+            title: 'Express API',
+            version: '1.0.0',
+            description: 'A sample Express.js API for Bedrock integration',
+        },
+        servers: [
+            {
+                url: 'http://localhost:3000',
+                description: 'Development server'
+            }
+        ],
     },
-    apis: ['./express-app.js']
-});
+    apis: [
+        './express-app.js',           // Current file
+        './routes/*.js',              // Additional route files
+        './models/*.js'               // Model definitions (if any)
+    ],
+};
 
-fs.writeFileSync('./express-api-spec.json', JSON.stringify(specs, null, 2));
-app.listen(3000, () => console.log('Express server running on port 3000'));
+// Generate OpenAPI specification
+const specs = swaggerJsdoc(swaggerOptions);
+
+// Save the OpenAPI spec to file
+const specPath = path.join(__dirname, 'express-api-spec.json');
+try {
+    fs.writeFileSync(specPath, JSON.stringify(specs, null, 2));
+    console.log(`✓ OpenAPI spec generated: ${specPath}`);
+} catch (error) {
+    console.error('Error writing OpenAPI spec:', error);
+}
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Express server running on port ${PORT}`);
+    console.log(`📝 OpenAPI spec available at: ${specPath}`);
+});
 ```
 
 ```python
 # ai_chat_integration.py - AI chat for Express.js API
+import asyncio
 from auto_bedrock_chat_fastapi import create_tools_generator_from_spec
 
-# Create tools from Express.js OpenAPI spec (URL auto-detected)
-generator = create_tools_generator_from_spec("./express-api-spec.json")
+async def main():
+    # Create tools from Express.js OpenAPI spec (URL auto-detected)
+    generator = create_tools_generator_from_spec(
+        "./express-api-spec.json",
+        allowed_paths=["/api/v1/users", "/api/v1/products"],  # Only expose these endpoints
+        excluded_paths=["/internal"]  # Exclude internal endpoints
+    )
 
-print(f"Detected API base URL: {generator.get_api_base_url()}")
-# Output: "Detected API base URL: http://localhost:3000"
+    print(f"🔍 Detected API base URL: {generator.get_api_base_url()}")
+    # Output: "Detected API base URL: http://localhost:3000"
 
-# Generate tool descriptions for Bedrock
-tools_desc = generator.generate_tools_desc()
-print(f"Generated {len(tools_desc)} tools from Express.js API")
+    # Generate tool descriptions for Bedrock
+    tools_desc = generator.generate_tools_desc()
+    
+    print(f"🛠️  Generated {len(tools_desc['functions'])} tools from Express.js API:")
+    for func in tools_desc['functions']:
+        method = func['name'].split('_')[0].upper()
+        path = func.get('description', '').split('HTTP ')[-1].split(')')[0] if 'HTTP' in func.get('description', '') else 'Unknown'
+        print(f"   • {func['name']}: {method} {path}")
+
+    # Example of using with Bedrock (pseudo-code)
+    # bedrock_client = BedrockClient(config)
+    # response = await bedrock_client.converse(
+    #     messages=[
+    #         {"role": "user", "content": "Show me all users and products"}
+    #     ],
+    #     tools=tools_desc
+    # )
+    
+    # Tool call validation example
+    print(f"\n🔍 Tool validation examples:")
+    
+    # Valid call - get users with limit
+    valid_call = generator.validate_tool_call("get_api_v1_users", {"limit": 5})
+    print(f"   ✓ get_api_v1_users with limit=5: {valid_call}")
+    
+    # Invalid call - missing required field for POST
+    invalid_call = generator.validate_tool_call("post_api_v1_users", {})
+    print(f"   ✗ post_api_v1_users without required fields: {invalid_call}")
+    
+    # Valid call - create user with required fields
+    valid_post = generator.validate_tool_call(
+        "post_api_v1_users", 
+        {"name": "Alice Johnson", "email": "alice@example.com"}
+    )
+    print(f"   ✓ post_api_v1_users with valid data: {valid_post}")
+
+    # Show tool statistics
+    stats = generator.get_tool_statistics()
+    print(f"\n📊 API Statistics:")
+    print(f"   • Total tools: {stats['total_tools']}")
+    print(f"   • Unique paths: {stats['unique_paths']}")
+    print(f"   • HTTP methods: {stats['methods_distribution']}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Package.json for Express.js setup:**
+```json
+{
+  "name": "express-api-for-bedrock",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.0",
+    "swagger-jsdoc": "^6.2.0",
+    "swagger-ui-express": "^4.6.0"
+  },
+  "scripts": {
+    "start": "node express-app.js",
+    "dev": "nodemon express-app.js"
+  }
+}
 ```
 
 ### ✅ Validation & Testing
