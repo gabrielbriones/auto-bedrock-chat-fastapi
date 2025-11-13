@@ -161,7 +161,6 @@ class BedrockChatPlugin:
                 try:
                     result = sock.connect_ex(("localhost", port))
                     if result == 0:  # Port is in use
-                        sock.close()
                         return f"http://localhost:{port}"
                 finally:
                     sock.close()
