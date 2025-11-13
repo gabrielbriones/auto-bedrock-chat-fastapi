@@ -1,7 +1,9 @@
 """Tools generator to convert FastAPI routes to AI-callable tools"""
 
+import json
 import logging
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -13,13 +15,39 @@ logger = logging.getLogger(__name__)
 
 
 class ToolsGenerator:
-    """Generates tool descriptions from FastAPI routes for AI model consumption"""
+    """Generates tool descriptions from FastAPI routes or OpenAPI specs for AI model consumption"""
 
-    def __init__(self, app: FastAPI, config: ChatConfig):
+    def __init__(
+        self,
+        app: Optional[FastAPI] = None,
+        config: Optional[ChatConfig] = None,
+        openapi_spec: Optional[Union[str, Path, Dict]] = None,
+    ):
+        """
+        Initialize ToolsGenerator for framework-agnostic tool generation.
+
+        Args:
+            app: FastAPI application instance (for FastAPI integration)
+            config: Chat configuration
+            openapi_spec: OpenAPI specification - can be:
+                         - Path to OpenAPI spec file (str or Path)
+                         - OpenAPI spec dict directly
+                         - None (will use config.openapi_spec_file or app's spec)
+
+        Note: Either app or openapi_spec must be provided (or config.openapi_spec_file set)
+        """
         self.app = app
-        self.config = config
+        self.config = config or ChatConfig()
         self._openapi_schema = None
         self._generated_tools = {}
+        self._openapi_spec_source = openapi_spec
+
+        # Validate initialization parameters
+        if not app and not openapi_spec and not self.config.openapi_spec_file:
+            raise ToolsGenerationError(
+                "Either FastAPI app, openapi_spec parameter, or "
+                "config.openapi_spec_file must be provided"
+            )
 
     def generate_tools_desc(self) -> Dict[str, Any]:
         """Generate tools description from FastAPI OpenAPI spec"""
@@ -70,17 +98,92 @@ class ToolsGenerator:
             raise ToolsGenerationError(f"Tools generation failed: {str(e)}")
 
     def _get_openapi_schema(self) -> Dict[str, Any]:
-        """Get OpenAPI schema from FastAPI app"""
+        """Get OpenAPI schema from FastAPI app or OpenAPI spec file"""
 
         if self._openapi_schema is None:
-            self._openapi_schema = get_openapi(
-                title=self.app.title or "API",
-                version=self.app.version or "1.0.0",
-                description=self.app.description or "",
-                routes=self.app.routes,
-            )
+            # Try different sources in order of priority
+            if self._openapi_spec_source:
+                self._openapi_schema = self._load_openapi_spec(
+                    self._openapi_spec_source
+                )
+            elif self.config.openapi_spec_file:
+                self._openapi_schema = self._load_openapi_spec(
+                    self.config.openapi_spec_file
+                )
+            elif self.app:
+                self._openapi_schema = get_openapi(
+                    title=self.app.title or "API",
+                    version=self.app.version or "1.0.0",
+                    description=self.app.description or "",
+                    routes=self.app.routes,
+                )
+            else:
+                raise ToolsGenerationError(
+                    "No OpenAPI spec source available. Provide either a FastAPI app, "
+                    "openapi_spec parameter, or config.openapi_spec_file"
+                )
 
         return self._openapi_schema
+
+    def _load_openapi_spec(self, spec_source: Union[str, Path, Dict]) -> Dict[str, Any]:
+        """Load OpenAPI spec from various sources"""
+
+        # If it's already a dict, return it
+        if isinstance(spec_source, dict):
+            return spec_source
+
+        # Otherwise, treat as file path
+        spec_path = Path(spec_source)
+
+        if not spec_path.exists():
+            raise ToolsGenerationError(f"OpenAPI spec file not found: {spec_path}")
+
+        try:
+            with open(spec_path, "r", encoding="utf-8") as f:
+                if spec_path.suffix.lower() == ".json":
+                    return json.load(f)
+                else:
+                    # Assume YAML format
+                    try:
+                        import yaml
+
+                        return yaml.safe_load(f)
+                    except ImportError:
+                        raise ToolsGenerationError(
+                            "YAML support requires 'pyyaml' package. "
+                            "Install with: pip install pyyaml"
+                        )
+        except (json.JSONDecodeError, Exception) as e:
+            raise ToolsGenerationError(
+                f"Failed to parse OpenAPI spec file {spec_path}: {e}"
+            )
+
+    def get_api_base_url(self) -> Optional[str]:
+        """Extract API base URL from OpenAPI spec or configuration"""
+
+        # Priority 1: Explicit configuration
+        if self.config.api_base_url:
+            return self.config.api_base_url
+
+        # Priority 2: Extract from OpenAPI spec
+        # Ensure schema is loaded
+        try:
+            schema = self._get_openapi_schema()
+            servers = schema.get("servers", [])
+            if servers:
+                # Use the first server URL
+                first_server = servers[0]
+                if isinstance(first_server, dict) and "url" in first_server:
+                    return first_server["url"]
+        except Exception as e:
+            logger.debug(f"Could not extract base URL from OpenAPI spec: {e}")
+
+        # Priority 3: Default for FastAPI apps
+        if self.app:
+            return "http://localhost:8000"  # Will be improved in plugin
+
+        # Priority 4: Generic default
+        return "http://localhost:8000"
 
     def _create_function_description(
         self, path: str, method: str, operation: Dict
