@@ -335,7 +335,7 @@ The framework-agnostic functionality is thoroughly tested with **15 comprehensiv
 
 **Test Results**: All 15 framework-agnostic tests pass, ensuring reliability across different frameworks and configurations.
 
-## �🎯 How It Works
+## 🎯 How It Works
 
 1. **Automatic Discovery**: Scans your FastAPI routes and OpenAPI specification
 2. **Tool Generation**: Converts API endpoints into AI-callable tools with proper schemas
