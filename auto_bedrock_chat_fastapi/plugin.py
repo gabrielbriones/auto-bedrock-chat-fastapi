@@ -112,7 +112,18 @@ class BedrockChatPlugin:
         )
 
     def _determine_base_url(self) -> str:
-        """Determine base URL for internal API calls"""
+        """
+        Determine base URL for internal API calls.
+
+        Priority order:
+        1. Explicit api_base_url configuration (recommended for production)
+        2. OpenAPI spec servers[0].url (auto-detected from framework specs)
+        3. Environment variables (HOST/PORT, SERVER_HOST/SERVER_PORT, etc.)
+        4. Default fallback (http://localhost:8000)
+
+        For production deployments, it's strongly recommended to explicitly
+        configure the api_base_url parameter rather than relying on auto-detection.
+        """
 
         # Priority 1: Explicit configuration
         if self.config.api_base_url:
@@ -139,88 +150,48 @@ class BedrockChatPlugin:
         return "http://localhost:8000"
 
     def _detect_runtime_base_url(self) -> Optional[str]:
-        """Try to detect the base URL from runtime environment"""
+        """
+        Try to detect the base URL from runtime environment.
 
-        # Priority 1: Check standard environment variables
+        This method only uses stable, documented approaches and relies primarily
+        on environment variables. For production deployments, it's recommended
+        to explicitly set the api_base_url configuration parameter.
+        """
+
+        # Priority 1: Check standard environment variables (recommended approach)
         host_env = os.getenv("HOST")
         port_env = os.getenv("PORT")
         if host_env is not None and port_env is not None:
             scheme = (
                 "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
             )
+            logger.debug(
+                f"Detected base URL from HOST/PORT env vars: {scheme}://{host_env}:{port_env}"
+            )
             return f"{scheme}://{host_env}:{port_env}"
 
-        # Priority 2: Try to detect from uvicorn server instance
-        try:
-            import uvicorn
-
-            # Check if uvicorn is running and has server config
-            # This works when uvicorn.run() is used
-            if hasattr(uvicorn, "_current_server") and uvicorn._current_server:
-                server = uvicorn._current_server
-                if hasattr(server, "config"):
-                    host = getattr(server.config, "host", "localhost")
-                    port = getattr(server.config, "port", None)
-                    if port:
-                        scheme = (
-                            "https"
-                            if getattr(server.config, "ssl_keyfile", None)
-                            else "http"
-                        )
-                        return f"{scheme}://{host}:{port}"
-        except (ImportError, AttributeError):
-            pass
-
-        # Priority 3: Check current process command line arguments
-        try:
-            import re
-            import sys
-
-            # Parse command line for uvicorn/gunicorn style arguments
-            cmd_args = " ".join(sys.argv)
-
-            # Look for --host and --port arguments
-            host_match = re.search(r"--host[=\s]+([^\s]+)", cmd_args)
-            port_match = re.search(r"--port[=\s]+(\d+)", cmd_args)
-
-            if port_match:
-                port = port_match.group(1)
-                host = host_match.group(1) if host_match else "localhost"
-                # Check for SSL indicators
-                ssl_indicators = ["--ssl-", "--keyfile", "--certfile"]
+        # Priority 2: Check common deployment environment variables
+        # Many cloud platforms and deployment tools set these
+        for env_vars in [
+            ("SERVER_HOST", "SERVER_PORT"),
+            ("APP_HOST", "APP_PORT"),
+            ("WEB_HOST", "WEB_PORT"),
+        ]:
+            host = os.getenv(env_vars[0])
+            port = os.getenv(env_vars[1])
+            if host and port:
                 scheme = (
                     "https"
-                    if any(ssl_arg in cmd_args for ssl_arg in ssl_indicators)
+                    if os.getenv("HTTPS", "").lower() in ("1", "true")
                     else "http"
+                )
+                logger.debug(
+                    f"Detected base URL from {env_vars} env vars: {scheme}://{host}:{port}"
                 )
                 return f"{scheme}://{host}:{port}"
 
-        except Exception:
-            pass
-
-        # Priority 4: Try to find the actual server socket if available
-        try:
-            import asyncio
-
-            # Try to get the current event loop and find running servers
-            try:
-                loop = asyncio.get_running_loop()
-                # Look for server tasks in the current loop
-                for task in asyncio.all_tasks(loop):
-                    if hasattr(task, "_server") and hasattr(task._server, "sockets"):
-                        for socket in task._server.sockets:
-                            if socket.family.name in ["AF_INET", "AF_INET6"]:
-                                host, port = socket.getsockname()[:2]
-                                # Use localhost for 0.0.0.0 or :: bindings
-                                if host in ["0.0.0.0", "::"]:
-                                    host = "localhost"
-                                return f"http://{host}:{port}"
-            except RuntimeError:
-                # No running event loop
-                pass
-        except Exception:
-            pass
-
+        # No reliable detection method available
+        logger.debug("Could not detect runtime base URL from environment variables")
         return None
 
     def _setup_templates(self):
@@ -1079,6 +1050,8 @@ def add_bedrock_chat(
         auth_dependency: Authentication dependency function
         openapi_spec_file: Path to OpenAPI spec file for framework-agnostic tool generation
         api_base_url: Base URL for API calls (e.g., http://localhost:8080)
+                     RECOMMENDED: Explicitly set this for production deployments
+                     instead of relying on auto-detection from environment variables
         **kwargs: Additional configuration parameters
 
     Returns:
@@ -1087,6 +1060,11 @@ def add_bedrock_chat(
     Raises:
         ConfigurationError: If configuration is invalid
         BedrockChatError: If plugin initialization fails
+
+    Note:
+        For production deployments, it's strongly recommended to explicitly
+        configure api_base_url rather than relying on environment variable
+        auto-detection, which may not work reliably in all deployment scenarios.
     """
 
     try:
