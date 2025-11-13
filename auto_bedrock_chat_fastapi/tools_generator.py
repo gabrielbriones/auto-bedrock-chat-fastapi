@@ -141,21 +141,30 @@ class ToolsGenerator:
         try:
             with open(spec_path, "r", encoding="utf-8") as f:
                 if spec_path.suffix.lower() == ".json":
-                    return json.load(f)
+                    try:
+                        return json.load(f)
+                    except json.JSONDecodeError as e:
+                        raise ToolsGenerationError(
+                            f"Failed to parse OpenAPI spec file {spec_path} as JSON: {e}"
+                        )
                 else:
                     # Assume YAML format
                     try:
                         import yaml
-
-                        return yaml.safe_load(f)
+                        try:
+                            return yaml.safe_load(f)
+                        except yaml.YAMLError as e:
+                            raise ToolsGenerationError(
+                                f"Failed to parse OpenAPI spec file {spec_path} as YAML: {e}"
+                            )
                     except ImportError:
                         raise ToolsGenerationError(
                             "YAML support requires 'pyyaml' package. "
                             "Install with: pip install pyyaml"
                         )
-        except (json.JSONDecodeError, Exception) as e:
+        except OSError as e:
             raise ToolsGenerationError(
-                f"Failed to parse OpenAPI spec file {spec_path}: {e}"
+                f"Failed to open OpenAPI spec file {spec_path}: {e}"
             )
 
     def get_api_base_url(self) -> Optional[str]:
