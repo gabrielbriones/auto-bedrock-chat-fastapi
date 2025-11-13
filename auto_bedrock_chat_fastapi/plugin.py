@@ -83,9 +83,9 @@ class BedrockChatPlugin:
         # Initialize components
         self.session_manager = ChatSessionManager(self.config)
         self.bedrock_client = BedrockClient(self.config)
-        self.tools_generator = ToolsGenerator(self.app, self.config)
+        self.tools_generator = ToolsGenerator(app=self.app, config=self.config)
 
-        # Determine base URL for internal API calls
+        # Determine base URL for internal API calls (after tools_generator is created)
         self.app_base_url = self._determine_base_url()
 
         self.websocket_handler = WebSocketChatHandler(
@@ -112,11 +112,87 @@ class BedrockChatPlugin:
         )
 
     def _determine_base_url(self) -> str:
-        """Determine base URL for internal API calls"""
+        """
+        Determine base URL for internal API calls.
 
-        # For development, use localhost
-        # In production, this should be configured properly
+        Priority order:
+        1. Explicit api_base_url configuration (recommended for production)
+        2. OpenAPI spec servers[0].url (auto-detected from framework specs)
+        3. Environment variables (HOST/PORT, SERVER_HOST/SERVER_PORT, etc.)
+        4. Default fallback (http://localhost:8000)
+
+        For production deployments, it's strongly recommended to explicitly
+        configure the api_base_url parameter rather than relying on auto-detection.
+        """
+
+        # Priority 1: Explicit configuration
+        if self.config.api_base_url:
+            logger.info(f"Using configured API base URL: {self.config.api_base_url}")
+            return self.config.api_base_url
+
+        # Priority 2: Try to get from ToolsGenerator (OpenAPI spec servers)
+        try:
+            api_base_url = self.tools_generator.get_api_base_url()
+            if api_base_url and api_base_url != "http://localhost:8000":
+                logger.info(f"Using API base URL from OpenAPI spec: {api_base_url}")
+                return api_base_url
+        except Exception as e:
+            logger.debug(f"Could not get base URL from tools generator: {e}")
+
+        # Priority 3: Try to detect from environment or runtime
+        detected_url = self._detect_runtime_base_url()
+        if detected_url:
+            logger.info(f"Detected runtime API base URL: {detected_url}")
+            return detected_url
+
+        # Priority 4: Default fallback
+        logger.info("Using default API base URL: http://localhost:8000")
         return "http://localhost:8000"
+
+    def _detect_runtime_base_url(self) -> Optional[str]:
+        """
+        Try to detect the base URL from runtime environment.
+
+        This method only uses stable, documented approaches and relies primarily
+        on environment variables. For production deployments, it's recommended
+        to explicitly set the api_base_url configuration parameter.
+        """
+
+        # Priority 1: Check standard environment variables (recommended approach)
+        host_env = os.getenv("HOST")
+        port_env = os.getenv("PORT")
+        if host_env is not None and port_env is not None:
+            scheme = (
+                "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
+            )
+            logger.debug(
+                f"Detected base URL from HOST/PORT env vars: {scheme}://{host_env}:{port_env}"
+            )
+            return f"{scheme}://{host_env}:{port_env}"
+
+        # Priority 2: Check common deployment environment variables
+        # Many cloud platforms and deployment tools set these
+        for env_vars in [
+            ("SERVER_HOST", "SERVER_PORT"),
+            ("APP_HOST", "APP_PORT"),
+            ("WEB_HOST", "WEB_PORT"),
+        ]:
+            host = os.getenv(env_vars[0])
+            port = os.getenv(env_vars[1])
+            if host and port:
+                scheme = (
+                    "https"
+                    if os.getenv("HTTPS", "").lower() in ("1", "true")
+                    else "http"
+                )
+                logger.debug(
+                    f"Detected base URL from {env_vars} env vars: {scheme}://{host}:{port}"
+                )
+                return f"{scheme}://{host}:{port}"
+
+        # No reliable detection method available
+        logger.debug("Could not detect runtime base URL from environment variables")
+        return None
 
     def _setup_templates(self):
         """Setup Jinja2 templates for UI"""
@@ -950,6 +1026,8 @@ def add_bedrock_chat(
     max_tool_calls: Optional[int] = None,
     timeout: Optional[int] = None,
     auth_dependency: Optional[Callable] = None,
+    openapi_spec_file: Optional[str] = None,
+    api_base_url: Optional[str] = None,
     **kwargs,
 ) -> BedrockChatPlugin:
     """
@@ -970,6 +1048,10 @@ def add_bedrock_chat(
         max_tool_calls: Maximum tool calls per conversation
         timeout: Timeout for API calls in seconds
         auth_dependency: Authentication dependency function
+        openapi_spec_file: Path to OpenAPI spec file for framework-agnostic tool generation
+        api_base_url: Base URL for API calls (e.g., http://localhost:8080)
+                     RECOMMENDED: Explicitly set this for production deployments
+                     instead of relying on auto-detection from environment variables
         **kwargs: Additional configuration parameters
 
     Returns:
@@ -978,6 +1060,11 @@ def add_bedrock_chat(
     Raises:
         ConfigurationError: If configuration is invalid
         BedrockChatError: If plugin initialization fails
+
+    Note:
+        For production deployments, it's strongly recommended to explicitly
+        configure api_base_url rather than relying on environment variable
+        auto-detection, which may not work reliably in all deployment scenarios.
     """
 
     try:
@@ -1010,6 +1097,10 @@ def add_bedrock_chat(
             config_overrides["timeout"] = timeout
         if auth_dependency is not None:
             config_overrides["auth_dependency"] = auth_dependency
+        if openapi_spec_file is not None:
+            config_overrides["openapi_spec_file"] = openapi_spec_file
+        if api_base_url is not None:
+            config_overrides["api_base_url"] = api_base_url
 
         # Add any additional kwargs
         config_overrides.update(kwargs)
@@ -1022,6 +1113,73 @@ def add_bedrock_chat(
     except Exception as e:
         logger.error(f"Failed to add Bedrock chat to FastAPI app: {str(e)}")
         raise BedrockChatError(f"Plugin initialization failed: {str(e)}")
+
+
+def create_tools_generator_from_spec(
+    openapi_spec_file: str,
+    allowed_paths: Optional[list] = None,
+    excluded_paths: Optional[list] = None,
+    api_base_url: Optional[str] = None,
+    **config_kwargs,
+) -> "ToolsGenerator":
+    """
+    Create a ToolsGenerator from an OpenAPI spec file for framework-agnostic usage.
+
+    This allows using the tool generation capabilities with any framework (Express.js, Flask, etc.)
+    by providing an OpenAPI spec file instead of requiring a FastAPI app.
+
+    Args:
+        openapi_spec_file: Path to OpenAPI specification file (JSON or YAML)
+        allowed_paths: List of API paths to expose as tools
+        excluded_paths: List of API paths to exclude from tools
+        api_base_url: Base URL for API calls (auto-detected from spec if not provided)
+        **config_kwargs: Additional configuration parameters for ChatConfig
+
+    Returns:
+        ToolsGenerator instance
+
+    Example:
+        ```python
+        from auto_bedrock_chat_fastapi import create_tools_generator_from_spec
+
+        # Generate tools from Express.js OpenAPI spec
+        generator = create_tools_generator_from_spec(
+            openapi_spec_file="./express-api-spec.json",
+            allowed_paths=["/api/users", "/api/products"],
+            excluded_paths=["/api/internal"],
+            api_base_url="http://localhost:3000"  # Express.js server URL
+        )
+
+        # Generate tool descriptions
+        tools_desc = generator.generate_tools_desc()
+
+        # Use with any Bedrock-compatible client
+        # bedrock_client.chat_completion(messages=messages, tools_desc=tools_desc)
+        ```
+
+    Raises:
+        ToolsGenerationError: If spec file is invalid or not found
+    """
+    from .tools_generator import ToolsGenerator
+
+    # Prepare config overrides
+    config_overrides = {
+        "openapi_spec_file": openapi_spec_file,
+        **config_kwargs,
+    }
+
+    if allowed_paths is not None:
+        config_overrides["allowed_paths"] = allowed_paths
+    if excluded_paths is not None:
+        config_overrides["excluded_paths"] = excluded_paths
+    if api_base_url is not None:
+        config_overrides["api_base_url"] = api_base_url
+
+    # Create config
+    config = load_config(**config_overrides)
+
+    # Create and return ToolsGenerator
+    return ToolsGenerator(app=None, config=config)
 
 
 def create_fastapi_with_bedrock_chat(**kwargs) -> tuple[FastAPI, BedrockChatPlugin]:

@@ -73,6 +73,18 @@ class ChatConfig(BaseSettings):
         default_factory=dict, description="Auto-generated tools from FastAPI routes"
     )
 
+    openapi_spec_file: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_OPENAPI_SPEC_FILE",
+        description="Path to OpenAPI spec file for framework-agnostic tool generation",
+    )
+
+    api_base_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_API_BASE_URL",
+        description="Base URL for API calls (e.g., http://localhost:8080). Auto-detected if not specified",
+    )
+
     allowed_paths: List[str] = Field(
         default_factory=list,
         alias="BEDROCK_ALLOWED_PATHS",

@@ -24,6 +24,7 @@ from .plugin import (
     BedrockChatPlugin,
     add_bedrock_chat,
     create_fastapi_with_bedrock_chat,
+    create_tools_generator_from_spec,
 )
 from .session_manager import ChatMessage, ChatSession, ChatSessionManager
 from .tools_generator import ToolsGenerator
@@ -34,6 +35,7 @@ __all__ = [
     "add_bedrock_chat",
     "BedrockChatPlugin",
     "create_fastapi_with_bedrock_chat",
+    "create_tools_generator_from_spec",
     # Configuration
     "ChatConfig",
     "load_config",
