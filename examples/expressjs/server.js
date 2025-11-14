@@ -513,7 +513,7 @@ const swaggerOptions = {
             }
         ],
     },
-    apis: ['./server.js'], // Path to this file for swagger-jsdoc to scan
+    apis: [__filename], // Path to this file for swagger-jsdoc to scan
 };
 
 // Generate OpenAPI specification
