@@ -14,7 +14,7 @@ This example shows two ways to use the plugin:
 
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # Import the plugin
@@ -214,7 +214,7 @@ def generate_order_id() -> str:
 @app.get("/health", summary="Health Check", description="Check if the API is running")
 async def health_check():
     """Simple health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc)}
 
 
 # Product endpoints
@@ -421,7 +421,7 @@ async def create_order(order: CreateOrder):
         "items": order_items,
         "total": total,
         "status": "pending",
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     }
 
     orders_db[order_id] = new_order
