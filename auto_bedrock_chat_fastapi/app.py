@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from auto_bedrock_chat_fastapi import add_bedrock_chat
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ async def health_check():
     """Health check endpoint for Docker containers and load balancers"""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "service": "auto-bedrock-chat-fastapi",
         "version": "1.0.0",
     }
