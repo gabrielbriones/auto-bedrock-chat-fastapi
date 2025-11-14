@@ -6,12 +6,14 @@ This example demonstrates how to use auto-bedrock-chat-fastapi with an Express.j
 by using OpenAPI specifications instead of requiring a FastAPI application.
 
 Usage:
-1. First, generate an OpenAPI spec from your Express.js app (see express-example.js)
-2. Run this script to create a tool generator from the spec
-3. Use the generated tools with Bedrock for AI chat capabilities
+1. cd examples/expressjs/
+2. npm install && npm start  (starts Express server on port 3000)
+3. In another terminal: cd examples/expressjs && poetry run python integration.py
+4. Use the generated tools with Bedrock for AI chat capabilities
 
 Prerequisites:
-- An OpenAPI spec file from your Express.js (or other framework) API
+- Node.js and npm installed
+- Express server running (generates OpenAPI spec automatically)
 - AWS credentials configured
 - auto-bedrock-chat-fastapi installed
 """
@@ -23,14 +25,33 @@ from pathlib import Path
 from auto_bedrock_chat_fastapi import create_tools_generator_from_spec
 
 
+def check_for_express_server_spec():
+    """Check if Express server has generated an OpenAPI spec file"""
+    # Look for the spec file in the current directory
+    spec_file = Path("api_spec.json")
+
+    if spec_file.exists():
+        print(f"✓ Found existing OpenAPI spec from Express server: {spec_file}")
+        return spec_file
+    else:
+        print("⚠️  No existing Express server spec found")
+        print("   To get the full experience:")
+        print("   1. Make sure you're in examples/expressjs/")
+        print("   2. npm install")
+        print("   3. npm start  (starts Express server on port 3000)")
+        print("   4. The server will auto-generate api_spec.json")
+        print("\n   Creating a sample spec for demo purposes...")
+        return create_sample_express_openapi_spec()
+
+
 def create_sample_express_openapi_spec():
-    """Create a sample OpenAPI spec that might come from an Express.js app"""
+    """Create a sample OpenAPI spec for demo when Express server isn't running"""
     express_api_spec = {
         "openapi": "3.0.0",
         "info": {
-            "title": "Express E-commerce API",
+            "title": "Express E-commerce API (Sample)",
             "version": "1.0.0",
-            "description": "Sample Express.js e-commerce API",
+            "description": "Sample OpenAPI spec - start Express server for full version",
         },
         "servers": [
             {"url": "http://localhost:3000", "description": "Development server"}
@@ -140,191 +161,12 @@ def create_sample_express_openapi_spec():
                         }
                     },
                 },
-            },
-            "/api/v1/users/{userId}": {
-                "get": {
-                    "summary": "Get user by ID",
-                    "description": "Retrieve a specific user by their ID",
-                    "parameters": [
-                        {
-                            "name": "userId",
-                            "in": "path",
-                            "required": True,
-                            "description": "User ID",
-                            "schema": {"type": "integer"},
-                        }
-                    ],
-                    "responses": {
-                        "200": {
-                            "description": "User details",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "id": {"type": "integer"},
-                                            "name": {"type": "string"},
-                                            "email": {"type": "string"},
-                                            "created_at": {
-                                                "type": "string",
-                                                "format": "date-time",
-                                            },
-                                        },
-                                    }
-                                }
-                            },
-                        },
-                        "404": {"description": "User not found"},
-                    },
-                },
-            },
-            "/api/v1/products": {
-                "get": {
-                    "summary": "Get all products",
-                    "description": "Retrieve a list of all products",
-                    "parameters": [
-                        {
-                            "name": "category",
-                            "in": "query",
-                            "description": "Filter by product category",
-                            "schema": {"type": "string"},
-                        },
-                        {
-                            "name": "min_price",
-                            "in": "query",
-                            "description": "Minimum price filter",
-                            "schema": {"type": "number", "minimum": 0},
-                        },
-                        {
-                            "name": "max_price",
-                            "in": "query",
-                            "description": "Maximum price filter",
-                            "schema": {"type": "number", "minimum": 0},
-                        },
-                    ],
-                    "responses": {
-                        "200": {
-                            "description": "List of products",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "id": {"type": "integer"},
-                                                "name": {"type": "string"},
-                                                "description": {"type": "string"},
-                                                "price": {"type": "number"},
-                                                "category": {"type": "string"},
-                                                "in_stock": {"type": "boolean"},
-                                            },
-                                        },
-                                    }
-                                }
-                            },
-                        }
-                    },
-                },
-            },
-            "/api/v1/orders": {
-                "post": {
-                    "summary": "Create a new order",
-                    "description": "Create a new order for a user",
-                    "requestBody": {
-                        "required": True,
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "user_id": {
-                                            "type": "integer",
-                                            "description": "ID of the user placing the order",
-                                        },
-                                        "items": {
-                                            "type": "array",
-                                            "description": "Items in the order",
-                                            "items": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "product_id": {"type": "integer"},
-                                                    "quantity": {
-                                                        "type": "integer",
-                                                        "minimum": 1,
-                                                    },
-                                                },
-                                                "required": ["product_id", "quantity"],
-                                            },
-                                        },
-                                        "shipping_address": {
-                                            "type": "object",
-                                            "properties": {
-                                                "street": {"type": "string"},
-                                                "city": {"type": "string"},
-                                                "state": {"type": "string"},
-                                                "zip_code": {"type": "string"},
-                                            },
-                                            "required": [
-                                                "street",
-                                                "city",
-                                                "state",
-                                                "zip_code",
-                                            ],
-                                        },
-                                    },
-                                    "required": [
-                                        "user_id",
-                                        "items",
-                                        "shipping_address",
-                                    ],
-                                }
-                            }
-                        },
-                    },
-                    "responses": {
-                        "201": {
-                            "description": "Order created successfully",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "order_id": {"type": "integer"},
-                                            "total_amount": {"type": "number"},
-                                            "status": {"type": "string"},
-                                            "created_at": {
-                                                "type": "string",
-                                                "format": "date-time",
-                                            },
-                                        },
-                                    }
-                                }
-                            },
-                        }
-                    },
-                },
-            },
-            # Internal/admin endpoints that should be excluded
-            "/internal/admin/users": {
-                "get": {
-                    "summary": "Admin: Get all users with sensitive data",
-                    "description": "Internal admin endpoint - should be excluded",
-                    "responses": {"200": {"description": "Admin user data"}},
-                }
-            },
-            "/internal/health": {
-                "get": {
-                    "summary": "Internal health check",
-                    "description": "Internal health check - should be excluded",
-                    "responses": {"200": {"description": "Health status"}},
-                }
-            },
+            }
         },
     }
 
-    # Save to file
-    spec_file = Path("express_api_spec.json")
+    # Save to file (sample version)
+    spec_file = Path("api_spec_sample.json")
     with open(spec_file, "w") as f:
         json.dump(express_api_spec, f, indent=2)
 
@@ -338,9 +180,9 @@ async def demonstrate_framework_agnostic_usage():
     print("🚀 Framework-Agnostic auto-bedrock-chat-fastapi Demo")
     print("=" * 50)
 
-    # Step 1: Create sample OpenAPI spec (normally from Express.js)
-    print("\n1. Creating sample OpenAPI spec from Express.js...")
-    spec_file = create_sample_express_openapi_spec()
+    # Step 1: Check for OpenAPI spec from Express server or create sample
+    print("\n1. Looking for OpenAPI spec from Express.js server...")
+    spec_file = check_for_express_server_spec()
 
     # Step 2: Create ToolsGenerator from OpenAPI spec
     print("\n2. Creating ToolsGenerator from OpenAPI spec...")
@@ -432,7 +274,7 @@ async def demonstrate_framework_agnostic_usage():
     # Step 6: Show configuration options
     print("\n6. Configuration Options:")
     print("   🔧 Environment variables (.env file):")
-    print("   BEDROCK_OPENAPI_SPEC_FILE=./express_api_spec.json")
+    print("   BEDROCK_OPENAPI_SPEC_FILE=./api_spec.json")
     print(
         "   BEDROCK_API_BASE_URL=http://localhost:3000  # Auto-detected from spec if not set"
     )
@@ -449,16 +291,21 @@ async def demonstrate_framework_agnostic_usage():
     print("   4. Default http://localhost:8000 (fallback)")
 
     print("\n📚 Next Steps:")
-    print("   1. Generate OpenAPI spec from your Express.js app")
-    print("   2. Set up AWS credentials for Bedrock access")
-    print("   3. Configure environment variables (API URL auto-detected)")
-    print("   4. Use ToolsGenerator in your Python application")
-    print("   5. Integrate with Bedrock for AI chat capabilities")
+    print("   1. Start the Express server: npm install && npm start")
+    print("   2. Access Swagger UI: http://localhost:3000/api-docs")
+    print("   3. Test API endpoints directly or via AI chat")
+    print("   4. Set up AWS credentials for Bedrock access")
+    print("   5. Configure environment variables (API URL auto-detected)")
+    print("   6. Integrate with Bedrock for AI chat capabilities")
 
-    # Cleanup
-    if spec_file.exists():
-        spec_file.unlink()
-        print(f"\n🧹 Cleaned up: {spec_file}")
+    # Cleanup (only clean up sample file, leave Express server spec)
+    sample_spec = Path("api_spec_sample.json")
+    if sample_spec.exists():
+        sample_spec.unlink()
+        print(f"\n🧹 Cleaned up sample spec: {sample_spec}")
+
+    if str(spec_file) == "api_spec_sample.json":
+        print("   (Express server spec retained for reuse)")
 
 
 if __name__ == "__main__":
