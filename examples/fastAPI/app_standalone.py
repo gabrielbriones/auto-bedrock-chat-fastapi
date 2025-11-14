@@ -565,5 +565,5 @@ if __name__ == "__main__":
     print("📊 Chat Health: http://localhost:8000/api/chat/health")
 
     uvicorn.run(
-        "example_app:app", host="0.0.0.0", port=8000, reload=True, log_level="info"
+        "app_standalone:app", host="0.0.0.0", port=8000, reload=True, log_level="info"
     )
