@@ -17,7 +17,7 @@ This directory contains complete examples showing how to integrate `auto-bedrock
 
 ```bash
 # Install Node.js dependencies
-cd examples
+cd examples/expressjs/
 npm install
 
 # Start the Express server
