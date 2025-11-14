@@ -298,13 +298,14 @@ async def demonstrate_framework_agnostic_usage():
     print("   5. Configure environment variables (API URL auto-detected)")
     print("   6. Integrate with Bedrock for AI chat capabilities")
 
-    # Cleanup (only clean up sample file, leave Express server spec)
-    sample_spec = Path("api_spec_sample.json")
-    if sample_spec.exists():
-        sample_spec.unlink()
-        print(f"\n🧹 Cleaned up sample spec: {sample_spec}")
-
-    if str(spec_file) == "api_spec_sample.json":
+    # Cleanup:
+    # If we used the temporary sample spec, remove it.
+    # Otherwise (real Express server spec), retain it and inform the user.
+    if spec_file.name == "api_spec_sample.json":
+        if spec_file.exists():
+            spec_file.unlink()
+            print(f"\n🧹 Cleaned up sample spec: {spec_file}")
+    else:
         print("   (Express server spec retained for reuse)")
 
 
