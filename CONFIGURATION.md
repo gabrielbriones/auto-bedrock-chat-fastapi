@@ -7,6 +7,7 @@ The Bedrock Chat FastAPI plugin supports configuration through environment varia
 ## Quick Start
 
 1. **Copy the example file:**
+
    ```bash
    cp .env.example .env
    ```
@@ -14,12 +15,13 @@ The Bedrock Chat FastAPI plugin supports configuration through environment varia
 2. **Edit your `.env` file** with your AWS credentials and preferred settings.
 
 3. **Use in your app:**
+
    ```python
    from fastapi import FastAPI
    from auto_bedrock_chat_fastapi import add_bedrock_chat
 
    app = FastAPI()
-   
+
    # Most configuration loaded from .env automatically
    # Override list fields due to Pydantic v2 limitations
    bedrock_chat = add_bedrock_chat(
@@ -32,6 +34,7 @@ The Bedrock Chat FastAPI plugin supports configuration through environment varia
 ## Configuration Options
 
 ### ✅ Works from .env file
+
 - `AWS_REGION`: AWS region where Bedrock is available
 - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: AWS credentials
 - `BEDROCK_MODEL_ID`: Which Bedrock model to use
@@ -47,6 +50,7 @@ The Bedrock Chat FastAPI plugin supports configuration through environment varia
 - All other single-value settings
 
 ### ⚠️ Must be set in code (Pydantic v2 limitation)
+
 - `allowed_paths`: API paths the AI can access
 - `excluded_paths`: API paths to exclude
 - `cors_origins`: CORS allowed origins
@@ -68,6 +72,7 @@ bedrock_chat = add_bedrock_chat(
 ## Environment-Specific Configurations
 
 ### Development (.env)
+
 ```env
 BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
 BEDROCK_TEMPERATURE=0.3
@@ -77,6 +82,7 @@ BEDROCK_ENABLE_UI=true
 ```
 
 ### Production (.env.prod)
+
 ```env
 BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
 BEDROCK_TEMPERATURE=0.7
@@ -86,6 +92,7 @@ BEDROCK_ENABLE_UI=false
 ```
 
 ### Testing (.env.test)
+
 ```env
 BEDROCK_TEMPERATURE=0.0
 BEDROCK_MAX_TOOL_CALLS=3
@@ -98,10 +105,11 @@ BEDROCK_ENABLE_UI=false
 Due to changes in Pydantic v2, list fields cannot be reliably parsed from `.env` files. The following fields must be set in your Python code:
 
 - `allowed_paths`
-- `excluded_paths` 
+- `excluded_paths`
 - `cors_origins`
 
 **Example workaround:**
+
 ```python
 # Instead of setting in .env:
 # BEDROCK_ALLOWED_PATHS=/api/products,/api/users,/api/orders
@@ -124,6 +132,9 @@ bedrock_chat = add_bedrock_chat(
 ## Examples
 
 See the following example files:
-- `example_app.py`: E-commerce API with AI chat using .env configuration
-- `example_override.py`: Shows different ways to override .env settings
+
+## 📂 Example Files
+
+- `app_plugin.py`: E-commerce API with AI chat using .env configuration
+- `app_plugin_override.py`: Shows different ways to override .env settings
 - `.env.example`: Complete example configuration file
