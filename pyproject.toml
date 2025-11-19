@@ -43,6 +43,7 @@ pytest-asyncio = ">=0.21.0"
 pytest-cov = ">=4.0.0"
 black = ">=23.0.0"
 flake8 = ">=6.0.0"
+isort = ">=5.13.0"
 mypy = ">=1.0.0"
 pre-commit = ">=3.0.0"
 httpx = ">=0.24.0"
@@ -63,7 +64,7 @@ Repository = "https://github.com/gabrielbriones/auto-bedrock-chat-fastapi"
 Issues = "https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/issues"
 
 [tool.black]
-line-length = 88
+line-length = 120
 target-version = ['py38', 'py39', 'py310', 'py311']
 include = '\.pyi?$'
 extend-exclude = '''

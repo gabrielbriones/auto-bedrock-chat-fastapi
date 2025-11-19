@@ -170,9 +170,9 @@ let nextOrderId = 1;
 app.get('/api/v1/users', (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 10, 100);
     const offset = parseInt(req.query.offset) || 0;
-    
+
     const paginatedUsers = users.slice(offset, offset + limit);
-    
+
     res.json({
         users: paginatedUsers,
         total: users.length,
@@ -183,7 +183,7 @@ app.get('/api/v1/users', (req, res) => {
 
 app.post('/api/v1/users', (req, res) => {
     const { name, email, age } = req.body;
-    
+
     // Validation
     if (!name || !email) {
         return res.status(400).json({
@@ -191,7 +191,7 @@ app.post('/api/v1/users', (req, res) => {
             details: { name: !name ? 'Required' : null, email: !email ? 'Required' : null }
         });
     }
-    
+
     // Check for duplicate email
     if (users.find(u => u.email === email)) {
         return res.status(400).json({
@@ -199,7 +199,7 @@ app.post('/api/v1/users', (req, res) => {
             details: { email: 'Must be unique' }
         });
     }
-    
+
     const newUser = {
         id: nextUserId++,
         name,
@@ -207,7 +207,7 @@ app.post('/api/v1/users', (req, res) => {
         age: age || null,
         created_at: new Date().toISOString()
     };
-    
+
     users.push(newUser);
     res.status(201).json(newUser);
 });
@@ -238,14 +238,14 @@ app.post('/api/v1/users', (req, res) => {
 app.get('/api/v1/users/:userId', (req, res) => {
     const userId = parseInt(req.params.userId);
     const user = users.find(u => u.id === userId);
-    
+
     if (!user) {
         return res.status(404).json({
             error: 'User not found',
             userId: userId
         });
     }
-    
+
     res.json(user);
 });
 
@@ -290,35 +290,35 @@ app.get('/api/v1/users/:userId', (req, res) => {
  */
 app.get('/api/v1/products', (req, res) => {
     let filteredProducts = [...products];
-    
+
     // Apply filters
     const { category, min_price, max_price, in_stock } = req.query;
-    
+
     if (category) {
-        filteredProducts = filteredProducts.filter(p => 
+        filteredProducts = filteredProducts.filter(p =>
             p.category.toLowerCase().includes(category.toLowerCase())
         );
     }
-    
+
     if (min_price !== undefined) {
         const minPrice = parseFloat(min_price);
         if (!isNaN(minPrice)) {
             filteredProducts = filteredProducts.filter(p => p.price >= minPrice);
         }
     }
-    
+
     if (max_price !== undefined) {
         const maxPrice = parseFloat(max_price);
         if (!isNaN(maxPrice)) {
             filteredProducts = filteredProducts.filter(p => p.price <= maxPrice);
         }
     }
-    
+
     if (in_stock !== undefined) {
         const stockFilter = in_stock === 'true';
         filteredProducts = filteredProducts.filter(p => p.in_stock === stockFilter);
     }
-    
+
     res.json(filteredProducts);
 });
 
@@ -388,14 +388,14 @@ app.get('/api/v1/products', (req, res) => {
  */
 app.post('/api/v1/orders', (req, res) => {
     const { user_id, items, shipping_address } = req.body;
-    
+
     // Validation
     if (!user_id || !items || !shipping_address) {
         return res.status(400).json({
             error: 'user_id, items, and shipping_address are required'
         });
     }
-    
+
     // Check if user exists
     const user = users.find(u => u.id === user_id);
     if (!user) {
@@ -404,11 +404,11 @@ app.post('/api/v1/orders', (req, res) => {
             user_id: user_id
         });
     }
-    
+
     // Validate items and calculate total
     let totalAmount = 0;
     const orderItems = [];
-    
+
     for (const item of items) {
         const product = products.find(p => p.id === item.product_id);
         if (!product) {
@@ -417,7 +417,7 @@ app.post('/api/v1/orders', (req, res) => {
                 product_id: item.product_id
             });
         }
-        
+
         if (!product.in_stock) {
             return res.status(400).json({
                 error: 'Product out of stock',
@@ -425,10 +425,10 @@ app.post('/api/v1/orders', (req, res) => {
                 product_name: product.name
             });
         }
-        
+
         const itemTotal = product.price * item.quantity;
         totalAmount += itemTotal;
-        
+
         orderItems.push({
             product_id: product.id,
             product_name: product.name,
@@ -437,7 +437,7 @@ app.post('/api/v1/orders', (req, res) => {
             total_price: itemTotal
         });
     }
-    
+
     const newOrder = {
         order_id: nextOrderId++,
         user_id: user_id,
@@ -448,7 +448,7 @@ app.post('/api/v1/orders', (req, res) => {
         status: 'pending',
         created_at: new Date().toISOString()
     };
-    
+
     orders.push(newOrder);
     res.status(201).json(newOrder);
 });

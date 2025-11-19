@@ -1,6 +1,7 @@
 """Tests for conversation history management functionality"""
 
 import pytest
+
 from auto_bedrock_chat_fastapi import BedrockClient, ChatConfig
 from auto_bedrock_chat_fastapi.config import load_config
 from auto_bedrock_chat_fastapi.exceptions import ConfigurationError
@@ -103,15 +104,11 @@ class TestConversationManagement:
 
         # Should prefer user/assistant messages over tool messages
         tool_count = sum(1 for msg in trimmed if msg.get("role") == "tool")
-        user_assistant_count = sum(
-            1 for msg in trimmed if msg.get("role") in ["user", "assistant"]
-        )
+        user_assistant_count = sum(1 for msg in trimmed if msg.get("role") in ["user", "assistant"])
 
         # Should have fewer tool messages in the pruned result
         assert user_assistant_count > 0, "Should preserve user/assistant messages"
-        original_tool_count = sum(
-            1 for msg in self.long_conversation if msg.get("role") == "tool"
-        )
+        original_tool_count = sum(1 for msg in self.long_conversation if msg.get("role") == "tool")
         assert tool_count <= original_tool_count
 
     def test_no_trimming_needed(self):
@@ -150,9 +147,7 @@ class TestConversationManagement:
 
     def test_conversation_without_system_message(self):
         """Test conversation management when no system message exists"""
-        conversation_no_system = [
-            msg for msg in self.long_conversation if msg.get("role") != "system"
-        ]
+        conversation_no_system = [msg for msg in self.long_conversation if msg.get("role") != "system"]
 
         config = ChatConfig()
         # Manually set the values to bypass environment loading
@@ -425,10 +420,7 @@ class TestMessageChunking:
             if len(chunked) > 1:
                 assert f"[CHUNK {i + 1}/{len(chunked)}]" in chunk["content"]
                 if i == 0:  # First chunk should have explanation
-                    assert (
-                        "This message was too large and has been split into chunks"
-                        in chunk["content"]
-                    )
+                    assert "This message was too large and has been split into chunks" in chunk["content"]
 
     def test_tool_response_chunking_scenario(self):
         """Test realistic scenario of chunking a large tool response (like a log file)"""
@@ -444,12 +436,8 @@ class TestMessageChunking:
         log_content = ""
         for i in range(100):
             log_content += f"2024-11-07 10:{i:02d}:00 INFO - Processing item {i}\n"
-            log_content += (
-                f"2024-11-07 10:{i:02d}:05 DEBUG - Item {i} validation successful\n"
-            )
-            log_content += (
-                f"2024-11-07 10:{i:02d}:10 INFO - Item {i} completed successfully\n\n"
-            )
+            log_content += f"2024-11-07 10:{i:02d}:05 DEBUG - Item {i} validation successful\n"
+            log_content += f"2024-11-07 10:{i:02d}:10 INFO - Item {i} completed successfully\n\n"
 
         messages = [
             {"role": "user", "content": "Show me the application logs"},

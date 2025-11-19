@@ -380,9 +380,7 @@ async def create_order(order: CreateOrder):
 
     for item in order.items:
         if item.product_id not in products_db:
-            raise HTTPException(
-                status_code=404, detail=f"Product {item.product_id} not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Product {item.product_id} not found")
 
         product = products_db[item.product_id]
 
@@ -481,9 +479,7 @@ async def update_order_status(order_id: str, status: str):
 
     valid_statuses = ["pending", "confirmed", "shipped", "delivered", "cancelled"]
     if status not in valid_statuses:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid status. Valid options: {valid_statuses}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid options: {valid_statuses}")
 
     orders_db[order_id]["status"] = status
     return {"message": f"Order {order_id} status updated to {status}"}
@@ -564,6 +560,4 @@ if __name__ == "__main__":
     print("🔗 WebSocket Chat: ws://localhost:8000/ws/chat")
     print("📊 Chat Health: http://localhost:8000/api/chat/health")
 
-    uvicorn.run(
-        "app_standalone:app", host="0.0.0.0", port=8000, reload=True, log_level="info"
-    )
+    uvicorn.run("app_standalone:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

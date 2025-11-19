@@ -4,10 +4,11 @@ import json
 from unittest.mock import Mock, patch
 
 import pytest
-from auto_bedrock_chat_fastapi import BedrockChatPlugin, add_bedrock_chat
-from auto_bedrock_chat_fastapi.config import load_config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from auto_bedrock_chat_fastapi import BedrockChatPlugin, add_bedrock_chat
+from auto_bedrock_chat_fastapi.config import load_config
 
 
 class TestConfig:
@@ -190,9 +191,7 @@ class TestBedrockClient:
             "content": [{"text": "Hello!"}],
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
-        mock_client.invoke_model.return_value["body"].read.return_value = json.dumps(
-            mock_response_body
-        ).encode()
+        mock_client.invoke_model.return_value["body"].read.return_value = json.dumps(mock_response_body).encode()
 
         config = load_config()
         client = BedrockClient(config)
@@ -267,9 +266,7 @@ class TestIntegration:
         mock_session_instance.client.return_value = mock_client
 
         # Add chat capabilities
-        plugin = add_bedrock_chat(
-            self.app, enable_ui=False, allowed_paths=["/test-data"]
-        )
+        plugin = add_bedrock_chat(self.app, enable_ui=False, allowed_paths=["/test-data"])
 
         # Create test client
         client = TestClient(self.app)

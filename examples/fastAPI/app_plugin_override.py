@@ -1,8 +1,9 @@
 """Alternative example showing how to override .env settings"""
 
+from fastapi import FastAPI
+
 from auto_bedrock_chat_fastapi import add_bedrock_chat
 from auto_bedrock_chat_fastapi.config import load_config
-from fastapi import FastAPI
 
 # Create FastAPI app
 app = FastAPI(title="Override Example")

@@ -1,0 +1,8 @@
+# Hadolint ignore rules for Dockerfile
+# Format: RULE_CODE
+
+# Allow building with root (necessary for this project)
+DL3002
+
+# Allow using 'latest' tag (managed via strategy)
+DL3007
