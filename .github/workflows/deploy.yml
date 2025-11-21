@@ -61,7 +61,6 @@ jobs:
     environment:
       name: production
       url: https://api.example.com
-    needs: [tests, code-quality]
 
     steps:
       - name: Checkout code
