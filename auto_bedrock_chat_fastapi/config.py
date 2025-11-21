@@ -65,7 +65,7 @@ class ChatConfig(BaseSettings):
     system_prompt: Optional[str] = Field(
         default=None,
         alias="BEDROCK_SYSTEM_PROMPT",
-        description="You are a helpful AI assistant",
+        description="Custom system prompt for the AI assistant",
     )
 
     # API Tools Configuration
