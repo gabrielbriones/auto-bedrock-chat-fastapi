@@ -118,7 +118,6 @@ jobs:
           VALIDATE_PYTHON_BLACK: true
           VALIDATE_PYTHON_FLAKE8: true
           VALIDATE_PYTHON_ISORT: true
-          VALIDATE_PYTHON_MYPY: false
           VALIDATE_MARKDOWN: true
           VALIDATE_DOCKERFILE_HADOLINT: true
           VALIDATE_HTML: true
@@ -126,9 +125,6 @@ jobs:
           VALIDATE_JSON: true
           VALIDATE_YAML: true
           VALIDATE_BASH: true
-          VALIDATE_SHELL_SHFMT: false
-          VALIDATE_JSCPD: false
-          VALIDATE_GITLEAKS: false
 
       - name: Upload Super Linter reports
         if: always()
