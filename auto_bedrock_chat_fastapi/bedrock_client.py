@@ -263,7 +263,7 @@ class BedrockClient:
             adjusted_max_tokens = max(
                 min_response_tokens, min(remaining_tokens - 1000, max_tokens)
             )  # Leave 1000 token buffer
-            logger.info(f"Input approaching limit, adjusting max_tokens from " f"{max_tokens} to {adjusted_max_tokens}")
+            logger.info(f"Input approaching limit, adjusting max_tokens from {max_tokens} to {adjusted_max_tokens}")
         else:
             # Use original max_tokens for normal-sized inputs
             adjusted_max_tokens = max_tokens
