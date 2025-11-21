@@ -3,22 +3,27 @@
 ## Files Created/Modified
 
 ### New Workflow
+
 - **`.github/workflows/super-linter.yml`** - Main GitHub Actions workflow
 
 ### Configuration Files
+
 - **`.markdownlint.json`** - Markdown linting rules
 - **`.flake8`** - Python flake8 configuration
 - **`.hadolintignore`** - Docker linting exceptions
 
 ### Documentation
+
 - **`GITHUB_ACTIONS.md`** - Comprehensive workflow documentation
 
 ### Modified
+
 - **`.gitignore`** - Added linting report directories
 
 ## Quick Start
 
 ### 1. Push to GitHub
+
 ```bash
 git add .github/workflows/super-linter.yml .markdownlint.json .flake8 .hadolintignore GITHUB_ACTIONS.md
 git commit -m "feat: add GitHub Actions Super Linter workflow"
@@ -26,11 +31,13 @@ git push origin dev
 ```
 
 ### 2. Create a Pull Request
+
 - Create a PR to `main` or `dev`
 - The workflow will automatically run
 - Check the "Checks" tab for results
 
 ### 3. View Results
+
 - **PR Checks**: See results directly on PR
 - **Actions Tab**: View full logs and artifacts
 - **Artifacts**: Download reports from workflow run
@@ -38,12 +45,15 @@ git push origin dev
 ## What Gets Linted
 
 ### Python
+
 ✅ Black, Flake8, isort, mypy
 
 ### Markdown & Docs
+
 ✅ Markdown, HTML, CSS, JSON, YAML
 
 ### Infrastructure
+
 ✅ Dockerfile (Hadolint), Bash scripts
 
 ## Running Locally
@@ -82,20 +92,21 @@ npx prettier --write "**/*.{md,json,yaml,yml}"
 
 All linters are pre-configured with sensible defaults:
 
-| Linter | Config File | Status |
-|--------|------------|--------|
-| Black | `pyproject.toml` | ✅ Enabled |
-| Flake8 | `.flake8` | ✅ Enabled |
-| isort | `pyproject.toml` | ✅ Enabled |
-| mypy | `pyproject.toml` | ✅ Enabled |
+| Linter   | Config File          | Status     |
+| -------- | -------------------- | ---------- |
+| Black    | `pyproject.toml`     | ✅ Enabled |
+| Flake8   | `.flake8`            | ✅ Enabled |
+| isort    | `pyproject.toml`     | ✅ Enabled |
+| mypy     | `pyproject.toml`     | ✅ Enabled |
 | Markdown | `.markdownlint.json` | ✅ Enabled |
-| Hadolint | `.hadolintignore` | ✅ Enabled |
+| Hadolint | `.hadolintignore`    | ✅ Enabled |
 
 ## Disable a Linter (if needed)
 
 Edit `.github/workflows/super-linter.yml` and set:
+
 ```yaml
-VALIDATE_PYTHON_BLACK: false  # Example: disable Black
+VALIDATE_PYTHON_BLACK: false # Example: disable Black
 ```
 
 ## See Also

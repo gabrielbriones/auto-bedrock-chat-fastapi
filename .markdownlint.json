@@ -17,13 +17,7 @@
   },
   "MD031": false,
   "MD033": {
-    "allowed_elements": [
-      "br",
-      "img",
-      "kbd",
-      "details",
-      "summary"
-    ]
+    "allowed_elements": ["br", "img", "kbd", "details", "summary"]
   },
   "MD034": false,
   "MD036": false,

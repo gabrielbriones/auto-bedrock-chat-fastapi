@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from auto_bedrock_chat_fastapi import BedrockChatPlugin, add_bedrock_chat
 from auto_bedrock_chat_fastapi.config import load_config
+from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
 
 
 class TestConfig:
@@ -209,8 +210,6 @@ class TestSessionManager:
 
     async def test_session_creation(self):
         """Test session creation and management"""
-        from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
-
         config = load_config()
         manager = ChatSessionManager(config)
 
@@ -224,8 +223,6 @@ class TestSessionManager:
 
     async def test_session_cleanup(self):
         """Test session cleanup"""
-        from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
-
         config = load_config()
         manager = ChatSessionManager(config)
 

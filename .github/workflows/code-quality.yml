@@ -50,7 +50,7 @@ jobs:
         run: poetry run black --check auto_bedrock_chat_fastapi/ tests/ examples/
 
       - name: Run isort
-        run: poetry run isort --check-only auto_bedrock_chat_fastapi/ tests/ examples/
+        run: poetry run isort --check-only --profile black --line-length 120 auto_bedrock_chat_fastapi/ tests/ examples/
 
       - name: Run Flake8
         run: poetry run flake8 auto_bedrock_chat_fastapi/ tests/ examples/

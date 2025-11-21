@@ -105,5 +105,3 @@ jobs:
           state: ${{ job.status }}
           description: Deployment ${{ job.status }}
           environment_url: https://api.example.com
-
-

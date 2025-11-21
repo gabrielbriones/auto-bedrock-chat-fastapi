@@ -13,6 +13,7 @@ This document describes the Super Linter GitHub Actions workflow that automatica
 ### Trigger Events
 
 The workflow runs on:
+
 - **Push** to `main`, `dev`, and `develop` branches
 - **Pull Request** to `main`, `dev`, and `develop` branches
 - **Manual trigger** via GitHub Actions UI (`workflow_dispatch`)
@@ -20,12 +21,14 @@ The workflow runs on:
 ### Linters Enabled
 
 #### Python
+
 - **Black** - Code formatter
 - **Flake8** - Style guide enforcement
 - **isort** - Import sorting
 - **mypy** - Type checking
 
 #### Documentation & Markup
+
 - **Markdown** - Markdown linting
 - **HTML** - HTML validation
 - **CSS** - CSS linting
@@ -33,10 +36,12 @@ The workflow runs on:
 - **YAML** - YAML validation
 
 #### Infrastructure
+
 - **Dockerfile** (Hadolint) - Docker best practices
 - **Bash** - Shell script linting
 
 #### Disabled Linters
+
 - **JSCPD** - Copy-paste detection (can be noisy)
 - **Gitleaks** - Secret scanning (optional)
 - **Checkov** - IaC security scanning
@@ -46,35 +51,44 @@ The workflow runs on:
 ## Configuration Files
 
 ### `.github/workflows/super-linter.yml`
+
 Main workflow file that defines the CI/CD pipeline.
 
 ```yaml
 # Key settings:
-RUN_LOCAL: false                    # Run in Docker (not local)
-USE_FIND_ALGORITHM: true           # Use find for file detection
-VALIDATE_ALL_CODEBASE: true        # Check all files on push
-PARALLEL_PROCESSES: 2              # Parallel execution for speed
+RUN_LOCAL: false # Run in Docker (not local)
+USE_FIND_ALGORITHM: true # Use find for file detection
+VALIDATE_ALL_CODEBASE: true # Check all files on push
+PARALLEL_PROCESSES: 2 # Parallel execution for speed
 ```
 
 ### `.markdownlint.json`
+
 Markdown linting configuration:
+
 - Line length: 120 characters
 - Allows HTML elements like `<br>`, `<img>`, `<kbd>`
 - Consistent list styling
 
 ### `.flake8`
+
 Python flake8 linting rules:
+
 - Max line length: 88 (Black compatible)
-- Excludes common directories (.git, __pycache__, .venv, etc.)
+- Excludes common directories (.git, **pycache**, .venv, etc.)
 - Max complexity: 10
 
 ### `.hadolintignore`
+
 Docker linting exceptions:
+
 - `DL3002` - Allow building with root (necessary for this project)
 - `DL3007` - Allow 'latest' tag (managed separately)
 
 ### `.github/super-linter.env`
+
 Local environment configuration (used for local runs):
+
 ```bash
 docker run -v "$(pwd)":/tmp/lint \
   --env-file .github/super-linter.env \
@@ -94,11 +108,13 @@ docker run -v "$(pwd)":/tmp/lint \
 Two options:
 
 **Option 1: Using the shell script**
+
 ```bash
 ./run_super_linter.sh
 ```
 
 **Option 2: Docker directly**
+
 ```bash
 docker run --rm \
   -e RUN_LOCAL=true \
@@ -128,15 +144,16 @@ The workflow requires these permissions:
 
 ```yaml
 permissions:
-  contents: read        # Read repository contents
-  statuses: write       # Write commit statuses
-  checks: write         # Write check results
-  pull-requests: write  # Write PR comments
+  contents: read # Read repository contents
+  statuses: write # Write commit statuses
+  checks: write # Write check results
+  pull-requests: write # Write PR comments
 ```
 
 ## Artifacts
 
 The workflow uploads:
+
 - `report/` - Detailed linter reports
 - `super-linter.log` - Full execution log
 
@@ -161,6 +178,7 @@ git commit -m "Your message" --no-verify
 ```
 
 Or add to commit message:
+
 ```
 [skip ci]
 ```
@@ -183,6 +201,7 @@ Or add to commit message:
 ### Docker Issues
 
 If you see Docker-related errors:
+
 ```bash
 # Pull latest image
 docker pull github/super-linter:latest
