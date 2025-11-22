@@ -117,12 +117,6 @@ jobs:
           USE_FIND_ALGORITHM: true
           LOG_LEVEL: DEBUG
           OUTPUT_FORMAT: sarif
-          # Point to root-level config files
-          PYTHON_BLACK_CONFIG_FILE: /github/workspace/.python-black
-          FLAKE8_CONFIG_FILE: /github/workspace/.flake8
-          PYTHON_ISORT_CONFIG_FILE: /github/workspace/pyproject.toml
-          YAML_CONFIG_FILE: /github/workspace/.yamllint
-          # Validators to enable
           VALIDATE_PYTHON_BLACK: true
           VALIDATE_PYTHON_FLAKE8: true
           VALIDATE_PYTHON_ISORT: true
