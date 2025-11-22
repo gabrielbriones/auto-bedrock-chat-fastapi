@@ -115,7 +115,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_LOCAL: false
           USE_FIND_ALGORITHM: true
-          LOG_LEVEL: INFO
+          LOG_LEVEL: DEBUG
+          OUTPUT_FORMAT: sarif
           VALIDATE_PYTHON_BLACK: true
           VALIDATE_PYTHON_FLAKE8: true
           VALIDATE_PYTHON_ISORT: true
@@ -127,6 +128,15 @@ jobs:
           VALIDATE_YAML: true
           VALIDATE_BASH: true
 
+      - name: Check Super Linter exit code
+        if: always()
+        run: |
+          echo "Super Linter job status: ${{ job.status }}"
+          if [ -f super-linter.log ]; then
+            echo "=== Super Linter Log ==="
+            cat super-linter.log
+          fi
+
       - name: Upload Super Linter reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -135,4 +145,5 @@ jobs:
           path: |
             report/
             super-linter.log
+            super-linter-sarif.json
           if-no-files-found: ignore
