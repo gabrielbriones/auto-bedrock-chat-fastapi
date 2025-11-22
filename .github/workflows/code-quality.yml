@@ -117,6 +117,15 @@ jobs:
           USE_FIND_ALGORITHM: true
           LOG_LEVEL: DEBUG
           OUTPUT_FORMAT: sarif
+          # Black configuration (120 char line length)
+          PYTHON_BLACK_CONFIG_FILE: .python-black
+          # Flake8 configuration (120 char line length, B036, E203, W503, E501 ignored)
+          FLAKE8_CONFIG_FILE: .flake8
+          # isort configuration (Black profile, 120 char line length)
+          PYTHON_ISORT_CONFIG_FILE: pyproject.toml
+          # yamllint configuration (120 char line length)
+          YAML_CONFIG_FILE: .yamllint
+          # Validators to enable
           VALIDATE_PYTHON_BLACK: true
           VALIDATE_PYTHON_FLAKE8: true
           VALIDATE_PYTHON_ISORT: true
