@@ -58,9 +58,7 @@ def _setup_logging(config: ChatConfig):
         logging.getLogger("httpcore").setLevel(logging.WARNING)
         logging.getLogger("httpcore.connection").setLevel(logging.WARNING)
         logging.getLogger("httpcore.http11").setLevel(logging.WARNING)
-        logging.getLogger("httpx").setLevel(
-            logging.INFO
-        )  # Keep INFO for httpx (less verbose)
+        logging.getLogger("httpx").setLevel(logging.INFO)  # Keep INFO for httpx (less verbose)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
@@ -68,9 +66,7 @@ def _setup_logging(config: ChatConfig):
 class BedrockChatPlugin:
     """Main plugin class for integrating Bedrock chat with FastAPI"""
 
-    def __init__(
-        self, app: FastAPI, config: Optional[ChatConfig] = None, **config_overrides
-    ):
+    def __init__(self, app: FastAPI, config: Optional[ChatConfig] = None, **config_overrides):
         self.app = app
         self.config = config or load_config(**config_overrides)
 
@@ -107,9 +103,7 @@ class BedrockChatPlugin:
         # Setup shutdown handler
         self._setup_shutdown()
 
-        logger.info(
-            f"Bedrock Chat Plugin initialized with model: {self.config.model_id}"
-        )
+        logger.info(f"Bedrock Chat Plugin initialized with model: {self.config.model_id}")
 
     def _determine_base_url(self) -> str:
         """
@@ -162,12 +156,8 @@ class BedrockChatPlugin:
         host_env = os.getenv("HOST")
         port_env = os.getenv("PORT")
         if host_env is not None and port_env is not None:
-            scheme = (
-                "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
-            )
-            logger.debug(
-                f"Detected base URL from HOST/PORT env vars: {scheme}://{host_env}:{port_env}"
-            )
+            scheme = "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
+            logger.debug(f"Detected base URL from HOST/PORT env vars: {scheme}://{host_env}:{port_env}")
             return f"{scheme}://{host_env}:{port_env}"
 
         # Priority 2: Check common deployment environment variables
@@ -180,14 +170,8 @@ class BedrockChatPlugin:
             host = os.getenv(env_vars[0])
             port = os.getenv(env_vars[1])
             if host and port:
-                scheme = (
-                    "https"
-                    if os.getenv("HTTPS", "").lower() in ("1", "true")
-                    else "http"
-                )
-                logger.debug(
-                    f"Detected base URL from {env_vars} env vars: {scheme}://{host}:{port}"
-                )
+                scheme = "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
+                logger.debug(f"Detected base URL from {env_vars} env vars: {scheme}://{host}:{port}")
                 return f"{scheme}://{host}:{port}"
 
         # No reliable detection method available
@@ -217,11 +201,7 @@ class BedrockChatPlugin:
 
                 return JSONResponse(
                     {
-                        "status": (
-                            "healthy"
-                            if bedrock_health["status"] == "healthy"
-                            else "degraded"
-                        ),
+                        "status": ("healthy" if bedrock_health["status"] == "healthy" else "degraded"),
                         "bedrock": bedrock_health,
                         "statistics": stats,
                         "config": {
@@ -234,9 +214,7 @@ class BedrockChatPlugin:
                 )
             except Exception as e:
                 logger.error(f"Health check failed: {str(e)}")
-                return JSONResponse(
-                    {"status": "unhealthy", "error": str(e)}, status_code=503
-                )
+                return JSONResponse({"status": "unhealthy", "error": str(e)}, status_code=503)
 
         # WebSocket endpoint
         @self.app.websocket(self.config.websocket_endpoint)
@@ -277,9 +255,7 @@ class BedrockChatPlugin:
                         },
                     )
                 except Exception as e:
-                    logger.warning(
-                        f"Template rendering failed: {str(e)}, using default UI"
-                    )
+                    logger.warning(f"Template rendering failed: {str(e)}, using default UI")
                     return HTMLResponse(self._get_default_ui_html(), status_code=200)
 
         # Statistics endpoint
@@ -339,10 +315,7 @@ class BedrockChatPlugin:
         # Try to set up lifespan handler if the app supports it and doesn't
         # have one
         try:
-            if (
-                not hasattr(self.app.router, "lifespan_context")
-                or not self.app.router.lifespan_context
-            ):
+            if not hasattr(self.app.router, "lifespan_context") or not self.app.router.lifespan_context:
 
                 @asynccontextmanager
                 async def bedrock_lifespan(app: FastAPI):
@@ -1003,9 +976,7 @@ class BedrockChatPlugin:
         try:
             new_tools_desc = self.tools_generator.generate_tools_desc()
             self.config.tools_desc = new_tools_desc
-            logger.info(
-                f"Updated tools: {len(new_tools_desc.get('functions', []))} functions"
-            )
+            logger.info(f"Updated tools: {len(new_tools_desc.get('functions', []))} functions")
         except Exception as e:
             logger.error(f"Failed to update tools: {str(e)}")
             raise BedrockChatError(f"Tools update failed: {str(e)}")

@@ -1,0 +1,107 @@
+---
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  deployments: write
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/develop'
+    environment:
+      name: staging
+      url: https://staging-api.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: false
+          tags: auto-bedrock-chat-fastapi:staging
+          outputs: type=docker,dest=/tmp/image.tar
+
+      - name: Load image and deploy
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+          STAGING_KEY: ${{ secrets.STAGING_KEY }}
+        run: |
+          echo "🚀 Deploying to staging environment"
+          echo "Note: Configure SSH deployment secrets for actual deployment"
+          # Example deployment steps:
+          # mkdir -p ~/.ssh
+          # echo "$STAGING_KEY" > ~/.ssh/deploy_key
+          # chmod 600 ~/.ssh/deploy_key
+          # scp -i ~/.ssh/deploy_key /tmp/image.tar $STAGING_USER@$STAGING_HOST:/tmp/
+          # ssh -i ~/.ssh/deploy_key $STAGING_USER@$STAGING_HOST 'docker load -i /tmp/image.tar && docker run ...'
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: production
+      url: https://api.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: false
+          tags: auto-bedrock-chat-fastapi:${{ github.ref_name }}
+          outputs: type=docker,dest=/tmp/image.tar
+
+      - name: Deploy to production
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_KEY: ${{ secrets.PROD_KEY }}
+        run: |
+          echo "🚀 Deploying to production"
+          echo "Version: ${{ github.ref_name }}"
+          echo "Note: Configure deployment secrets for actual production deployment"
+
+      - name: Create deployment record
+        uses: chrnorm/deployment-action@v2
+        if: success()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment: production
+          auto_merge: false
+
+      - name: Update deployment status
+        uses: chrnorm/deployment-status@v2
+        if: always()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+          state: ${{ job.status }}
+          description: Deployment ${{ job.status }}
+          environment_url: https://api.example.com

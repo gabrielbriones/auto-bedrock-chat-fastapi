@@ -72,10 +72,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "name",
-                  "email"
-                ],
+                "required": ["name", "email"],
                 "properties": {
                   "name": {
                     "type": "string",
@@ -214,11 +211,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "user_id",
-                  "items",
-                  "shipping_address"
-                ],
+                "required": ["user_id", "items", "shipping_address"],
                 "properties": {
                   "user_id": {
                     "type": "integer",
@@ -229,10 +222,7 @@
                     "description": "Items in the order",
                     "items": {
                       "type": "object",
-                      "required": [
-                        "product_id",
-                        "quantity"
-                      ],
+                      "required": ["product_id", "quantity"],
                       "properties": {
                         "product_id": {
                           "type": "integer",
@@ -248,12 +238,7 @@
                   },
                   "shipping_address": {
                     "type": "object",
-                    "required": [
-                      "street",
-                      "city",
-                      "state",
-                      "zip_code"
-                    ],
+                    "required": ["street", "city", "state", "zip_code"],
                     "properties": {
                       "street": {
                         "type": "string"
@@ -321,10 +306,7 @@
     "schemas": {
       "User": {
         "type": "object",
-        "required": [
-          "name",
-          "email"
-        ],
+        "required": ["name", "email"],
         "properties": {
           "id": {
             "type": "integer",

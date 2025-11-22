@@ -27,12 +27,14 @@ poetry run python integration.py
 ### What You'll Get
 
 1. **Complete Express.js API Server** (`expressjs/server.js`)
+
    - RESTful endpoints for users, products, and orders
    - Automatic OpenAPI specification generation
    - Interactive Swagger UI documentation
    - Production-ready error handling and validation
 
 2. **Framework-Agnostic Python Integration** (`express_integration_example.py`)
+
    - Loads OpenAPI spec from any source (Express, FastAPI, etc.)
    - Generates AI tools automatically
    - Demonstrates tool validation and usage
@@ -46,16 +48,19 @@ poetry run python integration.py
 ## Key Benefits Demonstrated
 
 ### Framework Agnostic
+
 - Works with Express.js, FastAPI, or any framework that generates OpenAPI specs
 - No framework-specific dependencies in Python code
 - Consistent tool generation regardless of backend technology
 
 ### Automatic API Discovery
+
 - Automatically detects all API endpoints from OpenAPI specification
 - Generates properly typed AI tools with validation
 - Handles complex request/response schemas
 
 ### Production Ready
+
 - Environment-based configuration
 - Selective endpoint exposure (exclude admin/internal APIs)
 - Robust error handling and fallback mechanisms
@@ -144,6 +149,7 @@ AWS_REGION=us-east-1
 ## Support for Other Frameworks
 
 The same approach works with:
+
 - **FastAPI**: Already generates OpenAPI specs automatically
 - **Django REST Framework**: With `drf-spectacular` or similar
 - **Flask**: With `flask-restx` or `apispec`

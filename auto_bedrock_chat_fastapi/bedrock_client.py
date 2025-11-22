@@ -51,9 +51,7 @@ class BedrockClient:
                 config=client_config,
             )
 
-            logger.info(
-                f"Bedrock client initialized for region: {self.config.aws_region}"
-            )
+            logger.info(f"Bedrock client initialized for region: {self.config.aws_region}")
 
         except Exception as e:
             raise BedrockClientError(f"Failed to initialize Bedrock client: {str(e)}")
@@ -85,9 +83,7 @@ class BedrockClient:
         # Use config defaults if not provided
         model_id = model_id or self.config.model_id
         tools_desc = tools_desc or self.config.tools_desc
-        temperature = (
-            temperature if temperature is not None else self.config.temperature
-        )
+        temperature = temperature if temperature is not None else self.config.temperature
         max_tokens = max_tokens or self.config.max_tokens
 
         # Log request if enabled
@@ -102,18 +98,14 @@ class BedrockClient:
             original_count = len(messages)
             messages = self._manage_conversation_history(messages)
             if len(messages) < original_count:
-                logger.info(
-                    f"Conversation history trimmed from {original_count} to {len(messages)} messages"
-                )
+                logger.info(f"Conversation history trimmed from {original_count} to {len(messages)} messages")
 
             # Check and chunk large messages to prevent individual message size
             # issues
             original_message_count = len(messages)
             messages = self._check_and_chunk_messages(messages)
             if len(messages) > original_message_count:
-                logger.info(
-                    f"Large messages chunked: {original_message_count} -> {len(messages)} messages"
-                )
+                logger.info(f"Large messages chunked: {original_message_count} -> {len(messages)} messages")
 
             # Try making the request with current messages
             response = await self._try_request_with_fallback(
@@ -126,9 +118,7 @@ class BedrockClient:
 
             # Process any tool calls
             if formatted_response.get("tool_calls"):
-                tool_results = await self._execute_tool_calls(
-                    formatted_response["tool_calls"], tools_desc
-                )
+                tool_results = await self._execute_tool_calls(formatted_response["tool_calls"], tools_desc)
                 formatted_response["tool_results"] = tool_results
 
             return formatted_response
@@ -138,9 +128,7 @@ class BedrockClient:
 
             # Try fallback model if configured
             if self.config.fallback_model and model_id != self.config.fallback_model:
-                logger.info(
-                    f"Attempting fallback to model: {self.config.fallback_model}"
-                )
+                logger.info(f"Attempting fallback to model: {self.config.fallback_model}")
                 try:
                     return await self.chat_completion(
                         messages=messages,
@@ -151,9 +139,7 @@ class BedrockClient:
                         **kwargs,
                     )
                 except Exception as fallback_error:
-                    logger.exception(
-                        f"Fallback model also failed: {str(fallback_error)}"
-                    )
+                    logger.exception(f"Fallback model also failed: {str(fallback_error)}")
 
             # Handle graceful degradation
             if self.config.graceful_degradation:
@@ -172,33 +158,19 @@ class BedrockClient:
     ) -> Dict[str, Any]:
         """Prepare request body based on model family"""
 
-        if model_id.startswith("anthropic.claude") or model_id.startswith(
-            "us.anthropic.claude"
-        ):
-            return self._prepare_claude_request(
-                messages, tools_desc, temperature, max_tokens, **kwargs
-            )
+        if model_id.startswith("anthropic.claude") or model_id.startswith("us.anthropic.claude"):
+            return self._prepare_claude_request(messages, tools_desc, temperature, max_tokens, **kwargs)
         elif model_id.startswith("amazon.titan"):
-            return self._prepare_titan_request(
-                messages, tools_desc, temperature, max_tokens, **kwargs
-            )
+            return self._prepare_titan_request(messages, tools_desc, temperature, max_tokens, **kwargs)
         elif model_id.startswith("meta.llama") or model_id.startswith("us.meta.llama"):
-            return self._prepare_llama_request(
-                messages, tools_desc, temperature, max_tokens, **kwargs
-            )
+            return self._prepare_llama_request(messages, tools_desc, temperature, max_tokens, **kwargs)
         elif model_id.startswith("openai.gpt-oss"):
-            return self._prepare_openai_gpt_request(
-                messages, tools_desc, temperature, max_tokens, **kwargs
-            )
+            return self._prepare_openai_gpt_request(messages, tools_desc, temperature, max_tokens, **kwargs)
         else:
             # Generic format
-            return self._prepare_generic_request(
-                messages, tools_desc, temperature, max_tokens, **kwargs
-            )
+            return self._prepare_generic_request(messages, tools_desc, temperature, max_tokens, **kwargs)
 
-    def _prepare_claude_request(
-        self, messages, tools_desc, temperature, max_tokens, **kwargs
-    ) -> Dict[str, Any]:
+    def _prepare_claude_request(self, messages, tools_desc, temperature, max_tokens, **kwargs) -> Dict[str, Any]:
         """Prepare request for Claude models"""
 
         # Extract system prompt from messages if present
@@ -241,9 +213,7 @@ class BedrockClient:
 
         return request_body
 
-    def _prepare_openai_gpt_request(
-        self, messages, tools_desc, temperature, max_tokens, **kwargs
-    ) -> Dict[str, Any]:
+    def _prepare_openai_gpt_request(self, messages, tools_desc, temperature, max_tokens, **kwargs) -> Dict[str, Any]:
         """Prepare request for OpenAI GPT OSS models"""
 
         # For OpenAI format, messages can already include system message
@@ -254,18 +224,14 @@ class BedrockClient:
 
         if not has_system_message:
             # Add default system message if none present
-            formatted_messages.append(
-                {"role": "system", "content": self.config.get_system_prompt()}
-            )
+            formatted_messages.append({"role": "system", "content": self.config.get_system_prompt()})
 
         # Add all conversation messages
         formatted_messages.extend(messages)
 
         # For GPT models with very large inputs, we need to ensure max_tokens stays positive
         # Estimate input size roughly and adjust max_tokens accordingly
-        total_input_chars = sum(
-            len(str(msg.get("content", ""))) for msg in formatted_messages
-        )
+        total_input_chars = sum(len(str(msg.get("content", ""))) for msg in formatted_messages)
 
         # Rough estimation: 1 token ≈ 4 characters (conservative estimate)
         estimated_input_tokens = total_input_chars // 4
@@ -277,36 +243,27 @@ class BedrockClient:
         min_response_tokens = 1  # Absolute minimum
         safe_response_tokens = 10  # Very conservative safe amount
 
-        if (
-            estimated_input_tokens > gpt_context_limit * 0.9
-        ):  # Very large input (90% of context)
+        if estimated_input_tokens > gpt_context_limit * 0.9:  # Very large input (90% of context)
             # Use absolute minimum for very large inputs
             adjusted_max_tokens = min_response_tokens
             logger.warning(
                 f"Very large input ({estimated_input_tokens} est. tokens), "
                 f"using absolute minimal max_tokens: {adjusted_max_tokens}"
             )
-        elif (
-            estimated_input_tokens > gpt_context_limit * 0.8
-        ):  # Large input (80% of context)
+        elif estimated_input_tokens > gpt_context_limit * 0.8:  # Large input (80% of context)
             # Use very safe small amount
             adjusted_max_tokens = safe_response_tokens
             logger.warning(
                 f"Large input ({estimated_input_tokens} est. tokens), "
                 f"using minimal max_tokens: {adjusted_max_tokens}"
             )
-        elif (
-            estimated_input_tokens + max_tokens > gpt_context_limit
-        ):  # Approaching context limit
+        elif estimated_input_tokens + max_tokens > gpt_context_limit:  # Approaching context limit
             # Calculate remaining safely
             remaining_tokens = gpt_context_limit - estimated_input_tokens
             adjusted_max_tokens = max(
                 min_response_tokens, min(remaining_tokens - 1000, max_tokens)
             )  # Leave 1000 token buffer
-            logger.info(
-                f"Input approaching limit, adjusting max_tokens from "
-                f"{max_tokens} to {adjusted_max_tokens}"
-            )
+            logger.info(f"Input approaching limit, adjusting max_tokens from {max_tokens} to {adjusted_max_tokens}")
         else:
             # Use original max_tokens for normal-sized inputs
             adjusted_max_tokens = max_tokens
@@ -334,9 +291,7 @@ class BedrockClient:
 
         return request_body
 
-    def _prepare_titan_request(
-        self, messages, tools_desc, temperature, max_tokens, **kwargs
-    ) -> Dict[str, Any]:
+    def _prepare_titan_request(self, messages, tools_desc, temperature, max_tokens, **kwargs) -> Dict[str, Any]:
         """Prepare request for Titan models"""
 
         # Extract system prompt from messages or use default
@@ -360,8 +315,7 @@ class BedrockClient:
                 "does NOT support tool calling or API execution.\n"
             )
             tools_info += (
-                "I can only provide text responses and cannot access "
-                "real-time data from your API endpoints.\n\n"
+                "I can only provide text responses and cannot access " "real-time data from your API endpoints.\n\n"
             )
             tools_info += "Your API has these available endpoints:\n"
             for func in tools_desc.get("functions", []):
@@ -369,8 +323,7 @@ class BedrockClient:
                 tools_info += f"- {desc}\n"
 
             tools_info += (
-                "\nTo get real-time data from your API, please use a model "
-                "that supports tool calling such as:\n"
+                "\nTo get real-time data from your API, please use a model " "that supports tool calling such as:\n"
             )
             tools_info += "- Claude models (anthropic.claude-*)\n"
             tools_info += "- Llama models (meta.llama* or us.meta.llama*)\n"
@@ -416,9 +369,7 @@ class BedrockClient:
 
         return request_body
 
-    def _prepare_llama_request(
-        self, messages, tools_desc, temperature, max_tokens, **kwargs
-    ) -> Dict[str, Any]:
+    def _prepare_llama_request(self, messages, tools_desc, temperature, max_tokens, **kwargs) -> Dict[str, Any]:
         """Prepare request for Llama models using proper prompt format"""
 
         # Convert messages to Llama's prompt format with special tokens
@@ -479,9 +430,7 @@ class BedrockClient:
             "top_p": kwargs.get("top_p", self.config.top_p),
         }
 
-    def _prepare_generic_request(
-        self, messages, tools_desc, temperature, max_tokens, **kwargs
-    ) -> Dict[str, Any]:
+    def _prepare_generic_request(self, messages, tools_desc, temperature, max_tokens, **kwargs) -> Dict[str, Any]:
         """Prepare generic request format"""
 
         # Extract system prompt from messages for generic format
@@ -506,9 +455,7 @@ class BedrockClient:
             **kwargs,
         }
 
-    async def _make_request_with_retries(
-        self, model_id: str, request_body: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _make_request_with_retries(self, model_id: str, request_body: Dict[str, Any]) -> Dict[str, Any]:
         """Make Bedrock API request with retry logic"""
 
         last_exception = None
@@ -517,9 +464,7 @@ class BedrockClient:
             try:
                 # Convert to async
                 # Debug logging for request
-                logger.debug(
-                    f"Bedrock request for {model_id}: {json.dumps(request_body, indent=2)}"
-                )
+                logger.debug(f"Bedrock request for {model_id}: {json.dumps(request_body, indent=2)}")
 
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
@@ -551,10 +496,7 @@ class BedrockClient:
                     error_code = response.get("Error", {}).get("Code", "")
 
                 # Check for context length issues
-                if (
-                    error_code == "ValidationException"
-                    and "Input is too long" in error_message
-                ):
+                if error_code == "ValidationException" and "Input is too long" in error_message:
                     # This is a context length issue, enhance the error message
                     enhanced_message = (
                         f"Input is too long for the model's context window. "
@@ -575,9 +517,7 @@ class BedrockClient:
 
                 # Calculate delay
                 delay = self._calculate_retry_delay(attempt)
-                logger.warning(
-                    f"Request failed (attempt {attempt + 1}), retrying in {delay}s: {str(e)}"
-                )
+                logger.warning(f"Request failed (attempt {attempt + 1}), retrying in {delay}s: {str(e)}")
 
                 await asyncio.sleep(delay)
 
@@ -586,30 +526,22 @@ class BedrockClient:
 
                 # Check if it's a timeout error that we can retry
                 is_timeout = (
-                    "ReadTimeoutError" in str(type(e))
-                    or "timeout" in str(e).lower()
-                    or "timed out" in str(e).lower()
+                    "ReadTimeoutError" in str(type(e)) or "timeout" in str(e).lower() or "timed out" in str(e).lower()
                 )
 
                 # Retry timeout errors, but not on last attempt
                 if is_timeout and attempt < self.config.max_retries:
                     delay = self._calculate_retry_delay(attempt)
-                    logger.warning(
-                        f"Timeout error (attempt {attempt + 1}), retrying in {delay}s: {str(e)}"
-                    )
+                    logger.warning(f"Timeout error (attempt {attempt + 1}), retrying in {delay}s: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
                 # Don't retry other unexpected errors
                 break
 
-        raise BedrockClientError(
-            f"Request failed after {self.config.max_retries + 1} attempts: {str(last_exception)}"
-        )
+        raise BedrockClientError(f"Request failed after {self.config.max_retries + 1} attempts: {str(last_exception)}")
 
-    async def _try_request_with_fallback(
-        self, messages, model_id, tools_desc, temperature, max_tokens, **kwargs
-    ):
+    async def _try_request_with_fallback(self, messages, model_id, tools_desc, temperature, max_tokens, **kwargs):
         """
         Try making a request with automatic fallback for context window issues
         """
@@ -642,8 +574,7 @@ class BedrockClient:
                 or "max_tokens must be at least 1" in error_str
                 or "got -" in error_str  # Negative max_tokens
                 or "length limit exceeded" in error_str  # Request body too large
-                or "Failed to buffer the request body"
-                in error_str  # Bedrock HTTP limits
+                or "Failed to buffer the request body" in error_str  # Bedrock HTTP limits
                 or "Unexpected token" in error_str  # GPT tokenization issues
                 or "expecting start token" in error_str
             )  # GPT token parsing errors
@@ -664,9 +595,7 @@ class BedrockClient:
                         # Use more conservative max_tokens for aggressive
                         # fallback
                         fallback_max_tokens = (
-                            min(max_tokens, 1000)
-                            if model_id.startswith("openai.gpt-oss")
-                            else max_tokens
+                            min(max_tokens, 1000) if model_id.startswith("openai.gpt-oss") else max_tokens
                         )
 
                         request_body = self._prepare_request_body(
@@ -685,17 +614,13 @@ class BedrockClient:
                                 f"(fallback: {fallback_max_tokens}, messages: {len(fallback_messages)})"
                             )
 
-                        return await self._make_request_with_retries(
-                            model_id, request_body
-                        )
+                        return await self._make_request_with_retries(model_id, request_body)
                     except BedrockClientError:
                         # If fallback also fails, provide helpful error message
                         logger.error("Aggressive fallback also failed")
 
                         if model_id.startswith("openai.gpt-oss"):
-                            if "length limit exceeded" in str(
-                                e
-                            ) or "Failed to buffer" in str(e):
+                            if "length limit exceeded" in str(e) or "Failed to buffer" in str(e):
                                 raise BedrockClientError(
                                     f"GPT OSS model request body size exceeded Bedrock limits. "
                                     f"Tried {len(messages)} messages (1st attempt), then "
@@ -706,9 +631,7 @@ class BedrockClient:
                                     f"(3) Start new conversation for large inputs, or (4) use Claude models. "
                                     f"Original error: {str(e)}"
                                 )
-                            elif "Unexpected token" in str(
-                                e
-                            ) or "expecting start token" in str(e):
+                            elif "Unexpected token" in str(e) or "expecting start token" in str(e):
                                 raise BedrockClientError(
                                     f"GPT OSS model tokenization error. "
                                     f"This often occurs with longer conversations or special characters. "
@@ -745,9 +668,7 @@ class BedrockClient:
                 # Re-raise non-context-window errors
                 raise
 
-    def _aggressive_conversation_fallback(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _aggressive_conversation_fallback(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Apply aggressive conversation management when context window is exceeded
         """
@@ -755,16 +676,10 @@ class BedrockClient:
         # chunking)
         total_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
 
-        if (
-            len(messages) > 50 or total_chars > 500000
-        ):  # Very large conversation or content
+        if len(messages) > 50 or total_chars > 500000:  # Very large conversation or content
             # Ultra-aggressive fallback for request body size issues
-            logger.warning(
-                f"Ultra-aggressive fallback triggered: {len(messages)} messages, {total_chars:,} chars"
-            )
-            aggressive_limit = min(
-                3, max(1, self.config.max_conversation_messages // 10)
-            )
+            logger.warning(f"Ultra-aggressive fallback triggered: {len(messages)} messages, {total_chars:,} chars")
+            aggressive_limit = min(3, max(1, self.config.max_conversation_messages // 10))
         else:
             # Standard aggressive fallback
             aggressive_limit = max(5, self.config.max_conversation_messages // 3)
@@ -772,11 +687,7 @@ class BedrockClient:
         result = []
 
         # Always preserve system message if present and configured
-        if (
-            self.config.preserve_system_message
-            and messages
-            and messages[0].get("role") == "system"
-        ):
+        if self.config.preserve_system_message and messages and messages[0].get("role") == "system":
             result.append(messages[0])
             remaining_messages = messages[1:]
             max_remaining = aggressive_limit - 1
@@ -803,10 +714,7 @@ class BedrockClient:
                 else:
                     # Keep a truncated version of large messages
                     truncated_msg = msg.copy()
-                    truncated_msg["content"] = (
-                        str(msg.get("content", ""))[:1000]
-                        + "...[truncated due to size]"
-                    )
+                    truncated_msg["content"] = str(msg.get("content", ""))[:1000] + "...[truncated due to size]"
                     size_filtered.append(truncated_msg)
             filtered_messages = size_filtered
 
@@ -836,9 +744,7 @@ class BedrockClient:
 
         return min(delay + jitter, 60.0)  # Cap at 60 seconds
 
-    def _parse_response(
-        self, response: Dict[str, Any], model_id: str
-    ) -> Dict[str, Any]:
+    def _parse_response(self, response: Dict[str, Any], model_id: str) -> Dict[str, Any]:
         """Parse and format model response"""
 
         # Check if response is None or invalid
@@ -861,15 +767,11 @@ class BedrockClient:
         try:
             logger.debug(f"Parsing response for model {model_id}: {response}")
 
-            if model_id.startswith("anthropic.claude") or model_id.startswith(
-                "us.anthropic.claude"
-            ):
+            if model_id.startswith("anthropic.claude") or model_id.startswith("us.anthropic.claude"):
                 return self._parse_claude_response(response)
             elif model_id.startswith("amazon.titan"):
                 return self._parse_titan_response(response)
-            elif model_id.startswith("meta.llama") or model_id.startswith(
-                "us.meta.llama"
-            ):
+            elif model_id.startswith("meta.llama") or model_id.startswith("us.meta.llama"):
                 return self._parse_llama_response(response)
             elif model_id.startswith("openai.gpt-oss"):
                 return self._parse_openai_gpt_response(response)
@@ -987,9 +889,7 @@ class BedrockClient:
             "metadata": response.get("metadata", {}),
         }
 
-    def _manage_conversation_history(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _manage_conversation_history(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Manage conversation history to prevent context length issues
 
@@ -1017,15 +917,9 @@ class BedrockClient:
             # Default to sliding window
             return self._sliding_window_messages(messages)
 
-    def _truncate_messages(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _truncate_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Simple truncation - keep the most recent messages"""
-        if (
-            self.config.preserve_system_message
-            and messages
-            and messages[0].get("role") == "system"
-        ):
+        if self.config.preserve_system_message and messages and messages[0].get("role") == "system":
             # Keep system message + most recent messages
             system_msg = [messages[0]]
             recent_messages = messages[-(self.config.max_conversation_messages - 1) :]
@@ -1033,18 +927,12 @@ class BedrockClient:
         else:
             return messages[-self.config.max_conversation_messages :]
 
-    def _sliding_window_messages(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _sliding_window_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Sliding window - preserve system message and recent context"""
         result = []
 
         # Always preserve system message if present and configured
-        if (
-            self.config.preserve_system_message
-            and messages
-            and messages[0].get("role") == "system"
-        ):
+        if self.config.preserve_system_message and messages and messages[0].get("role") == "system":
             result.append(messages[0])
             remaining_messages = messages[1:]
             max_remaining = self.config.max_conversation_messages - 1
@@ -1060,18 +948,12 @@ class BedrockClient:
 
         return result
 
-    def _smart_prune_messages(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _smart_prune_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Smart pruning - remove tool messages first, then older messages"""
         result = []
 
         # Always preserve system message if present and configured
-        if (
-            self.config.preserve_system_message
-            and messages
-            and messages[0].get("role") == "system"
-        ):
+        if self.config.preserve_system_message and messages and messages[0].get("role") == "system":
             result.append(messages[0])
             remaining_messages = messages[1:]
             max_remaining = self.config.max_conversation_messages - 1
@@ -1099,9 +981,7 @@ class BedrockClient:
         result.extend(non_tool_messages[-max_remaining:])
         return result
 
-    def _check_and_chunk_messages(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _check_and_chunk_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Check for large messages and chunk them if necessary
 
@@ -1165,9 +1045,7 @@ class BedrockClient:
             if total_chunks > 1:
                 chunk_prefix = f"[CHUNK {chunk_number}/{total_chunks}] "
                 if chunk_number == 1:
-                    chunk_prefix += (
-                        "This message was too large and has been split into chunks. "
-                    )
+                    chunk_prefix += "This message was too large and has been split into chunks. "
                 chunk_content = chunk_prefix + chunk
             else:
                 chunk_content = chunk
@@ -1304,9 +1182,7 @@ class BedrockClient:
             # Simple test request
             test_messages = [{"role": "user", "content": "Hello"}]
 
-            response = await self.chat_completion(
-                messages=test_messages, max_tokens=10, temperature=0.1
-            )
+            response = await self.chat_completion(messages=test_messages, max_tokens=10, temperature=0.1)
 
             return {
                 "status": "healthy",

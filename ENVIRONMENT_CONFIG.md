@@ -7,20 +7,23 @@ The auto-bedrock-chat-fastapi package now supports environment-aware configurati
 ## Configuration Files
 
 ### `.env` (Production/Development)
+
 - **Purpose**: Environment-specific configuration for production or development
 - **Git Status**: **Ignored** (not committed to source control)
 - **Usage**: Contains sensitive information and environment-specific settings
 - **Location**: Project root directory
 
-### `.env.example` 
+### `.env.example`
+
 - **Purpose**: Template showing all available configuration options
 - **Git Status**: **Tracked** (committed to source control)
 - **Usage**: Copy to `.env` and customize for your environment
 - **Location**: Project root directory
 
 ### `.env.test`
+
 - **Purpose**: Test-specific configuration with safe defaults
-- **Git Status**: **Tracked** (committed to source control)  
+- **Git Status**: **Tracked** (committed to source control)
 - **Usage**: Automatically used during pytest runs
 - **Location**: Project root directory
 
@@ -29,30 +32,26 @@ The auto-bedrock-chat-fastapi package now supports environment-aware configurati
 The configuration system automatically detects the runtime environment:
 
 ### Test Environment Detection
+
 The system uses `.env.test` when any of these conditions are met:
+
 - `PYTEST_CURRENT_TEST` environment variable is set
 - `pytest` appears in the command path
 - `pytest` module is imported
 - `ENVIRONMENT=test` environment variable is set
 
 ### Production/Development Environment
+
 The system uses `.env` for normal application runtime.
 
-## Example Usage
+### 🚀 Quick Start
 
-### Development Setup
 ```bash
-# Copy the example configuration
-cp .env.example .env
-
-# Edit with your specific settings
-nano .env
-
-# Run your application
-python example_app.py
+python examples/fastAPI/app_plugin.py
 ```
 
 ### Testing
+
 ```bash
 # Tests automatically use .env.test
 poetry run pytest
@@ -62,6 +61,7 @@ ENVIRONMENT=test python your_script.py
 ```
 
 ### Manual Environment Selection
+
 ```bash
 # Force test environment
 ENVIRONMENT=test python your_script.py
@@ -72,11 +72,11 @@ python your_script.py
 
 ## Configuration Differences
 
-| Setting | `.env` (Production) | `.env.test` (Testing) |
-|---------|-------------------|-------------------|
-| `BEDROCK_CHAT_ENDPOINT` | `/api/chat` | `/bedrock-chat` |
-| `BEDROCK_ENABLE_UI` | `true` | `false` |
-| `BEDROCK_SYSTEM_PROMPT` | Production message | Test message |
+| Setting                 | `.env` (Production) | `.env.test` (Testing) |
+| ----------------------- | ------------------- | --------------------- |
+| `BEDROCK_CHAT_ENDPOINT` | `/api/chat`         | `/bedrock-chat`       |
+| `BEDROCK_ENABLE_UI`     | `true`              | `false`               |
+| `BEDROCK_SYSTEM_PROMPT` | Production message  | Test message          |
 
 ## Best Practices
 

@@ -42,9 +42,7 @@ class WebSocketChatHandler:
         self._total_tool_calls_executed = 0
         self._total_errors = 0
 
-    async def handle_connection(
-        self, websocket: WebSocket, user_id: Optional[str] = None
-    ):
+    async def handle_connection(self, websocket: WebSocket, user_id: Optional[str] = None):
         """Handle new WebSocket connection"""
 
         try:
@@ -63,9 +61,7 @@ class WebSocketChatHandler:
                 ip_address=ip_address,
             )
 
-            logger.info(
-                f"WebSocket connected: session={session_id}, user={user_id}, ip={ip_address}"
-            )
+            logger.info(f"WebSocket connected: session={session_id}, user={user_id}, ip={ip_address}")
 
             # Send welcome message
             await self._send_message(
@@ -122,9 +118,7 @@ class WebSocketChatHandler:
                 elif message_type == "clear":
                     await self._handle_clear_history(websocket, message_data)
                 else:
-                    await self._send_error(
-                        websocket, f"Unknown message type: {message_type}"
-                    )
+                    await self._send_error(websocket, f"Unknown message type: {message_type}")
 
             except WebSocketDisconnect:
                 break
@@ -150,13 +144,9 @@ class WebSocketChatHandler:
 
         try:
             # Add user message to history
-            user_chat_message = ChatMessage(
-                role="user", content=user_message, metadata={"source": "websocket"}
-            )
+            user_chat_message = ChatMessage(role="user", content=user_message, metadata={"source": "websocket"})
             logger.debug(f"Received user message: {user_message}")
-            await self.session_manager.add_message(
-                session.session_id, user_chat_message
-            )
+            await self.session_manager.add_message(session.session_id, user_chat_message)
 
             # Send typing indicator
             await self._send_message(
@@ -169,9 +159,7 @@ class WebSocketChatHandler:
             )
 
             # Get conversation context
-            context_messages = await self.session_manager.get_context_messages(
-                session.session_id
-            )
+            context_messages = await self.session_manager.get_context_messages(session.session_id)
 
             # Convert to Bedrock format
             bedrock_messages = self._format_messages_for_bedrock(context_messages)
@@ -191,9 +179,7 @@ class WebSocketChatHandler:
             (
                 final_response,
                 all_tool_results,
-            ) = await self._handle_tool_calls_recursively(
-                session.session_id, response, tools_desc, websocket
-            )
+            ) = await self._handle_tool_calls_recursively(session.session_id, response, tools_desc, websocket)
 
             # Add the final AI response to history (if not already added)
             if not final_response.get("tool_calls"):
@@ -235,9 +221,7 @@ class WebSocketChatHandler:
                 },
             )
 
-    async def _execute_tool_calls(
-        self, tool_calls: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    async def _execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Execute tool calls by making HTTP requests to API endpoints"""
 
         results = []
@@ -264,12 +248,8 @@ class WebSocketChatHandler:
                     continue
 
                 # Validate arguments
-                if not self.tools_generator.validate_tool_call(
-                    function_name, arguments
-                ):
-                    logger.warning(
-                        f"Invalid arguments for tool {function_name}: {arguments}"
-                    )
+                if not self.tools_generator.validate_tool_call(function_name, arguments):
+                    logger.warning(f"Invalid arguments for tool {function_name}: {arguments}")
                     results.append(
                         {
                             "tool_call_id": tool_call.get("id"),
@@ -343,9 +323,7 @@ class WebSocketChatHandler:
                     continue
 
                 # Validate arguments
-                if not self.tools_generator.validate_tool_call(
-                    function_name, arguments
-                ):
+                if not self.tools_generator.validate_tool_call(function_name, arguments):
                     results.append(
                         {
                             "tool_call_id": tool_call.get("id"),
@@ -389,9 +367,7 @@ class WebSocketChatHandler:
 
         return results
 
-    async def _execute_single_tool_call(
-        self, tool_metadata: Dict, arguments: Dict
-    ) -> Any:
+    async def _execute_single_tool_call(self, tool_metadata: Dict, arguments: Dict) -> Any:
         """Execute a single tool call"""
 
         method = tool_metadata["method"]
@@ -509,16 +485,12 @@ class WebSocketChatHandler:
                 websocket,
                 {
                     "type": "typing",
-                    "message": current_response.get(
-                        "content", "Working on your request..."
-                    ),
+                    "message": current_response.get("content", "Working on your request..."),
                     "timestamp": datetime.now().isoformat(),
                 },
             )
 
-            logger.debug(
-                f"Tool call round {round_count}, processing {len(current_response['tool_calls'])} tool calls"
-            )
+            logger.debug(f"Tool call round {round_count}, processing {len(current_response['tool_calls'])} tool calls")
 
             # Add the assistant message with tool calls to history
             tool_assistant_message = ChatMessage(
@@ -530,9 +502,7 @@ class WebSocketChatHandler:
             await self.session_manager.add_message(session_id, tool_assistant_message)
 
             # Execute the tool calls
-            tool_results = await self._execute_tool_calls(
-                current_response["tool_calls"]
-            )
+            tool_results = await self._execute_tool_calls(current_response["tool_calls"])
             all_tool_results.extend(tool_results)
 
             # Add tool results to context
@@ -545,12 +515,8 @@ class WebSocketChatHandler:
             await self.session_manager.add_message(session_id, tool_message)
 
             # Get updated context and make another request
-            updated_context = await self.session_manager.get_context_messages(
-                session_id
-            )
-            updated_bedrock_messages = self._format_messages_for_bedrock(
-                updated_context
-            )
+            updated_context = await self.session_manager.get_context_messages(session_id)
+            updated_bedrock_messages = self._format_messages_for_bedrock(updated_context)
 
             # Get next response from AI
             current_response = await self.bedrock_client.chat_completion(
@@ -564,27 +530,19 @@ class WebSocketChatHandler:
                     f"AI requested {len(current_response['tool_calls'])} more tool calls in round {round_count + 1}"
                 )
             else:
-                logger.debug(
-                    f"AI provided final response after {round_count} tool call rounds"
-                )
+                logger.debug(f"AI provided final response after {round_count} tool call rounds")
 
         if round_count >= max_rounds and current_response.get("tool_calls"):
-            logger.warning(
-                f"Reached maximum tool call rounds ({max_rounds}), stopping recursion"
-            )
+            logger.warning(f"Reached maximum tool call rounds ({max_rounds}), stopping recursion")
             # Add a note to the response about hitting the limit
             content = current_response.get("content", "")
-            content += (
-                f"\n\n[Note: Reached maximum tool call limit of {max_rounds} rounds]"
-            )
+            content += f"\n\n[Note: Reached maximum tool call limit of {max_rounds} rounds]"
             current_response["content"] = content
             current_response["tool_calls"] = []  # Stop further tool calls
 
         return current_response, all_tool_results
 
-    def _format_messages_for_bedrock(
-        self, messages: List[ChatMessage]
-    ) -> List[Dict[str, Any]]:
+    def _format_messages_for_bedrock(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         """Convert chat messages to Bedrock API format"""
 
         bedrock_messages = []
@@ -594,14 +552,12 @@ class WebSocketChatHandler:
 
         # Add system prompt as first message if not present
         if not has_system_message:
-            bedrock_messages.append(
-                {"role": "system", "content": self.config.get_system_prompt()}
-            )
+            bedrock_messages.append({"role": "system", "content": self.config.get_system_prompt()})
 
         # Determine if we're using Claude or OpenAI GPT format
-        is_claude_model = self.config.model_id.startswith(
-            "anthropic.claude"
-        ) or self.config.model_id.startswith("us.anthropic.claude")
+        is_claude_model = self.config.model_id.startswith("anthropic.claude") or self.config.model_id.startswith(
+            "us.anthropic.claude"
+        )
 
         for msg in messages:
             # Only include valid Bedrock message roles and content
@@ -646,18 +602,12 @@ class WebSocketChatHandler:
                 )
 
             if assistant_content:
-                bedrock_messages.append(
-                    {"role": "assistant", "content": assistant_content}
-                )
+                bedrock_messages.append({"role": "assistant", "content": assistant_content})
 
         # Now add the user message with tool results
         tool_result_content = []
         for i, tool_result in enumerate(msg.tool_results):
-            tool_call_id = (
-                msg.tool_calls[i].get("id")
-                if i < len(msg.tool_calls)
-                else f"tool_call_{i}"
-            )
+            tool_call_id = msg.tool_calls[i].get("id") if i < len(msg.tool_calls) else f"tool_call_{i}"
 
             if "error" in tool_result:
                 # Tool error result
@@ -714,27 +664,19 @@ class WebSocketChatHandler:
 
         # Add individual tool result messages
         for i, tool_result in enumerate(msg.tool_results):
-            tool_call_id = (
-                msg.tool_calls[i].get("id")
-                if i < len(msg.tool_calls)
-                else f"tool_call_{i}"
-            )
+            tool_call_id = msg.tool_calls[i].get("id") if i < len(msg.tool_calls) else f"tool_call_{i}"
 
             if "error" in tool_result:
                 content = f"Error: {tool_result['error']}"
             else:
                 content = str(tool_result.get("result", "No result"))
 
-            bedrock_messages.append(
-                {"role": "tool", "tool_call_id": tool_call_id, "content": content}
-            )
+            bedrock_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
 
     async def _handle_ping(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle ping message"""
 
-        await self._send_message(
-            websocket, {"type": "pong", "timestamp": datetime.now().isoformat()}
-        )
+        await self._send_message(websocket, {"type": "pong", "timestamp": datetime.now().isoformat()})
 
     async def _handle_history_request(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle history request"""
@@ -744,9 +686,7 @@ class WebSocketChatHandler:
             await self._send_error(websocket, "Session not found")
             return
 
-        history = await self.session_manager.get_conversation_history(
-            session.session_id
-        )
+        history = await self.session_manager.get_conversation_history(session.session_id)
 
         await self._send_message(
             websocket,
@@ -766,10 +706,7 @@ class WebSocketChatHandler:
             return
 
         # Clear conversation history but keep system message if present
-        if (
-            session.conversation_history
-            and session.conversation_history[0].role == "system"
-        ):
+        if session.conversation_history and session.conversation_history[0].role == "system":
             system_msg = session.conversation_history[0]
             session.conversation_history = [system_msg]
         else:
@@ -827,13 +764,9 @@ class WebSocketChatHandler:
         if "timeout" in error_message.lower():
             return "I'm taking longer than usual to respond. Please try again."
         elif "rate limit" in error_message.lower():
-            return (
-                "I'm receiving too many requests. Please wait a moment and try again."
-            )
+            return "I'm receiving too many requests. Please wait a moment and try again."
         elif "access denied" in error_message.lower():
-            return (
-                "I don't have access to that model or service. Please contact support."
-            )
+            return "I don't have access to that model or service. Please contact support."
         elif "model" in error_message.lower():
             return "I'm having trouble with the AI model. Please try again in a moment."
         else:

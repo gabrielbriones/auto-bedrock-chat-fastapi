@@ -33,7 +33,7 @@ class ChatConfig(BaseSettings):
 
     # Model Configuration
     model_id: str = Field(
-        default="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        default="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         alias="BEDROCK_MODEL_ID",
         description="Bedrock model identifier",
     )
@@ -69,9 +69,7 @@ class ChatConfig(BaseSettings):
     )
 
     # API Tools Configuration
-    tools_desc: Optional[Dict] = Field(
-        default_factory=dict, description="Auto-generated tools from FastAPI routes"
-    )
+    tools_desc: Optional[Dict] = Field(default_factory=dict, description="Auto-generated tools from FastAPI routes")
 
     openapi_spec_file: Optional[str] = Field(
         default=None,
@@ -201,9 +199,7 @@ class ChatConfig(BaseSettings):
         description="AWS region for Bedrock service",
     )
 
-    aws_access_key_id: Optional[str] = Field(
-        default=None, alias="AWS_ACCESS_KEY_ID", description="AWS access key ID"
-    )
+    aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID", description="AWS access key ID")
 
     aws_secret_access_key: Optional[str] = Field(
         default=None, alias="AWS_SECRET_ACCESS_KEY", description="AWS secret access key"
@@ -228,9 +224,7 @@ class ChatConfig(BaseSettings):
         description="Web UI endpoint",
     )
 
-    enable_ui: bool = Field(
-        default=True, alias="BEDROCK_ENABLE_UI", description="Enable built-in chat UI"
-    )
+    enable_ui: bool = Field(default=True, alias="BEDROCK_ENABLE_UI", description="Enable built-in chat UI")
 
     ui_title: str = Field(
         default="AI Assistant",
@@ -248,9 +242,7 @@ class ChatConfig(BaseSettings):
     )
 
     # Security Configuration
-    auth_dependency: Optional[Callable] = Field(
-        default=None, description="Authentication dependency function"
-    )
+    auth_dependency: Optional[Callable] = Field(default=None, description="Authentication dependency function")
 
     rate_limit: Optional[str] = Field(
         default=None,
@@ -265,9 +257,7 @@ class ChatConfig(BaseSettings):
     )
 
     # Logging Configuration
-    log_level: str = Field(
-        default="INFO", alias="BEDROCK_LOG_LEVEL", description="Logging level"
-    )
+    log_level: str = Field(default="INFO", alias="BEDROCK_LOG_LEVEL", description="Logging level")
 
     log_api_calls: bool = Field(
         default=False,
@@ -275,9 +265,7 @@ class ChatConfig(BaseSettings):
         description="Log API calls for debugging",
     )
 
-    log_errors: bool = Field(
-        default=True, alias="BEDROCK_LOG_ERRORS", description="Log errors"
-    )
+    log_errors: bool = Field(default=True, alias="BEDROCK_LOG_ERRORS", description="Log errors")
 
     suppress_third_party_logs: bool = Field(
         default=True,
@@ -380,9 +368,7 @@ class ChatConfig(BaseSettings):
 
         # Simple validation for format like "10/minute", "100/hour"
         if "/" not in v:
-            raise ValueError(
-                "Rate limit must be in format 'number/period' (e.g., '10/minute')"
-            )
+            raise ValueError("Rate limit must be in format 'number/period' (e.g., '10/minute')")
 
         return v
 
@@ -392,9 +378,7 @@ class ChatConfig(BaseSettings):
         """Validate conversation strategy"""
         valid_strategies = {"sliding_window", "truncate", "smart_prune"}
         if v not in valid_strategies:
-            raise ValueError(
-                f"conversation_strategy must be one of: {', '.join(valid_strategies)}"
-            )
+            raise ValueError(f"conversation_strategy must be one of: {', '.join(valid_strategies)}")
         return v
 
     @field_validator("chunking_strategy")
@@ -403,9 +387,7 @@ class ChatConfig(BaseSettings):
         """Validate chunking strategy"""
         valid_strategies = {"simple", "preserve_context", "semantic"}
         if v not in valid_strategies:
-            raise ValueError(
-                f"chunking_strategy must be one of: {', '.join(valid_strategies)}"
-            )
+            raise ValueError(f"chunking_strategy must be one of: {', '.join(valid_strategies)}")
         return v
 
     @field_validator("chunk_size", "max_message_size")
@@ -421,9 +403,7 @@ class ChatConfig(BaseSettings):
         if self.system_prompt:
             return self.system_prompt
 
-        tools_count = (
-            len(self.tools_desc.get("functions", [])) if self.tools_desc else 0
-        )
+        tools_count = len(self.tools_desc.get("functions", [])) if self.tools_desc else 0
 
         if tools_count > 0:
             return f"""You are a helpful AI assistant with access to {tools_count} tools and functions.
@@ -496,9 +476,7 @@ def load_config(
             if "temperature" in overrides:
                 temp_val = overrides["temperature"]
                 if not 0.0 <= temp_val <= 1.0:
-                    raise ConfigurationError(
-                        f"Temperature must be between 0.0 and 1.0, got {temp_val}"
-                    )
+                    raise ConfigurationError(f"Temperature must be between 0.0 and 1.0, got {temp_val}")
 
             if "model_id" in overrides:
                 model_val = overrides["model_id"]
@@ -526,32 +504,24 @@ def load_config(
                 strategy_val = overrides["conversation_strategy"]
                 valid_strategies = {"sliding_window", "truncate", "smart_prune"}
                 if strategy_val not in valid_strategies:
-                    raise ConfigurationError(
-                        f"conversation_strategy must be one of: {', '.join(valid_strategies)}"
-                    )
+                    raise ConfigurationError(f"conversation_strategy must be one of: {', '.join(valid_strategies)}")
 
             if "max_conversation_messages" in overrides:
                 max_msg_val = overrides["max_conversation_messages"]
                 if not isinstance(max_msg_val, int) or max_msg_val <= 0:
-                    raise ConfigurationError(
-                        "max_conversation_messages must be a positive integer"
-                    )
+                    raise ConfigurationError("max_conversation_messages must be a positive integer")
 
             # Validate chunking fields
             if "chunking_strategy" in overrides:
                 strategy_val = overrides["chunking_strategy"]
                 valid_strategies = {"simple", "preserve_context", "semantic"}
                 if strategy_val not in valid_strategies:
-                    raise ConfigurationError(
-                        f"chunking_strategy must be one of: {', '.join(valid_strategies)}"
-                    )
+                    raise ConfigurationError(f"chunking_strategy must be one of: {', '.join(valid_strategies)}")
 
             if "max_message_size" in overrides:
                 size_val = overrides["max_message_size"]
                 if not isinstance(size_val, int) or size_val <= 0:
-                    raise ConfigurationError(
-                        "max_message_size must be a positive integer"
-                    )
+                    raise ConfigurationError("max_message_size must be a positive integer")
 
             if "chunk_size" in overrides:
                 chunk_val = overrides["chunk_size"]
@@ -561,16 +531,12 @@ def load_config(
             if "chunk_overlap" in overrides:
                 overlap_val = overrides["chunk_overlap"]
                 if not isinstance(overlap_val, int) or overlap_val < 0:
-                    raise ConfigurationError(
-                        "chunk_overlap must be a non-negative integer"
-                    )
+                    raise ConfigurationError("chunk_overlap must be a non-negative integer")
 
             # Validate chunk_size vs max_message_size relationship
             if "chunk_size" in overrides and "max_message_size" in overrides:
                 if overrides["chunk_size"] >= overrides["max_message_size"]:
-                    raise ConfigurationError(
-                        "chunk_size must be smaller than max_message_size"
-                    )
+                    raise ConfigurationError("chunk_size must be smaller than max_message_size")
 
             # Create base config from .env
             config = ChatConfig()
@@ -617,16 +583,10 @@ def validate_config(config: ChatConfig) -> None:
 
     # Warn about common misconfigurations
     if config.temperature > 0.9:
-        print(
-            f"Warning: High temperature ({config.temperature}) may cause unpredictable responses"
-        )
+        print(f"Warning: High temperature ({config.temperature}) may cause unpredictable responses")
 
     if config.max_tool_calls > 20:
-        print(
-            f"Warning: High max_tool_calls ({config.max_tool_calls}) may cause long response times"
-        )
+        print(f"Warning: High max_tool_calls ({config.max_tool_calls}) may cause long response times")
 
     if config.session_timeout < 300:  # 5 minutes
-        print(
-            f"Warning: Low session timeout ({config.session_timeout}s) may disconnect users frequently"
-        )
+        print(f"Warning: Low session timeout ({config.session_timeout}s) may disconnect users frequently")

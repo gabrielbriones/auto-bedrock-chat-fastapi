@@ -40,9 +40,7 @@ class ChatMessage:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatMessage":
         """Create from dictionary"""
-        timestamp = datetime.fromisoformat(
-            data.get("timestamp", datetime.now().isoformat())
-        )
+        timestamp = datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat()))
         return cls(
             role=data["role"],
             content=data["content"],
@@ -82,14 +80,10 @@ class ChatSession:
             # messages
             if self.conversation_history[0].role == "system":
                 system_msg = self.conversation_history[0]
-                recent_msgs = self.conversation_history[
-                    -(self.max_history_length - 1) :
-                ]
+                recent_msgs = self.conversation_history[-(self.max_history_length - 1) :]
                 self.conversation_history = [system_msg] + recent_msgs
             else:
-                self.conversation_history = self.conversation_history[
-                    -self.max_history_length :
-                ]
+                self.conversation_history = self.conversation_history[-self.max_history_length :]
 
     def get_context_messages(self) -> List[ChatMessage]:
         """Get recent messages for context"""
@@ -128,9 +122,7 @@ class ChatSession:
             "metadata": self.metadata,
             "message_count": self.get_message_count(),
             "duration_seconds": self.get_duration().total_seconds(),
-            "conversation_history": [
-                msg.to_dict() for msg in self.conversation_history
-            ],
+            "conversation_history": [msg.to_dict() for msg in self.conversation_history],
         }
 
 
@@ -164,9 +156,7 @@ class ChatSessionManager:
         """Start the cleanup task for expired sessions"""
         try:
             if self._cleanup_task is None or self._cleanup_task.done():
-                self._cleanup_task = asyncio.create_task(
-                    self._cleanup_expired_sessions()
-                )
+                self._cleanup_task = asyncio.create_task(self._cleanup_expired_sessions())
         except RuntimeError:
             # No event loop running
             pass
@@ -187,9 +177,7 @@ class ChatSessionManager:
             await self._cleanup_oldest_sessions(10)
 
             if len(self._sessions) >= self.config.max_sessions:
-                raise SessionError(
-                    f"Maximum session limit reached: {self.config.max_sessions}"
-                )
+                raise SessionError(f"Maximum session limit reached: {self.config.max_sessions}")
 
         # Generate unique session ID
         session_id = str(uuid.uuid4())
@@ -320,20 +308,13 @@ class ChatSessionManager:
         active_sessions = len(self._sessions)
 
         # Calculate session durations
-        durations = [
-            session.get_duration().total_seconds()
-            for session in self._sessions.values()
-        ]
+        durations = [session.get_duration().total_seconds() for session in self._sessions.values()]
         avg_duration = sum(durations) / len(durations) if durations else 0
 
         # Calculate message counts
-        message_counts = [
-            session.get_message_count() for session in self._sessions.values()
-        ]
+        message_counts = [session.get_message_count() for session in self._sessions.values()]
         total_active_messages = sum(message_counts)
-        avg_messages_per_session = (
-            total_active_messages / active_sessions if active_sessions else 0
-        )
+        avg_messages_per_session = total_active_messages / active_sessions if active_sessions else 0
 
         return {
             "active_sessions": active_sessions,
@@ -400,9 +381,7 @@ class ChatSessionManager:
             try:
                 await session.websocket.close()
             except Exception as e:
-                logger.error(
-                    f"Error closing WebSocket for session {session.session_id}: {str(e)}"
-                )
+                logger.error(f"Error closing WebSocket for session {session.session_id}: {str(e)}")
 
         # Clear all sessions
         self._sessions.clear()
@@ -413,9 +392,5 @@ class ChatSessionManager:
 
     def __del__(self):
         """Cleanup on deletion"""
-        if (
-            hasattr(self, "_cleanup_task")
-            and self._cleanup_task
-            and not self._cleanup_task.done()
-        ):
+        if hasattr(self, "_cleanup_task") and self._cleanup_task and not self._cleanup_task.done():
             self._cleanup_task.cancel()
