@@ -86,42 +86,43 @@ git commit --no-verify
 
 ### Python
 
-| Hook | Purpose | Config |
-|------|---------|--------|
-| **Black** | Code formatter | Line length: 120 |
-| **isort** | Import sorting | Black profile |
-| **Flake8** | Style guide | Max line: 120 |
+| Hook       | Purpose        | Config           |
+| ---------- | -------------- | ---------------- |
+| **Black**  | Code formatter | Line length: 120 |
+| **isort**  | Import sorting | Black profile    |
+| **Flake8** | Style guide    | Max line: 120    |
 
 ### Markup & Config
 
-| Hook | Purpose |
-|------|---------|
-| **Markdownlint** | Markdown formatting |
-| **Prettier** | Format Markdown, JSON, YAML |
-| **yamllint** | YAML validation |
-| **check-json** | JSON validation |
+| Hook             | Purpose                     |
+| ---------------- | --------------------------- |
+| **Markdownlint** | Markdown formatting         |
+| **Prettier**     | Format Markdown, JSON, YAML |
+| **yamllint**     | YAML validation             |
+| **check-json**   | JSON validation             |
 
 ### Infrastructure
 
-| Hook | Purpose |
-|------|---------|
-| **Hadolint** | Docker linting |
+| Hook           | Purpose             |
+| -------------- | ------------------- |
+| **Hadolint**   | Docker linting      |
 | **Shellcheck** | Bash script linting |
 
 ### Utilities
 
-| Hook | Purpose |
-|------|---------|
-| **end-of-file-fixer** | Ensure newline at EOF |
-| **trailing-whitespace** | Remove trailing spaces |
-| **check-merge-conflict** | Detect merge conflicts |
-| **detect-private-key** | Prevent committing secrets |
+| Hook                     | Purpose                    |
+| ------------------------ | -------------------------- |
+| **end-of-file-fixer**    | Ensure newline at EOF      |
+| **trailing-whitespace**  | Remove trailing spaces     |
+| **check-merge-conflict** | Detect merge conflicts     |
+| **detect-private-key**   | Prevent committing secrets |
 
 ## Auto-Fix Behavior
 
 Most hooks can auto-fix issues:
 
 ### Auto-Fixed by Pre-Commit
+
 - Black - Reformats code
 - isort - Reorders imports
 - Prettier - Formats Markdown/JSON/YAML
@@ -129,6 +130,7 @@ Most hooks can auto-fix issues:
 - End of file - Fixed
 
 ### Requires Manual Fix
+
 - Flake8 - Reports style issues
 - Shellcheck - Reports bash issues
 - Hadolint - Reports Docker issues
@@ -232,8 +234,8 @@ Edit `.pre-commit-config.yaml` to:
 Example - disable Hadolint:
 
 ```yaml
-  # - repo: https://github.com/hadolint/hadolint
-  #   ...disabled
+# - repo: https://github.com/hadolint/hadolint
+#   ...disabled
 ```
 
 ## Skip Hooks (Temporary)

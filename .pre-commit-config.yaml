@@ -1,3 +1,4 @@
+---
 repos:
   # Super Linter - Comprehensive linting (Docker-based, optional - use GitHub Actions instead for CI)
   # Note: Commented out by default as it requires Docker and can be slow
@@ -10,7 +11,9 @@ repos:
   #       language: docker
   #       pass_filenames: false
   #       always_run: true
-  #       entry: bash -c 'docker run --rm -v "$(pwd)":/tmp/lint -e RUN_LOCAL=true -e USE_FIND_ALGORITHM=true -e VALIDATE_ALL_CODEBASE=true -e LOG_LEVEL=INFO github/super-linter:latest'
+  #       entry: bash -c 'docker run --rm -v "$(pwd)":/tmp/lint -e RUN_LOCAL=true \
+  #         -e USE_FIND_ALGORITHM=true -e VALIDATE_ALL_CODEBASE=true \
+  #         -e LOG_LEVEL=INFO github/super-linter:latest'
 
   # Black - Python code formatter
   - repo: https://github.com/psf/black
@@ -56,7 +59,7 @@ repos:
     rev: v1.33.0
     hooks:
       - id: yamllint
-        args: [--strict]
+        args: [--strict, -c, .yamllint]
 
   # JSON validation
   - repo: https://github.com/pre-commit/pre-commit-hooks

@@ -13,7 +13,7 @@ def mock_aws_credentials(monkeypatch):
     monkeypatch.delenv("AWS_PROFILE", raising=False)
     monkeypatch.delenv("AWS_CONFIG_FILE", raising=False)
     monkeypatch.delenv("AWS_SHARED_CREDENTIALS_FILE", raising=False)
-    
+
     # Set test credentials
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")

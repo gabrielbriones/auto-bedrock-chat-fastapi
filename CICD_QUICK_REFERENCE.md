@@ -42,6 +42,7 @@ PUSH TO main/dev                    PULL REQUEST
 ## Quick Commands
 
 ### View Workflow Status
+
 ```bash
 # Open Actions tab in GitHub
 https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/actions
@@ -53,6 +54,7 @@ gh run view <run-id>
 ```
 
 ### Run Workflow Manually
+
 ```bash
 # Using GitHub CLI
 gh workflow run tests.yml -r dev
@@ -62,6 +64,7 @@ gh workflow run code-quality.yml -r dev
 ### Required Setup
 
 1. **Secrets** (GitHub repo settings → Secrets and variables → Actions):
+
    - `PYPI_API_TOKEN` - PyPI API token (optional, for publishing)
    - `SLACK_WEBHOOK_URL` - Slack webhook (optional)
    - ✅ Docker: No secrets needed! Uses GitHub Token
@@ -73,33 +76,39 @@ gh workflow run code-quality.yml -r dev
 ## Workflow Triggers
 
 ### tests.yml
+
 - ✅ Push to main/dev/develop
 - ✅ Pull request to main/dev/develop
 - ✅ Manual trigger
 
 ### code-quality.yml
+
 - ✅ Push to main/dev/develop
 - ✅ Pull request to main/dev/develop
 - ✅ Manual trigger
 
 ### build-publish.yml
+
 - ✅ Push to main (builds Docker)
-- ✅ Tags matching v* (publishes to PyPI + releases)
+- ✅ Tags matching v\* (publishes to PyPI + releases)
 - ✅ Manual trigger
 
 ### docs.yml
+
 - ✅ Push to main/dev
 - ✅ Pull requests to main/dev
 - ✅ Manual trigger
 
 ### deploy.yml
+
 - ✅ Push to main (production)
-- ✅ Tags matching v* (production)
+- ✅ Tags matching v\* (production)
 - ✅ Manual trigger
 
 ## Typical Workflow
 
 ### Development
+
 ```bash
 # 1. Create feature branch
 git checkout -b feature/my-feature
@@ -115,6 +124,7 @@ git push origin feature/my-feature
 ```
 
 ### Release
+
 ```bash
 # 1. Update version in pyproject.toml
 # 2. Commit: git commit -m "chore: bump version to x.y.z"

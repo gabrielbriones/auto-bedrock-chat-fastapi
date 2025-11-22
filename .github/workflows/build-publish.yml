@@ -1,3 +1,4 @@
+---
 name: Build & Publish
 
 on:
@@ -46,7 +47,8 @@ jobs:
       - name: Verify package
         run: |
           poetry run pip install dist/*.whl
-          python -c "import auto_bedrock_chat_fastapi; print(f'Package version: {auto_bedrock_chat_fastapi.__version__}')"
+          python -c "import auto_bedrock_chat_fastapi; \
+            print(f'Package version: {auto_bedrock_chat_fastapi.__version__}')"
 
   docker:
     name: Build & Push Docker Image

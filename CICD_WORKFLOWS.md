@@ -11,11 +11,13 @@ This project uses GitHub Actions to automate testing, code quality checks, build
 Runs automated tests across multiple Python versions.
 
 **Triggers:**
+
 - Push to `main`, `dev`, `develop` branches
 - Pull requests to `main`, `dev`, `develop` branches
 - Manual trigger (`workflow_dispatch`)
 
 **What it does:**
+
 - ✅ Tests on Python 3.9, 3.10, 3.11, 3.12
 - ✅ Runs pytest with coverage reporting
 - ✅ Uploads coverage to Codecov
@@ -23,6 +25,7 @@ Runs automated tests across multiple Python versions.
 - ✅ Uploads test artifacts
 
 **Configuration:**
+
 ```yaml
 Strategy matrix:
   - Python 3.9, 3.10, 3.11, 3.12
@@ -34,6 +37,7 @@ Coverage tools:
 ```
 
 **Artifacts:**
+
 - `coverage.xml` - Coverage report
 - `coverage.svg` - Coverage badge
 
@@ -42,11 +46,13 @@ Coverage tools:
 Enforces code standards and security checks.
 
 **Triggers:**
+
 - Push to `main`, `dev`, `develop` branches
 - Pull requests to `main`, `dev`, `develop` branches
 - Manual trigger
 
 **What it does:**
+
 - ✅ Black formatter check
 - ✅ isort import sorting check
 - ✅ Flake8 style guide enforcement
@@ -58,19 +64,25 @@ Enforces code standards and security checks.
 **Jobs:**
 
 #### Lint
+
 Checks Python code formatting:
+
 - `black --check` - Code format
 - `isort --check-only` - Import sorting
 - `flake8` - Style guide
 - `mypy` - Type hints (optional)
 
 #### Security
+
 Analyzes code for security issues:
+
 - **Bandit** - Security issues in code
 - **Safety** - Vulnerable dependencies
 
 #### Super Linter
+
 Comprehensive linting:
+
 - Python (Black, Flake8, isort)
 - Markdown, HTML, CSS, JSON, YAML
 - Dockerfile (Hadolint)
@@ -81,11 +93,13 @@ Comprehensive linting:
 Builds, packages, and publishes releases.
 
 **Triggers:**
+
 - Push to `main` branch
-- Push to tags (v*)
+- Push to tags (v\*)
 - Manual trigger
 
 **What it does:**
+
 - ✅ Builds Python package with Poetry
 - ✅ Builds and pushes Docker image
 - ✅ Publishes to PyPI (on version tags)
@@ -94,13 +108,17 @@ Builds, packages, and publishes releases.
 **Jobs:**
 
 #### Build
+
 Builds Python distribution package:
+
 - Uses Poetry to build wheel and source dist
 - Verifies package can be installed
 - Uploads to artifacts
 
 #### Docker
+
 Builds and publishes Docker image to GHCR:
+
 - Only runs on `main` branch or tags
 - Uses GitHub Token (no extra secrets needed!)
 - Uses GitHub Actions cache for speed
@@ -108,12 +126,16 @@ Builds and publishes Docker image to GHCR:
 - Registry: `ghcr.io/gabrielbriones/auto-bedrock-chat-fastapi`
 
 #### Publish PyPI
+
 Publishes to PyPI (only on version tags):
+
 - Requires `PYPI_API_TOKEN` secret
 - Automatically creates release notes
 
 #### Publish Release
+
 Creates GitHub Release:
+
 - Attaches built artifacts
 - Generates automatic release notes
 - Triggered on version tags
@@ -123,11 +145,13 @@ Creates GitHub Release:
 Builds and deploys documentation.
 
 **Triggers:**
+
 - Push to `main`, `dev` branches
 - Pull requests to `main`, `dev` branches
 - Manual trigger
 
 **What it does:**
+
 - ✅ Builds Sphinx documentation
 - ✅ Validates README and Markdown
 - ✅ Deploys to GitHub Pages (main only)
@@ -135,14 +159,18 @@ Builds and deploys documentation.
 **Jobs:**
 
 #### Docs
+
 Builds documentation:
+
 - Uses Sphinx with RTD theme
 - Generates HTML documentation
 - Uploads artifacts
 - Deploys to GitHub Pages on main
 
 #### README Validation
+
 Validates Markdown files:
+
 - README.md
 - GITHUB_ACTIONS.md
 - PRE_COMMIT_SETUP.md
@@ -152,12 +180,14 @@ Validates Markdown files:
 Deploys to staging and production environments.
 
 **Triggers:**
+
 - Push to `main` branch (production)
 - Push to `dev`/`develop` branches (staging)
 - Manual trigger
-- Version tags (v*)
+- Version tags (v\*)
 
 **What it does:**
+
 - ✅ Builds Docker image
 - ✅ Deploys to staging (on dev branches)
 - ✅ Deploys to production (on main with tags)
@@ -167,20 +197,26 @@ Deploys to staging and production environments.
 **Jobs:**
 
 #### Deploy Staging
+
 Deploys to staging environment:
+
 - Environment: `staging`
 - Triggered on `dev`/`develop` pushes
 - Requires staging secrets
 
 #### Deploy Production
+
 Deploys to production environment:
+
 - Environment: `production`
 - Triggered on `main` with version tags
 - Requires production secrets
 - Requires passing tests and code quality
 
 #### Notify
+
 Sends Slack notifications:
+
 - Triggered after deployment
 - Requires `SLACK_WEBHOOK_URL` secret
 
@@ -197,14 +233,17 @@ Original comprehensive linting workflow (reference).
 Configure these in GitHub repository settings:
 
 #### For Docker Publishing
+
 - No secrets needed! Uses GitHub Token automatically
 - Image stored in GitHub Container Registry (GHCR)
 - Access: `ghcr.io/gabrielbriones/auto-bedrock-chat-fastapi`
 
 #### For PyPI Publishing
+
 - `PYPI_API_TOKEN` - PyPI API token
 
 #### For Deployment
+
 - `STAGING_HOST` - Staging server hostname
 - `STAGING_USER` - Staging SSH user
 - `STAGING_KEY` - Staging SSH private key
@@ -213,6 +252,7 @@ Configure these in GitHub repository settings:
 - `PROD_KEY` - Production SSH private key
 
 #### For Notifications
+
 - `SLACK_WEBHOOK_URL` - Slack incoming webhook
 
 ### Required Variables
@@ -228,11 +268,13 @@ SLACK_WEBHOOK_URL: # Optional, for Slack notifications
 ### Check Status on GitHub
 
 1. **On Pull Request:**
+
    - Checks appear as status checks
    - Must pass before merge (if required)
    - Click details to see logs
 
 2. **On Push:**
+
    - View in Actions tab
    - Check workflow runs list
    - Click run to see details
@@ -285,11 +327,13 @@ SLACK_WEBHOOK_URL: # Optional, for Slack notifications
 ### Reduce Build Time
 
 1. **Use caching:**
+
    - Poetry dependency cache
    - Docker layer caching
    - GitHub Actions cache
 
 2. **Matrix strategies:**
+
    - Only test on essential Python versions
    - Run jobs in parallel
 
@@ -312,7 +356,7 @@ jobs:
   test:
     strategy:
       matrix:
-        python-version: ["3.11"]  # Single version
+        python-version: ["3.11"] # Single version
   # Skip Docker/PyPI publishing
 ```
 
@@ -336,8 +380,8 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 0 * * 0'  # Weekly
-  workflow_dispatch:     # Manual trigger
+    - cron: "0 0 * * 0" # Weekly
+  workflow_dispatch: # Manual trigger
 ```
 
 ### Conditional Execution
