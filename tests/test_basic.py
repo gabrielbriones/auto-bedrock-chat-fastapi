@@ -4,10 +4,12 @@ import json
 from unittest.mock import Mock, patch
 
 import pytest
-from auto_bedrock_chat_fastapi import BedrockChatPlugin, add_bedrock_chat
-from auto_bedrock_chat_fastapi.config import load_config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from auto_bedrock_chat_fastapi import BedrockChatPlugin, add_bedrock_chat
+from auto_bedrock_chat_fastapi.config import load_config
+from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
 
 
 class TestConfig:
@@ -57,7 +59,7 @@ class TestPlugin:
 
     @patch("auto_bedrock_chat_fastapi.plugin.BedrockClient")
     @patch("auto_bedrock_chat_fastapi.plugin.ChatSessionManager")
-    def test_plugin_initialization(self, mock_session_manager, mock_bedrock_client):
+    def test_plugin_initialization(self, mock_session_manager, mock_bedrock_client, mock_aws_credentials):
         """Test plugin initialization"""
         # Mock the dependencies
         mock_bedrock_client.return_value = Mock()
@@ -69,7 +71,7 @@ class TestPlugin:
         assert plugin.config.model_id == "test-model"
         assert plugin.config.enable_ui is False
 
-    def test_plugin_routes_added(self):
+    def test_plugin_routes_added(self, mock_aws_credentials):
         """Test that plugin routes are added to app"""
         with patch("auto_bedrock_chat_fastapi.plugin.BedrockClient"), patch(
             "auto_bedrock_chat_fastapi.plugin.ChatSessionManager"
@@ -190,9 +192,7 @@ class TestBedrockClient:
             "content": [{"text": "Hello!"}],
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
-        mock_client.invoke_model.return_value["body"].read.return_value = json.dumps(
-            mock_response_body
-        ).encode()
+        mock_client.invoke_model.return_value["body"].read.return_value = json.dumps(mock_response_body).encode()
 
         config = load_config()
         client = BedrockClient(config)
@@ -210,8 +210,6 @@ class TestSessionManager:
 
     async def test_session_creation(self):
         """Test session creation and management"""
-        from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
-
         config = load_config()
         manager = ChatSessionManager(config)
 
@@ -225,8 +223,6 @@ class TestSessionManager:
 
     async def test_session_cleanup(self):
         """Test session cleanup"""
-        from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
-
         config = load_config()
         manager = ChatSessionManager(config)
 
@@ -267,9 +263,7 @@ class TestIntegration:
         mock_session_instance.client.return_value = mock_client
 
         # Add chat capabilities
-        plugin = add_bedrock_chat(
-            self.app, enable_ui=False, allowed_paths=["/test-data"]
-        )
+        plugin = add_bedrock_chat(self.app, enable_ui=False, allowed_paths=["/test-data"])
 
         # Create test client
         client = TestClient(self.app)

@@ -53,9 +53,7 @@ def create_sample_express_openapi_spec():
             "version": "1.0.0",
             "description": "Sample OpenAPI spec - start Express server for full version",
         },
-        "servers": [
-            {"url": "http://localhost:3000", "description": "Development server"}
-        ],
+        "servers": [{"url": "http://localhost:3000", "description": "Development server"}],
         "paths": {
             "/api/v1/users": {
                 "get": {
@@ -232,9 +230,7 @@ async def demonstrate_framework_agnostic_usage():
     print("\n4. Testing tool validation...")
     try:
         # Valid tool call
-        valid_call = generator.validate_tool_call(
-            "get_api_v1_users", {"limit": 10, "offset": 0}
-        )
+        valid_call = generator.validate_tool_call("get_api_v1_users", {"limit": 10, "offset": 0})
         print(f"✓ Valid tool call validation: {valid_call}")
 
         # Invalid tool call
@@ -275,9 +271,7 @@ async def demonstrate_framework_agnostic_usage():
     print("\n6. Configuration Options:")
     print("   🔧 Environment variables (.env file):")
     print("   BEDROCK_OPENAPI_SPEC_FILE=./api_spec.json")
-    print(
-        "   BEDROCK_API_BASE_URL=http://localhost:3000  # Auto-detected from spec if not set"
-    )
+    print("   BEDROCK_API_BASE_URL=http://localhost:3000  # Auto-detected from spec if not set")
     print("   BEDROCK_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders")
     print("   BEDROCK_EXCLUDED_PATHS=/internal,/admin")
     print("   BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0")

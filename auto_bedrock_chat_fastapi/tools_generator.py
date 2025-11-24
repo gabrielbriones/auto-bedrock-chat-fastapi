@@ -45,8 +45,7 @@ class ToolsGenerator:
         # Validate initialization parameters
         if not app and not openapi_spec and not self.config.openapi_spec_file:
             raise ToolsGenerationError(
-                "Either FastAPI app, openapi_spec parameter, or "
-                "config.openapi_spec_file must be provided"
+                "Either FastAPI app, openapi_spec parameter, or " "config.openapi_spec_file must be provided"
             )
 
     def generate_tools_desc(self) -> Dict[str, Any]:
@@ -87,9 +86,7 @@ class ToolsGenerator:
                                 "function_desc": function_desc,
                             }
 
-            logger.info(
-                f"Generated {len(tools_desc['functions'])} tools from FastAPI routes"
-            )
+            logger.info(f"Generated {len(tools_desc['functions'])} tools from FastAPI routes")
 
             return tools_desc
 
@@ -103,13 +100,9 @@ class ToolsGenerator:
         if self._openapi_schema is None:
             # Try different sources in order of priority
             if self._openapi_spec_source:
-                self._openapi_schema = self._load_openapi_spec(
-                    self._openapi_spec_source
-                )
+                self._openapi_schema = self._load_openapi_spec(self._openapi_spec_source)
             elif self.config.openapi_spec_file:
-                self._openapi_schema = self._load_openapi_spec(
-                    self.config.openapi_spec_file
-                )
+                self._openapi_schema = self._load_openapi_spec(self.config.openapi_spec_file)
             elif self.app:
                 self._openapi_schema = get_openapi(
                     title=self.app.title or "API",
@@ -144,28 +137,22 @@ class ToolsGenerator:
                     try:
                         return json.load(f)
                     except json.JSONDecodeError as e:
-                        raise ToolsGenerationError(
-                            f"Failed to parse OpenAPI spec file {spec_path} as JSON: {e}"
-                        )
+                        raise ToolsGenerationError(f"Failed to parse OpenAPI spec file {spec_path} as JSON: {e}")
                 else:
                     # Assume YAML format
                     try:
                         import yaml
+
                         try:
                             return yaml.safe_load(f)
                         except yaml.YAMLError as e:
-                            raise ToolsGenerationError(
-                                f"Failed to parse OpenAPI spec file {spec_path} as YAML: {e}"
-                            )
+                            raise ToolsGenerationError(f"Failed to parse OpenAPI spec file {spec_path} as YAML: {e}")
                     except ImportError:
                         raise ToolsGenerationError(
-                            "YAML support requires 'pyyaml' package. "
-                            "Install with: pip install pyyaml"
+                            "YAML support requires 'pyyaml' package. " "Install with: pip install pyyaml"
                         )
         except OSError as e:
-            raise ToolsGenerationError(
-                f"Failed to open OpenAPI spec file {spec_path}: {e}"
-            )
+            raise ToolsGenerationError(f"Failed to open OpenAPI spec file {spec_path}: {e}")
 
     def get_api_base_url(self) -> Optional[str]:
         """Extract API base URL from OpenAPI spec or configuration"""
@@ -194,9 +181,7 @@ class ToolsGenerator:
         # Priority 4: Generic default
         return "http://localhost:8000"
 
-    def _create_function_description(
-        self, path: str, method: str, operation: Dict
-    ) -> Optional[Dict]:
+    def _create_function_description(self, path: str, method: str, operation: Dict) -> Optional[Dict]:
         """Create function description for Bedrock tool calling"""
 
         try:
@@ -228,9 +213,7 @@ class ToolsGenerator:
             return function_desc
 
         except Exception as e:
-            logger.warning(
-                f"Failed to create function description for {method} {path}: {str(e)}"
-            )
+            logger.warning(f"Failed to create function description for {method} {path}: {str(e)}")
             return None
 
     def _clean_function_name(self, name: str) -> str:
@@ -292,9 +275,7 @@ class ToolsGenerator:
                 function_desc=function_desc,
                 param_name=param_name,
                 param_schema=param_schema,
-                param_description=param.get(
-                    "description", f"The {param_name} parameter"
-                ),
+                param_description=param.get("description", f"The {param_name} parameter"),
                 required=param_required,
                 param_in=param_in,
             )
@@ -311,27 +292,19 @@ class ToolsGenerator:
         # Handle JSON content
         if "application/json" in content:
             json_schema = content["application/json"].get("schema", {})
-            self._add_schema_to_function(
-                function_desc, json_schema, request_body.get("required", False)
-            )
+            self._add_schema_to_function(function_desc, json_schema, request_body.get("required", False))
 
         # Handle form data
         elif "application/x-www-form-urlencoded" in content:
             form_schema = content["application/x-www-form-urlencoded"].get("schema", {})
-            self._add_schema_to_function(
-                function_desc, form_schema, request_body.get("required", False)
-            )
+            self._add_schema_to_function(function_desc, form_schema, request_body.get("required", False))
 
         # Handle multipart form data
         elif "multipart/form-data" in content:
             multipart_schema = content["multipart/form-data"].get("schema", {})
-            self._add_schema_to_function(
-                function_desc, multipart_schema, request_body.get("required", False)
-            )
+            self._add_schema_to_function(function_desc, multipart_schema, request_body.get("required", False))
 
-    def _add_schema_to_function(
-        self, function_desc: Dict, schema: Dict, required: bool = False
-    ):
+    def _add_schema_to_function(self, function_desc: Dict, schema: Dict, required: bool = False):
         """Add schema properties to function parameters"""
 
         if schema.get("type") == "object":
@@ -343,9 +316,7 @@ class ToolsGenerator:
                     function_desc=function_desc,
                     param_name=prop_name,
                     param_schema=prop_schema,
-                    param_description=prop_schema.get(
-                        "description", f"The {prop_name} field"
-                    ),
+                    param_description=prop_schema.get("description", f"The {prop_name} field"),
                     required=prop_name in schema_required,
                     param_in="body",
                 )
@@ -501,9 +472,7 @@ class ToolsGenerator:
             required_params = parameters_schema.get("required", [])
             for required_param in required_params:
                 if required_param not in arguments:
-                    logger.warning(
-                        f"Missing required parameter '{required_param}' for tool '{function_name}'"
-                    )
+                    logger.warning(f"Missing required parameter '{required_param}' for tool '{function_name}'")
                     return False
 
             # Validate parameter types (basic validation)
@@ -511,12 +480,8 @@ class ToolsGenerator:
             for param_name, param_value in arguments.items():
                 if param_name in properties:
                     expected_type = properties[param_name].get("type")
-                    if expected_type and not self._validate_parameter_type(
-                        param_value, expected_type
-                    ):
-                        logger.warning(
-                            f"Invalid type for parameter '{param_name}' in tool '{function_name}'"
-                        )
+                    if expected_type and not self._validate_parameter_type(param_value, expected_type):
+                        logger.warning(f"Invalid type for parameter '{param_name}' in tool '{function_name}'")
                         return False
 
             return True
@@ -562,7 +527,5 @@ class ToolsGenerator:
             "methods_distribution": methods_count,
             "excluded_paths": self.config.excluded_paths,
             "allowed_paths": self.config.allowed_paths,
-            "has_restrictions": bool(
-                self.config.allowed_paths or self.config.excluded_paths
-            ),
+            "has_restrictions": bool(self.config.allowed_paths or self.config.excluded_paths),
         }

@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
-from auto_bedrock_chat_fastapi import add_bedrock_chat
 from fastapi import FastAPI
+
+from auto_bedrock_chat_fastapi import add_bedrock_chat
 
 # Create FastAPI app (existing app approach)
 app = FastAPI(

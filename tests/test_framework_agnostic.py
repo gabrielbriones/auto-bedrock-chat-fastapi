@@ -5,12 +5,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from auto_bedrock_chat_fastapi import (
-    ChatConfig,
-    ToolsGenerator,
-    create_tools_generator_from_spec,
-    load_config,
-)
+
+from auto_bedrock_chat_fastapi import ChatConfig, ToolsGenerator, create_tools_generator_from_spec, load_config
 from auto_bedrock_chat_fastapi.exceptions import ToolsGenerationError
 
 
@@ -220,9 +216,7 @@ paths:
             spec_file = f.name
 
         try:
-            with pytest.raises(
-                ToolsGenerationError, match="Failed to parse OpenAPI spec"
-            ):
+            with pytest.raises(ToolsGenerationError, match="Failed to parse OpenAPI spec"):
                 generator = ToolsGenerator(openapi_spec=spec_file)
                 generator.generate_tools_desc()
         finally:
@@ -230,9 +224,7 @@ paths:
 
     def test_error_handling_no_sources(self):
         """Test error handling when no OpenAPI sources are provided"""
-        with pytest.raises(
-            ToolsGenerationError, match="Either FastAPI app, openapi_spec parameter"
-        ):
+        with pytest.raises(ToolsGenerationError, match="Either FastAPI app, openapi_spec parameter"):
             ToolsGenerator()
 
         # Test error when trying to generate tools without proper setup
@@ -273,9 +265,7 @@ paths:
         assert not generator.validate_tool_call("post_api_users", {})
 
         # Valid tool call with required parameters
-        assert generator.validate_tool_call(
-            "post_api_users", {"name": "John", "email": "john@example.com"}
-        )
+        assert generator.validate_tool_call("post_api_users", {"name": "John", "email": "john@example.com"})
 
     def test_parameter_processing_with_framework_agnostic(self):
         """Test parameter processing works correctly with framework-agnostic mode"""
@@ -283,9 +273,7 @@ paths:
         tools_desc = generator.generate_tools_desc()
 
         # Find the GET users function
-        get_users_func = next(
-            f for f in tools_desc["functions"] if f["name"] == "get_api_users"
-        )
+        get_users_func = next(f for f in tools_desc["functions"] if f["name"] == "get_api_users")
 
         # Should have query parameter
         properties = get_users_func["parameters"]["properties"]
@@ -293,9 +281,7 @@ paths:
         assert properties["limit"]["type"] == "integer"
 
         # Find the POST users function
-        post_users_func = next(
-            f for f in tools_desc["functions"] if f["name"] == "post_api_users"
-        )
+        post_users_func = next(f for f in tools_desc["functions"] if f["name"] == "post_api_users")
 
         # Should have body parameters
         properties = post_users_func["parameters"]["properties"]
@@ -353,9 +339,7 @@ paths:
                 {"url": "http://localhost:3000", "description": "Express.js server"},
                 {"url": "https://api.production.com", "description": "Production"},
             ],
-            "paths": {
-                "/test": {"get": {"responses": {"200": {"description": "Success"}}}}
-            },
+            "paths": {"/test": {"get": {"responses": {"200": {"description": "Success"}}}}},
         }
 
         generator = ToolsGenerator(openapi_spec=spec_with_servers)
@@ -372,9 +356,7 @@ paths:
         spec_no_servers = {
             "openapi": "3.0.0",
             "info": {"title": "No Servers API", "version": "1.0.0"},
-            "paths": {
-                "/test": {"get": {"responses": {"200": {"description": "Success"}}}}
-            },
+            "paths": {"/test": {"get": {"responses": {"200": {"description": "Success"}}}}},
         }
 
         generator = ToolsGenerator(openapi_spec=spec_no_servers)
@@ -386,9 +368,7 @@ paths:
             "openapi": "3.0.0",
             "info": {"title": "HTTPS API", "version": "1.0.0"},
             "servers": [{"url": "https://secure-api.example.com:8443"}],
-            "paths": {
-                "/secure": {"get": {"responses": {"200": {"description": "Success"}}}}
-            },
+            "paths": {"/secure": {"get": {"responses": {"200": {"description": "Success"}}}}},
         }
 
         generator = ToolsGenerator(openapi_spec=spec_https)
@@ -402,9 +382,7 @@ paths:
             "openapi": "3.0.0",
             "info": {"title": "Custom URL Test", "version": "1.0.0"},
             "servers": [{"url": "http://localhost:3000"}],  # Should be overridden
-            "paths": {
-                "/api/test": {"get": {"responses": {"200": {"description": "Success"}}}}
-            },
+            "paths": {"/api/test": {"get": {"responses": {"200": {"description": "Success"}}}}},
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:

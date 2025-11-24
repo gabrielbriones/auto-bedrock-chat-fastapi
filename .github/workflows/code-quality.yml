@@ -1,0 +1,98 @@
+---
+name: Code Quality
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - develop
+  pull_request:
+    branches:
+      - main
+      - dev
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: latest
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Run Black
+        run: poetry run black --check auto_bedrock_chat_fastapi/ tests/ examples/
+
+      - name: Run isort
+        run: poetry run isort --check-only --profile black --line-length 120 auto_bedrock_chat_fastapi/ tests/ examples/
+
+      - name: Run Flake8
+        run: poetry run flake8 auto_bedrock_chat_fastapi/ tests/ examples/
+
+      - name: Run mypy type checking
+        run: poetry run mypy auto_bedrock_chat_fastapi/ --ignore-missing-imports
+        continue-on-error: true
+
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+
+      - name: Run Bandit (security issues)
+        run: bandit -r auto_bedrock_chat_fastapi/ -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: Run Safety (dependency vulnerabilities)
+        run: safety check --json > safety-report.json
+        continue-on-error: true
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+          retention-days: 30

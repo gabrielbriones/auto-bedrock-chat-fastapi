@@ -32,15 +32,15 @@ try {
     // Generate OpenAPI specification
     console.log('🔧 Generating OpenAPI specification...');
     const specs = swaggerJsdoc(swaggerOptions);
-    
+
     // Save to file
     const specPath = path.join(__dirname, 'api_spec.json');
     fs.writeFileSync(specPath, JSON.stringify(specs, null, 2));
-    
+
     console.log(`✅ OpenAPI spec generated: ${specPath}`);
     console.log(`📊 Generated ${Object.keys(specs.paths || {}).length} endpoints`);
     console.log(`🔗 API Base URL: ${specs.servers[0].url}`);
-    
+
     // Show summary of generated endpoints
     if (specs.paths) {
         console.log('\n📋 Generated Endpoints:');
@@ -49,7 +49,7 @@ try {
             console.log(`   ${methodList.padEnd(12)} ${path}`);
         }
     }
-    
+
 } catch (error) {
     console.error('❌ Error generating OpenAPI spec:', error.message);
     process.exit(1);
