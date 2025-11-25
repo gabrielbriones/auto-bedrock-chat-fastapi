@@ -102,6 +102,9 @@ oauth2_clients: Dict[str, Dict[str, Any]] = {
 
 # User credentials storage (in production use proper password hashing)
 # Format: {"username": {"password": str, "user_id": int, "email": str}}
+# WARNING: DO NOT STORE PASSWORDS IN PLAINTEXT OR USE SIMPLE STRING COMPARISON FOR AUTHENTICATION IN PRODUCTION.
+# Always use a secure password hashing library such as bcrypt or argon2 to store and verify passwords.
+# This example is for demonstration purposes only.
 user_credentials: Dict[str, Dict[str, Any]] = {
     "alice": {
         "password": "password123",
