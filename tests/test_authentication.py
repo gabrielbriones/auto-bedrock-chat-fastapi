@@ -231,6 +231,24 @@ class TestAuthenticationHandler:
             await handler.apply_auth_to_headers(headers)
 
     @pytest.mark.asyncio
+    async def test_oauth2_missing_http_client(self):
+        """Test OAuth2 fails when HTTP client is not configured"""
+        creds = Credentials(
+            auth_type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
+            client_id="client-id",
+            client_secret="client-secret",
+            token_url="https://auth.example.com/token",
+        )
+        handler = AuthenticationHandler(creds)
+
+        # Ensure http_client is None (default)
+        assert handler.http_client is None
+
+        headers = {}
+        with pytest.raises(RuntimeError, match="HTTP client not configured"):
+            await handler.apply_auth_to_headers(headers)
+
+    @pytest.mark.asyncio
     async def test_oauth2_with_cached_token(self):
         """Test OAuth2 uses cached token"""
         import time
