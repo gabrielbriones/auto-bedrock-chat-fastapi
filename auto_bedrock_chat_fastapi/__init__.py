@@ -7,6 +7,7 @@ using Amazon Bedrock models with real-time WebSocket chat and automatic tool gen
 __version__ = "1.0.0"
 
 # Additional exports for advanced usage
+from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES, AuthenticationHandler, AuthType, Credentials
 from .bedrock_client import BedrockClient
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import (
@@ -40,6 +41,11 @@ __all__ = [
     "ChatConfig",
     "load_config",
     "validate_config",
+    # Authentication (new)
+    "DEFAULT_SUPPORTED_AUTH_TYPES",
+    "AuthenticationHandler",
+    "AuthType",
+    "Credentials",
     # Core components (for advanced usage)
     "BedrockClient",
     "ChatSessionManager",

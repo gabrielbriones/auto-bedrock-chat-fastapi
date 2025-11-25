@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
+from .auth_handler import AuthenticationHandler, Credentials
 from .config import ChatConfig
 from .exceptions import SessionError
 
@@ -65,9 +66,17 @@ class ChatSession:
     ip_address: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # Authentication
+    credentials: Credentials = field(default_factory=Credentials)
+    auth_handler: Optional[AuthenticationHandler] = field(default=None, init=False)
+
     # Session settings
     max_history_length: int = 50
     context_window: int = 20  # Number of recent messages to include in context
+
+    def __post_init__(self):
+        """Initialize auth handler after dataclass initialization"""
+        self.auth_handler = AuthenticationHandler(self.credentials)
 
     def add_message(self, message: ChatMessage):
         """Add a message to conversation history"""

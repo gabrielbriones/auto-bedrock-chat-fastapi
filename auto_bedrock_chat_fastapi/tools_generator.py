@@ -203,6 +203,7 @@ class ToolsGenerator:
                     "http_method": method,
                     "path": path,
                     "original_operation": operation,
+                    "authentication": self._extract_auth_requirements(operation),
                 },
             }
 
@@ -529,3 +530,62 @@ class ToolsGenerator:
             "allowed_paths": self.config.allowed_paths,
             "has_restrictions": bool(self.config.allowed_paths or self.config.excluded_paths),
         }
+
+    def _extract_auth_requirements(self, operation: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Extract authentication requirements from OpenAPI operation.
+
+        Supports:
+        - OpenAPI 3.0 security field
+        - x-auth-type custom extension (for non-standard auth types)
+        - x-bearer-token-header for custom bearer header names
+        - x-api-key-header for custom API key header names
+
+        Returns:
+            Dict with authentication requirements or None if none required
+        """
+        auth_config = {}
+
+        # Check for OpenAPI security requirements
+        security = operation.get("security")
+        if security:
+            # Security is a list of security schemes (OR'd together)
+            auth_config["openapi_security"] = security
+
+        # Check for custom auth type extension
+        auth_type = operation.get("x-auth-type")
+        if auth_type:
+            auth_config["type"] = auth_type
+
+        # Check for custom bearer header
+        bearer_header = operation.get("x-bearer-token-header")
+        if bearer_header:
+            auth_config["bearer_token_header"] = bearer_header
+
+        # Check for API key configuration
+        api_key_header = operation.get("x-api-key-header")
+        if api_key_header:
+            auth_config["api_key_header"] = api_key_header
+
+        # Check for OAuth2 token URL
+        token_url = operation.get("x-oauth2-token-url")
+        if token_url:
+            auth_config["token_url"] = token_url
+
+        # Check for OAuth2 scope
+        scope = operation.get("x-oauth2-scope")
+        if scope:
+            auth_config["oauth2_scope"] = scope
+
+        # Check for custom headers
+        custom_headers = operation.get("x-custom-auth-headers")
+        if custom_headers:
+            auth_config["custom_headers"] = custom_headers
+
+        # Check for basic auth requirement
+        basic_auth = operation.get("x-basic-auth")
+        if basic_auth:
+            auth_config["basic_auth"] = basic_auth
+
+        # Return None if no auth config found, otherwise return the config
+        return auth_config if auth_config else None

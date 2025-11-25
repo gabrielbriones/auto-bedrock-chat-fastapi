@@ -385,7 +385,11 @@ class BedrockChatPlugin:
             pass
 
     def _get_default_ui_html(self) -> str:
-        """Get default chat UI HTML"""
+        """Get default chat UI HTML with optional authentication support"""
+
+        # Determine which auth UI to include
+        auth_enabled = self.config.enable_tool_auth
+        supported_auth_types = self.config.supported_auth_types if auth_enabled else []
 
         return f"""
 <!DOCTYPE html>
@@ -415,6 +419,125 @@ class BedrockChatPlugin:
             justify-content: center;
         }}
 
+        .auth-modal {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }}
+
+        .auth-modal:not(.hidden) {{
+            display: flex;
+        }}
+
+        .auth-modal-content {{
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }}
+
+        .auth-modal-content h2 {{
+            margin-bottom: 20px;
+            color: #2d3748;
+        }}
+
+        .auth-form-group {{
+            margin-bottom: 15px;
+        }}
+
+        .auth-form-group label {{
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #4a5568;
+            font-size: 0.9rem;
+        }}
+
+        .auth-form-group select,
+        .auth-form-group input {{
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 5px;
+            font-size: 0.95rem;
+            box-sizing: border-box;
+        }}
+
+        .auth-form-group input:focus,
+        .auth-form-group select:focus {{
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }}
+
+        .auth-fields {{
+            margin: 20px 0;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+        }}
+
+        .auth-field-hidden {{
+            display: none;
+        }}
+
+        #authTypeSelector.hidden {{
+            display: none;
+        }}
+
+        .auth-buttons {{
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }}
+
+        .auth-buttons button {{
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.95rem;
+        }}
+
+        .auth-buttons .auth-submit {{
+            background: #667eea;
+            color: white;
+        }}
+
+        .auth-buttons .auth-submit:hover {{
+            background: #5a67d8;
+        }}
+
+        .auth-buttons .auth-skip {{
+            background: #e2e8f0;
+            color: #4a5568;
+        }}
+
+        .auth-buttons .auth-skip:hover {{
+            background: #cbd5e0;
+        }}
+
+        .auth-info {{
+            font-size: 0.85rem;
+            color: #718096;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #cbd5e0;
+        }}
+
         .chat-container {{
             width: 95%;
             max-width: 1400px;
@@ -430,18 +553,35 @@ class BedrockChatPlugin:
         .chat-header {{
             background: #4a5568;
             color: white;
-            padding: 20px;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }}
+
+        .chat-header-left {{
+            flex: 0 0 auto;
+        }}
+
+        .chat-header-center {{
+            flex: 1;
             text-align: center;
+        }}
+
+        .chat-header-right {{
+            flex: 0 0 auto;
         }}
 
         .chat-header h1 {{
             font-size: 1.5rem;
-            margin-bottom: 5px;
+            margin: 0;
         }}
 
         .chat-header p {{
             opacity: 0.8;
             font-size: 0.9rem;
+            margin: 5px 0 0 0;
         }}
 
         .chat-messages {{
@@ -559,13 +699,37 @@ class BedrockChatPlugin:
             cursor: not-allowed;
         }}
 
+        .auth-button {{
+            padding: 10px 18px;
+            background: #48bb78;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }}
+
+        .auth-button:hover {{
+            background: #38a169;
+        }}
+
+        .auth-button.logout {{
+            background: #f56565;
+        }}
+
+        .auth-button.logout:hover {{
+            background: #e53e3e;
+        }}
+
         .connection-status {{
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            padding: 5px 10px;
+            padding: 8px 12px;
             border-radius: 15px;
-            font-size: 0.8rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
         }}
 
         .connection-status.connected {{
@@ -694,14 +858,190 @@ class BedrockChatPlugin:
         .message-content em {{
             font-style: italic;
         }}
+
+        /* Mobile responsive design for auth modal and chat */
+        @media (max-width: 768px) {{
+            .auth-modal-content {{
+                width: 95%;
+                max-width: 100%;
+                padding: 20px;
+                max-height: 90vh;
+                overflow-y: auto;
+                border-radius: 8px;
+            }}
+
+            .auth-fields {{
+                max-height: 40vh;
+                padding: 12px;
+            }}
+
+            .auth-buttons {{
+                flex-direction: column;
+                gap: 8px;
+            }}
+
+            .auth-buttons button {{
+                width: 100%;
+                padding: 12px;
+            }}
+
+            .chat-container {{
+                width: 100%;
+                max-width: 100%;
+                height: 100vh;
+                border-radius: 0;
+            }}
+
+            .chat-header {{
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 10px 15px;
+            }}
+
+            .chat-header-center {{
+                order: 3;
+                width: 100%;
+                flex-basis: 100%;
+            }}
+
+            .chat-header h1 {{
+                font-size: 1.25rem;
+            }}
+
+            .auth-button {{
+                padding: 8px 15px;
+                font-size: 0.9rem;
+            }}
+
+            .chat-messages {{
+                padding: 15px;
+            }}
+
+            .message-content {{
+                max-width: 85%;
+            }}
+
+            .chat-input {{
+                padding: 15px;
+                gap: 8px;
+            }}
+
+            .chat-input textarea {{
+                font-size: 16px;
+                padding: 10px 12px;
+                min-height: 44px;
+            }}
+
+            .chat-input button {{
+                margin-left: 0;
+                padding: 10px 16px;
+                font-size: 14px;
+            }}
+
+            .tool-calls {{
+                font-size: 0.75rem;
+                padding: 8px;
+            }}
+        }}
     </style>
 </head>
 <body>
+    <div class="auth-modal hidden" id="authModal">
+        <div class="auth-modal-content">
+            <h2>🔐 Authenticate</h2>
+            <div class="auth-form-group" id="authTypeSelector">
+                <label for="authType">Authentication Type:</label>
+                <select id="authType" onchange="updateAuthFields()">
+                    <option value="">-- Select Auth Type --</option>
+                    {f''.join([f'<option value="{auth_type}">{auth_type.replace("_", " ").title()}</option>' for auth_type in supported_auth_types])}
+                </select>
+            </div>
+
+            <div class="auth-fields" id="authFields">
+                <!-- Bearer Token -->
+                <div id="bearer_token-fields" class="auth-field-hidden">
+                    <div class="auth-form-group">
+                        <label for="bearerToken">Bearer Token:</label>
+                        <input type="password" id="bearerToken" placeholder="Enter your JWT or OAuth token">
+                    </div>
+                </div>
+
+                <!-- Basic Auth -->
+                <div id="basic_auth-fields" class="auth-field-hidden">
+                    <div class="auth-form-group">
+                        <label for="username">Username:</label>
+                        <input type="text" id="username" placeholder="Enter username">
+                    </div>
+                    <div class="auth-form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" placeholder="Enter password">
+                    </div>
+                </div>
+
+                <!-- API Key -->
+                <div id="api_key-fields" class="auth-field-hidden">
+                    <div class="auth-form-group">
+                        <label for="apiKey">API Key:</label>
+                        <input type="password" id="apiKey" placeholder="Enter your API key">
+                    </div>
+                    <div class="auth-form-group">
+                        <label for="apiKeyHeader">API Key Header:</label>
+                        <input type="text" id="apiKeyHeader" placeholder="e.g., X-API-Key" value="X-API-Key">
+                    </div>
+                </div>
+
+                <!-- OAuth2 -->
+                <div id="oauth2_client_credentials-fields" class="auth-field-hidden">
+                    <div class="auth-form-group">
+                        <label for="clientId">Client ID:</label>
+                        <input type="text" id="clientId" placeholder="Enter client ID">
+                    </div>
+                    <div class="auth-form-group">
+                        <label for="clientSecret">Client Secret:</label>
+                        <input type="password" id="clientSecret" placeholder="Enter client secret">
+                    </div>
+                    <div class="auth-form-group">
+                        <label for="tokenUrl">Token URL:</label>
+                        <input type="text" id="tokenUrl" placeholder="https://auth.example.com/token">
+                    </div>
+                    <div class="auth-form-group">
+                        <label for="scope">Scope (optional):</label>
+                        <input type="text" id="scope" placeholder="e.g., api:read api:write">
+                    </div>
+                </div>
+
+                <!-- Custom Auth -->
+                <div id="custom-fields" class="auth-field-hidden">
+                    <div class="auth-form-group">
+                        <label>Custom Headers (JSON):</label>
+                        <textarea id="customHeaders" style="min-height: 100px; font-family: monospace;" placeholder="{{'X-Custom-Header': 'value', 'X-API-Version': 'v2'}}"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="auth-info">
+                ℹ️ Authentication credentials will be stored securely in your session and applied to all API calls.
+            </div>
+
+            <div class="auth-buttons">
+                <button class="auth-submit" onclick="submitAuth()">Authenticate</button>
+                <button class="auth-skip" onclick="skipAuth()">Skip</button>
+            </div>
+        </div>
+    </div>
+
     <div class="chat-container">
         <div class="chat-header">
-            <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
-            <h1>{self.config.ui_title}</h1>
-            <p>Powered by {self.config.model_id}</p>
+            <div class="chat-header-left">
+                <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
+            </div>
+            <div class="chat-header-center">
+                <h1>{self.config.ui_title}</h1>
+                <p>Powered by {self.config.model_id}</p>
+            </div>
+            <div class="chat-header-right">
+                <button id="authButton" class="auth-button">Log in</button>
+            </div>
         </div>
 
         <div class="chat-messages" id="chatMessages">
@@ -724,22 +1064,132 @@ class BedrockChatPlugin:
     </div>
 
     <script>
+        // Authentication functions
+        function initializeAuthModal() {{
+            const supportedTypes = {supported_auth_types};
+            const authTypeSelector = document.getElementById('authTypeSelector');
+            const authTypeSelect = document.getElementById('authType');
+
+            // If only one auth type, hide selector and auto-select it
+            if (supportedTypes.length === 1) {{
+                authTypeSelector.classList.add('hidden');
+                authTypeSelect.value = supportedTypes[0];
+                updateAuthFields();
+            }}
+        }}
+
+        function updateAuthFields() {{
+            const authType = document.getElementById('authType').value;
+            const fieldsContainer = document.getElementById('authFields');
+
+            // Get all field group divs
+            const allFieldGroups = fieldsContainer.querySelectorAll('div[id$="-fields"]');
+
+            // Hide all fields and clear their values
+            allFieldGroups.forEach(fieldGroup => {{
+                // Add hidden class
+                fieldGroup.classList.add('auth-field-hidden');
+
+                // Clear all input and textarea values
+                fieldGroup.querySelectorAll('input, textarea').forEach(input => {{
+                    if (input.id === 'apiKeyHeader') {{
+                        input.value = 'X-API-Key';  // Reset to default
+                    }} else {{
+                        input.value = '';
+                    }}
+                }});
+            }});
+
+            // Show selected auth type fields
+            if (authType) {{
+                const fieldId = authType + '-fields';
+                const fieldEl = document.getElementById(fieldId);
+                if (fieldEl) {{
+                    fieldEl.classList.remove('auth-field-hidden');
+                }}
+            }}
+        }}
+
+        function getAuthPayload() {{
+            const authType = document.getElementById('authType').value;
+
+            if (!authType) return null;
+
+            const payload = {{ type: 'auth', auth_type: authType }};
+
+            switch (authType) {{
+                case 'bearer_token':
+                    payload.token = document.getElementById('bearerToken').value;
+                    break;
+                case 'basic_auth':
+                    payload.username = document.getElementById('username').value;
+                    payload.password = document.getElementById('password').value;
+                    break;
+                case 'api_key':
+                    payload.api_key = document.getElementById('apiKey').value;
+                    payload.api_key_header = document.getElementById('apiKeyHeader').value;
+                    break;
+                case 'oauth2_client_credentials':
+                    payload.client_id = document.getElementById('clientId').value;
+                    payload.client_secret = document.getElementById('clientSecret').value;
+                    payload.token_url = document.getElementById('tokenUrl').value;
+                    const scope = document.getElementById('scope').value;
+                    if (scope) payload.scope = scope;
+                    break;
+                case 'custom':
+                    try {{
+                        payload.custom_headers = JSON.parse(document.getElementById('customHeaders').value);
+                    }} catch (e) {{
+                        alert('Invalid JSON for custom headers');
+                        return null;
+                    }}
+                    break;
+            }}
+
+            return payload;
+        }}
+
+        function submitAuth() {{
+            const payload = getAuthPayload();
+            if (!payload) return;
+
+            // Store auth for later use
+            window.pendingAuth = payload;
+
+            // Hide auth modal
+            document.getElementById('authModal').classList.add('hidden');
+
+            // Initialize chat client (will send auth after connection)
+            window.chatClient = new ChatClient(payload);
+        }}
+
+        function skipAuth() {{
+            document.getElementById('authModal').classList.add('hidden');
+            window.chatClient = new ChatClient(null);
+        }}
+
+        // Chat client with auth support
         class ChatClient {{
-            constructor() {{
+            constructor(authPayload = null) {{
                 this.ws = null;
+                this.authPayload = authPayload;
+                this.authSent = false;
                 this.messageInput = document.getElementById('messageInput');
                 this.sendButton = document.getElementById('sendButton');
+                this.authButton = document.getElementById('authButton');
                 this.chatMessages = document.getElementById('chatMessages');
                 this.connectionStatus = document.getElementById('connectionStatus');
                 this.typingIndicator = document.getElementById('typingIndicator');
                 this.typingText = document.getElementById('typingText');
 
                 this.setupEventListeners();
+                this.updateAuthButtonUI();  // Update button on page load
                 this.connect();
             }}
 
             setupEventListeners() {{
                 this.sendButton.addEventListener('click', () => this.sendMessage());
+                this.authButton.addEventListener('click', () => this.handleAuthButtonClick());
                 this.messageInput.addEventListener('keydown', (e) => {{
                     if (e.key === 'Enter' && !e.shiftKey) {{
                         e.preventDefault();
@@ -772,8 +1222,13 @@ class BedrockChatPlugin:
                 this.ws.onopen = (event) => {{
                     console.log('Connected to chat');
                     this.updateConnectionStatus(true);
-                    this.messageInput.disabled = false;
-                    this.sendButton.disabled = false;
+
+                    // Send authentication if provided
+                    if (this.authPayload && !this.authSent) {{
+                        this.sendAuth();
+                    }} else {{
+                        this.enableInput();
+                    }}
                 }};
 
                 this.ws.onmessage = (event) => {{
@@ -797,9 +1252,48 @@ class BedrockChatPlugin:
                 }};
             }}
 
+            sendAuth() {{
+                if (this.authPayload && this.ws && this.ws.readyState === WebSocket.OPEN) {{
+                    console.log('Sending authentication...');
+                    this.ws.send(JSON.stringify(this.authPayload));
+                    this.authSent = true;
+                }}
+            }}
+
             updateConnectionStatus(connected) {{
                 this.connectionStatus.textContent = connected ? 'Connected' : 'Disconnected';
                 this.connectionStatus.className = `connection-status ${{connected ? 'connected' : 'disconnected'}}`;
+            }}
+            enableInput() {{
+                this.messageInput.disabled = false;
+                this.sendButton.disabled = false;
+            }}
+
+            handleAuthButtonClick() {{
+                if (this.authPayload) {{
+                    // Logout: send logout message and clear auth
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {{
+                        this.ws.send(JSON.stringify({{
+                            type: 'logout'
+                        }}));
+                    }}
+                    this.authPayload = null;
+                    // Don't add message here - backend will send logout_success
+                }} else {{
+                    // Login: show auth modal
+                    document.getElementById('authModal').classList.remove('hidden');
+                    initializeAuthModal();  // Auto-select single auth type if needed
+                }}
+            }}
+
+            updateAuthButtonUI() {{
+                if (this.authPayload) {{
+                    this.authButton.textContent = 'Log out';
+                    this.authButton.classList.add('logout');
+                }} else {{
+                    this.authButton.textContent = 'Log in';
+                    this.authButton.classList.remove('logout');
+                }}
             }}
 
             sendMessage() {{
@@ -826,8 +1320,20 @@ class BedrockChatPlugin:
 
             handleMessage(data) {{
                 switch (data.type) {{
+                    case 'auth_configured':
+                        this.addMessage('system', `🔐 Authenticated with ${{data.auth_type}}`);
+                        this.updateAuthButtonUI();  // Update button after auth
+                        this.enableInput();
+                        break;
+
+                    case 'logout_success':
+                        this.addMessage('system', '🔓 Logged out successfully.');
+                        this.updateAuthButtonUI();  // Update button after logout
+                        break;
+
                     case 'connection_established':
                         this.addMessage('system', `Connected! Session ID: ${{data.session_id}}`);
+                        this.enableInput();
                         break;
 
                     case 'typing':
@@ -927,7 +1433,29 @@ class BedrockChatPlugin:
                 }}
             }});
 
-            new ChatClient();
+            // Initialize chat (with auth modal if enabled)
+            const authEnabled = {'true' if auth_enabled else 'false'};
+            console.log('Auth enabled:', authEnabled);
+
+            // Hide auth button if auth is disabled
+            const authButton = document.getElementById('authButton');
+            if (!authEnabled) {{
+                authButton.style.display = 'none';
+            }}
+
+            const authModal = document.getElementById('authModal');
+            if (authEnabled) {{
+                // Auth enabled, show modal (works on all screen sizes)
+                console.log('Showing auth modal');
+                authModal.classList.remove('hidden');
+                initializeAuthModal();  // Auto-select single auth type if needed
+                // Don't initialize ChatClient here - wait for auth submission
+            }} else {{
+                // Auth disabled, initialize directly without authentication
+                console.log('Auth disabled, initializing chat without authentication');
+                authModal.classList.add('hidden');
+                window.chatClient = new ChatClient(null);
+            }}
         }});
 
         /**
