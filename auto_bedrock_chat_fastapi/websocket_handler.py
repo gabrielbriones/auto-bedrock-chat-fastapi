@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
+from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .bedrock_client import BedrockClient
 from .config import ChatConfig
 from .exceptions import WebSocketError
@@ -117,6 +118,10 @@ class WebSocketChatHandler:
                     await self._handle_history_request(websocket, message_data)
                 elif message_type == "clear":
                     await self._handle_clear_history(websocket, message_data)
+                elif message_type == "auth":
+                    await self._handle_auth_message(websocket, message_data)
+                elif message_type == "logout":
+                    await self._handle_logout(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -179,7 +184,7 @@ class WebSocketChatHandler:
             (
                 final_response,
                 all_tool_results,
-            ) = await self._handle_tool_calls_recursively(session.session_id, response, tools_desc, websocket)
+            ) = await self._handle_tool_calls_recursively(session.session_id, response, tools_desc, websocket, session)
 
             # Add the final AI response to history (if not already added)
             if not final_response.get("tool_calls"):
@@ -221,8 +226,13 @@ class WebSocketChatHandler:
                 },
             )
 
-    async def _execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Execute tool calls by making HTTP requests to API endpoints"""
+    async def _execute_tool_calls(self, tool_calls: List[Dict[str, Any]], session=None) -> List[Dict[str, Any]]:
+        """Execute tool calls by making HTTP requests to API endpoints
+
+        Args:
+            tool_calls: List of tool calls to execute
+            session: ChatSession with authentication info (optional)
+        """
 
         results = []
 
@@ -259,8 +269,8 @@ class WebSocketChatHandler:
                     )
                     continue
 
-                # Execute tool call
-                result = await self._execute_single_tool_call(tool_metadata, arguments)
+                # Execute tool call with authentication if available
+                result = await self._execute_single_tool_call(tool_metadata, arguments, session)
                 logger.debug(f"Tool call result for {function_name}: {result}")
 
                 results.append(
@@ -367,8 +377,14 @@ class WebSocketChatHandler:
 
         return results
 
-    async def _execute_single_tool_call(self, tool_metadata: Dict, arguments: Dict) -> Any:
-        """Execute a single tool call"""
+    async def _execute_single_tool_call(self, tool_metadata: Dict, arguments: Dict, session=None) -> Any:
+        """Execute a single tool call
+
+        Args:
+            tool_metadata: Tool metadata including path, method, and auth config
+            arguments: Tool call arguments
+            session: ChatSession with authentication info (optional)
+        """
 
         method = tool_metadata["method"]
         path = tool_metadata["path"]
@@ -407,6 +423,29 @@ class WebSocketChatHandler:
             "Content-Type": "application/json",
             "User-Agent": "auto-bedrock-chat-fastapi/internal",
         }
+
+        # Apply authentication if session has credentials configured
+        if session and session.credentials and session.auth_handler:
+            auth_type_str = (
+                session.credentials.auth_type.value
+                if isinstance(session.credentials.auth_type, AuthType)
+                else str(session.credentials.auth_type)
+            )
+            if auth_type_str != "none":
+                try:
+                    # Get tool-specific auth config from metadata
+                    tool_auth_config = tool_metadata.get("_metadata", {}).get("authentication")
+
+                    # Apply authentication to headers
+                    request_kwargs["headers"] = await session.auth_handler.apply_auth_to_headers(
+                        request_kwargs["headers"],
+                        tool_auth_config,
+                    )
+                    logger.debug(f"Applied {auth_type_str} authentication to tool call")
+
+                except Exception as e:
+                    logger.error(f"Error applying authentication: {str(e)}")
+                    return {"error": f"Authentication failed: {str(e)}"}
 
         # Make HTTP request
         try:
@@ -456,6 +495,7 @@ class WebSocketChatHandler:
         initial_response: Dict[str, Any],
         tools_desc: Optional[Dict],
         websocket: WebSocket,
+        session=None,
     ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Handle tool calls recursively until AI provides a final response without more tool calls.
@@ -464,6 +504,8 @@ class WebSocketChatHandler:
             session_id: The chat session ID
             initial_response: The initial AI response that may contain tool calls
             tools_desc: Available tools description
+            websocket: WebSocket connection
+            session: ChatSession object with authentication info
 
         Returns:
             Tuple of (final_response, all_tool_results)
@@ -502,7 +544,7 @@ class WebSocketChatHandler:
             await self.session_manager.add_message(session_id, tool_assistant_message)
 
             # Execute the tool calls
-            tool_results = await self._execute_tool_calls(current_response["tool_calls"])
+            tool_results = await self._execute_tool_calls(current_response["tool_calls"], session)
             all_tool_results.extend(tool_results)
 
             # Add tool results to context
@@ -720,6 +762,150 @@ class WebSocketChatHandler:
                 "timestamp": datetime.now().isoformat(),
             },
         )
+
+    async def _handle_auth_message(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Handle authentication message from client"""
+
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return
+
+        try:
+            # Extract credentials from message
+            auth_type = data.get("auth_type", "bearer_token").lower()
+
+            # Create credentials based on auth type
+            credentials = None
+
+            if auth_type == "bearer_token":
+                token = data.get("token")
+                if not token:
+                    await self._send_error(websocket, "Bearer token required")
+                    return
+                credentials = Credentials(
+                    auth_type=AuthType.BEARER_TOKEN,
+                    bearer_token=token,
+                )
+
+            elif auth_type == "basic_auth":
+                username = data.get("username")
+                password = data.get("password")
+                if not username or not password:
+                    await self._send_error(websocket, "Username and password required for basic auth")
+                    return
+                credentials = Credentials(
+                    auth_type=AuthType.BASIC_AUTH,
+                    username=username,
+                    password=password,
+                )
+
+            elif auth_type == "api_key":
+                api_key = data.get("api_key")
+                api_key_header = data.get("api_key_header", "X-API-Key")
+                if not api_key:
+                    await self._send_error(websocket, "API key required")
+                    return
+                credentials = Credentials(
+                    auth_type=AuthType.API_KEY,
+                    api_key=api_key,
+                    api_key_header=api_key_header,
+                )
+
+            elif auth_type == "oauth2" or auth_type == "oauth2_client_credentials":
+                client_id = data.get("client_id")
+                client_secret = data.get("client_secret")
+                token_url = data.get("token_url")
+                scope = data.get("scope")
+
+                if not client_id or not client_secret or not token_url:
+                    await self._send_error(websocket, "client_id, client_secret, and token_url required for OAuth2")
+                    return
+
+                credentials = Credentials(
+                    auth_type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    token_url=token_url,
+                    scope=scope,
+                )
+
+            elif auth_type == "custom":
+                custom_headers = data.get("custom_headers", {})
+                credentials = Credentials(
+                    auth_type=AuthType.CUSTOM,
+                    custom_headers=custom_headers,
+                    metadata=data.get("metadata", {}),
+                )
+
+            else:
+                await self._send_error(websocket, f"Unknown auth type: {auth_type}")
+                return
+
+            # Validate credentials
+            if not credentials:
+                await self._send_error(websocket, "Failed to create credentials")
+                return
+
+            auth_handler = AuthenticationHandler(credentials)
+            if not auth_handler.validate_credentials():
+                await self._send_error(websocket, "Invalid credentials provided")
+                return
+
+            # Store credentials in session
+            session.credentials = credentials
+            session.auth_handler = auth_handler
+
+            # Set HTTP client for OAuth2 if needed
+            if auth_type == "oauth2" or auth_type == "oauth2_client_credentials":
+                session.auth_handler.set_http_client(self.http_client)
+
+            logger.info(f"Authentication configured for session {session.session_id}: {auth_type}")
+            logger.debug(f"Session credentials: {credentials}")
+
+            await self._send_message(
+                websocket,
+                {
+                    "type": "auth_configured",
+                    "message": f"Authentication configured: {auth_type}",
+                    "auth_type": auth_type,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling authentication message: {str(e)}")
+            self._total_errors += 1
+            await self._send_error(websocket, f"Authentication error: {str(e)}")
+
+    async def _handle_logout(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Handle logout message from client"""
+
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return
+
+        try:
+            # Clear credentials from session
+            session.credentials = None
+            session.auth_handler = None
+
+            logger.info(f"User logged out from session {session.session_id}")
+
+            await self._send_message(
+                websocket,
+                {
+                    "type": "logout_success",
+                    "message": "Successfully logged out",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling logout: {str(e)}")
+            self._total_errors += 1
+            await self._send_error(websocket, f"Logout error: {str(e)}")
 
     async def _send_message(self, websocket: WebSocket, message: Dict[str, Any]):
         """Send message to WebSocket client"""

@@ -256,6 +256,32 @@ class ChatConfig(BaseSettings):
         description="CORS allowed origins",
     )
 
+    # Tool Call Authentication Configuration
+    enable_tool_auth: bool = Field(
+        default=True,
+        alias="BEDROCK_ENABLE_TOOL_AUTH",
+        description="Enable authentication for tool calls",
+    )
+
+    supported_auth_types: List[str] = Field(
+        default_factory=lambda: ["bearer_token", "basic_auth", "api_key", "oauth2", "custom"],
+        alias="BEDROCK_SUPPORTED_AUTH_TYPES",
+        description="List of supported authentication types for tool calls",
+    )
+
+    require_tool_auth: bool = Field(
+        default=False,
+        alias="BEDROCK_REQUIRE_TOOL_AUTH",
+        description="Require authentication before any tool calls can be made",
+    )
+
+    auth_token_cache_ttl: int = Field(
+        default=3600,
+        alias="BEDROCK_AUTH_TOKEN_CACHE_TTL",
+        gt=0,
+        description="Cache TTL for OAuth2 tokens in seconds",
+    )
+
     # Logging Configuration
     log_level: str = Field(default="INFO", alias="BEDROCK_LOG_LEVEL", description="Logging level")
 
