@@ -24,15 +24,17 @@ bedrock_chat = add_bedrock_chat(
 ### 2. Client Sends Credentials
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/bedrock-chat/ws');
+const ws = new WebSocket("ws://localhost:8000/bedrock-chat/ws");
 
 ws.onopen = () => {
   // Send authentication
-  ws.send(JSON.stringify({
-    type: 'auth',
-    auth_type: 'bearer_token',
-    token: 'your-api-token'
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "auth",
+      auth_type: "bearer_token",
+      token: "your-api-token",
+    }),
+  );
 };
 ```
 
@@ -55,13 +57,13 @@ LLM: "Here's your data: ..."
 
 ## Supported Authentication Methods
 
-| Method | Use Case | Example |
-|--------|----------|---------|
-| **Bearer Token** | Modern APIs, JWTs | `Authorization: Bearer token123` |
-| **Basic Auth** | Legacy APIs | `Authorization: Basic dXNlcjpwYXNz` |
-| **API Key** | Simplified APIs | `X-API-Key: sk-123456` |
-| **OAuth2** | Enterprise APIs | Client credentials flow with token endpoint |
-| **Custom** | Proprietary schemes | Any custom headers |
+| Method           | Use Case            | Example                                     |
+| ---------------- | ------------------- | ------------------------------------------- |
+| **Bearer Token** | Modern APIs, JWTs   | `Authorization: Bearer token123`            |
+| **Basic Auth**   | Legacy APIs         | `Authorization: Basic dXNlcjpwYXNz`         |
+| **API Key**      | Simplified APIs     | `X-API-Key: sk-123456`                      |
+| **OAuth2**       | Enterprise APIs     | Client credentials flow with token endpoint |
+| **Custom**       | Proprietary schemes | Any custom headers                          |
 
 ## Configuration
 
@@ -163,43 +165,47 @@ class AuthenticatedChat {
   }
 
   setupHandlers() {
-    this.ws.onopen = () => console.log('Connected');
+    this.ws.onopen = () => console.log("Connected");
     this.ws.onmessage = (e) => this.onMessage(JSON.parse(e.data));
   }
 
   authenticate(authType, credentials) {
-    this.ws.send(JSON.stringify({
-      type: 'auth',
-      auth_type: authType,
-      ...credentials,
-    }));
+    this.ws.send(
+      JSON.stringify({
+        type: "auth",
+        auth_type: authType,
+        ...credentials,
+      }),
+    );
   }
 
   sendMessage(text) {
-    this.ws.send(JSON.stringify({
-      type: 'chat',
-      message: text,
-    }));
+    this.ws.send(
+      JSON.stringify({
+        type: "chat",
+        message: text,
+      }),
+    );
   }
 
   onMessage(msg) {
-    if (msg.type === 'auth_configured') {
-      console.log('✅ Authenticated with ' + msg.auth_type);
-      this.sendMessage('What can you help me with?');
-    } else if (msg.type === 'ai_response') {
-      console.log('🤖 ' + msg.message);
-    } else if (msg.type === 'error') {
-      console.error('❌ ' + msg.message);
+    if (msg.type === "auth_configured") {
+      console.log("✅ Authenticated with " + msg.auth_type);
+      this.sendMessage("What can you help me with?");
+    } else if (msg.type === "ai_response") {
+      console.log("🤖 " + msg.message);
+    } else if (msg.type === "error") {
+      console.error("❌ " + msg.message);
     }
   }
 }
 
 // Usage
-const chat = new AuthenticatedChat('ws://localhost:8000/bedrock-chat/ws');
+const chat = new AuthenticatedChat("ws://localhost:8000/bedrock-chat/ws");
 
 // Authenticate with bearer token
-chat.authenticate('bearer_token', {
-  token: 'your-api-token'
+chat.authenticate("bearer_token", {
+  token: "your-api-token",
 });
 ```
 
@@ -218,17 +224,17 @@ async def main():
             'auth_type': 'bearer_token',
             'token': 'your-api-token'
         }))
-        
+
         # Wait for auth confirmation
         response = json.loads(await ws.recv())
         print(f'✅ {response["message"]}')
-        
+
         # Send message
         await ws.send(json.dumps({
             'type': 'chat',
             'message': 'Get my user data'
         }))
-        
+
         # Receive response
         response = json.loads(await ws.recv())
         print(f'🤖 {response["message"]}')
@@ -257,9 +263,9 @@ paths:
           schema:
             type: integer
       responses:
-        '200':
+        "200":
           description: List of users
-        '401':
+        "401":
           description: Unauthorized
 
 components:
@@ -273,12 +279,14 @@ components:
 ## Security Notes
 
 ✅ **What's Secure:**
+
 - Credentials stored in memory only (not persisted)
 - Not sent to LLM or logged
 - Per-session isolation
 - Automatic cleanup on disconnect
 
 ⚠️ **Best Practices:**
+
 - Always use HTTPS/WSS in production
 - Rotate tokens regularly
 - Use minimal OAuth2 scopes
@@ -287,18 +295,19 @@ components:
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| "Bearer token required" | Include `token` field in auth message |
-| "HTTP 401 Unauthorized" | Check token validity and API requirements |
-| "OAuth2 token URL not provided" | Include `token_url` for OAuth2 |
-| Tool calls failing silently | Enable logging: `BEDROCK_LOG_LEVEL=DEBUG` |
+| Issue                           | Solution                                  |
+| ------------------------------- | ----------------------------------------- |
+| "Bearer token required"         | Include `token` field in auth message     |
+| "HTTP 401 Unauthorized"         | Check token validity and API requirements |
+| "OAuth2 token URL not provided" | Include `token_url` for OAuth2            |
+| Tool calls failing silently     | Enable logging: `BEDROCK_LOG_LEVEL=DEBUG` |
 
 ## Advanced Features
 
 ### OAuth2 Token Caching
 
 Tokens are automatically cached and refreshed:
+
 - Cached in session memory
 - Refreshed at 90% of expiry
 - Reduces token endpoint calls
@@ -309,27 +318,29 @@ Create separate sessions for different APIs:
 
 ```javascript
 // Session 1: API A with Bearer Token
-const session1 = new AuthenticatedChat('ws://localhost:8000/bedrock-chat/ws');
-session1.authenticate('bearer_token', { token: 'api-a-token' });
+const session1 = new AuthenticatedChat("ws://localhost:8000/bedrock-chat/ws");
+session1.authenticate("bearer_token", { token: "api-a-token" });
 
 // Session 2: API B with OAuth2
-const session2 = new AuthenticatedChat('ws://localhost:8000/bedrock-chat/ws');
-session2.authenticate('oauth2', {
-  client_id: 'client-id',
-  client_secret: 'client-secret',
-  token_url: 'https://auth.example.com/token'
+const session2 = new AuthenticatedChat("ws://localhost:8000/bedrock-chat/ws");
+session2.authenticate("oauth2", {
+  client_id: "client-id",
+  client_secret: "client-secret",
+  token_url: "https://auth.example.com/token",
 });
 ```
 
 ## Complete Example
 
 See `examples/fastAPI/app_auth.py` for a complete working example with:
+
 - Protected API endpoints
 - Multiple auth types
 - Web UI with authentication
 - Real tool calls with auto-applied auth
 
 Run it with:
+
 ```bash
 python examples/fastAPI/app_auth.py
 ```

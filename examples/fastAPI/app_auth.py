@@ -15,15 +15,14 @@ For production, use proper JWT libraries like python-jose or PyJWT.
 """
 
 import random
-import string
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
 import secrets
-import base64
+import string
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Body, Request, Form
+from fastapi import Body, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 # Import the plugin
@@ -44,14 +43,17 @@ basic_security = HTTPBasic(description="Basic authentication with username and p
 # Authentication Models and Storage
 # ============================================================================
 
+
 class LoginRequest(BaseModel):
     """User login credentials"""
+
     username: str = Field(..., description="Username")
     password: str = Field(..., description="Password")
 
 
 class LoginResponse(BaseModel):
     """Login response with access token"""
+
     access_token: str = Field(..., description="Bearer token for authentication")
     token_type: str = Field(default="bearer", description="Token type")
     user_id: int = Field(..., description="Authenticated user ID")
@@ -61,6 +63,7 @@ class LoginResponse(BaseModel):
 
 class CurrentUser(BaseModel):
     """Current authenticated user information"""
+
     id: int = Field(..., description="User ID")
     username: str = Field(..., description="Username")
     email: str = Field(..., description="Email address")
@@ -127,6 +130,7 @@ user_credentials: Dict[str, Dict[str, Any]] = {
 # Authentication Functions
 # ============================================================================
 
+
 def get_current_user(
     bearer: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False)),
     basic: HTTPBasicCredentials = Depends(HTTPBasic(auto_error=False)),
@@ -138,7 +142,7 @@ def get_current_user(
     - Basic auth (username:password)
     - API Key in X-API-Key header
     - Bearer token (OAuth2 access token from /oauth2/token)
-    
+
     Usage:
         @app.get("/protected")
         async def protected_route(user: CurrentUser = Depends(get_current_user)):
@@ -147,16 +151,16 @@ def get_current_user(
     # Try bearer token first (both JWT tokens and OAuth2 access tokens)
     if bearer:
         token = bearer.credentials
-        
+
         # Check if it's a JWT-style token
         if token in active_tokens:
             token_data = active_tokens[token]
-            
+
             # Check expiration
             if datetime.now(timezone.utc) > token_data["expires_at"]:
                 del active_tokens[token]
                 raise HTTPException(status_code=401, detail="Token expired")
-            
+
             # Return current user information
             user_id = token_data["user_id"]
             return CurrentUser(
@@ -167,21 +171,21 @@ def get_current_user(
         # If not found in active_tokens, it's invalid
         else:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
+
     # Try basic auth
     elif basic:
         username = basic.username
         password = basic.password
-        
+
         # Verify credentials
         if username not in user_credentials:
             raise HTTPException(status_code=401, detail="Invalid username or password")
-        
+
         user_creds = user_credentials[username]
-        
+
         if user_creds["password"] != password:
             raise HTTPException(status_code=401, detail="Invalid username or password")
-        
+
         # Return current user information
         user_id = user_creds["user_id"]
         email = user_creds["email"]
@@ -190,20 +194,20 @@ def get_current_user(
             username=username,
             email=email,
         )
-    
+
     # Try API Key from header
     api_key = None
     if request:
         api_key = request.headers.get("X-API-Key")
-    
+
     if api_key:
         if api_key not in api_keys:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        
+
         api_key_data = api_keys[api_key]
         if not api_key_data.get("active"):
             raise HTTPException(status_code=401, detail="API key is inactive")
-        
+
         user_id = api_key_data["user_id"]
         # Get user info from user_credentials
         for username, creds in user_credentials.items():
@@ -214,7 +218,7 @@ def get_current_user(
                     email=creds["email"],
                 )
         raise HTTPException(status_code=401, detail="User not found")
-    
+
     # No credentials provided
     raise HTTPException(status_code=401, detail="Authorization required")
 
@@ -347,6 +351,7 @@ users_db: Dict[int, Dict] = {
 # Pydantic Models
 # ============================================================================
 
+
 class Product(BaseModel):
     id: int
     name: str = Field(..., description="Product name")
@@ -398,6 +403,7 @@ class Order(BaseModel):
 # Helper Functions
 # ============================================================================
 
+
 def generate_order_id() -> str:
     """Generate a random order ID"""
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -412,6 +418,7 @@ def generate_token() -> str:
 # Authentication Endpoints
 # ============================================================================
 
+
 @app.post(
     "/auth/login",
     response_model=LoginResponse,
@@ -422,29 +429,29 @@ def generate_token() -> str:
 async def login(credentials: LoginRequest = Body(...)):
     """
     Authenticate user and return an access token.
-    
+
     **Test Credentials:**
     - alice / password123
     - bob / password456
     - charlie / password789
-    
+
     The returned token should be used in the Authorization header for protected endpoints:
     `Authorization: Bearer <token>`
     """
     # Verify credentials
     if credentials.username not in user_credentials:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    
+
     user_creds = user_credentials[credentials.username]
-    
+
     if user_creds["password"] != credentials.password:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    
+
     # Generate token
     token = generate_token()
     user_id = user_creds["user_id"]
     email = user_creds["email"]
-    
+
     # Store token with expiration (24 hours)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     active_tokens[token] = {
@@ -453,7 +460,7 @@ async def login(credentials: LoginRequest = Body(...)):
         "email": email,
         "expires_at": expires_at,
     }
-    
+
     return LoginResponse(
         access_token=token,
         token_type="bearer",
@@ -473,7 +480,7 @@ async def login(credentials: LoginRequest = Body(...)):
 async def get_me(user: CurrentUser = Depends(get_current_user)):
     """
     Get the current authenticated user's information.
-    
+
     Requires: Authorization header with Bearer token
     """
     return user
@@ -492,26 +499,26 @@ async def oauth2_token(
 ):
     """
     OAuth2 Client Credentials flow token endpoint.
-    
+
     **Test Credentials:**
     - client_id: client_alice, client_secret: secret_alice_12345
     - client_id: client_bob, client_secret: secret_bob_67890
     """
     if grant_type != "client_credentials":
         raise HTTPException(status_code=400, detail="Unsupported grant_type")
-    
+
     if client_id not in oauth2_clients:
         raise HTTPException(status_code=401, detail="Invalid client_id")
-    
+
     client_data = oauth2_clients[client_id]
-    
+
     if client_data["client_secret"] != client_secret:
         raise HTTPException(status_code=401, detail="Invalid client_secret")
-    
+
     # Generate access token
     token = generate_token()
     user_id = client_data["user_id"]
-    
+
     # Get username from user_credentials
     username = None
     email = None
@@ -520,10 +527,10 @@ async def oauth2_token(
             username = user
             email = creds["email"]
             break
-    
+
     if not username:
         raise HTTPException(status_code=401, detail="User not found")
-    
+
     # Store token with expiration (1 hour for OAuth2)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     active_tokens[token] = {
@@ -532,7 +539,7 @@ async def oauth2_token(
         "email": email,
         "expires_at": expires_at,
     }
-    
+
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -549,7 +556,7 @@ async def oauth2_token(
 async def list_api_keys():
     """
     List available test API keys.
-    
+
     Use these keys in the X-API-Key header:
     - sk_test_alice_12345 (for Alice)
     - sk_test_bob_67890 (for Bob)
@@ -571,6 +578,7 @@ async def list_api_keys():
 # Public Product Endpoints (No Authentication Required)
 # ============================================================================
 
+
 @app.get("/health", summary="Health Check", description="Check if the API is running")
 async def health_check():
     """Simple health check endpoint"""
@@ -591,7 +599,7 @@ async def list_products(
 ):
     """
     Get all products, optionally filtered by category and price range.
-    
+
     This is a public endpoint - no authentication required.
 
     - **category**: Filter by product category
@@ -622,7 +630,7 @@ async def list_products(
 async def get_product(product_id: int):
     """
     Get a specific product by its ID.
-    
+
     This is a public endpoint - no authentication required.
 
     - **product_id**: The ID of the product to retrieve
@@ -643,7 +651,7 @@ async def get_product(product_id: int):
 async def create_product(product: CreateProduct, user: CurrentUser = Depends(get_current_user)):
     """
     Create a new product in the store.
-    
+
     Requires authentication. In a real app, would check for admin role.
 
     - **product**: Product details (name, price, category, stock)
@@ -668,7 +676,7 @@ async def update_product(
 ):
     """
     Update an existing product.
-    
+
     Requires authentication. In a real app, would check for admin role.
 
     - **product_id**: The ID of the product to update
@@ -695,7 +703,7 @@ async def update_product(
 async def delete_product(product_id: int, user: CurrentUser = Depends(get_current_user)):
     """
     Delete a product from the store.
-    
+
     Requires authentication. In a real app, would check for admin role.
 
     - **product_id**: The ID of the product to delete
@@ -716,7 +724,7 @@ async def delete_product(product_id: int, user: CurrentUser = Depends(get_curren
 async def search_products(q: str, limit: int = 10):
     """
     Search for products by name or category.
-    
+
     This is a public endpoint - no authentication required.
 
     - **q**: Search query (searches in product name and category)
@@ -739,6 +747,7 @@ async def search_products(q: str, limit: int = 10):
 # Protected Order Endpoints (Authentication Required)
 # ============================================================================
 
+
 @app.get(
     "/orders",
     response_model=List[Order],
@@ -749,9 +758,9 @@ async def search_products(q: str, limit: int = 10):
 async def list_user_orders(user: CurrentUser = Depends(get_current_user)):
     """
     Get all orders for the currently authenticated user.
-    
+
     Users can only see their own orders.
-    
+
     Requires: Authorization header with Bearer token
     """
     user_orders = [order for order in orders_db.values() if order["user_id"] == user.id]
@@ -768,10 +777,10 @@ async def list_user_orders(user: CurrentUser = Depends(get_current_user)):
 async def get_user_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
     """
     Get a specific order by its ID.
-    
+
     Users can only access their own orders. Returns 404 if order doesn't exist
     or belongs to another user.
-    
+
     Requires: Authorization header with Bearer token
 
     - **order_id**: The ID of the order to retrieve
@@ -780,7 +789,7 @@ async def get_user_order(order_id: str, user: CurrentUser = Depends(get_current_
         raise HTTPException(status_code=404, detail="Order not found")
 
     order = orders_db[order_id]
-    
+
     # Check if order belongs to the current user
     if order["user_id"] != user.id:
         raise HTTPException(status_code=403, detail="You don't have permission to access this order")
@@ -798,9 +807,9 @@ async def get_user_order(order_id: str, user: CurrentUser = Depends(get_current_
 async def create_user_order(order: CreateOrder, user: CurrentUser = Depends(get_current_user)):
     """
     Create a new order for the currently authenticated user.
-    
+
     The order is automatically associated with the current user's ID.
-    
+
     Requires: Authorization header with Bearer token
 
     - **items**: List of products and quantities to order
@@ -868,9 +877,9 @@ async def update_user_order_status(
 ):
     """
     Update the status of an order.
-    
+
     Users can only update their own orders. Returns 403 if order belongs to another user.
-    
+
     Requires: Authorization header with Bearer token
 
     - **order_id**: The ID of the order to update
@@ -880,7 +889,7 @@ async def update_user_order_status(
         raise HTTPException(status_code=404, detail="Order not found")
 
     order = orders_db[order_id]
-    
+
     # Check if order belongs to the current user
     if order["user_id"] != user.id:
         raise HTTPException(status_code=403, detail="You don't have permission to update this order")
@@ -897,6 +906,7 @@ async def update_user_order_status(
 # Analytics Endpoints
 # ============================================================================
 
+
 @app.get(
     "/analytics/summary",
     summary="Analytics Summary",
@@ -906,7 +916,7 @@ async def update_user_order_status(
 async def analytics_summary():
     """
     Get summary analytics including product counts, order stats, and revenue.
-    
+
     This is a public endpoint - no authentication required.
     """
     total_products = len(products_db)
@@ -948,20 +958,20 @@ async def analytics_summary():
 async def my_orders_analytics(user: CurrentUser = Depends(get_current_user)):
     """
     Get analytics for the currently authenticated user's orders.
-    
+
     Requires: Authorization header with Bearer token
     """
     user_orders = [order for order in orders_db.values() if order["user_id"] == user.id]
-    
+
     total_orders = len(user_orders)
     total_spent = sum(order["total"] for order in user_orders)
-    
+
     # Order status breakdown
     order_statuses = {}
     for order in user_orders:
         status = order["status"]
         order_statuses[status] = order_statuses.get(status, 0) + 1
-    
+
     return {
         "total_orders": total_orders,
         "total_spent": total_spent,
@@ -1045,51 +1055,49 @@ def custom_openapi():
     """Generate custom OpenAPI schema with security requirements for protected endpoints"""
     if app.openapi_schema:
         return app.openapi_schema
-    
+
     openapi_schema = get_openapi(
         title="Example E-commerce API with Authentication",
         version="1.0.0",
         description="E-commerce API with AI chat assistance and token-based authentication",
         routes=app.routes,
     )
-    
+
     # Preserve existing components (schemas, etc.) and add security scheme
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
-    
+
     if "securitySchemes" not in openapi_schema["components"]:
         openapi_schema["components"]["securitySchemes"] = {}
-    
+
     # Add security scheme
     openapi_schema["components"]["securitySchemes"]["HTTPBearer"] = {
         "type": "http",
         "scheme": "bearer",
         "description": "Bearer token authentication. Get token from /auth/login",
     }
-    
+
     # Also add basic auth scheme
     openapi_schema["components"]["securitySchemes"]["HTTPBasic"] = {
         "type": "http",
         "scheme": "basic",
         "description": "HTTP Basic authentication with username and password",
     }
-    
+
     # List of endpoints that require authentication
     protected_endpoints = [
         "/orders",
         "/auth/me",
         "/analytics/my-orders",
     ]
-    
+
     # Add security requirements to protected endpoints
     for path, path_item in openapi_schema.get("paths", {}).items():
         for method, operation in path_item.items():
             if method in ["get", "post", "put", "delete", "patch"]:
                 # Check if this is a protected endpoint
-                is_protected = any(
-                    path.startswith(protected) for protected in protected_endpoints
-                )
-                
+                is_protected = any(path.startswith(protected) for protected in protected_endpoints)
+
                 # Exclude specific public operations
                 if path == "/products" and method == "get":
                     # GET /products is public, but POST/PUT/DELETE are protected
@@ -1102,12 +1110,12 @@ def custom_openapi():
                     is_protected = False
                 if path == "/auth/login":
                     is_protected = False
-                
+
                 # Add security to protected endpoints
                 if is_protected and method != "options":
                     if "security" not in operation:
                         operation["security"] = [{"HTTPBearer": []}, {"HTTPBasic": []}]
-    
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 

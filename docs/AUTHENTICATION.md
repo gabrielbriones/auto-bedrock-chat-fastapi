@@ -18,6 +18,7 @@ When the LLM makes tool calls (API requests), those requests may require authent
 Simple bearer token authentication, commonly used in modern APIs.
 
 **WebSocket Message:**
+
 ```json
 {
   "type": "auth",
@@ -27,6 +28,7 @@ Simple bearer token authentication, commonly used in modern APIs.
 ```
 
 **How it works:**
+
 - Token is added to requests as `Authorization: Bearer <token>`
 
 ### 2. Basic Authentication
@@ -34,6 +36,7 @@ Simple bearer token authentication, commonly used in modern APIs.
 HTTP Basic Authentication using username and password.
 
 **WebSocket Message:**
+
 ```json
 {
   "type": "auth",
@@ -44,6 +47,7 @@ HTTP Basic Authentication using username and password.
 ```
 
 **How it works:**
+
 - Credentials are base64-encoded and added as `Authorization: Basic <encoded-credentials>`
 
 ### 3. API Key
@@ -51,6 +55,7 @@ HTTP Basic Authentication using username and password.
 API key authentication with configurable header name.
 
 **WebSocket Message:**
+
 ```json
 {
   "type": "auth",
@@ -61,6 +66,7 @@ API key authentication with configurable header name.
 ```
 
 **How it works:**
+
 - API key is added to requests as custom header (default: `X-API-Key`)
 - You can customize the header name per session
 
@@ -69,6 +75,7 @@ API key authentication with configurable header name.
 OAuth2 client credentials flow for service-to-service authentication.
 
 **WebSocket Message:**
+
 ```json
 {
   "type": "auth",
@@ -81,6 +88,7 @@ OAuth2 client credentials flow for service-to-service authentication.
 ```
 
 **How it works:**
+
 - Automatically requests access tokens from the token endpoint
 - Caches tokens and refreshes them when they expire
 - Adds token to requests as `Authorization: Bearer <access-token>`
@@ -90,6 +98,7 @@ OAuth2 client credentials flow for service-to-service authentication.
 Flexible authentication for non-standard schemes.
 
 **WebSocket Message:**
+
 ```json
 {
   "type": "auth",
@@ -105,6 +114,7 @@ Flexible authentication for non-standard schemes.
 ```
 
 **How it works:**
+
 - Custom headers are added directly to all requests
 - Useful for proprietary authentication schemes
 
@@ -116,22 +126,25 @@ When a client connects via WebSocket:
 
 ```javascript
 // Connect to WebSocket
-const ws = new WebSocket('ws://localhost:8000/bedrock-chat/ws');
+const ws = new WebSocket("ws://localhost:8000/bedrock-chat/ws");
 
 // Wait for connection
 ws.onopen = () => {
   // Send authentication
-  ws.send(JSON.stringify({
-    type: 'auth',
-    auth_type: 'bearer_token',
-    token: 'your-token'
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "auth",
+      auth_type: "bearer_token",
+      token: "your-token",
+    }),
+  );
 };
 ```
 
 ### 2. Authentication Storage
 
 Credentials are stored securely in the session:
+
 - They are **not** sent to the LLM
 - They are **only** used by the executor when making tool calls
 - They remain in memory for the session duration
@@ -182,6 +195,7 @@ if session.auth_handler and session.credentials.auth_type != "none":
 **Message Type:** `auth`
 
 **Response on success:**
+
 ```json
 {
   "type": "auth_configured",
@@ -192,6 +206,7 @@ if session.auth_handler and session.credentials.auth_type != "none":
 ```
 
 **Response on error:**
+
 ```json
 {
   "type": "error",
@@ -202,7 +217,7 @@ if session.auth_handler and session.credentials.auth_type != "none":
 
 ## Configuration
 
-### In your `.env` file:
+### In your `.env` file
 
 ```bash
 # Enable/disable tool authentication
@@ -218,7 +233,7 @@ BEDROCK_REQUIRE_TOOL_AUTH=false
 BEDROCK_AUTH_TOKEN_CACHE_TTL=3600
 ```
 
-### Programmatically:
+### Programmatically
 
 ```python
 from auto_bedrock_chat_fastapi import add_bedrock_chat
@@ -239,6 +254,7 @@ bedrock_chat = add_bedrock_chat(
 Document authentication requirements in your OpenAPI spec:
 
 ### Bearer Token
+
 ```yaml
 paths:
   /api/data:
@@ -248,6 +264,7 @@ paths:
 ```
 
 ### Basic Auth
+
 ```yaml
 paths:
   /api/admin:
@@ -256,6 +273,7 @@ paths:
 ```
 
 ### API Key
+
 ```yaml
 paths:
   /api/search:
@@ -265,6 +283,7 @@ paths:
 ```
 
 ### OAuth2
+
 ```yaml
 paths:
   /api/secure:
@@ -275,6 +294,7 @@ paths:
 ```
 
 ### Custom Headers
+
 ```yaml
 paths:
   /api/custom:
@@ -297,14 +317,14 @@ class AuthenticatedChatClient {
   }
 
   setupHandlers() {
-    this.ws.onopen = () => console.log('Connected');
+    this.ws.onopen = () => console.log("Connected");
     this.ws.onmessage = (event) => this.handleMessage(JSON.parse(event.data));
-    this.ws.onerror = (error) => console.error('WebSocket error:', error);
+    this.ws.onerror = (error) => console.error("WebSocket error:", error);
   }
 
   authenticate(authType, credentials) {
     const message = {
-      type: 'auth',
+      type: "auth",
       auth_type: authType,
       ...credentials,
     };
@@ -312,34 +332,36 @@ class AuthenticatedChatClient {
   }
 
   sendMessage(content) {
-    this.ws.send(JSON.stringify({
-      type: 'chat',
-      message: content,
-    }));
+    this.ws.send(
+      JSON.stringify({
+        type: "chat",
+        message: content,
+      }),
+    );
   }
 
   handleMessage(message) {
-    if (message.type === 'auth_configured') {
-      console.log('Authentication configured:', message.auth_type);
-    } else if (message.type === 'error') {
-      console.error('Error:', message.message);
-    } else if (message.type === 'ai_response') {
-      console.log('AI Response:', message.message);
+    if (message.type === "auth_configured") {
+      console.log("Authentication configured:", message.auth_type);
+    } else if (message.type === "error") {
+      console.error("Error:", message.message);
+    } else if (message.type === "ai_response") {
+      console.log("AI Response:", message.message);
     }
   }
 }
 
 // Usage
-const client = new AuthenticatedChatClient('ws://localhost:8000/bedrock-chat/ws');
+const client = new AuthenticatedChatClient("ws://localhost:8000/bedrock-chat/ws");
 
 // Authenticate with bearer token
-client.authenticate('bearer_token', {
-  token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+client.authenticate("bearer_token", {
+  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
 });
 
 // Send message
 setTimeout(() => {
-  client.sendMessage('Get me the user data');
+  client.sendMessage("Get me the user data");
 }, 1000);
 ```
 
@@ -352,7 +374,7 @@ import websockets
 
 async def chat_with_auth():
     uri = "ws://localhost:8000/bedrock-chat/ws"
-    
+
     async with websockets.connect(uri) as websocket:
         # Authenticate
         auth_message = {
@@ -361,18 +383,18 @@ async def chat_with_auth():
             "token": "your-token-here",
         }
         await websocket.send(json.dumps(auth_message))
-        
+
         # Wait for auth confirmation
         response = json.loads(await websocket.recv())
         print(f"Auth response: {response}")
-        
+
         # Send a message
         chat_message = {
             "type": "chat",
             "message": "Get me the user data",
         }
         await websocket.send(json.dumps(chat_message))
-        
+
         # Receive response
         response = json.loads(await websocket.recv())
         print(f"AI Response: {response}")
@@ -420,6 +442,7 @@ Client → WebSocket → Server Memory (Session)
 ### Token Caching
 
 OAuth2 tokens are cached in memory:
+
 - Automatically refreshed at 90% of expiry time
 - No sensitive data in logs
 - Tokens cleared when session ends
@@ -429,6 +452,7 @@ OAuth2 tokens are cached in memory:
 ### Issue: "Bearer token required"
 
 **Solution**: Ensure token is provided in the auth message:
+
 ```json
 {
   "type": "auth",
@@ -440,6 +464,7 @@ OAuth2 tokens are cached in memory:
 ### Issue: "Authentication failed: Request failed"
 
 **Possible causes**:
+
 - OAuth2 token URL is unreachable
 - Client credentials are invalid
 - Scopes are insufficient
@@ -449,6 +474,7 @@ OAuth2 tokens are cached in memory:
 ### Issue: Tool calls failing with 401 Unauthorized
 
 **Possible causes**:
+
 - Authentication not configured for the session
 - Wrong authentication type for the API
 - Token has expired
@@ -458,6 +484,7 @@ OAuth2 tokens are cached in memory:
 ### Issue: "OAuth2 token URL not provided"
 
 **Solution**: Include `token_url` in OAuth2 auth message:
+
 ```json
 {
   "type": "auth",
@@ -496,15 +523,15 @@ Create separate sessions if you need to call different APIs:
 
 ```javascript
 // Session 1: API A with Bearer Token
-const session1 = new AuthenticatedChatClient('ws://localhost:8000/bedrock-chat/ws');
-session1.authenticate('bearer_token', { token: 'api-a-token' });
+const session1 = new AuthenticatedChatClient("ws://localhost:8000/bedrock-chat/ws");
+session1.authenticate("bearer_token", { token: "api-a-token" });
 
 // Session 2: API B with OAuth2
-const session2 = new AuthenticatedChatClient('ws://localhost:8000/bedrock-chat/ws');
-session2.authenticate('oauth2', {
-  client_id: '...',
-  client_secret: '...',
-  token_url: '...',
+const session2 = new AuthenticatedChatClient("ws://localhost:8000/bedrock-chat/ws");
+session2.authenticate("oauth2", {
+  client_id: "...",
+  client_secret: "...",
+  token_url: "...",
 });
 ```
 

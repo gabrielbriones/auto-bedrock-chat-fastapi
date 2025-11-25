@@ -48,13 +48,15 @@ jobs:
         run: poetry install
 
       - name: Run Black
-        run: poetry run black --check auto_bedrock_chat_fastapi/ tests/ examples/
+        run: poetry run black --check --diff auto_bedrock_chat_fastapi/ tests/ examples/
 
       - name: Run isort
-        run: poetry run isort --check-only --profile black --line-length 120 auto_bedrock_chat_fastapi/ tests/ examples/
+        run: >
+          poetry run isort --check-only --diff --profile black --line-length 120
+          auto_bedrock_chat_fastapi/ tests/ examples/
 
       - name: Run Flake8
-        run: poetry run flake8 auto_bedrock_chat_fastapi/ tests/ examples/
+        run: poetry run flake8 auto_bedrock_chat_fastapi/ tests/ examples/ --max-line-length=120 --count --statistics
 
       - name: Run mypy type checking
         run: poetry run mypy auto_bedrock_chat_fastapi/ --ignore-missing-imports

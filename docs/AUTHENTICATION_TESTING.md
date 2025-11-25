@@ -9,10 +9,12 @@ Comprehensive test suite for the tool call authentication system in auto-bedrock
 ### `tests/test_authentication.py` (38 tests)
 
 **TestAuthType** (2 tests)
+
 - `test_auth_type_values` - Verify all 6 auth types are defined
 - `test_auth_type_from_string` - Test enum string conversion
 
 **TestCredentials** (9 tests)
+
 - `test_credentials_defaults` - Default credential initialization
 - `test_credentials_bearer_token` - Bearer token credential storage
 - `test_credentials_basic_auth` - Username/password credential storage
@@ -24,6 +26,7 @@ Comprehensive test suite for the tool call authentication system in auto-bedrock
 - `test_credentials_custom` - Custom header authentication
 
 **TestAuthenticationHandler** (18 tests)
+
 - `test_handler_initialization` - Handler creation
 - `test_handler_default_credentials` - Handler with no auth
 - `test_apply_bearer_token` - Bearer token header application
@@ -43,17 +46,20 @@ Comprehensive test suite for the tool call authentication system in auto-bedrock
 - `test_validate_credentials_custom` - Custom auth validation
 
 **TestChatSessionWithAuth** (3 tests)
+
 - `test_session_credentials_default` - Session credential initialization
 - `test_session_credentials_initialization` - Explicit credential storage
 - `test_session_update_credentials` - Credential updates in session
 
 **TestAuthenticationConfiguration** (4 tests)
+
 - `test_auth_config_defaults` - Default config values
 - `test_auth_config_custom_types` - Custom auth type support
 - `test_auth_disabled` - Auth enabled by default
 - `test_require_auth` - Auth requirement default
 
 **TestAuthenticationIntegration** (4 tests)
+
 - `test_bearer_token_flow` - Complete bearer token flow
 - `test_basic_auth_flow` - Complete basic auth flow
 - `test_api_key_flow` - Complete API key flow
@@ -62,6 +68,7 @@ Comprehensive test suite for the tool call authentication system in auto-bedrock
 ### `tests/test_websocket_authentication.py` (11 tests)
 
 **TestWebSocketAuthMessages** (8 tests)
+
 - `test_handle_bearer_token_auth_message` - WebSocket bearer token message
 - `test_handle_basic_auth_message` - WebSocket basic auth message
 - `test_handle_api_key_auth_message` - WebSocket API key message
@@ -72,6 +79,7 @@ Comprehensive test suite for the tool call authentication system in auto-bedrock
 - `test_handle_auth_invalid_type` - Error handling for invalid auth type
 
 **TestToolCallAuthentication** (3 tests)
+
 - `test_execute_tool_call_with_bearer_token` - Tool execution with auth
 - `test_execute_tool_call_without_auth` - Tool execution without auth
 - `test_tool_call_auth_failure` - Error handling during tool auth
@@ -187,10 +195,12 @@ assert session1.credentials != session2.credentials
 ### Common Issues
 
 1. **OAuth2 Token Response Not Awaited**
+
    - Issue: `response.json()` must be `await response.json()`
    - Solution: Fixed in `auth_handler.py` line 226
 
 2. **AsyncMock Configuration**
+
    - Issue: `mock_response.json.return_value` vs `AsyncMock(return_value=...)`
    - Solution: Use `AsyncMock()` for async methods
 

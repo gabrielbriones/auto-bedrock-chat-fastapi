@@ -5,6 +5,7 @@
 A complete, production-ready authentication system for securing tool calls (API requests) in auto-bedrock-chat-fastapi.
 
 **Key Points:**
+
 - Clients provide credentials once via WebSocket
 - Credentials automatically applied to all API calls
 - LLM never sees the credentials
@@ -13,17 +14,18 @@ A complete, production-ready authentication system for securing tool calls (API 
 
 ## Authentication Types
 
-| Type | Use Case | Header Example |
-|------|----------|---|
-| **Bearer Token** | Modern APIs, JWTs | `Authorization: Bearer abc123...` |
-| **Basic Auth** | Legacy systems | `Authorization: Basic dXNlcjpwYXNz` |
-| **API Key** | Simplified APIs | `X-API-Key: sk-123456` |
-| **OAuth2** | Enterprise, token endpoint | Auto-fetches & caches tokens |
-| **Custom** | Proprietary schemes | Any custom headers |
+| Type             | Use Case                   | Header Example                      |
+| ---------------- | -------------------------- | ----------------------------------- |
+| **Bearer Token** | Modern APIs, JWTs          | `Authorization: Bearer abc123...`   |
+| **Basic Auth**   | Legacy systems             | `Authorization: Basic dXNlcjpwYXNz` |
+| **API Key**      | Simplified APIs            | `X-API-Key: sk-123456`              |
+| **OAuth2**       | Enterprise, token endpoint | Auto-fetches & caches tokens        |
+| **Custom**       | Proprietary schemes        | Any custom headers                  |
 
 ## 5-Minute Setup
 
 ### 1. Enable Authentication
+
 ```python
 from auto_bedrock_chat_fastapi import add_bedrock_chat
 
@@ -31,16 +33,21 @@ bedrock_chat = add_bedrock_chat(app, enable_tool_auth=True)
 ```
 
 ### 2. Client Authenticates
+
 ```javascript
-ws.send(JSON.stringify({
-  type: 'auth',
-  auth_type: 'bearer_token',
-  token: 'your-api-token'
-}));
+ws.send(
+  JSON.stringify({
+    type: "auth",
+    auth_type: "bearer_token",
+    token: "your-api-token",
+  }),
+);
 ```
 
 ### 3. System Applies Auth Automatically
+
 When the LLM makes a tool call, the executor:
+
 1. Retrieves credentials from session
 2. Applies auth headers to request
 3. Makes API call with authentication
@@ -49,6 +56,7 @@ When the LLM makes a tool call, the executor:
 ## File Structure
 
 ### New Files (1,500+ lines of code)
+
 - **`auth_handler.py`** (430 lines) - Core authentication logic
 - **`AUTHENTICATION_QUICK_START.md`** - Quick start guide
 - **`AUTHENTICATION.md`** - Full reference (500+ lines)
@@ -56,6 +64,7 @@ When the LLM makes a tool call, the executor:
 - **`examples/fastAPI/app_auth.py`** - Multi-auth working example (1,100+ lines)
 
 ### Modified Files
+
 - **`session_manager.py`** - Added credentials storage
 - **`websocket_handler.py`** - Added auth handling and application
 - **`tools_generator.py`** - Added auth metadata extraction
@@ -65,6 +74,7 @@ When the LLM makes a tool call, the executor:
 ## WebSocket API
 
 ### Send Authentication
+
 ```json
 {
   "type": "auth",
@@ -74,6 +84,7 @@ When the LLM makes a tool call, the executor:
 ```
 
 ### Receive Confirmation
+
 ```json
 {
   "type": "auth_configured",
@@ -85,6 +96,7 @@ When the LLM makes a tool call, the executor:
 ## Configuration
 
 ### Environment Variables
+
 ```bash
 BEDROCK_ENABLE_TOOL_AUTH=true
 BEDROCK_SUPPORTED_AUTH_TYPES=bearer_token,basic_auth,api_key,oauth2,custom
@@ -93,6 +105,7 @@ BEDROCK_AUTH_TOKEN_CACHE_TTL=3600
 ```
 
 ### Programmatic
+
 ```python
 add_bedrock_chat(
     app,
@@ -136,18 +149,22 @@ Result to LLM
 ## Security Features
 
 ✅ **Credentials isolated per session**
+
 - Each session has its own credentials
 - Automatically cleaned up on disconnect
 
 ✅ **Never sent to LLM**
+
 - Only applied when making API calls
 - LLM only sees results
 
 ✅ **Not logged**
+
 - Credentials excluded from logs
 - Only `has_token` flags logged
 
 ✅ **OAuth2 token caching**
+
 - Tokens cached in memory
 - Auto-refreshed at 90% expiry
 - Reduces auth endpoint calls
@@ -155,34 +172,40 @@ Result to LLM
 ## Code Examples
 
 ### JavaScript
+
 ```javascript
 class AuthChat {
   constructor(wsUrl) {
     this.ws = new WebSocket(wsUrl);
-    this.ws.onmessage = e => this.onMsg(JSON.parse(e.data));
+    this.ws.onmessage = (e) => this.onMsg(JSON.parse(e.data));
   }
 
   auth(type, creds) {
-    this.ws.send(JSON.stringify({
-      type: 'auth',
-      auth_type: type,
-      ...creds
-    }));
+    this.ws.send(
+      JSON.stringify({
+        type: "auth",
+        auth_type: type,
+        ...creds,
+      }),
+    );
   }
 
   send(msg) {
-    this.ws.send(JSON.stringify({
-      type: 'chat',
-      message: msg
-    }));
+    this.ws.send(
+      JSON.stringify({
+        type: "chat",
+        message: msg,
+      }),
+    );
   }
 }
 
-const chat = new AuthChat('ws://localhost:8000/bedrock-chat/ws');
-chat.auth('bearer_token', { token: 'my-token' });
+const chat = new AuthChat("ws://localhost:8000/bedrock-chat/ws");
+chat.auth("bearer_token", { token: "my-token" });
 ```
 
 ### Python
+
 ```python
 import asyncio
 import json
@@ -195,10 +218,10 @@ async def main():
             'auth_type': 'bearer_token',
             'token': 'my-token'
         }))
-        
+
         msg = json.loads(await ws.recv())
         print(f'✅ {msg["message"]}')
-        
+
         await ws.send(json.dumps({
             'type': 'chat',
             'message': 'Get my data'
@@ -214,11 +237,12 @@ asyncio.run(main())
 async def list_users(x_api_key: str = Header(None)):
     if not x_api_key or x_api_key != "valid-key":
         raise HTTPException(status_code=401)
-    
+
     return {"users": [...]}
 ```
 
 When LLM calls this tool, system:
+
 1. Retrieves API key from session
 2. Adds `X-API-Key: valid-key` header
 3. Calls the endpoint successfully
@@ -229,16 +253,19 @@ When LLM calls this tool, system:
 📖 **Start with these:**
 
 1. **AUTHENTICATION_QUICK_START.md** (5 min)
+
    - Quick setup
    - All auth types
    - Code examples
 
 2. **AUTHENTICATION.md** (20 min)
+
    - Complete guide
    - Best practices
    - Troubleshooting
 
 3. **AUTHENTICATION_IMPLEMENTATION.md** (30 min)
+
    - Technical deep dive
    - Architecture diagrams
    - Implementation details
@@ -251,6 +278,7 @@ When LLM calls this tool, system:
 ## Key Classes
 
 ### `AuthType` (Enum)
+
 ```python
 class AuthType(str, Enum):
     NONE = "none"
@@ -262,6 +290,7 @@ class AuthType(str, Enum):
 ```
 
 ### `Credentials` (Dataclass)
+
 ```python
 @dataclass
 class Credentials:
@@ -277,6 +306,7 @@ class Credentials:
 ```
 
 ### `AuthenticationHandler` (Class)
+
 ```python
 class AuthenticationHandler:
     async def apply_auth_to_headers(
@@ -291,12 +321,14 @@ class AuthenticationHandler:
 ## Integration Points
 
 ### 1. Session Manager
+
 ```python
 session.credentials  # Stores creds
 session.auth_handler  # Applies auth
 ```
 
 ### 2. Tools Generator
+
 ```python
 # Extracts auth requirements from OpenAPI specs
 x-auth-type: bearer_token
@@ -305,12 +337,14 @@ x-oauth2-token-url: https://...
 ```
 
 ### 3. WebSocket Handler
+
 ```python
 # Receives auth messages
 # Applies auth to tool calls
 ```
 
 ### 4. Configuration
+
 ```python
 enable_tool_auth
 supported_auth_types
@@ -321,6 +355,7 @@ auth_token_cache_ttl
 ## Testing the System
 
 ### Run the Example
+
 ```bash
 cd /home/gbriones/auto-bedrock-chat-fastapi
 python examples/fastAPI/app_auth.py
@@ -328,6 +363,7 @@ python examples/fastAPI/app_auth.py
 ```
 
 ### Test Different Auth Types
+
 1. **API Key**: Use one of the test credentials
 2. **Bearer Token**: Test JWT tokens
 3. **Try prompts**: "List all orders", "Get user profile", etc.
@@ -346,6 +382,7 @@ python examples/fastAPI/app_auth.py
 ## Common Tasks
 
 ### Enable Only Bearer Token
+
 ```python
 add_bedrock_chat(
     app,
@@ -354,6 +391,7 @@ add_bedrock_chat(
 ```
 
 ### Require Auth Before Tool Calls
+
 ```python
 add_bedrock_chat(
     app,
@@ -362,6 +400,7 @@ add_bedrock_chat(
 ```
 
 ### Custom OAuth2 Setup
+
 ```json
 {
   "type": "auth",
@@ -374,38 +413,40 @@ add_bedrock_chat(
 ```
 
 ### Multiple Sessions
+
 ```javascript
 // Session 1: API A
-const chat1 = new AuthChat('ws://...');
-chat1.auth('bearer_token', { token: 'token-a' });
+const chat1 = new AuthChat("ws://...");
+chat1.auth("bearer_token", { token: "token-a" });
 
 // Session 2: API B
-const chat2 = new AuthChat('ws://...');
-chat2.auth('api_key', { api_key: 'key-b' });
+const chat2 = new AuthChat("ws://...");
+chat2.auth("api_key", { api_key: "key-b" });
 ```
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| "Bearer token required" | Send `token` field in auth message |
-| "HTTP 401 Unauthorized" | Check token validity |
-| "OAuth2 token URL not provided" | Include `token_url` in message |
-| Credentials not applied | Ensure auth message sent before chat |
-| Tool calls fail silently | Enable debug logging |
+| Problem                         | Solution                             |
+| ------------------------------- | ------------------------------------ |
+| "Bearer token required"         | Send `token` field in auth message   |
+| "HTTP 401 Unauthorized"         | Check token validity                 |
+| "OAuth2 token URL not provided" | Include `token_url` in message       |
+| Credentials not applied         | Ensure auth message sent before chat |
+| Tool calls fail silently        | Enable debug logging                 |
 
 ## What's Next?
 
 The authentication system is production-ready and includes:
 
-✅ 5 authentication methods  
-✅ Automatic credential application  
-✅ Security best practices  
-✅ Comprehensive documentation  
-✅ Working examples  
-✅ Full configuration options  
+✅ 5 authentication methods
+✅ Automatic credential application
+✅ Security best practices
+✅ Comprehensive documentation
+✅ Working examples
+✅ Full configuration options
 
 You can:
+
 1. Use the example as a starting point
 2. Integrate with existing FastAPI apps
 3. Configure for your specific auth needs

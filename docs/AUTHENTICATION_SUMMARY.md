@@ -11,11 +11,13 @@ A complete authentication system for securing tool calls (API requests) in auto-
 **Purpose**: Manages different authentication methods and applies them to requests.
 
 **Key Components:**
+
 - `AuthType` enum: BEARER_TOKEN, BASIC_AUTH, API_KEY, OAUTH2_CLIENT_CREDENTIALS, CUSTOM, NONE
 - `Credentials` dataclass: Stores user credentials securely
 - `AuthenticationHandler` class: Applies authentication to HTTP headers
 
 **Features:**
+
 - Bearer Token: `Authorization: Bearer <token>`
 - Basic Authentication: Base64-encoded username:password
 - API Key: Configurable header name (default: X-API-Key)
@@ -25,11 +27,13 @@ A complete authentication system for securing tool calls (API requests) in auto-
 ### 2. Session Authentication (`session_manager.py` updates)
 
 **Changes:**
+
 - Added `credentials` field to `ChatSession` to store user credentials
 - Added `auth_handler` field to instantiate the authentication handler
 - Credentials are session-scoped and automatically cleaned up on disconnect
 
 **Security:**
+
 - Credentials stored in memory only
 - Not sent to LLM or included in logs
 - Isolated per session
@@ -39,6 +43,7 @@ A complete authentication system for securing tool calls (API requests) in auto-
 **New Method**: `_extract_auth_requirements()`
 
 **Extracts authentication requirements from OpenAPI specs:**
+
 - Standard OpenAPI `security` field
 - Custom extensions:
   - `x-auth-type`: Specifies auth type
@@ -53,6 +58,7 @@ A complete authentication system for securing tool calls (API requests) in auto-
 **New Method**: `_handle_auth_message()`
 
 **Supports:**
+
 - Bearer token authentication
 - Basic authentication (username/password)
 - API key with configurable header
@@ -60,6 +66,7 @@ A complete authentication system for securing tool calls (API requests) in auto-
 - Custom authentication schemes
 
 **Workflow:**
+
 1. Client sends auth message
 2. Credentials validated and stored in session
 3. Confirmation sent to client
@@ -68,18 +75,21 @@ A complete authentication system for securing tool calls (API requests) in auto-
 ### 5. Tool Execution with Authentication (`websocket_handler.py` updates)
 
 **Changes to `_execute_single_tool_call()`:**
+
 - Accepts optional `session` parameter
 - Checks if session has authentication configured
 - Applies authentication to request headers before API call
 - Gracefully handles OAuth2 token refresh
 
 **Changes to `_execute_tool_calls()`:**
+
 - Accepts `session` parameter
 - Passes session to `_execute_single_tool_call()`
 
 ### 6. Configuration (`config.py` updates)
 
 **New Configuration Fields:**
+
 ```python
 enable_tool_auth: bool = True
 supported_auth_types: List[str] = ["bearer_token", "basic_auth", "api_key", "oauth2", "custom"]
@@ -88,6 +98,7 @@ auth_token_cache_ttl: int = 3600
 ```
 
 **Environment Variables:**
+
 ```bash
 BEDROCK_ENABLE_TOOL_AUTH=true
 BEDROCK_SUPPORTED_AUTH_TYPES=bearer_token,basic_auth,api_key,oauth2,custom
@@ -132,7 +143,7 @@ BEDROCK_AUTH_TOKEN_CACHE_TTL=3600
 if session and session.auth_handler:
     # Get tool-specific auth requirements from metadata
     tool_auth_config = tool_metadata.get("_metadata", {}).get("authentication")
-    
+
     # Apply authentication to headers
     headers = await session.auth_handler.apply_auth_to_headers(
         headers,
@@ -152,6 +163,7 @@ response = await http_client.get(url, headers=headers)
 **Message Type**: `auth`
 
 #### Bearer Token
+
 ```json
 {
   "type": "auth",
@@ -161,6 +173,7 @@ response = await http_client.get(url, headers=headers)
 ```
 
 #### Basic Authentication
+
 ```json
 {
   "type": "auth",
@@ -171,6 +184,7 @@ response = await http_client.get(url, headers=headers)
 ```
 
 #### API Key
+
 ```json
 {
   "type": "auth",
@@ -181,6 +195,7 @@ response = await http_client.get(url, headers=headers)
 ```
 
 #### OAuth2 Client Credentials
+
 ```json
 {
   "type": "auth",
@@ -193,6 +208,7 @@ response = await http_client.get(url, headers=headers)
 ```
 
 #### Custom Headers
+
 ```json
 {
   "type": "auth",
@@ -207,6 +223,7 @@ response = await http_client.get(url, headers=headers)
 ### Response Messages
 
 **Success:**
+
 ```json
 {
   "type": "auth_configured",
@@ -217,6 +234,7 @@ response = await http_client.get(url, headers=headers)
 ```
 
 **Error:**
+
 ```json
 {
   "type": "error",
@@ -228,24 +246,29 @@ response = await http_client.get(url, headers=headers)
 ## Files Created/Modified
 
 ### New Files
+
 1. **`auto_bedrock_chat_fastapi/auth_handler.py`** (430 lines)
+
    - Complete authentication system
    - Support for 5 auth types
    - OAuth2 token management
 
 2. **`AUTHENTICATION.md`** (500+ lines)
+
    - Comprehensive authentication guide
    - All supported methods with examples
    - Security considerations
    - Troubleshooting guide
 
 3. **`AUTHENTICATION_IMPLEMENTATION.md`** (400+ lines)
+
    - Technical implementation details
    - Architecture diagrams
    - Data flow explanations
    - Code examples
 
 4. **`AUTHENTICATION_QUICK_START.md`** (300+ lines)
+
    - Quick start guide
    - Configuration instructions
    - JavaScript and Python examples
@@ -258,27 +281,33 @@ response = await http_client.get(url, headers=headers)
    - Multiple auth method demonstrations
 
 ### Modified Files
+
 1. **`auto_bedrock_chat_fastapi/auth_handler.py`** (NEW)
+
    - 430 lines of authentication logic
 
 2. **`auto_bedrock_chat_fastapi/session_manager.py`**
+
    - Added credentials field
    - Added auth_handler field
-   - Added __post_init__ method
+   - Added **post_init** method
 
 3. **`auto_bedrock_chat_fastapi/tools_generator.py`**
-   - Added _extract_auth_requirements() method (60 lines)
-   - Updated _create_function_description()
+
+   - Added \_extract_auth_requirements() method (60 lines)
+   - Updated \_create_function_description()
 
 4. **`auto_bedrock_chat_fastapi/websocket_handler.py`**
+
    - Added import for auth components
-   - Added _handle_auth_message() method (120 lines)
-   - Updated _message_loop() for auth handling
-   - Updated _handle_tool_calls_recursively() signature
-   - Updated _execute_tool_calls() to accept session
-   - Updated _execute_single_tool_call() for auth application
+   - Added \_handle_auth_message() method (120 lines)
+   - Updated \_message_loop() for auth handling
+   - Updated \_handle_tool_calls_recursively() signature
+   - Updated \_execute_tool_calls() to accept session
+   - Updated \_execute_single_tool_call() for auth application
 
 5. **`auto_bedrock_chat_fastapi/config.py`**
+
    - Added 4 new authentication configuration fields
    - Support for environment variables
 
@@ -288,6 +317,7 @@ response = await http_client.get(url, headers=headers)
 ## Key Features
 
 ### ✅ Multiple Authentication Types
+
 - Bearer Token (JWT, OAuth2 access tokens)
 - HTTP Basic Authentication
 - API Key (with configurable header names)
@@ -295,11 +325,13 @@ response = await http_client.get(url, headers=headers)
 - Custom Headers (for proprietary schemes)
 
 ### ✅ Automatic Application
+
 - Credentials automatically applied to all tool calls
 - LLM never sees the credentials
 - No need for tool developers to handle auth
 
 ### ✅ Security
+
 - Credentials stored in memory only
 - Per-session isolation
 - Automatic cleanup on disconnect
@@ -307,11 +339,13 @@ response = await http_client.get(url, headers=headers)
 - OAuth2 token caching with auto-refresh
 
 ### ✅ Flexibility
+
 - Developers choose which auth types to enable
 - Per-tool auth requirements in OpenAPI specs
 - Custom extensions for non-standard auth
 
 ### ✅ Developer Experience
+
 - Simple WebSocket message API
 - Clear error messages
 - Configuration via environment or code
@@ -337,30 +371,34 @@ bedrock_chat = add_bedrock_chat(
 ### 2. Client Connection (JavaScript)
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/bedrock-chat/ws');
+const ws = new WebSocket("ws://localhost:8000/bedrock-chat/ws");
 
 ws.onopen = () => {
   // Authenticate
-  ws.send(JSON.stringify({
-    type: 'auth',
-    auth_type: 'bearer_token',
-    token: 'your-api-token'
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "auth",
+      auth_type: "bearer_token",
+      token: "your-api-token",
+    }),
+  );
 };
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  
-  if (msg.type === 'auth_configured') {
-    console.log('✅ Authenticated!');
-    
+
+  if (msg.type === "auth_configured") {
+    console.log("✅ Authenticated!");
+
     // Now make requests
-    ws.send(JSON.stringify({
-      type: 'chat',
-      message: 'Get my data'
-    }));
-  } else if (msg.type === 'ai_response') {
-    console.log('AI: ' + msg.message);
+    ws.send(
+      JSON.stringify({
+        type: "chat",
+        message: "Get my data",
+      }),
+    );
+  } else if (msg.type === "ai_response") {
+    console.log("AI: " + msg.message);
   }
 };
 ```
@@ -372,17 +410,18 @@ ws.onmessage = (event) => {
 async def list_users(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401)
-    
+
     token = authorization.replace("Bearer ", "")
     if token != "valid-token":
         raise HTTPException(status_code=401)
-    
+
     return {"users": [...]}
 ```
 
 ### 4. Tool Call Execution
 
 The system automatically:
+
 1. Extracts the bearer token from session
 2. Adds `Authorization: Bearer <token>` header
 3. Makes the request
@@ -391,6 +430,7 @@ The system automatically:
 ## Security Considerations
 
 ### What's Protected
+
 - Credentials stored in session memory only
 - Automatic cleanup on disconnect
 - Never sent to LLM
@@ -398,6 +438,7 @@ The system automatically:
 - Per-session isolation
 
 ### Best Practices
+
 - Always use HTTPS/WSS in production
 - Rotate tokens regularly
 - Use minimal OAuth2 scopes
@@ -407,6 +448,7 @@ The system automatically:
 ## Testing
 
 The implementation includes:
+
 - Validation of credentials before storage
 - Error handling for invalid auth types
 - Support for custom error messages
@@ -414,6 +456,7 @@ The implementation includes:
 - Timeout handling
 
 Run tests with:
+
 ```bash
 pytest tests/
 ```
@@ -423,17 +466,20 @@ pytest tests/
 Complete documentation provided:
 
 1. **AUTHENTICATION_QUICK_START.md** - Start here (5 min read)
+
    - Quick setup instructions
    - All auth types explained
    - Working JavaScript/Python examples
 
 2. **AUTHENTICATION.md** - Full guide (20 min read)
+
    - Detailed explanations
    - Security best practices
    - Troubleshooting guide
    - Advanced usage
 
 3. **AUTHENTICATION_IMPLEMENTATION.md** - Technical details (30 min read)
+
    - Architecture diagrams
    - Component descriptions
    - Data flow explanations
@@ -448,6 +494,7 @@ Complete documentation provided:
 ## Future Enhancements
 
 Potential additions:
+
 - JWT token parsing and validation
 - MTLS (mutual TLS) certificate authentication
 - SAML/OIDC enterprise authentication
@@ -460,13 +507,13 @@ Potential additions:
 
 A production-ready authentication system has been implemented that:
 
-✅ Supports 5 authentication methods  
-✅ Automatically applies credentials to tool calls  
-✅ Keeps credentials secure and isolated  
-✅ Provides simple WebSocket API  
-✅ Works with existing FastAPI applications  
-✅ Highly configurable for developers  
-✅ Completely transparent to the LLM  
-✅ Well-documented with examples  
+✅ Supports 5 authentication methods
+✅ Automatically applies credentials to tool calls
+✅ Keeps credentials secure and isolated
+✅ Provides simple WebSocket API
+✅ Works with existing FastAPI applications
+✅ Highly configurable for developers
+✅ Completely transparent to the LLM
+✅ Well-documented with examples
 
 The system is ready for production use and fully integrated with the existing auto-bedrock-chat-fastapi framework.

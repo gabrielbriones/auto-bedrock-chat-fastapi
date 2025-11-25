@@ -16,3 +16,4 @@ exclude =
     htmlcov
 per-file-ignores =
     __init__.py:F401
+    examples/fastAPI/app_auth.py:B008

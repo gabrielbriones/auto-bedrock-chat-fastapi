@@ -1,7 +1,6 @@
 """Authentication handler for tool call execution"""
 
 import base64
-import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum

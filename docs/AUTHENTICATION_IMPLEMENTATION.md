@@ -64,15 +64,18 @@ The authentication system is designed with these principles:
 ### Modified Files
 
 1. **`auto_bedrock_chat_fastapi/session_manager.py`**
+
    - Added `credentials` field to `ChatSession`
    - Added `auth_handler` field to `ChatSession`
    - Added `__post_init__` to initialize auth handler
 
 2. **`auto_bedrock_chat_fastapi/tools_generator.py`**
+
    - Added `_extract_auth_requirements()` method
    - Updated `_create_function_description()` to include auth metadata
 
 3. **`auto_bedrock_chat_fastapi/websocket_handler.py`**
+
    - Added `_handle_auth_message()` method
    - Updated `_message_loop()` to handle auth messages
    - Updated `_execute_tool_calls()` to accept session parameter
@@ -88,7 +91,7 @@ The authentication system is designed with these principles:
 ```python
 class AuthenticationHandler:
     """Manages authentication for API calls"""
-    
+
     async def apply_auth_to_headers(self, headers, tool_auth_config):
         """Apply authentication to request headers"""
         # Determines which auth method to use based on credentials.auth_type
@@ -97,6 +100,7 @@ class AuthenticationHandler:
 ```
 
 **Supported Methods:**
+
 - `_apply_bearer_token()` - Adds `Authorization: Bearer <token>`
 - `_apply_basic_auth()` - Base64 encodes and adds `Authorization: Basic`
 - `_apply_api_key()` - Adds custom header with API key
@@ -111,13 +115,14 @@ class ChatSession:
     # ...
     credentials: Credentials = field(default_factory=lambda: Credentials())
     auth_handler: Optional[AuthenticationHandler] = field(default=None, init=False)
-    
+
     def __post_init__(self):
         """Initialize auth handler after dataclass initialization"""
         self.auth_handler = AuthenticationHandler(self.credentials)
 ```
 
 Each session has its own:
+
 - `credentials`: The actual auth data
 - `auth_handler`: Instance that applies the auth
 
@@ -129,6 +134,7 @@ def _extract_auth_requirements(self, operation: Dict) -> Optional[Dict[str, Any]
 ```
 
 Looks for:
+
 - `security` (standard OpenAPI)
 - `x-auth-type` (custom extension)
 - `x-bearer-token-header` (custom header name)
@@ -154,14 +160,14 @@ async def _handle_auth_message(self, websocket: WebSocket, data: Dict[str, Any])
 ```python
 async def _execute_single_tool_call(self, tool_metadata, arguments, session):
     # ... build request ...
-    
+
     # Apply authentication if available
     if session and session.auth_handler:
         headers = await session.auth_handler.apply_auth_to_headers(
             headers,
             tool_metadata.get("_metadata", {}).get("authentication")
         )
-    
+
     # Make request with authenticated headers
     response = await self.http_client.get(**request_kwargs)
 ```
@@ -252,6 +258,7 @@ else:
 ### Logging
 
 Credentials are excluded from logs:
+
 - Username/password: Not logged
 - Tokens: Not logged
 - Only flags logged: `has_bearer_token`, `has_credentials`, etc.
