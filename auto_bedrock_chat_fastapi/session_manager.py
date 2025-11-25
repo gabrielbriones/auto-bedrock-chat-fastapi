@@ -67,7 +67,7 @@ class ChatSession:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     # Authentication
-    credentials: Credentials = field(default_factory=lambda: Credentials())
+    credentials: Credentials = field(default_factory=Credentials)
     auth_handler: Optional[AuthenticationHandler] = field(default=None, init=False)
 
     # Session settings
