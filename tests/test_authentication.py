@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from auto_bedrock_chat_fastapi.auth_handler import AuthenticationHandler, AuthType, Credentials
+from auto_bedrock_chat_fastapi.auth_handler import (
+    DEFAULT_SUPPORTED_AUTH_TYPES,
+    AuthenticationHandler,
+    AuthType,
+    Credentials,
+)
 from auto_bedrock_chat_fastapi.config import ChatConfig
 from auto_bedrock_chat_fastapi.session_manager import ChatSession
 
@@ -382,7 +387,7 @@ class TestAuthenticationConfiguration:
         config = ChatConfig()
 
         assert config.enable_tool_auth is True
-        assert config.supported_auth_types == ["bearer_token", "basic_auth", "api_key", "oauth2", "custom"]
+        assert config.supported_auth_types == DEFAULT_SUPPORTED_AUTH_TYPES
         assert config.require_tool_auth is False
         assert config.auth_token_cache_ttl == 3600
 

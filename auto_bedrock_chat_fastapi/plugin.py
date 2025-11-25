@@ -858,6 +858,91 @@ class BedrockChatPlugin:
         .message-content em {{
             font-style: italic;
         }}
+
+        /* Mobile responsive design for auth modal and chat */
+        @media (max-width: 768px) {{
+            .auth-modal-content {{
+                width: 95%;
+                max-width: 100%;
+                padding: 20px;
+                max-height: 90vh;
+                overflow-y: auto;
+                border-radius: 8px;
+            }}
+
+            .auth-fields {{
+                max-height: 40vh;
+                padding: 12px;
+            }}
+
+            .auth-buttons {{
+                flex-direction: column;
+                gap: 8px;
+            }}
+
+            .auth-buttons button {{
+                width: 100%;
+                padding: 12px;
+            }}
+
+            .chat-container {{
+                width: 100%;
+                max-width: 100%;
+                height: 100vh;
+                border-radius: 0;
+            }}
+
+            .chat-header {{
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 10px 15px;
+            }}
+
+            .chat-header-center {{
+                order: 3;
+                width: 100%;
+                flex-basis: 100%;
+            }}
+
+            .chat-header h1 {{
+                font-size: 1.25rem;
+            }}
+
+            .auth-button {{
+                padding: 8px 15px;
+                font-size: 0.9rem;
+            }}
+
+            .chat-messages {{
+                padding: 15px;
+            }}
+
+            .message-content {{
+                max-width: 85%;
+            }}
+
+            .chat-input {{
+                padding: 15px;
+                gap: 8px;
+            }}
+
+            .chat-input textarea {{
+                font-size: 16px;
+                padding: 10px 12px;
+                min-height: 44px;
+            }}
+
+            .chat-input button {{
+                margin-left: 0;
+                padding: 10px 16px;
+                font-size: 14px;
+            }}
+
+            .tool-calls {{
+                font-size: 0.75rem;
+                padding: 8px;
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -1350,8 +1435,7 @@ class BedrockChatPlugin:
 
             // Initialize chat (with auth modal if enabled)
             const authEnabled = {'true' if auth_enabled else 'false'};
-            const isMobile = window.innerWidth <= 768;
-            console.log('Auth enabled:', authEnabled, 'Is mobile:', isMobile, 'Window width:', window.innerWidth);
+            console.log('Auth enabled:', authEnabled);
 
             // Hide auth button if auth is disabled
             const authButton = document.getElementById('authButton');
@@ -1360,15 +1444,15 @@ class BedrockChatPlugin:
             }}
 
             const authModal = document.getElementById('authModal');
-            if (authEnabled && !isMobile) {{
-                // Auth enabled and not mobile, show modal
+            if (authEnabled) {{
+                // Auth enabled, show modal (works on all screen sizes)
                 console.log('Showing auth modal');
                 authModal.classList.remove('hidden');
                 initializeAuthModal();  // Auto-select single auth type if needed
                 // Don't initialize ChatClient here - wait for auth submission
             }} else {{
-                // Auth disabled or mobile, initialize directly
-                console.log('Hiding auth modal and initializing chat without auth');
+                // Auth disabled, initialize directly without authentication
+                console.log('Auth disabled, initializing chat without authentication');
                 authModal.classList.add('hidden');
                 window.chatClient = new ChatClient(null);
             }}

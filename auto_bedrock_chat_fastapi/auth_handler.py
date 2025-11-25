@@ -2,13 +2,23 @@
 
 import base64
 import logging
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Default supported authentication types
+DEFAULT_SUPPORTED_AUTH_TYPES: List[str] = [
+    "bearer_token",
+    "basic_auth",
+    "api_key",
+    "oauth2",
+    "custom",
+]
 
 
 class AuthType(str, Enum):
@@ -194,7 +204,6 @@ class AuthenticationHandler:
         Returns:
             Access token
         """
-        import time
 
         # Check if cached token is still valid
         if self.credentials._cached_access_token and self.credentials._token_expiry:
@@ -229,7 +238,6 @@ class AuthenticationHandler:
 
             # Cache the token with expiry
             expires_in = token_data.get("expires_in", 3600)
-            import time
 
             self.credentials._cached_access_token = access_token
             self.credentials._token_expiry = time.time() + (expires_in * 0.9)  # Refresh at 90%

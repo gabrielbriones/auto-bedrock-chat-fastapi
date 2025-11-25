@@ -345,6 +345,12 @@ class TestToolCallAuthentication:
                 mock_session.auth_handler.apply_auth_to_headers.assert_called_once()
                 assert result == {"data": "test"}
 
+                # Verify HTTP client was called with the correct headers
+                handler.http_client.get.assert_called_once()
+                call_kwargs = handler.http_client.get.call_args[1]
+                assert "headers" in call_kwargs
+                assert call_kwargs["headers"] == {"Authorization": "Bearer test-token"}
+
     @pytest.mark.asyncio
     async def test_execute_tool_call_without_auth(self):
         """Test tool call execution without authentication"""
@@ -376,6 +382,13 @@ class TestToolCallAuthentication:
 
                 assert result == {"data": "test"}
 
+                # Verify HTTP client was called without auth headers
+                handler.http_client.get.assert_called_once()
+                call_kwargs = handler.http_client.get.call_args[1]
+                # Either no headers or headers don't contain auth
+                if "headers" in call_kwargs:
+                    assert "Authorization" not in call_kwargs["headers"]
+
     @pytest.mark.asyncio
     async def test_tool_call_auth_failure(self):
         """Test tool call with authentication failure"""
@@ -405,3 +418,6 @@ class TestToolCallAuthentication:
                 # Should return error
                 assert "error" in result
                 assert "Authentication" in result["error"]
+
+                # Verify auth handler was attempted
+                mock_session.auth_handler.apply_auth_to_headers.assert_called_once()

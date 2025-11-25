@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .exceptions import ConfigurationError
 
 
@@ -264,7 +265,7 @@ class ChatConfig(BaseSettings):
     )
 
     supported_auth_types: List[str] = Field(
-        default_factory=lambda: ["bearer_token", "basic_auth", "api_key", "oauth2", "custom"],
+        default_factory=lambda: DEFAULT_SUPPORTED_AUTH_TYPES.copy(),
         alias="BEDROCK_SUPPORTED_AUTH_TYPES",
         description="List of supported authentication types for tool calls",
     )
