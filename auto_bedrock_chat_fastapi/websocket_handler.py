@@ -889,6 +889,15 @@ class WebSocketChatHandler:
         try:
             # Clear credentials from session
             session.credentials = None
+            # Explicitly cleanup auth_handler if it exists and has a cleanup/close method
+            auth_handler = session.auth_handler
+            if auth_handler is not None:
+                cleanup_method = getattr(auth_handler, "cleanup", None) or getattr(auth_handler, "close", None)
+                if callable(cleanup_method):
+                    if hasattr(cleanup_method, "__await__"):
+                        await cleanup_method()
+                    else:
+                        cleanup_method()
             session.auth_handler = None
 
             logger.info(f"User logged out from session {session.session_id}")
