@@ -141,11 +141,10 @@ function skipAuth() {
         alert('Authentication is required to use this chat.');
         return;  // Don't close modal or initialize chat
     }
-    
+
     // Just hide modal, use existing connection or create new one without auth
     if (!window.chatClient || !window.chatClient.ws || window.chatClient.ws.readyState !== WebSocket.OPEN) {
         window.chatClient = new ChatClient();
     }
     document.getElementById('authModal').classList.add('hidden');
 }
-

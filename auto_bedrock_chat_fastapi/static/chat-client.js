@@ -112,7 +112,7 @@ class ChatClient {
             this.authSent = false;
             // Don't close the connection immediately - let the server send logout_success
             // The connection will be cleaned up automatically
-            
+
             // Show auth modal for re-authentication
             const authModal = document.getElementById('authModal');
             if (authModal) {

@@ -2,7 +2,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     const authModal = document.getElementById('authModal');
     const skipAuthButton = document.getElementById('skipAuthButton');
-    
+
     // Store chatClient globally so it persists across modal interactions
     if (!window.chatClient) {
         window.chatClient = null;
@@ -48,21 +48,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Helper function to process message content with markdown and remove reasoning if needed
+// Helper function to process message content with markdown rendering
 function processMessageContent(content, modelId) {
-    // Remove reasoning tags for Claude models before escaping/markdown
+    // Remove reasoning tags for Claude models
     let processed = content;
     if (modelId && modelId.includes('claude')) {
         // Remove <reasoning> blocks but preserve content
         processed = processed.replace(/<\/?reasoning>/g, '');
     }
-    // Basic markdown processing
-    processed = processed
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/\n/g, '<br>');
+
+    // Use marked.js for markdown processing (handles escaping properly)
+    if (window.marked) {
+        processed = marked.parse(processed);
+    }
+
     return processed;
 }

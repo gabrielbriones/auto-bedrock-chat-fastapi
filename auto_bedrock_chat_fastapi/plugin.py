@@ -247,7 +247,7 @@ class BedrockChatPlugin:
                 """Serve chat UI"""
 
                 if not self.templates:
-                    return self._get_default_ui_html(request)
+                    return self._render_chat_ui(request)
 
                 try:
                     # Get supported auth types from config
@@ -271,7 +271,7 @@ class BedrockChatPlugin:
                     )
                 except Exception as e:
                     logger.warning(f"Template rendering failed: {str(e)}, using default UI")
-                    return self._get_default_ui_html(request)
+                    return self._render_chat_ui(request)
 
         # Statistics endpoint
         @self.app.get(f"{self.config.chat_endpoint}/stats")
@@ -399,8 +399,8 @@ class BedrockChatPlugin:
             # Silently ignore any errors during sync cleanup
             pass
 
-    def _get_default_ui_html(self, request: Request):
-        """Get default chat UI HTML by rendering Jinja2 template"""
+    def _render_chat_ui(self, request: Request):
+        """Render chat UI using Jinja2 template"""
 
         # Prepare context for template rendering
         context = {
