@@ -1,9 +1,9 @@
 <div class="auth-modal-content">
     <h2>🔐 Authenticate</h2>
-    <form id="authForm" onsubmit="event.preventDefault(); submitAuth();">
+    <form id="authForm">
         <div class="auth-form-group" id="authTypeSelector">
             <label for="authType">Authentication Type:</label>
-            <select id="authType" onchange="updateAuthFields()">
+            <select id="authType">
                 <option value="">-- Select Auth Type --</option>
                 <!-- Options will be populated by JavaScript from window.CONFIG.supportedAuthTypes -->
             </select>
@@ -77,8 +77,7 @@
 
         <div class="auth-buttons">
             <button type="submit" class="auth-submit">Authenticate</button>
-            <button type="button" class="auth-skip" id="skipAuthButton" onclick="skipAuth()">Skip</button>
+            <button type="button" class="auth-skip" id="skipAuthButton">Skip</button>
         </div>
     </form>
 </div>
-

@@ -3,6 +3,7 @@ function initializeAuthModal() {
     const supportedTypes = window.CONFIG.supportedAuthTypes;
     const authTypeSelector = document.getElementById('authTypeSelector');
     const authTypeSelect = document.getElementById('authType');
+    const authForm = document.getElementById('authForm');
     const skipButton = document.getElementById('skipAuthButton');
 
     // Populate auth type dropdown if empty
@@ -26,6 +27,22 @@ function initializeAuthModal() {
         authTypeSelector.classList.add('hidden');
         authTypeSelect.value = supportedTypes[0];
         updateAuthFields();
+    }
+
+    // Attach event handlers
+    if (authTypeSelect) {
+        authTypeSelect.addEventListener('change', updateAuthFields);
+    }
+
+    if (authForm) {
+        authForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            submitAuth();
+        });
+    }
+
+    if (skipButton) {
+        skipButton.addEventListener('click', skipAuth);
     }
 }
 
