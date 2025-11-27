@@ -10,7 +10,8 @@ function initializeAuthModal() {
         supportedTypes.forEach(authType => {
             const option = document.createElement('option');
             option.value = authType;
-            option.textContent = authType.replace(/_/g, ' ').charAt(0).toUpperCase() + authType.replace(/_/g, ' ').slice(1);
+            const displayText = authType.replace(/_/g, ' ');
+            option.textContent = displayText.charAt(0).toUpperCase() + displayText.slice(1);
             authTypeSelect.appendChild(option);
         });
     }
