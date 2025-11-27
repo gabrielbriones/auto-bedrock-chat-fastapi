@@ -50,20 +50,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Helper function to process message content with markdown and remove reasoning if needed
 function processMessageContent(content, modelId) {
+    // Remove reasoning tags for Claude models before escaping/markdown
+    let processed = content;
+    if (modelId && modelId.includes('claude')) {
+        // Remove <reasoning> blocks but preserve content
+        processed = processed.replace(/<\/?reasoning>/g, '');
+    }
     // Basic markdown processing
-    let processed = content
+    processed = processed
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
         .replace(/\n/g, '<br>');
-
-    // Remove reasoning tags for Claude models
-    if (modelId && modelId.includes('claude')) {
-        // Remove <reasoning> blocks but preserve content
-        processed = processed.replace(/<\/?reasoning>/g, '');
-    }
-
     return processed;
 }
