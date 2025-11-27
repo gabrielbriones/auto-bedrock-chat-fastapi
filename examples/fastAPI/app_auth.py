@@ -989,6 +989,7 @@ bedrock_chat = add_bedrock_chat(
     app,
     # Enable authentication for tool calls
     enable_tool_auth=True,
+    require_tool_auth=True,
     supported_auth_types=[
         "bearer_token",
         "basic_auth",

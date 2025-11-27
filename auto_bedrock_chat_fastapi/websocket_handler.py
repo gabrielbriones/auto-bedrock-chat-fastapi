@@ -148,6 +148,15 @@ class WebSocketChatHandler:
         self._total_messages_handled += 1
 
         try:
+            # Check if authentication is required before sending messages to LLM
+            if self.config.require_tool_auth:
+                auth_type_str = session.credentials.get_auth_type_string()
+                if auth_type_str == "none":
+                    await self._send_error(
+                        websocket, "Authentication is required before sending messages. Please authenticate first."
+                    )
+                    return
+
             # Add user message to history
             user_chat_message = ChatMessage(role="user", content=user_message, metadata={"source": "websocket"})
             logger.debug(f"Received user message: {user_message}")
@@ -426,11 +435,7 @@ class WebSocketChatHandler:
 
         # Apply authentication if session has credentials configured
         if session and session.credentials and session.auth_handler:
-            auth_type_str = (
-                session.credentials.auth_type.value
-                if isinstance(session.credentials.auth_type, AuthType)
-                else str(session.credentials.auth_type)
-            )
+            auth_type_str = session.credentials.get_auth_type_string()
             if auth_type_str != "none":
                 try:
                     # Get tool-specific auth config from metadata

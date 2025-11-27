@@ -53,6 +53,12 @@ class Credentials:
     _cached_access_token: Optional[str] = field(default=None, init=False, repr=False)
     _token_expiry: Optional[float] = field(default=None, init=False, repr=False)
 
+    def get_auth_type_string(self) -> str:
+        """Get auth_type as a string, handling both enum and string types"""
+        if isinstance(self.auth_type, AuthType):
+            return self.auth_type.value
+        return str(self.auth_type)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert credentials to dictionary for serialization (excluding sensitive data)"""
         return {
