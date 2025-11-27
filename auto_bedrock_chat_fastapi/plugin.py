@@ -389,6 +389,7 @@ class BedrockChatPlugin:
 
         # Determine which auth UI to include
         auth_enabled = self.config.enable_tool_auth
+        require_tool_auth = self.config.require_tool_auth
         supported_auth_types = self.config.supported_auth_types if auth_enabled else []
 
         return f"""
@@ -1025,7 +1026,7 @@ class BedrockChatPlugin:
 
             <div class="auth-buttons">
                 <button class="auth-submit" onclick="submitAuth()">Authenticate</button>
-                <button class="auth-skip" onclick="skipAuth()">Skip</button>
+                <button class="auth-skip" id="skipAuthButton" onclick="skipAuth()">Skip</button>
             </div>
         </div>
     </div>
@@ -1069,6 +1070,13 @@ class BedrockChatPlugin:
             const supportedTypes = {supported_auth_types};
             const authTypeSelector = document.getElementById('authTypeSelector');
             const authTypeSelect = document.getElementById('authType');
+            const skipButton = document.getElementById('skipAuthButton');
+            const requireAuth = {str(require_tool_auth).lower()};
+
+            // Hide/show skip button based on whether auth is required
+            if (skipButton) {{
+                skipButton.style.display = requireAuth ? 'none' : 'block';
+            }}
 
             // If only one auth type, hide selector and auto-select it
             if (supportedTypes.length === 1) {{
@@ -1164,6 +1172,11 @@ class BedrockChatPlugin:
         }}
 
         function skipAuth() {{
+            const requireAuth = {str(require_tool_auth).lower()};
+            if (requireAuth) {{
+                alert('Authentication is required to use this chat.');
+                return;  // Don't close modal or initialize chat
+            }}
             document.getElementById('authModal').classList.add('hidden');
             window.chatClient = new ChatClient(null);
         }}
@@ -1270,6 +1283,7 @@ class BedrockChatPlugin:
             }}
 
             handleAuthButtonClick() {{
+                const requireAuth = {str(require_tool_auth).lower()};
                 if (this.authPayload) {{
                     // Logout: send logout message and clear auth
                     if (this.ws && this.ws.readyState === WebSocket.OPEN) {{
@@ -1278,6 +1292,11 @@ class BedrockChatPlugin:
                         }}));
                     }}
                     this.authPayload = null;
+                    // If auth is required, show auth modal on logout
+                    if (requireAuth) {{
+                        document.getElementById('authModal').classList.remove('hidden');
+                        initializeAuthModal();
+                    }}
                     // Don't add message here - backend will send logout_success
                 }} else {{
                     // Login: show auth modal
@@ -1435,7 +1454,9 @@ class BedrockChatPlugin:
 
             // Initialize chat (with auth modal if enabled)
             const authEnabled = {'true' if auth_enabled else 'false'};
+            const requireAuth = {str(require_tool_auth).lower()};
             console.log('Auth enabled:', authEnabled);
+            console.log('Auth required:', requireAuth);
 
             // Hide auth button if auth is disabled
             const authButton = document.getElementById('authButton');
