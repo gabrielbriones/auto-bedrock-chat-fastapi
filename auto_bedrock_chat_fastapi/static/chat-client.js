@@ -205,7 +205,8 @@ class ChatClient {
         contentDiv.className = 'message-content';
 
         // Ensure content is a string
-        const messageText = typeof content === 'string' ? content :
+        const messageText = content === null ? '' :
+                          typeof content === 'string' ? content :
                           typeof content === 'object' ? JSON.stringify(content) :
                           String(content);
 
