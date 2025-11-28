@@ -3,11 +3,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const authModal = document.getElementById('authModal');
     const skipAuthButton = document.getElementById('skipAuthButton');
 
-    // Store chatClient globally so it persists across modal interactions
-    if (!window.chatClient) {
-        window.chatClient = null;
-    }
-
     // Check if auth is enabled
     const authEnabled = window.CONFIG.authEnabled;
     const requireAuth = window.CONFIG.requireAuth;

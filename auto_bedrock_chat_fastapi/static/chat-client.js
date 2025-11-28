@@ -110,8 +110,8 @@ class ChatClient {
             }
             this.authPayload = null;
             this.authSent = false;
-            // Don't close the connection immediately - let the server send logout_success
-            // The connection will be cleaned up automatically
+            // Send logout message to server - it will respond with logout_success
+            // which triggers connection close in handleMessage()
 
             // Show auth modal for re-authentication
             const authModal = document.getElementById('authModal');
@@ -170,6 +170,10 @@ class ChatClient {
             case 'logout_success':
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
+                // Close connection after logout - it will reconnect when user logs back in
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.close();
+                }
                 break;
 
             case 'connection_established':
@@ -205,10 +209,9 @@ class ChatClient {
         contentDiv.className = 'message-content';
 
         // Ensure content is a string
-        const messageText = content === null ? '' :
-                          typeof content === 'string' ? content :
+        const messageText = typeof content === 'string' ? content :
                           typeof content === 'object' ? JSON.stringify(content) :
-                          String(content);
+                          content ?? '';
 
         // Process content based on role and model
         if (role === 'assistant') {
