@@ -56,19 +56,23 @@ function updateAuthFields() {
     // Get all field group divs
     const allFieldGroups = fieldsContainer.querySelectorAll('div[id$="-fields"]');
 
-    // Hide all fields and clear their values
+    // Hide all fields
     allFieldGroups.forEach(fieldGroup => {
-        // Add hidden class
-        fieldGroup.classList.add('auth-field-hidden');
+        const isCurrentType = fieldGroup.id === authType + '-fields';
 
-        // Clear all input and textarea values
-        fieldGroup.querySelectorAll('input, textarea').forEach(input => {
-            if (input.id === 'apiKeyHeader') {
-                input.value = 'X-API-Key';  // Reset to default
-            } else {
-                input.value = '';
-            }
-        });
+        // Add hidden class to non-selected types
+        if (!isCurrentType) {
+            fieldGroup.classList.add('auth-field-hidden');
+
+            // Only clear non-password fields to minimize sensitive data handling
+            fieldGroup.querySelectorAll('input:not([type="password"]), textarea').forEach(input => {
+                if (input.id === 'apiKeyHeader') {
+                    input.value = 'X-API-Key';  // Reset to default
+                } else {
+                    input.value = '';
+                }
+            });
+        }
     });
 
     // Show selected auth type fields
