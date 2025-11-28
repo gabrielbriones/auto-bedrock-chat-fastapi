@@ -112,8 +112,9 @@ function getAuthPayload() {
                 const customHeadersText = document.getElementById('customHeaders').value;
                 payload.custom_headers = JSON.parse(customHeadersText);
             } catch (e) {
-                const preview = document.getElementById('customHeaders').value.substring(0, 100);
-                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input: ${preview}${preview.length >= 100 ? '...' : ''}`);
+                const fullInput = document.getElementById('customHeaders').value;
+                const preview = fullInput.substring(0, 100);
+                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input: ${preview}${fullInput.length > 100 ? '...' : ''}`);
                 return null;
             }
             break;

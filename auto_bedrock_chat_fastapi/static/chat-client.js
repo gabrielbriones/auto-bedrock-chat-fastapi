@@ -5,6 +5,7 @@ class ChatClient {
         this.authPayload = authPayload;
         this.authSent = false;
         this.intentionalClose = false;
+        this.connecting = false;
         this.messageInput = document.getElementById('messageInput');
         this.sendButton = document.getElementById('sendButton');
         this.authButton = document.getElementById('authButton');
@@ -45,12 +46,18 @@ class ChatClient {
     }
 
     connect() {
-        // Prevent multiple simultaneous connections
+        // Prevent multiple simultaneous connections using synchronous flag
+        if (this.connecting) {
+            console.log('Connection already in progress, skipping connect()');
+            return;
+        }
+
         if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
             console.log('WebSocket already connecting/connected, skipping connect()');
             return;
         }
 
+        this.connecting = true;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}${window.CONFIG.websocketUrl}`;
 
@@ -59,6 +66,7 @@ class ChatClient {
 
         this.ws.onopen = (event) => {
             console.log('Connected to chat');
+            this.connecting = false;
             this.updateConnectionStatus(true);
 
             // Send authentication if provided
@@ -76,6 +84,7 @@ class ChatClient {
 
         this.ws.onclose = (event) => {
             console.log(`WebSocket closed. Intentional: ${this.intentionalClose}`);
+            this.connecting = false;
             this.updateConnectionStatus(false);
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
@@ -93,6 +102,7 @@ class ChatClient {
 
         this.ws.onerror = (error) => {
             console.error('WebSocket error:', error);
+            this.connecting = false;
             this.addMessage('system', 'Connection error occurred');
         };
     }
@@ -186,9 +196,10 @@ class ChatClient {
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
                 // Close connection after logout - mark as intentional to prevent auto-reconnect
+                // Set flag BEFORE checking/closing to avoid race conditions
+                this.intentionalClose = true;
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    console.log('Logout: marking close as intentional and closing connection');
-                    this.intentionalClose = true;
+                    console.log('Logout: closing connection (intentional close flag already set)');
                     this.ws.close();
                 }
                 break;
@@ -226,10 +237,16 @@ class ChatClient {
         contentDiv.className = 'message-content';
 
         // Ensure content is a string
-        const messageText = typeof content === 'string' ? content :
-                          content === null || content === undefined ? '' :
-                          typeof content === 'object' ? JSON.stringify(content) :
-                          String(content);
+        let messageText;
+        if (typeof content === 'string') {
+            messageText = content;
+        } else if (content === null || content === undefined) {
+            messageText = '';
+        } else if (typeof content === 'object') {
+            messageText = JSON.stringify(content);
+        } else {
+            messageText = String(content);
+        }
 
         // Process content based on role and model
         if (role === 'assistant') {
