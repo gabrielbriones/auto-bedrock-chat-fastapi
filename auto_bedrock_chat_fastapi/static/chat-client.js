@@ -288,6 +288,8 @@ class ChatClient {
     showTypingIndicator(message = 'AI is typing...') {
         this.typingText.textContent = message;
         this.typingIndicator.classList.add('active');
+        // Auto-scroll to bottom when typing indicator appears
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
     }
 
     hideTypingIndicator() {
@@ -302,8 +304,36 @@ class ChatClient {
             return '';
         }
         if (typeof content === 'object') {
-            return JSON.stringify(content);
+            // Safely serialize objects, filtering out sensitive properties
+            return this._safeStringify(content);
         }
         return String(content);
+    }
+
+    _safeStringify(obj) {
+        // List of potentially sensitive property names to exclude
+        const sensitiveKeys = [
+            'password', 'token', 'secret', 'apiKey', 'api_key',
+            'authorization', 'credentials', 'private', 'key',
+            'stack', 'stackTrace', '__proto__', 'constructor'
+        ];
+
+        try {
+            // Use replacer function to filter sensitive data
+            return JSON.stringify(obj, (key, value) => {
+                // Check if key is sensitive (case-insensitive)
+                if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk.toLowerCase()))) {
+                    return '[REDACTED]';
+                }
+                // Exclude functions and symbols
+                if (typeof value === 'function' || typeof value === 'symbol') {
+                    return undefined;
+                }
+                return value;
+            }, 2); // Pretty print with 2-space indentation
+        } catch (e) {
+            // Handle circular references or other stringify errors
+            return '[Object: Unable to serialize safely]';
+        }
     }
 }

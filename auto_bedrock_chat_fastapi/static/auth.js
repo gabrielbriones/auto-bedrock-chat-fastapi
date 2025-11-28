@@ -56,7 +56,7 @@ function updateAuthFields() {
     // Get all field group divs
     const allFieldGroups = fieldsContainer.querySelectorAll('div[id$="-fields"]');
 
-    // Hide all fields
+    // Hide all fields and clear their values
     allFieldGroups.forEach(fieldGroup => {
         const isCurrentType = fieldGroup.id === authType + '-fields';
 
@@ -64,8 +64,8 @@ function updateAuthFields() {
         if (!isCurrentType) {
             fieldGroup.classList.add('auth-field-hidden');
 
-            // Only clear non-password fields to minimize sensitive data handling
-            fieldGroup.querySelectorAll('input:not([type="password"]), textarea').forEach(input => {
+            // Clear all fields to prevent credential leakage when switching auth types
+            fieldGroup.querySelectorAll('input, textarea').forEach(input => {
                 if (input.id === 'apiKeyHeader') {
                     input.value = 'X-API-Key';  // Reset to default
                 } else {
@@ -135,18 +135,20 @@ function submitAuth() {
         return;
     }
 
-    console.log('submitAuth: Checking existing connection...');
-    // Send auth through existing connection or create new one with auth
-    if (window.chatClient && window.chatClient.ws && window.chatClient.ws.readyState === WebSocket.OPEN) {
-        // Send auth through existing connection
-        console.log('submitAuth: Using existing connection');
-        window.chatClient.authPayload = payload;
-        window.chatClient.sendAuth();
-    } else {
-        // Create new chat client with auth payload
-        console.log('submitAuth: Creating new ChatClient with auth');
-        window.chatClient = new ChatClient(payload);
+    console.log('submitAuth: Setting up authentication...');
+
+    // Always create a new connection with auth to ensure clean state
+    // Close existing connection if any
+    if (window.chatClient && window.chatClient.ws) {
+        console.log('submitAuth: Closing existing connection to establish new authenticated session');
+        window.chatClient.intentionalClose = true;
+        window.chatClient.ws.close();
     }
+
+    // Create new chat client with auth payload
+    console.log('submitAuth: Creating new ChatClient with auth credentials');
+    window.chatClient = new ChatClient(payload);
+
     document.getElementById('authModal').classList.add('hidden');
 }
 

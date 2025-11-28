@@ -77,8 +77,38 @@ body {
 }
 
 .custom-headers-textarea {
-    min-height: 100px;
-    font-family: monospace;
+    min-height: 180px;
+    max-height: 350px;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    background: linear-gradient(to bottom, #f8f9fa 0%, #ffffff 100%);
+    border: 2px solid #cbd5e0;
+    border-radius: 8px;
+    padding: 16px;
+    color: #1a202c;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) inset;
+    resize: vertical;
+    letter-spacing: 0.01em;
+}
+
+.custom-headers-textarea:hover {
+    border-color: #a0aec0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08) inset;
+}
+
+.custom-headers-textarea:focus {
+    background: #ffffff;
+    border-color: #667eea;
+    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1) inset;
+    outline: none;
+}
+
+.custom-headers-textarea::placeholder {
+    color: #a0aec0;
+    font-style: italic;
+    opacity: 0.8;
 }
 
 .auth-form-group input:focus,

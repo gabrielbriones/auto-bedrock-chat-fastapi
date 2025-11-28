@@ -251,9 +251,9 @@ class BedrockChatPlugin:
                     template_dir = os.path.join(os.path.dirname(__file__), "templates")
                     return HTMLResponse(
                         content="<html><body><h1>Chat UI Error</h1>"
-                        f"<p>Templates directory not found or not properly configured.</p>"
-                        f"<p>Expected location: <code>{html.escape(template_dir)}</code></p>"
-                        "<p>Ensure the templates directory exists and contains the required template files.</p>"
+                        f"<p>Template rendering is unavailable. The template system failed to initialize.</p>"
+                        f"<p>Expected template directory: <code>{html.escape(template_dir)}</code></p>"
+                        "<p>Please check that the templates directory exists, is readable, and contains the required files.</p>"
                         "</body></html>",
                         status_code=500,
                     )
