@@ -4,6 +4,7 @@ class ChatClient {
         this.ws = null;
         this.authPayload = authPayload;
         this.authSent = false;
+        this.intentionalClose = false;
         this.messageInput = document.getElementById('messageInput');
         this.sendButton = document.getElementById('sendButton');
         this.authButton = document.getElementById('authButton');
@@ -44,9 +45,16 @@ class ChatClient {
     }
 
     connect() {
+        // Prevent multiple simultaneous connections
+        if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+            console.log('WebSocket already connecting/connected, skipping connect()');
+            return;
+        }
+
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}${window.CONFIG.websocketUrl}`;
 
+        console.log('Creating new WebSocket connection...');
         this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = (event) => {
@@ -67,13 +75,20 @@ class ChatClient {
         };
 
         this.ws.onclose = (event) => {
-            console.log('Disconnected from chat');
+            console.log(`WebSocket closed. Intentional: ${this.intentionalClose}`);
             this.updateConnectionStatus(false);
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
 
-            // Try to reconnect after 3 seconds
-            setTimeout(() => this.connect(), 3000);
+            // Only reconnect if close wasn't intentional (e.g., not from logout)
+            if (!this.intentionalClose) {
+                console.log('Scheduling reconnect in 3 seconds...');
+                setTimeout(() => this.connect(), 3000);
+            } else {
+                console.log('Intentional close, not reconnecting');
+                // Reset flag for next connection
+                this.intentionalClose = false;
+            }
         };
 
         this.ws.onerror = (error) => {
@@ -170,8 +185,10 @@ class ChatClient {
             case 'logout_success':
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
-                // Close connection after logout - it will reconnect when user logs back in
+                // Close connection after logout - mark as intentional to prevent auto-reconnect
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    console.log('Logout: marking close as intentional and closing connection');
+                    this.intentionalClose = true;
                     this.ws.close();
                 }
                 break;
@@ -210,8 +227,9 @@ class ChatClient {
 
         // Ensure content is a string
         const messageText = typeof content === 'string' ? content :
+                          content === null || content === undefined ? '' :
                           typeof content === 'object' ? JSON.stringify(content) :
-                          content ?? '';
+                          String(content);
 
         // Process content based on role and model
         if (role === 'assistant') {

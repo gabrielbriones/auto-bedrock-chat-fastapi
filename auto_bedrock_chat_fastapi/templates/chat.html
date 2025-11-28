@@ -51,12 +51,11 @@
 
     <script>
         // Configuration passed from server
-        {% set auth_types = supported_auth_types if supported_auth_types else [] %}
         window.CONFIG = {
             websocketUrl: "{{ websocket_url }}",
             authEnabled: {{ 'true' if auth_enabled else 'false' }},
             requireAuth: {{ 'true' if require_tool_auth else 'false' }},
-            supportedAuthTypes: {{ auth_types | tojson }},
+            supportedAuthTypes: {{ supported_auth_types | tojson }},
             modelId: "{{ model_id }}"
         };
     </script>

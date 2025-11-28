@@ -48,8 +48,8 @@ function processMessageContent(content, modelId) {
     // Remove reasoning tags for Claude models
     let processed = content;
     if (modelId && modelId.includes('claude')) {
-        // Remove <reasoning> blocks but preserve content
-        processed = processed.replace(/<\/?reasoning>/g, '');
+        // Remove <reasoning>...</reasoning> blocks including content
+        processed = processed.replace(/<reasoning[^>]*>[\s\S]*?<\/reasoning>/gi, '');
     }
 
     // Use marked.js for markdown processing (handles escaping properly)

@@ -29,20 +29,23 @@ function initializeAuthModal() {
         updateAuthFields();
     }
 
-    // Attach event handlers
-    if (authTypeSelect) {
+    // Attach event handlers only if not already attached
+    if (authTypeSelect && !authTypeSelect.dataset.listenerAttached) {
         authTypeSelect.addEventListener('change', updateAuthFields);
+        authTypeSelect.dataset.listenerAttached = 'true';
     }
 
-    if (authForm) {
+    if (authForm && !authForm.dataset.listenerAttached) {
         authForm.addEventListener('submit', (e) => {
             e.preventDefault();
             submitAuth();
         });
+        authForm.dataset.listenerAttached = 'true';
     }
 
-    if (skipButton) {
+    if (skipButton && !skipButton.dataset.listenerAttached) {
         skipButton.addEventListener('click', skipAuth);
+        skipButton.dataset.listenerAttached = 'true';
     }
 }
 
@@ -108,7 +111,7 @@ function getAuthPayload() {
             try {
                 payload.custom_headers = JSON.parse(document.getElementById('customHeaders').value);
             } catch (e) {
-                alert('Invalid JSON for custom headers');
+                alert('Invalid JSON for custom headers: ' + e.message);
                 return null;
             }
             break;
@@ -124,13 +127,16 @@ function submitAuth() {
         return;
     }
 
+    console.log('submitAuth: Checking existing connection...');
     // Send auth through existing connection or create new one with auth
     if (window.chatClient && window.chatClient.ws && window.chatClient.ws.readyState === WebSocket.OPEN) {
         // Send auth through existing connection
+        console.log('submitAuth: Using existing connection');
         window.chatClient.authPayload = payload;
         window.chatClient.sendAuth();
     } else {
         // Create new chat client with auth payload
+        console.log('submitAuth: Creating new ChatClient with auth');
         window.chatClient = new ChatClient(payload);
     }
     document.getElementById('authModal').classList.add('hidden');
