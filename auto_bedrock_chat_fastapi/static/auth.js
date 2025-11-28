@@ -113,8 +113,9 @@ function getAuthPayload() {
                 payload.custom_headers = JSON.parse(customHeadersText);
             } catch (e) {
                 const fullInput = document.getElementById('customHeaders').value;
-                const preview = fullInput.substring(0, 100);
-                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input: ${preview}${fullInput.length > 100 ? '...' : ''}`);
+                const preview = fullInput.substring(0, 50);
+                const truncated = fullInput.length > 50 ? '...' : '';
+                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input (first 50 chars): ${preview}${truncated}`);
                 return null;
             }
             break;

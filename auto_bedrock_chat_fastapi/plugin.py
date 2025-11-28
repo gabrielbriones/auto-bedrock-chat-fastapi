@@ -2,6 +2,7 @@
 
 import asyncio
 import atexit
+import html
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -251,7 +252,7 @@ class BedrockChatPlugin:
                     return HTMLResponse(
                         content="<html><body><h1>Chat UI Error</h1>"
                         f"<p>Templates directory not found or not properly configured.</p>"
-                        f"<p>Expected location: <code>{template_dir}</code></p>"
+                        f"<p>Expected location: <code>{html.escape(template_dir)}</code></p>"
                         "<p>Ensure the templates directory exists and contains the required template files.</p>"
                         "</body></html>",
                         status_code=500,
@@ -281,7 +282,7 @@ class BedrockChatPlugin:
                     logger.error(f"Template rendering failed: {str(e)}")
                     return HTMLResponse(
                         content=f"<html><body><h1>Chat UI Error</h1>"
-                        f"<p>Failed to render template: {str(e)}</p>"
+                        f"<p>Failed to render template: {html.escape(str(e))}</p>"
                         "</body></html>",
                         status_code=500,
                     )

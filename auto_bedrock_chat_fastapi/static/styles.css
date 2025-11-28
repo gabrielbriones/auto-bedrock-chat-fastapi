@@ -66,8 +66,24 @@ body {
     box-sizing: border-box;
 }
 
+.auth-form-group textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #cbd5e0;
+    border-radius: 5px;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+.custom-headers-textarea {
+    min-height: 100px;
+    font-family: monospace;
+}
+
 .auth-form-group input:focus,
-.auth-form-group select:focus {
+.auth-form-group select:focus,
+.auth-form-group textarea:focus {
     outline: none;
     border-color: #667eea;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);

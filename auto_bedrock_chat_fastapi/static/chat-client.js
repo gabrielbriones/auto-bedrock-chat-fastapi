@@ -52,12 +52,15 @@ class ChatClient {
             return;
         }
 
+        // Set flag immediately to prevent race conditions
+        this.connecting = true;
+
         if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
             console.log('WebSocket already connecting/connected, skipping connect()');
+            this.connecting = false; // Reset flag since we're not proceeding
             return;
         }
 
-        this.connecting = true;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}${window.CONFIG.websocketUrl}`;
 
@@ -237,16 +240,7 @@ class ChatClient {
         contentDiv.className = 'message-content';
 
         // Ensure content is a string
-        let messageText;
-        if (typeof content === 'string') {
-            messageText = content;
-        } else if (content === null || content === undefined) {
-            messageText = '';
-        } else if (typeof content === 'object') {
-            messageText = JSON.stringify(content);
-        } else {
-            messageText = String(content);
-        }
+        const messageText = this._normalizeContent(content);
 
         // Process content based on role and model
         if (role === 'assistant') {
@@ -262,13 +256,24 @@ class ChatClient {
         if (toolCalls && toolCalls.length > 0) {
             const toolCallsDiv = document.createElement('div');
             toolCallsDiv.className = 'tool-calls';
-            toolCallsDiv.innerHTML = '<strong>API Calls:</strong><br>';
+
+            const titleStrong = document.createElement('strong');
+            titleStrong.textContent = 'API Calls:';
+            toolCallsDiv.appendChild(titleStrong);
+            toolCallsDiv.appendChild(document.createElement('br'));
 
             toolCalls.forEach(call => {
                 const callDiv = document.createElement('div');
                 callDiv.className = 'tool-call';
-                callDiv.innerHTML = `<span class="tool-call-name">${call.name}</span>` +
-                                  `(${JSON.stringify(call.arguments)})`;
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'tool-call-name';
+                nameSpan.textContent = call.name;
+
+                const argsText = document.createTextNode(`(${JSON.stringify(call.arguments)})`);
+
+                callDiv.appendChild(nameSpan);
+                callDiv.appendChild(argsText);
                 toolCallsDiv.appendChild(callDiv);
             });
 
@@ -287,5 +292,18 @@ class ChatClient {
 
     hideTypingIndicator() {
         this.typingIndicator.classList.remove('active');
+    }
+
+    _normalizeContent(content) {
+        if (typeof content === 'string') {
+            return content;
+        }
+        if (content === null || content === undefined) {
+            return '';
+        }
+        if (typeof content === 'object') {
+            return JSON.stringify(content);
+        }
+        return String(content);
     }
 }
