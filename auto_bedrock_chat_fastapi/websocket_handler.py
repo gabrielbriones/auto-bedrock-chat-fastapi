@@ -149,13 +149,11 @@ class WebSocketChatHandler:
 
         try:
             # Check if authentication is required before sending messages to LLM
-            if self.config.require_tool_auth:
-                auth_type_str = session.credentials.get_auth_type_string()
-                if auth_type_str == "none":
-                    await self._send_error(
-                        websocket, "Authentication is required before sending messages. Please authenticate first."
-                    )
-                    return
+            if self.config.require_tool_auth and not session.credentials:
+                await self._send_error(
+                    websocket, "Authentication is required before sending messages. Please authenticate first."
+                )
+                return
 
             # Add user message to history
             user_chat_message = ChatMessage(role="user", content=user_message, metadata={"source": "websocket"})
@@ -896,21 +894,33 @@ class WebSocketChatHandler:
             session.credentials = None
             session.auth_handler = None
 
+            # Clear conversation history so new auth context is fresh
+            session.conversation_history = []
+
             logger.info(f"User logged out from session {session.session_id}")
 
-            await self._send_message(
-                websocket,
-                {
-                    "type": "logout_success",
-                    "message": "Successfully logged out",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
+            # Try to send logout_success, but don't fail if the client closed the connection
+            try:
+                await self._send_message(
+                    websocket,
+                    {
+                        "type": "logout_success",
+                        "message": "Successfully logged out",
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
+            except Exception as send_error:
+                # Client may have already closed the connection, which is fine
+                logger.debug(f"Could not send logout_success (client may have closed connection): {str(send_error)}")
 
         except Exception as e:
             logger.error(f"Error handling logout: {str(e)}")
             self._total_errors += 1
-            await self._send_error(websocket, f"Logout error: {str(e)}")
+            try:
+                await self._send_error(websocket, f"Logout error: {str(e)}")
+            except Exception:
+                # Connection might be closed, ignore
+                pass
 
     async def _send_message(self, websocket: WebSocket, message: Dict[str, Any]):
         """Send message to WebSocket client"""

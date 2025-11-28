@@ -1,0 +1,83 @@
+<div class="auth-modal-content">
+    <h2>🔐 Authenticate</h2>
+    <form id="authForm">
+        <div class="auth-form-group" id="authTypeSelector">
+            <label for="authType">Authentication Type:</label>
+            <select id="authType">
+                <option value="">-- Select Auth Type --</option>
+                <!-- Options will be populated by JavaScript from window.CONFIG.supportedAuthTypes -->
+            </select>
+        </div>
+
+        <div class="auth-fields" id="authFields">
+            <!-- Bearer Token -->
+            <div id="bearer_token-fields" class="auth-field-hidden">
+                <div class="auth-form-group">
+                    <label for="bearerToken">Bearer Token:</label>
+                    <input type="password" id="bearerToken" placeholder="Enter your JWT or OAuth token">
+                </div>
+            </div>
+
+            <!-- Basic Auth -->
+            <div id="basic_auth-fields" class="auth-field-hidden">
+                <div class="auth-form-group">
+                    <label for="username">Username:</label>
+                    <input type="text" id="username" placeholder="Enter username">
+                </div>
+                <div class="auth-form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" id="password" placeholder="Enter password">
+                </div>
+            </div>
+
+            <!-- API Key -->
+            <div id="api_key-fields" class="auth-field-hidden">
+                <div class="auth-form-group">
+                    <label for="apiKey">API Key:</label>
+                    <input type="password" id="apiKey" placeholder="Enter your API key">
+                </div>
+                <div class="auth-form-group">
+                    <label for="apiKeyHeader">API Key Header:</label>
+                    <input type="text" id="apiKeyHeader" placeholder="e.g., X-API-Key" value="X-API-Key">
+                </div>
+            </div>
+
+            <!-- OAuth2 -->
+            <div id="oauth2_client_credentials-fields" class="auth-field-hidden">
+                <div class="auth-form-group">
+                    <label for="clientId">Client ID:</label>
+                    <input type="text" id="clientId" placeholder="Enter client ID">
+                </div>
+                <div class="auth-form-group">
+                    <label for="clientSecret">Client Secret:</label>
+                    <input type="password" id="clientSecret" placeholder="Enter client secret">
+                </div>
+                <div class="auth-form-group">
+                    <label for="tokenUrl">Token URL:</label>
+                    <input type="text" id="tokenUrl" placeholder="https://auth.example.com/token">
+                </div>
+                <div class="auth-form-group">
+                    <label for="scope">Scope (optional):</label>
+                    <input type="text" id="scope" placeholder="e.g., api:read api:write">
+                </div>
+            </div>
+
+            <!-- Custom Auth -->
+            <div id="custom-fields" class="auth-field-hidden">
+                <div class="auth-form-group">
+                    <label>Custom Headers (JSON):</label>
+                    <textarea id="customHeaders" class="custom-headers-textarea" placeholder="{'X-Custom-Header': 'value', 'X-API-Version': 'v2'}"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <div class="auth-info">
+            ℹ️ Authentication credentials will be stored securely in your session and applied to all API calls.
+        </div>
+
+        <div class="auth-buttons">
+            <button type="submit" class="auth-submit">Authenticate</button>
+            <button type="button" class="auth-skip" id="skipAuthButton">Skip</button>
+        </div>
+    </form>
+</div>
