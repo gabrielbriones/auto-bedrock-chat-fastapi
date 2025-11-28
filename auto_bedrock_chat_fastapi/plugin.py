@@ -247,7 +247,12 @@ class BedrockChatPlugin:
                 """Serve chat UI"""
 
                 if not self.templates:
-                    return self._render_chat_ui(request)
+                    return HTMLResponse(
+                        content="<html><body><h1>Chat UI Error</h1>"
+                        "<p>Templates are not properly initialized. Please check your configuration.</p>"
+                        "</body></html>",
+                        status_code=500,
+                    )
 
                 try:
                     # Get supported auth types from config
@@ -270,8 +275,13 @@ class BedrockChatPlugin:
                         },
                     )
                 except Exception as e:
-                    logger.warning(f"Template rendering failed: {str(e)}, using default UI")
-                    return self._render_chat_ui(request)
+                    logger.error(f"Template rendering failed: {str(e)}")
+                    return HTMLResponse(
+                        content=f"<html><body><h1>Chat UI Error</h1>"
+                        f"<p>Failed to render template: {str(e)}</p>"
+                        "</body></html>",
+                        status_code=500,
+                    )
 
         # Statistics endpoint
         @self.app.get(f"{self.config.chat_endpoint}/stats")
@@ -398,24 +408,6 @@ class BedrockChatPlugin:
         except Exception:
             # Silently ignore any errors during sync cleanup
             pass
-
-    def _render_chat_ui(self, request: Request):
-        """Render chat UI using Jinja2 template"""
-
-        # Prepare context for template rendering
-        context = {
-            "request": request,
-            "auth_enabled": self.config.enable_tool_auth,
-            "require_tool_auth": self.config.require_tool_auth,
-            "supported_auth_types": self.config.supported_auth_types if self.config.enable_tool_auth else [],
-            "ui_title": self.config.ui_title,
-            "model_id": self.config.model_id,
-            "ui_welcome_message": self.config.ui_welcome_message,
-            "websocket_url": self.config.websocket_endpoint,
-        }
-
-        # Render template
-        return self.templates.TemplateResponse("chat.html", context)
 
     async def update_tools(self):
         """Update tools description from current FastAPI routes"""

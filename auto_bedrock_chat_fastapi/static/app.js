@@ -45,9 +45,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Helper function to process message content with markdown rendering
 function processMessageContent(content, modelId) {
-    // Remove reasoning tags for Claude models
+    // Remove reasoning tags for OpenAI o1 models
     let processed = content;
-    if (modelId && modelId.includes('claude')) {
+    if (modelId && (modelId.includes('o1') || modelId.includes('openai'))) {
         // Remove <reasoning>...</reasoning> blocks including content
         processed = processed.replace(/<reasoning[^>]*>[\s\S]*?<\/reasoning>/gi, '');
     }

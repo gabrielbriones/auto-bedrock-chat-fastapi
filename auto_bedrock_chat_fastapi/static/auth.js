@@ -109,9 +109,11 @@ function getAuthPayload() {
             break;
         case 'custom':
             try {
-                payload.custom_headers = JSON.parse(document.getElementById('customHeaders').value);
+                const customHeadersText = document.getElementById('customHeaders').value;
+                payload.custom_headers = JSON.parse(customHeadersText);
             } catch (e) {
-                alert('Invalid JSON for custom headers: ' + e.message);
+                const preview = document.getElementById('customHeaders').value.substring(0, 100);
+                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input: ${preview}${preview.length >= 100 ? '...' : ''}`);
                 return null;
             }
             break;
