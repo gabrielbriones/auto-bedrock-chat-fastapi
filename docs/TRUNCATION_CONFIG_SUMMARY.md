@@ -16,6 +16,7 @@ tool_result_history_threshold: int = 50_000          # 50K chars
 tool_result_history_target: int = 42_500             # 42.5K chars
 ```
 
+> **Note:** The above example is simplified for clarity. In the actual implementation, these fields are defined using Pydantic's `Field()` with environment variable aliases and validation. See the source code in `config.py` for the full implementation details.
 **Environment Variables:**
 
 - `BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD`
