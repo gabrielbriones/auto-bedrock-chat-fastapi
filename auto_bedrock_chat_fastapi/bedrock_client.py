@@ -5,6 +5,8 @@ import json
 import logging
 import random
 import time
+# The unicodedata import is required for Unicode normalization in GPT-specific sanitization.
+# This was added to support the _sanitize_text_for_gpt method, which helps avoid tokenization issues.
 import unicodedata
 from typing import Any, Dict, List, Optional
 
