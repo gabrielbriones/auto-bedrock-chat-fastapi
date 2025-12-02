@@ -8,12 +8,12 @@ Added four new configuration fields to `ChatConfig`:
 
 ```python
 # Tier 1: New Tool Response
-tool_result_new_response_threshold: int = 1_000_000  # 1M chars
-tool_result_new_response_target: int = 850_000       # 850K chars
+tool_result_new_response_threshold: int = 500_000    # 500K chars
+tool_result_new_response_target: int = 425_000       # 425K chars
 
 # Tier 2: Conversation History
-tool_result_history_threshold: int = 100_000         # 100K chars
-tool_result_history_target: int = 85_000             # 85K chars
+tool_result_history_threshold: int = 50_000          # 50K chars
+tool_result_history_target: int = 42_500             # 42.5K chars
 ```
 
 **Environment Variables:**
