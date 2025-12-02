@@ -369,6 +369,8 @@ class TestMessageChunking:
         config.max_message_size = 50000
         config.chunk_size = 40000
         config.enable_message_chunking = True
+        # Set truncation threshold high so chunking takes precedence for this test
+        config.tool_result_history_threshold = 200000
         client = BedrockClient(config)
 
         messages = [

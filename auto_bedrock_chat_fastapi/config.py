@@ -171,6 +171,51 @@ class ChatConfig(BaseSettings):
         description="Whether to enable automatic chunking of large messages",
     )
 
+    # Tool Result Truncation Configuration (Two-Tier System)
+    tool_result_new_response_threshold: int = Field(
+        default=500_000,
+        alias="BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD",
+        gt=0,
+        description=(
+            "Size threshold for truncating tool results in new/first responses (chars). "
+            "Default: 500K chars (~125K tokens) - optimized for all models including GPT OSS. "
+            "For Claude models with larger context, increase to 1M chars if needed."
+        ),
+    )
+
+    tool_result_new_response_target: int = Field(
+        default=425_000,
+        alias="BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET",
+        gt=0,
+        description=(
+            "Target size after truncating tool results in new responses (chars, 85% of threshold). "
+            "Default: 425K chars (~106K tokens) - optimized for all models. "
+            "Maintains ~85% of threshold for consistency."
+        ),
+    )
+
+    tool_result_history_threshold: int = Field(
+        default=50_000,
+        alias="BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD",
+        gt=0,
+        description=(
+            "Size threshold for truncating tool results in conversation history (chars). "
+            "Default: 50K chars (~12.5K tokens) - optimized for all models. "
+            "More aggressive truncation for history to preserve context space."
+        ),
+    )
+
+    tool_result_history_target: int = Field(
+        default=42_500,
+        alias="BEDROCK_TOOL_RESULT_HISTORY_TARGET",
+        gt=0,
+        description=(
+            "Target size after truncating tool results in history (chars, 85% of threshold). "
+            "Default: 42.5K chars (~10.6K tokens) - optimized for all models. "
+            "Maintains ~85% of threshold for consistent truncation behavior."
+        ),
+    )
+
     timeout: int = Field(
         default=30,
         alias="BEDROCK_TIMEOUT",
