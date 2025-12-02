@@ -10,21 +10,21 @@ class TestTruncationConfiguration:
         """Verify default configuration values match specifications"""
         config = ChatConfig()
 
-        # Verify new response thresholds (documented defaults: 1M → 850K)
-        assert config.tool_result_new_response_threshold == 1_000_000
-        assert config.tool_result_new_response_target == 850_000
+        # Verify new response thresholds (conservative defaults: 500K → 425K)
+        assert config.tool_result_new_response_threshold == 500_000
+        assert config.tool_result_new_response_target == 425_000
 
-        # Verify history thresholds (documented defaults: 100K → 85K)
-        assert config.tool_result_history_threshold == 100_000
-        assert config.tool_result_history_target == 85_000
+        # Verify history thresholds (conservative defaults: 50K → 42.5K)
+        assert config.tool_result_history_threshold == 50_000
+        assert config.tool_result_history_target == 42_500
 
     def test_configuration_maintains_tier_ratio(self):
         """Test that default configuration maintains proper tier ratios"""
         config = ChatConfig()
 
-        # New response threshold should be 10x history threshold (documented defaults: 1M/100K)
-        assert config.tool_result_new_response_threshold == 1_000_000
-        assert config.tool_result_history_threshold == 100_000
+        # New response threshold should be 10x history threshold (conservative defaults: 500K/50K)
+        assert config.tool_result_new_response_threshold == 500_000
+        assert config.tool_result_history_threshold == 50_000
         assert config.tool_result_new_response_threshold / config.tool_result_history_threshold == 10
 
         # Both tiers should maintain 85% target/threshold ratio
