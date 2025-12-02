@@ -28,14 +28,14 @@ tool_result_new_response_target: int = Field(
 
 # Tool Result Truncation Configuration - Tier 2: Conversation History
 tool_result_history_threshold: int = Field(
-    default=100_000,
+    default=50_000,
     gt=0,
     alias="BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD",
     description="Threshold for historical tool response truncation (characters)"
 )
 
 tool_result_history_target: int = Field(
-    default=85_000,
+    default=42_500,
     gt=0,
     alias="BEDROCK_TOOL_RESULT_HISTORY_TARGET",
     description="Target size after truncating historical tool responses (characters)"
