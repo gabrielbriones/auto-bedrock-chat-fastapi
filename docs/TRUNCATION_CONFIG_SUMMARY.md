@@ -245,7 +245,7 @@ Potential additions:
 ## Backward Compatibility
 
 ✓ No breaking changes
-✓ Default values match previous hardcoded values (1M/850K and 100K/85K)
+✓ Default values match previous hardcoded values (500K/425K and 50K/42.5K)
 ✓ Existing deployments work without modification
 ✓ Opt-in customization for advanced use cases
 
