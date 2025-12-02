@@ -1,7 +1,5 @@
 """Tests for configurable tool result truncation thresholds"""
 
-import pytest
-
 from auto_bedrock_chat_fastapi.config import ChatConfig
 
 
@@ -66,4 +64,3 @@ class TestTruncationConfiguration:
         assert config.tool_result_new_response_target == 1_275_000
         assert config.tool_result_history_threshold == 150_000
         assert config.tool_result_history_target == 127_500
-

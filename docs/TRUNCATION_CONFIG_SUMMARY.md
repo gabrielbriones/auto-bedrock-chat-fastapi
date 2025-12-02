@@ -17,6 +17,7 @@ tool_result_history_target: int = 85_000             # 85K chars
 ```
 
 **Environment Variables:**
+
 - `BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD`
 - `BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET`
 - `BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD`
@@ -27,6 +28,7 @@ tool_result_history_target: int = 85_000             # 85K chars
 Modified `_process_tool_result_message()` to use configurable thresholds:
 
 **Before:**
+
 ```python
 # Hardcoded values
 large_threshold = 100_000  # 100KB
@@ -34,6 +36,7 @@ target_size = int(large_threshold * 0.85)  # 85KB
 ```
 
 **After:**
+
 ```python
 # Configurable via settings
 large_threshold = self.config.tool_result_history_threshold
@@ -53,6 +56,7 @@ target_size = self.config.tool_result_history_target
 ### 4. Example Configuration Updated (`.env.example`)
 
 Added new section documenting the four new settings with:
+
 - Clear comments explaining each parameter
 - Default values
 - Configuration presets (conservative, generous)
@@ -61,6 +65,7 @@ Added new section documenting the four new settings with:
 ### 5. Validation Tests Created (`test_truncation_config.py`)
 
 Comprehensive test suite validating:
+
 - Default configuration values
 - Custom configuration via constructor
 - Environment variable configuration
@@ -71,7 +76,9 @@ Comprehensive test suite validating:
 ## Benefits
 
 ### 1. Flexibility
+
 Users can now adjust truncation behavior based on:
+
 - Model context window size
 - API response patterns
 - Conversation length requirements
@@ -80,6 +87,7 @@ Users can now adjust truncation behavior based on:
 ### 2. Use Case Optimization
 
 **Conservative (Minimize Context):**
+
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=500000
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=425000
@@ -88,6 +96,7 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=42500
 ```
 
 **Generous (Maximize Context):**
+
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=2000000
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=1700000
@@ -96,6 +105,7 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=170000
 ```
 
 **Balanced (Default):**
+
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=1000000
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=850000
@@ -104,11 +114,13 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=85000
 ```
 
 ### 3. No Breaking Changes
+
 - All defaults match previous hardcoded values
 - Existing deployments continue working without changes
 - Opt-in customization for those who need it
 
 ### 4. Validation
+
 - Pydantic validators ensure positive integers
 - Configuration is type-safe and validated at startup
 - Test suite confirms all configurations work correctly
@@ -116,12 +128,14 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=85000
 ## Testing
 
 Run validation tests:
+
 ```bash
 cd /home/gbriones/auto-bedrock-chat-fastapi
 poetry run python test_truncation_config.py
 ```
 
 Expected output:
+
 ```
 ✓ All default values correct
 ✓ All custom values correct
@@ -132,6 +146,7 @@ Expected output:
 ## Usage Examples
 
 ### Python API
+
 ```python
 from auto_bedrock_chat_fastapi import ChatConfig, BedrockChatPlugin
 
@@ -147,6 +162,7 @@ plugin = BedrockChatPlugin(config=config)
 ```
 
 ### Environment Variables
+
 ```bash
 # In .env file or environment
 export BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=2000000
@@ -156,6 +172,7 @@ export BEDROCK_TOOL_RESULT_HISTORY_TARGET=170000
 ```
 
 ### Framework Integration
+
 ```python
 # FastAPI example
 from auto_bedrock_chat_fastapi import BedrockChatPlugin
@@ -168,23 +185,28 @@ plugin.attach(app)
 ## Maintenance Considerations
 
 ### Configuration Validation
+
 - All four values must be positive integers (enforced by Pydantic)
 - Recommended: target = threshold × 0.85
 - Recommended: new_threshold = history_threshold × 10
 
 ### Monitoring
+
 Enable API call logging to track truncation:
+
 ```bash
 BEDROCK_LOG_API_CALLS=true
 ```
 
 Look for log messages:
+
 ```
 Tool result toolu_xyz in new tool response is very large (2,937,536 chars),
 truncating to ~850,000 chars (threshold: 1,000,000)...
 ```
 
 ### Performance
+
 - Binary search: O(log n) complexity
 - Minimal overhead compared to API latency
 - No impact on small messages (< threshold)
@@ -192,6 +214,7 @@ truncating to ~850,000 chars (threshold: 1,000,000)...
 ## Future Enhancements
 
 Potential additions:
+
 1. **Per-endpoint thresholds**: Different limits for specific API endpoints
 2. **Dynamic thresholds**: Adjust based on model context window
 3. **Truncation strategies**: Different algorithms (summary-based, semantic-based)
@@ -200,15 +223,19 @@ Potential additions:
 ## Files Modified
 
 1. `/home/gbriones/auto-bedrock-chat-fastapi/auto_bedrock_chat_fastapi/config.py`
+
    - Added 4 new configuration fields
 
 2. `/home/gbriones/auto-bedrock-chat-fastapi/auto_bedrock_chat_fastapi/bedrock_client.py`
+
    - Updated `_process_tool_result_message()` to use config values
 
 3. `/home/gbriones/auto-bedrock-chat-fastapi/.env.example`
+
    - Added documentation for new settings
 
 4. `/home/gbriones/auto-bedrock-chat-fastapi/docs/TOOL_RESULT_TRUNCATION.md`
+
    - Created comprehensive configuration guide
 
 5. `/home/gbriones/auto-bedrock-chat-fastapi/test_truncation_config.py`

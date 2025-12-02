@@ -43,6 +43,7 @@ tool_result_history_target: int = Field(
 ```
 
 **Key Features:**
+
 - ✅ Pydantic Field validation (all values must be positive integers)
 - ✅ Environment variable aliases for easy configuration
 - ✅ Clear documentation for each parameter
@@ -53,12 +54,14 @@ tool_result_history_target: int = Field(
 Modified `_process_tool_result_message()` in `auto_bedrock_chat_fastapi/bedrock_client.py` to use configuration values:
 
 **Before (hardcoded):**
+
 ```python
 large_threshold = 100_000  # 100K
 target_size = 85_000       # 85K
 ```
 
 **After (configurable):**
+
 ```python
 if is_conversation_history:
     large_threshold = self.config.tool_result_history_threshold
@@ -75,12 +78,14 @@ else:
 Three comprehensive documentation files in `docs/`:
 
 1. **TOOL_RESULT_TRUNCATION.md** - Detailed configuration guide
+
    - Two-tier strategy explanation
    - Configuration examples
    - Use cases and presets
    - Troubleshooting guide
 
 2. **TRUNCATION_CONFIG_SUMMARY.md** - Implementation summary
+
    - Technical details of changes made
    - Benefits of configurable approach
    - Testing and validation instructions
@@ -132,21 +137,25 @@ Created `tests/test_truncation_configuration.py` with 5 comprehensive test cases
 ## Benefits
 
 ### 1. Flexibility
+
 - Users can adjust thresholds based on their specific use cases
 - No code changes required - just environment variables
 - Different configurations for different environments (dev, staging, prod)
 
 ### 2. Backward Compatibility
+
 - Default values match previous hardcoded values
 - Existing deployments continue to work without changes
 - Gradual adoption possible
 
 ### 3. Validation
+
 - Pydantic ensures all values are positive integers
 - Invalid configurations are caught at startup
 - Clear error messages guide users
 
 ### 4. Maintainability
+
 - Configuration centralized in one place
 - Clear documentation for all parameters
 - Easy to test and validate
@@ -154,6 +163,7 @@ Created `tests/test_truncation_configuration.py` with 5 comprehensive test cases
 ## Configuration Presets
 
 ### Default (Balanced)
+
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=1000000  # 1M
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=850000      # 850K
@@ -162,6 +172,7 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=85000            # 85K
 ```
 
 ### Conservative (Smaller Limits)
+
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=500000   # 500K
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=425000      # 425K
@@ -170,6 +181,7 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=42500            # 42.5K
 ```
 
 ### Generous (Larger Limits)
+
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=2000000  # 2M
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=1700000     # 1.7M
@@ -180,11 +192,13 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=170000           # 170K
 ## Files Modified/Created
 
 ### Modified Files
+
 - ✅ `auto_bedrock_chat_fastapi/config.py` - Added 4 new configuration fields
 - ✅ `auto_bedrock_chat_fastapi/bedrock_client.py` - Updated to use config values
 - ✅ `.env.example` - Added truncation configuration section
 
 ### Created Files
+
 - ✅ `docs/TOOL_RESULT_TRUNCATION.md` - Comprehensive configuration guide
 - ✅ `docs/TRUNCATION_CONFIG_SUMMARY.md` - Implementation summary
 - ✅ `docs/TRUNCATION_QUICK_REF.md` - Quick reference card
@@ -194,18 +208,21 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=170000           # 170K
 ## Validation
 
 ### Configuration Validation
+
 - ✅ Default values verified
 - ✅ Environment variable support tested
 - ✅ Positive integer validation working
 - ✅ Ratio maintenance verified (85% target/threshold, 10x tier difference)
 
 ### Implementation Validation
+
 - ✅ BedrockClient uses config values correctly
 - ✅ Tier detection working (is_conversation_history parameter)
 - ✅ Backward compatible with existing code
 - ✅ All existing tests still passing
 
 ### Documentation Validation
+
 - ✅ All configuration parameters documented
 - ✅ Examples provided for common use cases
 - ✅ Troubleshooting guide available
