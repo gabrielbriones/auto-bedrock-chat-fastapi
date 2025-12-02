@@ -13,7 +13,7 @@ Added four new configuration fields to `ChatConfig` in `auto_bedrock_chat_fastap
 ```python
 # Tool Result Truncation Configuration - Tier 1: New Response (First/Latest)
 tool_result_new_response_threshold: int = Field(
-    default=1_000_000,
+    default=500_000,
     gt=0,
     alias="BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD",
     description="Threshold for new/first tool response truncation (characters)"
