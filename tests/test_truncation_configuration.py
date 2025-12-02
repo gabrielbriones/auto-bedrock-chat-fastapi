@@ -26,18 +26,18 @@ class TestTruncationConfiguration:
 
         # New response threshold should be 10x history threshold
         assert config.tool_result_new_response_threshold / config.tool_result_history_threshold == 10
-        
+
         # Both tiers should maintain 85% target/threshold ratio
         new_response_ratio = config.tool_result_new_response_target / config.tool_result_new_response_threshold
         history_ratio = config.tool_result_history_target / config.tool_result_history_threshold
-        
+
         assert new_response_ratio == 0.85
         assert history_ratio == 0.85
 
     def test_configuration_fields_are_positive(self):
         """Verify all truncation threshold values are positive integers"""
         config = ChatConfig()
-        
+
         assert config.tool_result_new_response_threshold > 0
         assert config.tool_result_new_response_target > 0
         assert config.tool_result_history_threshold > 0
@@ -46,21 +46,21 @@ class TestTruncationConfiguration:
     def test_configuration_targets_less_than_thresholds(self):
         """Verify target sizes are less than their corresponding thresholds"""
         config = ChatConfig()
-        
+
         assert config.tool_result_new_response_target < config.tool_result_new_response_threshold
         assert config.tool_result_history_target < config.tool_result_history_threshold
 
     def test_configuration_via_environment_variables(self, monkeypatch):
         """Test that environment variables can configure truncation thresholds"""
         # Set custom environment variables
-        monkeypatch.setenv('BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD', '1500000')
-        monkeypatch.setenv('BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET', '1275000')
-        monkeypatch.setenv('BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD', '150000')
-        monkeypatch.setenv('BEDROCK_TOOL_RESULT_HISTORY_TARGET', '127500')
-        
+        monkeypatch.setenv("BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD", "1500000")
+        monkeypatch.setenv("BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET", "1275000")
+        monkeypatch.setenv("BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD", "150000")
+        monkeypatch.setenv("BEDROCK_TOOL_RESULT_HISTORY_TARGET", "127500")
+
         # Create config - pydantic-settings will read from environment
         config = ChatConfig()
-        
+
         # Verify the environment variables were applied
         assert config.tool_result_new_response_threshold == 1_500_000
         assert config.tool_result_new_response_target == 1_275_000
