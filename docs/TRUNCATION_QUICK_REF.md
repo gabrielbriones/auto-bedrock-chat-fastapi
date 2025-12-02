@@ -4,23 +4,13 @@
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `tool_result_new_response_threshold` | 1,000,000 | Size threshold for new tool responses (chars) |
-| `tool_result_new_response_target` | 850,000 | Target size after truncating new responses (chars) |
-| `tool_result_history_threshold` | 100,000 | Size threshold for historical tool responses (chars) |
-| `tool_result_history_target` | 85,000 | Target size after truncating history (chars) |
+| `tool_result_new_response_threshold` | 500,000 | Size threshold for new tool responses (chars) |
+| `tool_result_new_response_target` | 425,000 | Target size after truncating new responses (chars) |
+| `tool_result_history_threshold` | 50,000 | Size threshold for historical tool responses (chars) |
+| `tool_result_history_target` | 42,500 | Target size after truncating history (chars) |
 
 ## Environment Variables
 
-```bash
-BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=1000000
-BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=850000
-BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD=100000
-BEDROCK_TOOL_RESULT_HISTORY_TARGET=85000
-```
-
-## Common Presets
-
-### Conservative (Minimize Context)
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=500000
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=425000
@@ -28,7 +18,17 @@ BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD=50000
 BEDROCK_TOOL_RESULT_HISTORY_TARGET=42500
 ```
 
-### Balanced (Default)
+## Common Presets
+
+### Conservative (Minimize Context) - Current Default
+```bash
+BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=500000
+BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=425000
+BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD=50000
+BEDROCK_TOOL_RESULT_HISTORY_TARGET=42500
+```
+
+### Balanced (Increased Context)
 ```bash
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=1000000
 BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=850000
@@ -49,12 +49,20 @@ BEDROCK_TOOL_RESULT_HISTORY_TARGET=170000
 ```python
 from auto_bedrock_chat_fastapi import ChatConfig
 
-# Conservative
+# Conservative (Current Default)
 config = ChatConfig(
     tool_result_new_response_threshold=500_000,
     tool_result_new_response_target=425_000,
     tool_result_history_threshold=50_000,
     tool_result_history_target=42_500,
+)
+
+# Balanced
+config = ChatConfig(
+    tool_result_new_response_threshold=1_000_000,
+    tool_result_new_response_target=850_000,
+    tool_result_history_threshold=100_000,
+    tool_result_history_target=85_000,
 )
 
 # Generous
