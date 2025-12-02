@@ -1634,7 +1634,7 @@ class BedrockClient:
 
         truncated = {}
         # Prevent division by zero
-        max_size_per_element = max_size / max(1, len(data))
+        max_size_per_element = max_size // max(1, len(data))
 
         # Calculate how many keys to show using common function
         total_keys = len(data)
