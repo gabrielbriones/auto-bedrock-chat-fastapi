@@ -20,7 +20,7 @@ tool_result_new_response_threshold: int = Field(
 )
 
 tool_result_new_response_target: int = Field(
-    default=850_000,
+    default=425_000,
     gt=0,
     alias="BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET",
     description="Target size after truncating new/first tool responses (characters)"
