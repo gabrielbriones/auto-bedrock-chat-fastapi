@@ -12,11 +12,11 @@ class TestTruncationConfiguration:
         """Verify default configuration values match specifications"""
         config = ChatConfig()
 
-        # Verify new response thresholds (optimized for all models: 500K → 425K)
+        # Verify new response thresholds (actual implementation defaults: 500K → 425K)
         assert config.tool_result_new_response_threshold == 500_000
         assert config.tool_result_new_response_target == 425_000
 
-        # Verify history thresholds (optimized for all models: 50K → 42.5K)
+        # Verify history thresholds (actual implementation defaults: 50K → 42.5K)
         assert config.tool_result_history_threshold == 50_000
         assert config.tool_result_history_target == 42_500
 
