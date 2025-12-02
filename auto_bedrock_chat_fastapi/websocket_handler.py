@@ -185,13 +185,14 @@ class WebSocketChatHandler:
                 tools_desc=tools_desc,
                 **self.config.get_bedrock_params(),
             )
-            logger.debug(f"Bedrock response: {response.get('content', '')}")
 
             # Process tool calls recursively if any
             (
                 final_response,
                 all_tool_results,
             ) = await self._handle_tool_calls_recursively(session.session_id, response, tools_desc, websocket, session)
+            content = final_response.get("content", "")
+            logger.debug(f"Bedrock response ({len(content):,} chars): {content[:100]}")
 
             # Add the final AI response to history (if not already added)
             if not final_response.get("tool_calls"):
@@ -278,7 +279,7 @@ class WebSocketChatHandler:
 
                 # Execute tool call with authentication if available
                 result = await self._execute_single_tool_call(tool_metadata, arguments, session)
-                logger.debug(f"Tool call result for {function_name}: {result}")
+                # logger.debug(f"Tool call result for {function_name}: {result}")
 
                 results.append(
                     {
@@ -537,16 +538,10 @@ class WebSocketChatHandler:
 
             logger.debug(f"Tool call round {round_count}, processing {len(current_response['tool_calls'])} tool calls")
 
-            # Add the assistant message with tool calls to history
-            tool_assistant_message = ChatMessage(
-                role="assistant",
-                content=current_response.get("content", ""),
-                tool_calls=current_response.get("tool_calls", []),
-                metadata=current_response.get("metadata", {}),
-            )
-            await self.session_manager.add_message(session_id, tool_assistant_message)
-
             # Execute the tool calls
+            # Note: We don't add the assistant message here because the tool message below
+            # will contain both tool_calls and tool_results, and _add_claude_tool_messages
+            # will reconstruct the proper assistant+user message format from it
             tool_results = await self._execute_tool_calls(current_response["tool_calls"], session)
             all_tool_results.extend(tool_results)
 

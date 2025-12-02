@@ -3,7 +3,9 @@
 import asyncio
 import json
 import logging
+import random
 import time
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 import boto3
@@ -213,6 +215,43 @@ class BedrockClient:
 
         return request_body
 
+    def _sanitize_text_for_gpt(self, text: str) -> str:
+        """
+        Sanitize text for GPT models to avoid tokenization issues
+        Removes problematic Unicode characters that may cause token errors
+        """
+        if not isinstance(text, str):
+            text = str(text)
+
+        # Replace problematic Unicode characters
+        replacements = {
+            "\u202f": " ",  # Narrow no-break space → regular space
+            "\u00a0": " ",  # Non-breaking space → regular space
+            "\u2009": " ",  # Thin space → regular space
+            "\u200b": "",  # Zero-width space → remove
+            "\u200c": "",  # Zero-width non-joiner → remove
+            "\u200d": "",  # Zero-width joiner → remove
+            "\ufeff": "",  # Zero-width no-break space (BOM) → remove
+        }
+
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+        text = unicodedata.normalize("NFC", text)
+
+        return text
+
+    def _sanitize_message_content(self, content):
+        """Sanitize message content (handles both string and dict/list formats)"""
+        if isinstance(content, str):
+            return self._sanitize_text_for_gpt(content)
+        elif isinstance(content, dict):
+            return {k: self._sanitize_message_content(v) for k, v in content.items()}
+        elif isinstance(content, list):
+            return [self._sanitize_message_content(item) for item in content]
+        else:
+            return content
+
     def _prepare_openai_gpt_request(self, messages, tools_desc, temperature, max_tokens, **kwargs) -> Dict[str, Any]:
         """Prepare request for OpenAI GPT OSS models"""
 
@@ -226,8 +265,12 @@ class BedrockClient:
             # Add default system message if none present
             formatted_messages.append({"role": "system", "content": self.config.get_system_prompt()})
 
-        # Add all conversation messages
-        formatted_messages.extend(messages)
+        # Add all conversation messages with sanitization for GPT models
+        for msg in messages:
+            sanitized_msg = msg.copy()
+            if "content" in sanitized_msg:
+                sanitized_msg["content"] = self._sanitize_message_content(sanitized_msg["content"])
+            formatted_messages.append(sanitized_msg)
 
         # For GPT models with very large inputs, we need to ensure max_tokens stays positive
         # Estimate input size roughly and adjust max_tokens accordingly
@@ -455,6 +498,46 @@ class BedrockClient:
             **kwargs,
         }
 
+    def _format_conversation_summary(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        Format conversation messages for compact logging
+        Shows role, content length, and first 100 chars of content for each message
+        """
+        summary_lines = []
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+
+            # Calculate content length
+            if isinstance(content, str):
+                content_len = len(content)
+                preview = content[:100].replace("\n", " ")
+                if len(content) > 100:
+                    preview += "..."
+            elif isinstance(content, list):
+                # Claude format with content blocks
+                content_len = len(str(content))
+                text_parts = [
+                    item.get("text", "") if isinstance(item, dict) and item.get("type") == "text" else str(item)[:100]
+                    for item in content[:2]  # Show first 2 items
+                ]
+                preview = " | ".join(text_parts)[:100]
+                if len(content) > 2 or len(str(content)) > 100:
+                    preview += "..."
+            else:
+                content_len = len(str(content))
+                preview = str(content)[:100] + "..."
+
+            summary_lines.append(f"  [{i+1}] {role} ({content_len:,} chars): {preview}")
+
+        return "\n".join(summary_lines)
+
+    def _log_conversation_history(self, model_id: str, messages: List[Dict[str, Any]]):
+        """Log conversation history in compact format before sending to model"""
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Bedrock request for {model_id} with {len(messages)} messages:")
+            logger.debug(f"\n{self._format_conversation_summary(messages)}")
+
     async def _make_request_with_retries(self, model_id: str, request_body: Dict[str, Any]) -> Dict[str, Any]:
         """Make Bedrock API request with retry logic"""
 
@@ -462,10 +545,6 @@ class BedrockClient:
 
         for attempt in range(self.config.max_retries + 1):
             try:
-                # Convert to async
-                # Debug logging for request
-                logger.debug(f"Bedrock request for {model_id}: {json.dumps(request_body, indent=2)}")
-
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
                     None,
@@ -547,6 +626,9 @@ class BedrockClient:
         """
         # First attempt with current messages
         try:
+            # Log conversation history before preparing request
+            self._log_conversation_history(model_id, messages)
+
             request_body = self._prepare_request_body(
                 messages=messages,
                 model_id=model_id,
@@ -597,6 +679,9 @@ class BedrockClient:
                         fallback_max_tokens = (
                             min(max_tokens, 1000) if model_id.startswith("openai.gpt-oss") else max_tokens
                         )
+
+                        # Log fallback conversation history before preparing request
+                        self._log_conversation_history(model_id, fallback_messages)
 
                         request_body = self._prepare_request_body(
                             messages=fallback_messages,
@@ -695,12 +780,23 @@ class BedrockClient:
             remaining_messages = messages
             max_remaining = aggressive_limit
 
-        # Filter out tool messages completely for context window issues
+        # Keep the most recent tool message if present (contains critical data)
+        # but filter out older tool messages to reduce context size
         filtered_messages = []
+        last_tool_message = None
+
         for msg in remaining_messages:
             role = msg.get("role", "")
-            if role not in ["tool", "function"] and "tool_call" not in msg:
+            if role in ["tool", "function"]:
+                # Keep track of the last tool message (most recent tool result)
+                last_tool_message = msg
+            elif "tool_call" not in msg:
+                # Keep non-tool messages
                 filtered_messages.append(msg)
+
+        # Add the most recent tool message at the end if we had any
+        if last_tool_message:
+            filtered_messages.append(last_tool_message)
 
         # For ultra-aggressive mode, also filter out very long messages (likely
         # chunked)
@@ -737,9 +833,6 @@ class BedrockClient:
         else:
             delay = base_delay
 
-        # Add jitter to prevent thundering herd
-        import random
-
         jitter = random.uniform(0.1, 0.3) * delay
 
         return min(delay + jitter, 60.0)  # Cap at 60 seconds
@@ -765,7 +858,53 @@ class BedrockClient:
             }
 
         try:
-            logger.debug(f"Parsing response for model {model_id}: {response}")
+            # Log response with truncated large values
+            if logger.isEnabledFor(logging.DEBUG):
+                truncated_response = {}
+                for key, val in response.items():
+                    if isinstance(val, str) and len(val) > 300:
+                        truncated_response[key] = val[:100] + f"... ({len(val):,} chars total)"
+                    elif isinstance(val, dict):
+                        # Handle nested dict - show structure with truncated values
+                        nested_dict = {}
+                        for nested_key, nested_val in val.items():
+                            if isinstance(nested_val, str) and len(nested_val) > 300:
+                                nested_dict[nested_key] = nested_val[:100] + f"... ({len(nested_val):,} chars total)"
+                            else:
+                                nested_dict[nested_key] = nested_val
+                        truncated_response[key] = nested_dict
+                    elif isinstance(val, list):
+                        # Handle list - iterate each element
+                        truncated_list = []
+                        for item in val:
+                            if isinstance(item, str) and len(item) > 300:
+                                truncated_list.append(item[:100] + f"... ({len(item):,} chars total)")
+                            elif isinstance(item, dict):
+                                # Handle dict inside list
+                                nested_dict = {}
+                                for item_key, item_val in item.items():
+                                    if isinstance(item_val, str) and len(item_val) > 300:
+                                        nested_dict[item_key] = item_val[:100] + f"... ({len(item_val):,} chars total)"
+                                    elif isinstance(item_val, dict):
+                                        # Handle nested dict in list item (message.content case)
+                                        inner_dict = {}
+                                        for inner_key, inner_val in item_val.items():
+                                            if isinstance(inner_val, str) and len(inner_val) > 300:
+                                                inner_dict[inner_key] = (
+                                                    inner_val[:100] + f"... ({len(inner_val):,} chars total)"
+                                                )
+                                            else:
+                                                inner_dict[inner_key] = inner_val
+                                        nested_dict[item_key] = inner_dict
+                                    else:
+                                        nested_dict[item_key] = item_val
+                                truncated_list.append(nested_dict)
+                            else:
+                                truncated_list.append(item)
+                        truncated_response[key] = truncated_list
+                    else:
+                        truncated_response[key] = val
+                logger.debug(f"Parsing response for model {model_id}: {truncated_response}")
 
             if model_id.startswith("anthropic.claude") or model_id.startswith("us.anthropic.claude"):
                 return self._parse_claude_response(response)
@@ -868,7 +1007,7 @@ class BedrockClient:
     def _parse_llama_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """Parse Llama model response"""
 
-        content = response.get("generation", "")
+        content = response.get("generation", "").lstrip()
 
         return {
             "content": content,
@@ -984,6 +1123,12 @@ class BedrockClient:
     def _check_and_chunk_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Check for large messages and chunk them if necessary
+        Special handling for tool responses to prevent context overflow
+
+        Three-tier system for tool messages:
+        - Very large (>threshold): Apply intelligent truncation (keep single message)
+        - Moderately large (>max_message_size): Apply chunking (split into multiple)
+        - Small (<max_message_size): Keep as-is
 
         Args:
             messages: List of conversation messages
@@ -995,16 +1140,76 @@ class BedrockClient:
             return messages
 
         result = []
+        total_messages = len(messages)
 
-        for msg in messages:
+        for idx, msg in enumerate(messages):
+            # Determine if this is the last message (most recent, likely new tool response)
+            # vs. earlier messages (conversation history)
+            is_last_message = idx == total_messages - 1
+
+            # Get message content
             content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > self.config.max_message_size:
-                logger.info(
-                    f"Message size ({len(content)} chars) exceeds "
-                    f"max_message_size ({self.config.max_message_size}), chunking..."
+
+            # Calculate content size - handle both string and list formats
+            if isinstance(content, str):
+                content_size = len(content)
+            elif isinstance(content, list):
+                # For Claude format with list content, sum all content
+                content_size = sum(len(str(item.get("content", ""))) for item in content)
+            else:
+                content_size = len(str(content))
+
+            # Special handling for tool/function result messages
+            # Handle both Claude format (role="user" with tool_result) and GPT format (role="tool")
+            is_tool_message = False
+
+            # Claude format: role="user" with content list containing tool_result items
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                has_tool_results = any(
+                    isinstance(item, dict) and item.get("type") == "tool_result" for item in msg["content"]
                 )
-                chunked_messages = self._chunk_large_message(msg)
-                result.extend(chunked_messages)
+                if has_tool_results:
+                    is_tool_message = True
+
+            # GPT format: role="tool" with string content
+            elif msg.get("role") == "tool" and isinstance(content, str):
+                is_tool_message = True
+
+            if content_size > 0:
+                # For tool messages: check against intelligent truncation threshold first
+                if is_tool_message:
+                    is_conversation_history = not is_last_message
+                    if is_conversation_history:
+                        truncation_threshold = self.config.tool_result_history_threshold
+                    else:
+                        truncation_threshold = self.config.tool_result_new_response_threshold
+
+                    # Check if needs intelligent truncation (very large messages)
+                    if content_size > truncation_threshold:
+                        processed_msg = self._process_tool_result_message(msg, is_conversation_history)
+                        result.append(processed_msg)
+                    # Check if needs chunking (moderately large messages)
+                    elif content_size > self.config.max_message_size:
+                        logger.info(
+                            f"Tool message size ({content_size} chars) exceeds "
+                            f"max_message_size ({self.config.max_message_size}), chunking..."
+                        )
+                        chunked_messages = self._chunk_large_message(msg)
+                        result.extend(chunked_messages)
+                    else:
+                        # Under threshold: keep as-is
+                        result.append(msg)
+                else:
+                    # For regular messages: use max_message_size threshold
+                    if content_size > self.config.max_message_size:
+                        logger.info(
+                            f"Message size ({content_size} chars) exceeds "
+                            f"max_message_size ({self.config.max_message_size}), chunking..."
+                        )
+                        chunked_messages = self._chunk_large_message(msg)
+                        result.extend(chunked_messages)
+                    else:
+                        result.append(msg)
             else:
                 result.append(msg)
 
@@ -1133,6 +1338,439 @@ class BedrockClient:
         # In the future, this could use libraries like spacy or nltk
         # to split on sentence or paragraph boundaries more intelligently
         return self._context_aware_chunk(content)
+
+    def _process_tool_result_message(
+        self, message: Dict[str, Any], is_conversation_history: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Process tool result messages to handle oversized responses
+
+        Supports both formats:
+        - Claude: role="user", content=[{type: "tool_result", tool_use_id: ..., content: ...}]
+        - GPT: role="tool", tool_call_id: ..., content="string"
+
+        Two-tier truncation strategy:
+        1. First tool response: 1M threshold → 850K target (maximize context)
+        2. Conversation history: 100K threshold → 85K target (keep manageable)
+
+        Args:
+            message: Message with tool results in content
+            is_conversation_history: True if processing existing conversation history,
+                                     False if processing new/first tool response
+
+        Returns:
+            Processed message with truncated/summarized tool results
+        """
+        # Determine thresholds based on context (configurable via settings)
+        if is_conversation_history:
+            # For conversation history: aggressive truncation to keep context manageable
+            large_threshold = self.config.tool_result_history_threshold
+            target_size = self.config.tool_result_history_target
+            context_label = "conversation history"
+        else:
+            # For first/new tool response: generous limit to maximize initial context
+            large_threshold = self.config.tool_result_new_response_threshold
+            target_size = self.config.tool_result_new_response_target
+            context_label = "new tool response"
+
+        content = message.get("content", "")
+
+        # GPT format: role="tool" with string content
+        if message.get("role") == "tool" and isinstance(content, str):
+            content_size = len(content)
+
+            if content_size > large_threshold:
+                logger.warning(
+                    f"Tool result in {context_label} is very large ({content_size:,} chars), "
+                    f"truncating to ~{target_size:,} chars (threshold: {large_threshold:,})..."
+                )
+
+                try:
+                    # Apply intelligent truncation
+                    truncated_content = self._intelligently_truncate_tool_result(
+                        content, message.get("tool_call_id", "unknown"), max_size=target_size
+                    )
+
+                    # Return message with truncated content
+                    return {**message, "content": truncated_content}
+
+                except Exception as e:
+                    # Fallback: simple truncation if intelligent truncation fails
+                    logger.error(f"Error truncating tool result: {e}")
+                    logger.error("Falling back to simple truncation")
+
+                    simple_truncated = (
+                        content[:target_size] + f"\n\n[TRUNCATED - Original size: {content_size:,} chars]"
+                    )
+
+                    return {**message, "content": simple_truncated}
+            else:
+                # Small result, return as-is
+                return message
+
+        # Claude format: role="user" with content list containing tool_result items
+        elif isinstance(content, list):
+            processed_content = []
+
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "tool_result":
+                    # Keep non-tool-result items as-is
+                    processed_content.append(item)
+                    continue
+
+                # Get tool result content and metadata
+                tool_result_content = item.get("content", "")
+                tool_use_id = item.get("tool_use_id", "")
+
+                # Calculate size (only convert to string once)
+                content_str = str(tool_result_content)
+                content_size = len(content_str)
+
+                if content_size > large_threshold:
+                    logger.warning(
+                        f"Tool result {tool_use_id} in {context_label} is very large ({content_size:,} chars), "
+                        f"truncating to ~{target_size:,} chars (threshold: {large_threshold:,})..."
+                    )
+
+                    try:
+                        # Apply intelligent truncation
+                        truncated_content = self._intelligently_truncate_tool_result(
+                            tool_result_content, tool_use_id, max_size=target_size
+                        )
+
+                        # Preserve all original fields, just update content
+                        truncated_item = item.copy()
+                        truncated_item["content"] = truncated_content
+                        processed_content.append(truncated_item)
+
+                    except Exception as e:
+                        # Fallback: simple truncation if intelligent truncation fails
+                        logger.error(f"Error truncating tool result {tool_use_id}: {e}")
+                        logger.error("Falling back to simple truncation")
+
+                        simple_truncated = (
+                            content_str[:target_size] + f"\n\n[TRUNCATED - Original size: {content_size:,} chars]"
+                        )
+
+                        fallback_item = item.copy()
+                        fallback_item["content"] = simple_truncated
+                        processed_content.append(fallback_item)
+                else:
+                    # Keep small results as-is
+                    processed_content.append(item)
+
+            # Return message with processed content
+            return {"role": message.get("role"), "content": processed_content}
+
+        # Unknown format, return as-is
+        return message
+
+    def _intelligently_truncate_tool_result(self, content: Any, tool_id: str, max_size: int = 50_000) -> str:
+        """
+        Intelligently truncate large tool results while preserving context
+
+        Strategies:
+        1. If JSON object: Try to truncate long strings first
+        2. If still too long: Try to reduce the number of items in arrays with summary
+        3. If text: Show beginning + end with summary
+
+        Args:
+            content: Tool result content (can be dict, list, or string)
+            tool_id: Tool use ID for logging
+            max_size: Maximum size in characters for truncated result
+
+        Returns:
+            Intelligently truncated string representation
+        """
+        content_str = str(content)
+        original_size = len(content_str)
+
+        # Try to parse as JSON for smart truncation
+        try:
+            if isinstance(content, str):
+                parsed = json.loads(content)
+            else:
+                parsed = content
+
+            # Handle JSON array (most common for list endpoints)
+            if isinstance(parsed, list):
+                return self._truncate_json_array(parsed, tool_id, max_size, original_size)
+
+            # Handle JSON object
+            elif isinstance(parsed, dict):
+                return self._truncate_json_object(parsed, tool_id, max_size, original_size)
+
+        except (json.JSONDecodeError, TypeError):
+            # Not JSON, treat as plain text
+            pass
+
+        # Fallback: Simple text truncation with context
+        return self._truncate_plain_text(content_str, tool_id, max_size, original_size)
+
+    def _calculate_max_items_to_show(self, total_items: int, max_size: int, item_sample_size: int = 100) -> int:
+        """
+        Calculate how many items to show based on size constraints
+
+        Args:
+            total_items: Total number of items in collection
+            max_size: Maximum size in characters for output
+            item_sample_size: Estimated size per item in characters
+
+        Returns:
+            Number of items to show (minimum 1, maximum 20)
+        """
+        # Start with a reasonable sample size
+        base_items = min(10, total_items)
+
+        # Estimate if we can show more based on max_size
+        # Leave 20% buffer for formatting, summaries, etc.
+        available_size = int(max_size * 0.8)
+        estimated_items = max(1, available_size // item_sample_size)
+
+        # Cap at 20 items to keep output manageable
+        return min(base_items, estimated_items, 20)
+
+    def _truncate_json_array(self, data: List[Any], tool_id: str, max_size: int, original_size: int) -> str:
+        """
+        Truncate JSON array intelligently
+
+        Strategy: Start with all items and iteratively remove until target size is reached
+        """
+        total_items = len(data)
+
+        if total_items == 0:
+            return json.dumps(data)
+
+        # Start with all items and work backwards
+        items_to_show = total_items
+        preview_items = data[:items_to_show]
+        preview_str = json.dumps(preview_items)
+
+        # Target size with some buffer for summary text (75% of max_size)
+        target_size = int(max_size * 0.75)
+
+        # If we're already under target, great!
+        if len(preview_str) <= target_size:
+            items_to_show = total_items
+            preview_items = data
+            preview_str = json.dumps(preview_items)
+        else:
+            # Binary search for optimal item count
+            left = 1
+            right = total_items
+            best_count = 1
+            best_preview = json.dumps(data[:1])
+
+            while left <= right:
+                mid = (left + right) // 2
+                preview_items = data[:mid]
+                preview_str = json.dumps(preview_items)
+
+                if len(preview_str) <= target_size:
+                    # This fits, try to get more
+                    best_count = mid
+                    best_preview = preview_str
+                    left = mid + 1
+                else:
+                    # Too large, try fewer items
+                    right = mid - 1
+
+            items_to_show = best_count
+            preview_str = best_preview
+
+        # Build summary
+        summary = self._build_array_summary(data, items_to_show, total_items)
+
+        # Combine preview + summary
+        result = (
+            f"[TOOL RESULT TRUNCATED - Original size: {original_size:,} chars]\n"
+            f"{summary}\n\n"
+            f"SHOWING FIRST {items_to_show} OF {total_items} ITEMS:\n"
+            f"{preview_str}\n\n"
+            f"... ({total_items - items_to_show} more items not shown)\n\n"
+            f"RECOMMENDATION: Use pagination or filtering in your API call to get specific items.\n"
+            f"Example: Add 'limit' and 'offset' parameters, or filter by specific criteria."
+        )
+
+        return result
+
+    def _build_array_summary(self, data: List[Any], shown: int, total: int) -> str:
+        """Build summary statistics for JSON array"""
+        try:
+            # Analyze array structure
+            if not data:
+                return "Empty array"
+
+            first_item = data[0]
+
+            if isinstance(first_item, dict):
+                # Extract field names
+                fields = list(first_item.keys())
+                return (
+                    f"SUMMARY: Array of {total} objects\n"
+                    f"Fields per object: {', '.join(fields[:10])}"
+                    f"{' ...' if len(fields) > 10 else ''}"
+                )
+            else:
+                item_type = type(first_item).__name__
+                return f"SUMMARY: Array of {total} {item_type} values"
+
+        except Exception:
+            return f"SUMMARY: Array of {total} items"
+
+    def _truncate_json_object_recursively(self, data: Dict[str, Any], max_size: int) -> Dict[str, Any]:
+        """
+        Recursively truncate JSON object values
+
+        Args:
+            data: JSON object to truncate
+            max_size: Maximum size per element
+
+        Returns:
+            Truncated JSON object (new copy, doesn't mutate input)
+        """
+        if not data:
+            return data
+
+        truncated = {}
+        # Prevent division by zero
+        max_size_per_element = max_size / max(1, len(data))
+
+        # Calculate how many keys to show using common function
+        total_keys = len(data)
+        max_items = self._calculate_max_items_to_show(total_keys, max_size)
+
+        # Limit number of keys shown
+        keys_to_show = list(data.keys())[:max_items]
+
+        for key in keys_to_show:
+            value = data[key]
+
+            if isinstance(value, dict):
+                truncated[key] = self._truncate_json_object_recursively(value, max_size_per_element)
+            elif isinstance(value, list):
+                # Calculate max items for this list
+                list_max_items = self._calculate_max_items_to_show(len(value), max_size_per_element)
+
+                # Truncate arrays to max_items
+                truncated_list = []
+                for item in value[:list_max_items]:
+                    if isinstance(item, dict):
+                        truncated_list.append(self._truncate_json_object_recursively(item, max_size_per_element))
+                    else:
+                        item_str = str(item)
+                        if len(item_str) > max_size_per_element:
+                            truncated_list.append(item_str[: int(max_size_per_element)] + "...")
+                        else:
+                            truncated_list.append(item)
+
+                # Add indicator if array was truncated
+                if len(value) > list_max_items:
+                    truncated[key] = truncated_list + [f"... ({len(value) - list_max_items} more items)"]
+                else:
+                    truncated[key] = truncated_list
+            else:
+                value_str = str(value)
+                if len(value_str) > max_size_per_element:
+                    truncated[key] = value_str[: int(max_size_per_element)] + "..."
+                else:
+                    truncated[key] = value
+
+        # Add indicator if dict was truncated
+        if len(data) > max_items:
+            truncated["..."] = f"({len(data) - max_items} more fields)"
+
+        return truncated
+
+    def _truncate_json_object(self, data: Dict[str, Any], tool_id: str, max_size: int, original_size: int) -> str:
+        """
+        Truncate JSON object intelligently
+
+        Strategy: Detect if object is a wrapper around array data and handle accordingly
+        """
+        # Check if this is a wrapper object with a large array field
+        # Common patterns: {"items": [...], "count": N}, {"results": [...], "total": N}, etc.
+        array_field = None
+        array_data = None
+        max_array_size = 0
+
+        for key, value in data.items():
+            if isinstance(value, list):
+                value_str = json.dumps(value)
+                value_size = len(value_str)
+                if value_size > max_array_size:
+                    max_array_size = value_size
+                    array_field = key
+                    array_data = value
+
+        # If we found a large array that dominates the object (>80% of content),
+        # treat it specially and give it most of the budget
+        if array_field and max_array_size > original_size * 0.8:
+            # Give 90% of budget to the array, 10% for metadata
+            array_budget = int(max_size * 0.9)
+
+            # Truncate the array
+            array_result = self._truncate_json_array(array_data, tool_id, array_budget, max_array_size)
+
+            # Build metadata summary (other fields)
+            metadata = {k: v for k, v in data.items() if k != array_field}
+            metadata_str = json.dumps(metadata) if metadata else "{}"
+
+            result = (
+                f"[TOOL RESULT TRUNCATED - Original size: {original_size:,} chars]\n\n"
+                f"SUMMARY: Object with main array field '{array_field}' ({len(array_data)} items) plus {len(metadata)} metadata fields\n\n"
+                f"METADATA FIELDS:\n"
+                f"{metadata_str}\n\n"
+                f"ARRAY DATA:\n"
+                f"{array_result}"
+            )
+        else:
+            # Standard object truncation for balanced objects
+            content_max_size = int(max_size * 0.8)
+            preview = self._truncate_json_object_recursively(data, content_max_size)
+
+            preview_str = json.dumps(preview)
+
+            result = (
+                f"[TOOL RESULT TRUNCATED - Original size: {original_size:,} chars]\n\n"
+                f"SUMMARY: Object with {len(data)} top-level fields\n\n"
+                f"STRUCTURE PREVIEW:\n"
+                f"{preview_str}\n\n"
+                f"RECOMMENDATION: Request specific fields or use a more targeted API endpoint."
+            )
+
+        return result
+
+    def _truncate_plain_text(self, text: str, tool_id: str, max_size: int, original_size: int) -> str:
+        """
+        Truncate plain text with beginning + end preview
+
+        Strategy: Show first and last portions with summary
+        """
+        if len(text) <= max_size:
+            return text
+
+        # Show first 40% and last 10%
+        head_size = int(max_size * 0.4)
+        tail_size = int(max_size * 0.1)
+
+        head = text[:head_size]
+        tail = text[-tail_size:] if tail_size > 0 else ""
+
+        # Count lines for summary
+        total_lines = text.count("\n") + 1
+
+        result = (
+            f"[TOOL RESULT TRUNCATED - Original size: {original_size:,} chars, {total_lines:,} lines]\n\n"
+            f"BEGINNING:\n"
+            f"{head}\n\n"
+            f"... ({original_size - head_size - tail_size:,} chars omitted) ...\n\n"
+            f"ENDING:\n"
+            f"{tail}\n\n"
+            f"RECOMMENDATION: Use filtering or pagination to get specific data."
+        )
+
+        return result
 
     async def _execute_tool_calls(
         self, tool_calls: List[Dict[str, Any]], tools_desc: Optional[Dict]
