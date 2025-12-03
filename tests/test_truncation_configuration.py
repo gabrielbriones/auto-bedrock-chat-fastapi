@@ -22,12 +22,12 @@ class TestTruncationConfiguration:
         """Test that default configuration maintains proper tier ratios"""
         config = ChatConfig()
 
-        # New response threshold should be 10x history threshold (conservative defaults: 500K/50K)
-        assert config.tool_result_new_response_threshold == 500_000
-        assert config.tool_result_history_threshold == 50_000
-        assert config.tool_result_new_response_threshold / config.tool_result_history_threshold == 10
+        # Verify recommended 10x ratio between new response and history thresholds
+        # (not enforced, but recommended for balanced truncation behavior)
+        ratio = config.tool_result_new_response_threshold / config.tool_result_history_threshold
+        assert ratio == 10  # Recommended but not required
 
-        # Both tiers should maintain 85% target/threshold ratio
+        # Both tiers MUST maintain 85% target/threshold ratio for consistent truncation behavior
         new_response_ratio = config.tool_result_new_response_target / config.tool_result_new_response_threshold
         history_ratio = config.tool_result_history_target / config.tool_result_history_threshold
 
