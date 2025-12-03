@@ -104,7 +104,7 @@ You: /quit
 
 ```python
 import asyncio
-from app import WebSocketConfig, WebSocketChatClient, AuthType
+from interactive import WebSocketConfig, WebSocketChatClient, AuthType
 
 async def main():
     # Create configuration
