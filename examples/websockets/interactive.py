@@ -581,7 +581,18 @@ async def main():
             auth_kwargs["scope"] = args.scope
 
     # Create configuration
-    auth_type = AuthType(args.auth) if args.auth != "none" else AuthType.NONE
+    # Map CLI argument to AuthType enum
+    auth_type_map = {
+        "bearer": AuthType.BEARER_TOKEN,
+        "api_key": AuthType.API_KEY,
+        "basic": AuthType.BASIC_AUTH,
+        "oauth2": AuthType.OAUTH2,
+        "none": AuthType.NONE,
+    }
+    try:
+        auth_type = auth_type_map[args.auth]
+    except KeyError:
+        parser.error(f"Invalid --auth value: {args.auth!r}")
 
     config = WebSocketConfig(
         endpoint=args.url,
