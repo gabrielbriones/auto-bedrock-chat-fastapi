@@ -27,7 +27,7 @@ pip install websockets
 python interactive.py
 ```
 
-This connects to the default WebSocket endpoint (`ws://localhost:8000/ws/chat`) and starts an interactive chat.
+This connects to the default WebSocket endpoint (`ws://localhost:8000/bedrock-chat/ws`) and starts an interactive chat.
 
 ### Interactive Chat (Bearer Token)
 

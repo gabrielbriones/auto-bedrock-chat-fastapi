@@ -359,6 +359,7 @@ async def interactive_chat(client: WebSocketChatClient) -> None:
         """Display the input prompt"""
         if show_next_prompt[0]:
             import sys
+
             sys.stdout.write("You: ")
             sys.stdout.flush()
 
