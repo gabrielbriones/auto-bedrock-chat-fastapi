@@ -20,11 +20,9 @@ import asyncio
 import json
 import logging
 from argparse import ArgumentParser
-from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
-import websockets
 from websockets.asyncio.client import ClientConnection, connect
 
 # Configure logging
