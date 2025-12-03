@@ -331,7 +331,7 @@ export BEDROCK_API_KEY="your-api-key"
 Enable debug logging:
 
 ```bash
-python app.py --auth bearer --token YOUR_TOKEN
+python interactive.py --auth bearer --token YOUR_TOKEN
 ```
 
 Check logs to see WebSocket communication:
