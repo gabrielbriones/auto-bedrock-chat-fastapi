@@ -166,7 +166,7 @@ class ChatConfig(BaseSettings):
     )
 
     enable_message_chunking: bool = Field(
-        default=True,
+        default=False,
         alias="BEDROCK_ENABLE_MESSAGE_CHUNKING",
         description="Whether to enable automatic chunking of large messages",
     )
