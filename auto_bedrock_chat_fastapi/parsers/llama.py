@@ -30,12 +30,12 @@ class LlamaParser(Parser):
         content = generation
 
         # Look for tool calls in format: <tool_call>function_name({"args"})</tool_call>
-        tool_pattern = r'<tool_call>([\w_]+)\((.*?)\)</tool_call>'
+        tool_pattern = r"<tool_call>([\w_]+)\((.*?)\)</tool_call>"
         matches = re.findall(tool_pattern, generation, re.DOTALL)
 
         if matches:
             # Extract content before first tool call (if any text before tool calls)
-            first_tool_pos = generation.find('<tool_call>')
+            first_tool_pos = generation.find("<tool_call>")
             if first_tool_pos > 0:
                 # There's text before the tool calls - keep just that as readable content
                 content = generation[:first_tool_pos].strip()
@@ -49,11 +49,7 @@ class LlamaParser(Parser):
                 try:
                     # Parse arguments as JSON
                     args = json.loads(args_str) if args_str.strip() else {}
-                    tool_calls.append({
-                        "id": f"llama-tool-{len(tool_calls)}",
-                        "name": func_name,
-                        "arguments": args
-                    })
+                    tool_calls.append({"id": f"llama-tool-{len(tool_calls)}", "name": func_name, "arguments": args})
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse tool arguments for {func_name}: {args_str}")
 
@@ -101,13 +97,15 @@ class LlamaParser(Parser):
                 for i, tool_result in enumerate(tool_results):
                     # For Llama, tool results are added as user messages
                     # Mark them with metadata so truncation can identify them
-                    tool_call_id = tool_result.get("tool_call_id") or tool_result.get("tool_use_id") or f"tool-result-{i}"
-                    
+                    tool_call_id = (
+                        tool_result.get("tool_call_id") or tool_result.get("tool_use_id") or f"tool-result-{i}"
+                    )
+
                     # Get the function name from tool_calls if available
                     func_name = "unknown"
                     if i < len(tool_calls):
                         func_name = tool_calls[i].get("name", "unknown")
-                    
+
                     if "error" in tool_result:
                         result_content = f"[Tool Result for {func_name}({tool_call_id})]\nError: {tool_result['error']}"
                     else:
@@ -115,13 +113,15 @@ class LlamaParser(Parser):
                         # Add context header so Llama knows this is a tool response
                         result_content = f"[Tool Result for {func_name}({tool_call_id})]\n{result_data}"
 
-                    bedrock_messages.append({
-                        "role": "user",
-                        "content": result_content,
-                        # Mark this as a tool result for truncation detection
-                        "is_tool_result": True,
-                        "tool_call_id": tool_call_id,
-                    })
+                    bedrock_messages.append(
+                        {
+                            "role": "user",
+                            "content": result_content,
+                            # Mark this as a tool result for truncation detection
+                            "is_tool_result": True,
+                            "tool_call_id": tool_call_id,
+                        }
+                    )
 
         return bedrock_messages
 
@@ -131,7 +131,7 @@ class LlamaParser(Parser):
         tools_desc: Optional[Dict] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Format messages for Llama API using proper prompt format with tool support
@@ -211,7 +211,9 @@ class LlamaParser(Parser):
         return {
             "prompt": formatted_prompt,
             "max_gen_len": max_tokens if max_tokens is not None else (self.config.max_tokens if self.config else 4096),
-            "temperature": temperature if temperature is not None else (self.config.temperature if self.config else 0.7),
+            "temperature": (
+                temperature if temperature is not None else (self.config.temperature if self.config else 0.7)
+            ),
             "top_p": kwargs.get("top_p") or (getattr(self.config, "top_p", 0.9) if self.config else 0.9),
         }
 
@@ -229,22 +231,22 @@ class LlamaParser(Parser):
             if isinstance(functions, list):
                 for func in functions:
                     if isinstance(func, dict):
-                        name = func.get('name', 'unknown')
+                        name = func.get("name", "unknown")
                         tool_names.append(name)
                         tool_instructions += f"\nTool: {name}\n"
                         tool_instructions += f"Description: {func.get('description', 'No description')}\n"
-                        if func.get('parameters'):
+                        if func.get("parameters"):
                             tool_instructions += f"Parameters: {json.dumps(func['parameters'], indent=2)}\n"
 
         # Handle list of function objects
         elif isinstance(tools_desc, list):
             for func in tools_desc:
                 if isinstance(func, dict):
-                    name = func.get('name', 'unknown')
+                    name = func.get("name", "unknown")
                     tool_names.append(name)
                     tool_instructions += f"\nTool: {name}\n"
                     tool_instructions += f"Description: {func.get('description', 'No description')}\n"
-                    if func.get('parameters'):
+                    if func.get("parameters"):
                         tool_instructions += f"Parameters: {json.dumps(func['parameters'], indent=2)}\n"
 
         # Handle dict where values might be tool objects or strings
@@ -252,19 +254,19 @@ class LlamaParser(Parser):
             for key, tool in tools_desc.items():
                 # Handle case where tool is a dict with tool metadata
                 if isinstance(tool, dict):
-                    name = tool.get('name', key)
+                    name = tool.get("name", key)
                     tool_names.append(name)
                     tool_instructions += f"\nTool: {name}\n"
                     tool_instructions += f"Description: {tool.get('description', 'No description')}\n"
-                    if tool.get('inputSchema'):
+                    if tool.get("inputSchema"):
                         tool_instructions += f"Parameters: {json.dumps(tool['inputSchema'], indent=2)}\n"
-                    elif tool.get('parameters'):
+                    elif tool.get("parameters"):
                         tool_instructions += f"Parameters: {json.dumps(tool['parameters'], indent=2)}\n"
                 # Handle case where tool is just a string (tool name)
                 elif isinstance(tool, str):
                     tool_names.append(tool)
                     tool_instructions += f"\nTool: {tool}\n"
-                    tool_instructions += f"Description: No description available\n"
+                    tool_instructions += "Description: No description available\n"
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Formatted tools for Llama: {tool_names}")

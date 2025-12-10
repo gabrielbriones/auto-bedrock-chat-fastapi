@@ -29,18 +29,18 @@ logger = logging.getLogger(__name__)
 def simple_chunk(content: str, chunk_size: int, chunk_overlap: int) -> List[str]:
     """
     Simple character-based chunking.
-    
+
     Args:
         content: The content to chunk
         chunk_size: Maximum size of each chunk
         chunk_overlap: Number of characters to overlap between chunks
-        
+
     Returns:
         List of content chunks
     """
     chunks = []
     i = 0
-    
+
     while i < len(content):
         # Determine chunk end position
         chunk_end = min(i + chunk_size, len(content))
@@ -58,20 +58,20 @@ def simple_chunk(content: str, chunk_size: int, chunk_overlap: int) -> List[str]
 def context_aware_chunk(content: str, chunk_size: int, chunk_overlap: int) -> List[str]:
     """
     Context-aware chunking that tries to break on natural boundaries.
-    
-    Looks for natural break points like paragraph breaks, newlines, 
+
+    Looks for natural break points like paragraph breaks, newlines,
     sentence endings, and word boundaries.
-    
+
     Args:
         content: The content to chunk
         chunk_size: Maximum size of each chunk
         chunk_overlap: Number of characters to overlap between chunks
-        
+
     Returns:
         List of content chunks
     """
     chunks = []
-    
+
     # Natural break points in order of preference
     break_patterns = ["\n\n", "\n", ". ", ", ", " "]
 
@@ -109,15 +109,15 @@ def context_aware_chunk(content: str, chunk_size: int, chunk_overlap: int) -> Li
 def semantic_chunk(content: str, chunk_size: int, chunk_overlap: int) -> List[str]:
     """
     Semantic chunking that tries to preserve logical units.
-    
+
     Currently falls back to context-aware chunking, but could be enhanced
     with NLP libraries for more intelligent splitting.
-    
+
     Args:
         content: The content to chunk
         chunk_size: Maximum size of each chunk
         chunk_overlap: Number of characters to overlap between chunks
-        
+
     Returns:
         List of content chunks
     """
@@ -135,16 +135,16 @@ def semantic_chunk(content: str, chunk_size: int, chunk_overlap: int) -> List[st
 class MessageChunker:
     """
     Handles message chunking with multiple strategies.
-    
+
     This class provides functionality to split large messages into smaller
     chunks that fit within model context limits while preserving message
     semantics as much as possible.
-    
+
     Supports three chunking strategies:
     - simple: Basic character-based chunking
     - preserve_context: Context-aware chunking on natural boundaries
     - semantic: Semantic-aware chunking (currently same as preserve_context)
-    
+
     Args:
         enable_message_chunking: Whether chunking is enabled
         max_message_size: Maximum size before chunking is applied
@@ -180,7 +180,7 @@ class MessageChunker:
     ) -> List[Dict[str, Any]]:
         """
         Check for large messages and chunk them if necessary.
-        
+
         Special handling for tool responses to prevent context overflow.
 
         Three-tier system for tool messages:
@@ -209,7 +209,7 @@ class MessageChunker:
                 trailing_tool_start_idx = i
             else:
                 break
-        
+
         num_trailing_tools = len(messages) - trailing_tool_start_idx
 
         result = []
@@ -219,7 +219,7 @@ class MessageChunker:
             # Check if this message is part of the trailing tool group
             # If so, skip all truncation/chunking - it's already been handled
             is_trailing_tool = (num_trailing_tools > 0) and (idx >= trailing_tool_start_idx)
-            
+
             if is_trailing_tool:
                 # Preserve trailing tool messages as-is (already group-truncated)
                 result.append(msg)
@@ -240,8 +240,7 @@ class MessageChunker:
             msg_is_tool = is_tool_message(msg)
             # Also check for metadata flag indicating tool result message (from websocket_handler)
             has_tool_result_flag = (
-                msg.get('metadata', {}).get('is_tool_result', False) 
-                if isinstance(msg, dict) else False
+                msg.get("metadata", {}).get("is_tool_result", False) if isinstance(msg, dict) else False
             )
             msg_is_tool = msg_is_tool or has_tool_result_flag
 
@@ -258,9 +257,7 @@ class MessageChunker:
 
                     # Use intelligent truncation for large messages (no chunking)
                     if content_size > truncation_threshold and tool_processor is not None:
-                        processed_msg = tool_processor.process_tool_result_message(
-                            msg, is_conversation_history
-                        )
+                        processed_msg = tool_processor.process_tool_result_message(msg, is_conversation_history)
                         result.append(processed_msg)
                     else:
                         # Under threshold: keep as-is (never chunk tool messages)
@@ -331,7 +328,7 @@ class MessageChunker:
             # Preserve any other standard message fields that might be needed
             if "name" in message:
                 chunked_msg["name"] = message["name"]
-            
+
             # CRITICAL: Preserve tool_call_id for GPT format tool messages
             # GPT format requires: role="tool", tool_call_id="...", content="string"
             if message.get("role") == "tool" and "tool_call_id" in message:
@@ -344,10 +341,10 @@ class MessageChunker:
     def _get_content_size(self, content: Any) -> int:
         """
         Calculate content size handling different formats.
-        
+
         Args:
             content: Message content (string, list, or other)
-            
+
         Returns:
             Size of the content in characters
         """

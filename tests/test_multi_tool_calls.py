@@ -11,11 +11,12 @@ Key scenarios tested:
 4. Conversation context is preserved despite truncation
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
+
 from auto_bedrock_chat_fastapi.bedrock_client import BedrockClient
 from auto_bedrock_chat_fastapi.config import ChatConfig
-from auto_bedrock_chat_fastapi.session_manager import ChatMessage
 
 
 class TestMultiToolCallScenarios:
@@ -26,9 +27,9 @@ class TestMultiToolCallScenarios:
         """Create config with small thresholds for testing"""
         config = ChatConfig(
             tool_result_history_threshold=100_000,  # 100K
-            tool_result_history_target=85_000,      # 85K (85% of threshold)
+            tool_result_history_target=85_000,  # 85K (85% of threshold)
             tool_result_new_response_threshold=500_000,  # 500K
-            tool_result_new_response_target=425_000,     # 425K (85% of threshold)
+            tool_result_new_response_target=425_000,  # 425K (85% of threshold)
         )
         return config
 
@@ -41,8 +42,8 @@ class TestMultiToolCallScenarios:
 
     def test_multiple_large_tool_responses_in_history(self, client):
         """Test that multiple large tool responses at END are grouped and truncated proportionally
-        
-        Behavior: Consecutive tool messages at END of history (trailing tools) are treated as a 
+
+        Behavior: Consecutive tool messages at END of history (trailing tools) are treated as a
         group and share the new_response budget (500K) proportionally.
         Earlier tool messages use the history budget (50K).
         """
@@ -79,7 +80,7 @@ class TestMultiToolCallScenarios:
                 if item.get("type") == "tool_result":
                     # Should be truncated to history target (42.5K)
                     assert len(item.get("content", "")) <= client.config.tool_result_history_target
-        
+
         # Messages 3 & 4 (trailing tools, grouped): Share 500K new_response budget
         # Per tool threshold = 500K / 2 = 250K
         # Since 150K < 250K, they should NOT be truncated
@@ -114,7 +115,9 @@ class TestMultiToolCallScenarios:
         for i, msg in enumerate(truncated):
             if msg.get("role") == "tool" and i < len(truncated) - 1:
                 # Should be truncated to target or smaller
-                assert len(msg.get("content", "")) <= client.config.tool_result_history_target + 1000  # Allow small margin
+                assert (
+                    len(msg.get("content", "")) <= client.config.tool_result_history_target + 1000
+                )  # Allow small margin
 
     def test_cumulative_history_size_calculation(self, client):
         """Test that cumulative history size is calculated correctly"""
@@ -143,7 +146,7 @@ class TestMultiToolCallScenarios:
 
         # Calculate total tool message size in truncated result (excluding last message)
         total_size_with_history_truncation = 0
-        for i, msg in enumerate(truncated[:-1]):  # Exclude last message
+        for msg in truncated[:-1]:  # Exclude last message
             if msg.get("role") == "user" and isinstance(msg.get("content"), list):
                 for item in msg["content"]:
                     if item.get("type") == "tool_result":
@@ -152,7 +155,7 @@ class TestMultiToolCallScenarios:
         # Total of first 2 tool messages should be significantly reduced from 80KB
         # (last message is not truncated, so we only look at first 2)
         assert total_size_with_history_truncation < 100_000
-        
+
         # Verify last message is NOT truncated
         last_tool_msg = truncated[-1]
         if isinstance(last_tool_msg.get("content"), list):
@@ -270,7 +273,7 @@ class TestMultiToolCallScenarios:
 
     def test_production_scale_dict_format_1mb_response(self, client):
         """Test production scenario: 1.2MB dict-format tool response from logs
-        
+
         This reproduces the exact issue from production logs where a tool response
         of 1,223,822 characters in dict format was not being truncated.
         """
@@ -318,14 +321,18 @@ class TestMultiToolCallScenarios:
         # What matters is: (1) it's much smaller than original, (2) it's reasonable size
         # Should be MUCH smaller than original 1.2MB
         original_size = 1_223_822
-        assert truncated_size < original_size, f"Expected truncation but got {truncated_size} chars from {original_size} original"
-        
+        assert (
+            truncated_size < original_size
+        ), f"Expected truncation but got {truncated_size} chars from {original_size} original"
+
         # Should still have meaningful content (not just error message)
         assert truncated_size > 1000, f"Truncation too aggressive: only {truncated_size} chars remaining"
 
         # Verify truncation was actually applied (significant reduction)
         reduction_ratio = truncated_size / original_size
-        assert reduction_ratio < 0.50, f"Expected significant truncation but only reduced by {100*(1-reduction_ratio):.1f}%"
+        assert (
+            reduction_ratio < 0.50
+        ), f"Expected significant truncation but only reduced by {100*(1-reduction_ratio):.1f}%"
 
     def test_mixed_format_tool_messages_all_truncated(self, client):
         """Test that all three message formats are truncated correctly in one conversation"""
@@ -408,9 +415,7 @@ class TestToolMessagesTruncationIntegration:
             large_response = "x" * 40_000  # Each tool returns 40KB
 
             # Tool response from assistant
-            messages.append(
-                {"role": "assistant", "content": f"Calling tool {i}", "tool_calls": [{"id": f"tool_{i}"}]}
-            )
+            messages.append({"role": "assistant", "content": f"Calling tool {i}", "tool_calls": [{"id": f"tool_{i}"}]})
 
             # Tool result
             messages.append({"role": "tool", "tool_call_id": f"tool_{i}", "content": large_response})
@@ -432,7 +437,7 @@ class TestToolMessagesTruncationIntegration:
         # (they might not be reduced if not all combined messages exceed history threshold)
         # Last tool message should be untruncated (40KB)
         assert total_tool_size <= 160_000
-        
+
         # Last message should not be truncated
         last_msg = truncated[-1]
         if last_msg.get("role") == "tool":
@@ -506,9 +511,7 @@ class TestCumulativeHistoryLimits:
         # Each tool returns 30KB (well under individual 50K threshold)
         # But 10 calls = 300KB cumulative (exceeds 50K threshold)
         for i in range(10):
-            messages.append(
-                {"role": "assistant", "content": f"Analyzing with tool {i}"}
-            )
+            messages.append({"role": "assistant", "content": f"Analyzing with tool {i}"})
             messages.append(
                 {
                     "role": "tool",
@@ -527,7 +530,7 @@ class TestCumulativeHistoryLimits:
         # Original would be ~320KB (10 x 30KB + messages)
         # After truncation should be significantly reduced
         assert total_size < 320_000
-        
+
         # All messages should still be present (no removal, just truncation)
         assert len(truncated) == len(messages)
 
@@ -554,9 +557,7 @@ class TestCumulativeHistoryLimits:
                     ],
                 }
             )
-            messages.append(
-                {"role": "assistant", "content": f"Processing result {round_num}"}
-            )
+            messages.append({"role": "assistant", "content": f"Processing result {round_num}"})
 
         # Before truncation: 5 x 60KB = 300KB tool responses alone
         before_size = self._calculate_total_size(messages)
@@ -567,7 +568,7 @@ class TestCumulativeHistoryLimits:
 
         # After truncation: should be reduced (all but last tool message truncated to 42.5K)
         after_size = self._calculate_total_size(truncated)
-        
+
         # Should be reduced: 4 truncated (4 x 42.5K = 170K) + 1 last (60K) = 230K tool content
         # Plus assistant messages and initial user message
         assert after_size < before_size
@@ -594,7 +595,7 @@ class TestCumulativeHistoryLimits:
         for i in range(5):
             messages.append({"role": "user", "content": user_dialogue[i]})
             messages.append({"role": "assistant", "content": assistant_dialogue[i]})
-            
+
             # Large tool response between exchanges
             messages.append(
                 {
@@ -614,11 +615,7 @@ class TestCumulativeHistoryLimits:
 
         # Verify all assistant dialogue preserved
         for dialogue in assistant_dialogue:
-            found = any(
-                dialogue in str(msg.get("content", ""))
-                for msg in truncated
-                if msg.get("role") == "assistant"
-            )
+            found = any(dialogue in str(msg.get("content", "")) for msg in truncated if msg.get("role") == "assistant")
             assert found, f"Assistant dialogue '{dialogue}' not found after truncation"
 
     def test_last_tool_message_never_truncated(self, client_realistic):
@@ -706,9 +703,7 @@ class TestCumulativeHistoryLimits:
         ]
 
         for i in range(10):
-            messages.append(
-                {"role": "assistant", "content": f"Step {i}"}
-            )
+            messages.append({"role": "assistant", "content": f"Step {i}"})
             messages.append(
                 {
                     "role": "tool",
@@ -726,7 +721,7 @@ class TestCumulativeHistoryLimits:
 
         # After truncation should be significantly smaller
         after = self._calculate_total_size(truncated)
-        
+
         # Should reduce from 600KB to approximately:
         # - 9 truncated messages @ 42.5KB each = 382.5KB
         # - 1 last message = 60KB

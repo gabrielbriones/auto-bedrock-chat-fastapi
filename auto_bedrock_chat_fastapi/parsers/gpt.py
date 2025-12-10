@@ -84,14 +84,16 @@ class GPTParser(Parser):
                 if tool_calls:
                     gpt_tool_calls = []
                     for tool_call in tool_calls:
-                        gpt_tool_calls.append({
-                            "id": tool_call.get("id"),
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.get("name"),
-                                "arguments": json.dumps(tool_call.get("arguments", {})),
-                            },
-                        })
+                        gpt_tool_calls.append(
+                            {
+                                "id": tool_call.get("id"),
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.get("name"),
+                                    "arguments": json.dumps(tool_call.get("arguments", {})),
+                                },
+                            }
+                        )
 
                     if gpt_tool_calls:
                         assistant_msg["tool_calls"] = gpt_tool_calls
@@ -108,11 +110,13 @@ class GPTParser(Parser):
                     else:
                         result_content = str(tool_result.get("result", "No result"))
 
-                    bedrock_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": result_content,
-                    })
+                    bedrock_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": result_content,
+                        }
+                    )
 
         return bedrock_messages
 
@@ -122,7 +126,7 @@ class GPTParser(Parser):
         tools_desc: Optional[Dict] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Format messages for GPT OSS API with emoji sanitization
@@ -154,18 +158,17 @@ class GPTParser(Parser):
             sanitized_msg = self._sanitize_message(msg)
             formatted_messages.append(sanitized_msg)
 
-        # Estimate max_tokens adjustment for input size
-        total_input_chars = sum(len(str(msg.get("content", ""))) for msg in formatted_messages)
-        estimated_input_tokens = total_input_chars // 4
-
         # Use provided max_tokens or fall back to config
-        adjusted_max_tokens = max_tokens if max_tokens is not None else (self.config.max_tokens if self.config else 4096)
-        temp = temperature if temperature is not None else (self.config.top_p if self.config else 0.7)
+        adjusted_max_tokens = (
+            max_tokens if max_tokens is not None else (self.config.max_tokens if self.config else 4096)
+        )
 
         request_body = {
             "messages": formatted_messages,
             "max_tokens": adjusted_max_tokens,
-            "temperature": temperature if temperature is not None else (self.config.temperature if self.config else 0.7),
+            "temperature": (
+                temperature if temperature is not None else (self.config.temperature if self.config else 0.7)
+            ),
             "top_p": kwargs.get("top_p") or (getattr(self.config, "top_p", 0.9) if self.config else 0.9),
         }
 
@@ -219,14 +222,12 @@ class GPTParser(Parser):
             text = text.replace(old, new)
 
         # Remove control characters except common ones (newline, tab, carriage return)
-        text = "".join(
-            char for char in text
-            if unicodedata.category(char)[0] != "C" or char in "\n\t\r"
-        )
+        text = "".join(char for char in text if unicodedata.category(char)[0] != "C" or char in "\n\t\r")
 
         # Remove emojis and other symbols that cause GPT tokenization issues
         text = "".join(
-            char for char in text
+            char
+            for char in text
             if not (
                 # Emoji ranges (common emoji zones)
                 ("\U0001F300" <= char <= "\U0001F9FF")  # Emoticons, symbols, pictographs

@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import random
-import time
 from typing import Any, Callable, Dict, List, Optional
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -17,7 +16,7 @@ logger = logging.getLogger(__name__)
 class RetryHandler:
     """
     Handles retry logic and fallback strategies for Bedrock API requests.
-    
+
     This class encapsulates:
     - Exponential backoff with jitter
     - Context window overflow detection and recovery
@@ -60,7 +59,7 @@ class RetryHandler:
             Delay in seconds before next retry
         """
         if self.exponential_backoff:
-            delay = self.retry_delay * (2 ** attempt)
+            delay = self.retry_delay * (2**attempt)
         else:
             delay = self.retry_delay
 
@@ -159,9 +158,7 @@ class RetryHandler:
                 # Don't retry other unexpected errors
                 break
 
-        raise BedrockClientError(
-            f"Request failed after {self.max_retries + 1} attempts: {str(last_exception)}"
-        )
+        raise BedrockClientError(f"Request failed after {self.max_retries + 1} attempts: {str(last_exception)}")
 
     def _extract_error_info(self, error: Exception) -> tuple:
         """
@@ -195,11 +192,7 @@ class RetryHandler:
         error_type = str(type(error))
         error_str = str(error).lower()
 
-        return (
-            "ReadTimeoutError" in error_type
-            or "timeout" in error_str
-            or "timed out" in error_str
-        )
+        return "ReadTimeoutError" in error_type or "timeout" in error_str or "timed out" in error_str
 
     def is_context_window_error(self, error: Exception) -> bool:
         """
@@ -245,9 +238,7 @@ class RetryHandler:
 
         if len(messages) > 50 or total_chars > 500000:
             # Ultra-aggressive fallback for request body size issues
-            logger.warning(
-                f"Ultra-aggressive fallback triggered: {len(messages)} messages, {total_chars:,} chars"
-            )
+            logger.warning(f"Ultra-aggressive fallback triggered: {len(messages)} messages, {total_chars:,} chars")
             aggressive_limit = min(3, max(1, self.max_conversation_messages // 10))
         else:
             # Standard aggressive fallback
@@ -256,11 +247,7 @@ class RetryHandler:
         result = []
 
         # Always preserve system message if present and configured
-        if (
-            self.preserve_system_message
-            and messages
-            and messages[0].get("role") == "system"
-        ):
+        if self.preserve_system_message and messages and messages[0].get("role") == "system":
             result.append(messages[0])
             remaining_messages = messages[1:]
             max_remaining = aggressive_limit - 1
@@ -271,18 +258,14 @@ class RetryHandler:
         # Filter messages, keeping track of tool-related messages
         filtered_messages = []
         last_tool_message = None
-        last_tool_message_tool_use_id = None
         last_assistant_with_tool_use = None
 
         for msg in remaining_messages:
             role = msg.get("role", "")
             if role in ["tool", "function"]:
-                # Keep track of the last tool message and its tool_use_id
+                # Keep track of the last tool message
                 last_tool_message = msg
-                last_tool_message_tool_use_id = msg.get("tool_call_id") or msg.get("tool_use_id")
-            elif role == "assistant" and (
-                "tool_use" in str(msg.get("content", "")) or "tool_calls" in msg
-            ):
+            elif role == "assistant" and ("tool_use" in str(msg.get("content", "")) or "tool_calls" in msg):
                 # Keep track of most recent assistant message with tool definitions
                 last_assistant_with_tool_use = msg
                 filtered_messages.append(msg)
@@ -291,11 +274,7 @@ class RetryHandler:
                 filtered_messages.append(msg)
 
         # Add the most recent assistant message with tool_use if we have a tool_result
-        if (
-            last_tool_message
-            and last_assistant_with_tool_use
-            and last_assistant_with_tool_use not in filtered_messages
-        ):
+        if last_tool_message and last_assistant_with_tool_use and last_assistant_with_tool_use not in filtered_messages:
             filtered_messages.append(last_assistant_with_tool_use)
 
         # Add the most recent tool message at the end if we had any
@@ -313,9 +292,7 @@ class RetryHandler:
                 else:
                     # Keep a truncated version of large messages
                     truncated_msg = msg.copy()
-                    truncated_msg["content"] = (
-                        str(msg.get("content", ""))[:1000] + "...[truncated due to size]"
-                    )
+                    truncated_msg["content"] = str(msg.get("content", ""))[:1000] + "...[truncated due to size]"
                     size_filtered.append(truncated_msg)
             filtered_messages = size_filtered
 

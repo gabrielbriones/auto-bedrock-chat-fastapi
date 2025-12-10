@@ -852,9 +852,9 @@ class TestToolUseToolResultPairManagement:
                 f"Available tool_use IDs: {available_tool_use_ids}"
             )
 
-        # The old tool IDs should NOT be in results
-        assert "toolu_bdrk_015Da6g5srFjm72ic7ZDHAM2" not in tool_result_ids, "Old tool ID should have been removed"
-        assert "toolu_bdrk_01ATXyXfAd98KeVQQSwqzfia" not in tool_result_ids, "Old tool ID should have been removed"
+        # The old tool IDs should NOT be in results (they were trimmed away)
+        assert "toolu_old_1" not in tool_result_ids, "Old tool ID should have been removed"
+        assert "toolu_old_2" not in tool_result_ids, "Old tool ID should have been removed"
 
     def test_production_scenario_with_debug_logging(self):
         """

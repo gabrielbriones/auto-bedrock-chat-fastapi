@@ -1,7 +1,7 @@
 # Bedrock Client Refactoring Plan
 
-> **Document Created:** December 9, 2025  
-> **Original File Size:** 2,151 lines  
+> **Document Created:** December 9, 2025
+> **Original File Size:** 2,151 lines
 > **Current File Size:** 1,139 lines (after Proposals 1 & 2)
 > **Target File Size:** ~500 lines (after full refactoring)
 
@@ -15,18 +15,18 @@ The `bedrock_client.py` file has grown organically and now violates the Single R
 
 ### Responsibility Breakdown
 
-| Responsibility | Lines (~approx) | Complexity |
-|----------------|-----------------|------------|
-| AWS Client Initialization | ~60 | Low |
-| Rate Limiting | ~20 | Low |
-| Chat Completion (main flow) | ~150 | High |
-| Retry Logic with Fallback | ~200 | High |
-| **Conversation Management** | ~400 | Very High |
-| **Tool Message Truncation** | ~350 | Very High |
-| **Message Chunking** | ~250 | Medium |
-| Response Parsing (delegation) | ~100 | Low |
-| Logging/Debug Helpers | ~100 | Low |
-| Error Handling | ~100 | Medium |
+| Responsibility                | Lines (~approx) | Complexity |
+| ----------------------------- | --------------- | ---------- |
+| AWS Client Initialization     | ~60             | Low        |
+| Rate Limiting                 | ~20             | Low        |
+| Chat Completion (main flow)   | ~150            | High       |
+| Retry Logic with Fallback     | ~200            | High       |
+| **Conversation Management**   | ~400            | Very High  |
+| **Tool Message Truncation**   | ~350            | Very High  |
+| **Message Chunking**          | ~250            | Medium     |
+| Response Parsing (delegation) | ~100            | Low        |
+| Logging/Debug Helpers         | ~100            | Low        |
+| Error Handling                | ~100            | Medium     |
 
 ### Key Problems Identified
 
@@ -42,17 +42,18 @@ The `bedrock_client.py` file has grown organically and now violates the Single R
 
 ### Proposal 1: Extract `ConversationManager` Class
 
-**Priority:** HIGH  
-**Status:** [x] COMPLETED (2025-12-10)  
-**Effort:** Medium  
+**Priority:** HIGH
+**Status:** [x] COMPLETED (2025-12-10)
+**Effort:** Medium
 **Impact:** High
 
-**Description:**  
+**Description:**
 Move all conversation history management to a new file.
 
 **New File:** `auto_bedrock_chat_fastapi/conversation_manager.py` (677 lines)
 
 **Methods Extracted:**
+
 - [x] `_manage_conversation_history()` → `ConversationManager.manage_conversation_history()`
 - [x] `_truncate_messages()` → `ConversationManager.truncate_messages()`
 - [x] `_sliding_window_messages()` → `ConversationManager.sliding_window_messages()`
@@ -64,6 +65,7 @@ Move all conversation history management to a new file.
 - [x] `_finalize_message_selection()` → `ConversationManager._finalize_message_selection()`
 
 **Changes Made:**
+
 1. Created `conversation_manager.py` with:
    - `build_tool_use_location_map()` - module-level helper function
    - `get_selected_tool_use_ids()` - module-level helper function
@@ -75,6 +77,7 @@ Move all conversation history management to a new file.
    - bedrock_client.py reduced from 1,586 to 1,139 lines (-447 lines)
 
 **Benefits:**
+
 - Single responsibility per class
 - Easier to test conversation strategies independently
 - Can add new strategies without touching BedrockClient
@@ -83,17 +86,18 @@ Move all conversation history management to a new file.
 
 ### Proposal 2: Extract `ToolMessageProcessor` Class
 
-**Priority:** HIGH  
-**Status:** [x] COMPLETED (2025-12-09)  
-**Effort:** Medium  
+**Priority:** HIGH
+**Status:** [x] COMPLETED (2025-12-09)
+**Effort:** Medium
 **Impact:** High
 
-**Description:**  
+**Description:**
 Move all tool message processing to a new file.
 
 **New File:** `auto_bedrock_chat_fastapi/tool_message_processor.py` (686 lines)
 
 **Methods Extracted:**
+
 - [x] `_truncate_tool_messages_in_history()` → `ToolMessageProcessor.truncate_tool_messages_in_history()`
 - [x] `_process_tool_result_message()` → `ToolMessageProcessor.process_tool_result_message()`
 - [x] `_intelligently_truncate_tool_result()` → `ToolMessageProcessor._intelligently_truncate_tool_result()`
@@ -102,6 +106,7 @@ Move all tool message processing to a new file.
 - [x] `get_content_size()` (module-level function, reusable)
 
 **Changes Made:**
+
 1. Created `tool_message_processor.py` with:
    - `is_tool_message()` - unified tool detection for all formats (Claude, GPT, Llama, dict)
    - `is_user_message()` - helper function
@@ -122,6 +127,7 @@ Move all tool message processing to a new file.
 4. Updated test files to use `client._tool_processor.truncate_tool_messages_in_history()`
 
 **Benefits:**
+
 - Centralized tool truncation logic in one place
 - `is_tool_message()` now reusable across codebase
 - Supports all formats: Claude (list), GPT (role=tool), Llama (is_tool_result flag), dict format
@@ -132,17 +138,18 @@ Move all tool message processing to a new file.
 
 ### Proposal 3: Extract `MessageChunker` Class
 
-**Priority:** MEDIUM  
-**Status:** [x] COMPLETED (2025-12-10)  
-**Effort:** Low  
+**Priority:** MEDIUM
+**Status:** [x] COMPLETED (2025-12-10)
+**Effort:** Low
 **Impact:** Medium
 
-**Description:**  
+**Description:**
 Move chunking logic to a new file.
 
 **New File:** `auto_bedrock_chat_fastapi/message_chunker.py` (372 lines)
 
 **Methods Extracted:**
+
 - [x] `_check_and_chunk_messages()` → `MessageChunker.check_and_chunk_messages()`
 - [x] `_chunk_large_message()` → `MessageChunker.chunk_large_message()`
 - [x] `_simple_chunk()` → `simple_chunk()` (module-level) + `MessageChunker.simple_chunk()`
@@ -150,6 +157,7 @@ Move chunking logic to a new file.
 - [x] `_semantic_chunk()` → `semantic_chunk()` (module-level) + `MessageChunker.semantic_chunk()`
 
 **Changes Made:**
+
 1. Created `message_chunker.py` with:
    - Module-level functions: `simple_chunk()`, `context_aware_chunk()`, `semantic_chunk()`
    - `MessageChunker` class with all chunking methods
@@ -160,6 +168,7 @@ Move chunking logic to a new file.
    - bedrock_client.py reduced from 1,139 to 939 lines (-200 lines)
 
 **Benefits:**
+
 - Chunking strategies become pluggable
 - Easy to add more sophisticated chunking (NLP-based, etc.)
 
@@ -167,17 +176,18 @@ Move chunking logic to a new file.
 
 ### Proposal 4: Extract `RetryHandler` Class
 
-**Priority:** MEDIUM  
-**Status:** [ ] Not Started  
-**Effort:** Low  
+**Priority:** MEDIUM
+**Status:** [ ] Not Started
+**Effort:** Low
 **Impact:** Medium
 
-**Description:**  
+**Description:**
 Move retry/fallback logic to a utility.
 
 **New File:** `auto_bedrock_chat_fastapi/retry_handler.py` (~150 lines)
 
 **Methods to Extract:**
+
 - [ ] `_make_request_with_retries()`
 - [ ] `_try_request_with_fallback()`
 - [ ] `_aggressive_conversation_fallback()`
@@ -185,6 +195,7 @@ Move retry/fallback logic to a utility.
 - [ ] `_create_error_response()`
 
 **Benefits:**
+
 - Retry logic is reusable for other AWS services
 - Easier to adjust backoff strategies
 
@@ -192,18 +203,19 @@ Move retry/fallback logic to a utility.
 
 ### Proposal 5: Consolidate Duplicate Orphan Detection
 
-**Priority:** HIGH  
-**Status:** [x] COMPLETED (2025-12-09)  
-**Effort:** Low  
+**Priority:** HIGH
+**Status:** [x] COMPLETED (2025-12-09)
+**Effort:** Low
 **Impact:** High
 
-**Description:**  
+**Description:**
 The orphan detection logic was repeated with minor variations in three places:
+
 - `_truncate_messages()` (lines 1156-1260)
 - `_sliding_window_messages()` (lines 1268-1390)
 - `_smart_prune_messages()` (lines 1392-1532)
 
-**Solution Implemented:**  
+**Solution Implemented:**
 Created four new helper methods:
 
 1. `_build_tool_use_location_map(messages)` - Builds a mapping of tool_use_id to assistant message index
@@ -219,27 +231,27 @@ Created four new helper methods:
 
 ### Proposal 6: Simplify Debug Logging
 
-**Priority:** LOW  
-**Status:** [ ] Not Started  
-**Effort:** Low  
+**Priority:** LOW
+**Status:** [ ] Not Started
+**Effort:** Low
 **Impact:** Low
 
-**Description:**  
+**Description:**
 The same logging pattern appears 3 times in `chat_completion()` (lines 127-180).
 
-**Solution:**  
+**Solution:**
 Create a `_log_messages_debug(messages, label)` helper method.
 
 ---
 
 ### Proposal 7: Create Type Hints and Protocols
 
-**Priority:** LOW  
-**Status:** [ ] Not Started  
-**Effort:** Low  
+**Priority:** LOW
+**Status:** [ ] Not Started
+**Effort:** Low
 **Impact:** Low
 
-**Description:**  
+**Description:**
 Add typed protocols for message formats to improve IDE support.
 
 ```python
@@ -248,7 +260,7 @@ from typing import TypedDict, Protocol
 class ToolResult(TypedDict):
     tool_call_id: str
     content: str
-    
+
 class ToolCall(TypedDict):
     id: str
     name: str
@@ -266,6 +278,7 @@ class ToolCall(TypedDict):
 **Location:** Lines 2012-2048 (removed)
 
 **Changes Made:**
+
 1. Removed the `_execute_tool_calls` placeholder method (~40 lines)
 2. Removed the call to it in `chat_completion()` method (~4 lines)
 3. Added comment explaining that tool execution is handled by WebSocketChatHandler
@@ -288,10 +301,11 @@ class ToolCall(TypedDict):
 
 **Status:** [x] COMPLETED (2025-12-09)
 
-**Analysis:**  
+**Analysis:**
 The `BedrockClient.truncate_tool_results()` method was a thin wrapper that delegated to `parser.truncate_tool_results()`. However, it was **never called** from anywhere in the codebase - it was completely dead code.
 
 **Changes Made:**
+
 - Removed the unused `truncate_tool_results()` method from BedrockClient (~17 lines)
 - The canonical implementation in `parsers/base.py` remains unchanged
 
@@ -303,16 +317,18 @@ The `BedrockClient.truncate_tool_results()` method was a thin wrapper that deleg
 
 **Status:** [x] COMPLETED (2025-12-09)
 
-**Analysis:**  
+**Analysis:**
 The methods `_generate_message_preview()` and `_format_conversation_summary()` were pure utility functions used only for debug logging. They didn't require any instance state (`self`).
 
 **Changes Made:**
+
 - Converted both methods to module-level functions at the top of `bedrock_client.py`
 - Renamed to `generate_message_preview()` and `format_conversation_summary()` (dropped underscore prefix since they're now module-level)
 - Updated `_log_conversation_history()` to call the module-level functions
 - Added proper docstrings explaining they are logging utilities
 
 **Benefits:**
+
 - Clearer separation of concerns (utilities vs class logic)
 - Functions can be imported and reused if needed
 - Class interface is cleaner
@@ -385,49 +401,52 @@ auto_bedrock_chat_fastapi/
 
 ## Recommended Execution Order
 
-| Order | Task | Effort | Impact | Status |
-|-------|------|--------|--------|--------|
-| 1 | Proposal 5: Consolidate orphan detection | Low | High | ✅ DONE |
-| 2 | Task A: Remove placeholder method | Low | Low | ✅ DONE |
-| 3 | Task C: Remove dead truncate_tool_results | Low | Low | ✅ DONE |
-| 4 | Task D: Extract logging utilities | Low | Low | ✅ DONE |
-| 5 | **Proposal 2: Extract `ToolMessageProcessor`** | Medium | High | ✅ DONE |
-| 6 | **Proposal 1: Extract `ConversationManager`** | Medium | High | ✅ DONE |
-| 7 | **Proposal 3: Extract `MessageChunker`** | Low | Medium | ✅ DONE |
-| 8 | Proposal 4: Extract `RetryHandler` | Low | Medium | Pending |
-| 9 | Proposal 6: Simplify debug logging | Low | Low | Pending |
+| Order | Task                                           | Effort | Impact | Status  |
+| ----- | ---------------------------------------------- | ------ | ------ | ------- |
+| 1     | Proposal 5: Consolidate orphan detection       | Low    | High   | ✅ DONE |
+| 2     | Task A: Remove placeholder method              | Low    | Low    | ✅ DONE |
+| 3     | Task C: Remove dead truncate_tool_results      | Low    | Low    | ✅ DONE |
+| 4     | Task D: Extract logging utilities              | Low    | Low    | ✅ DONE |
+| 5     | **Proposal 2: Extract `ToolMessageProcessor`** | Medium | High   | ✅ DONE |
+| 6     | **Proposal 1: Extract `ConversationManager`**  | Medium | High   | ✅ DONE |
+| 7     | **Proposal 3: Extract `MessageChunker`**       | Low    | Medium | ✅ DONE |
+| 8     | Proposal 4: Extract `RetryHandler`             | Low    | Medium | Pending |
+| 9     | Proposal 6: Simplify debug logging             | Low    | Low    | Pending |
 
 ---
 
 ## Progress Log
 
-| Date | Change | Proposals Affected | Lines |
-|------|--------|-------------------|-------|
-| 2025-12-09 | Document created | N/A | 2,151 |
-| 2025-12-09 | Proposal 5 completed: Consolidated duplicate orphan detection into 4 helper methods | Proposal 5 | 2,093 (-58) |
-| 2025-12-09 | Task A completed: Removed _execute_tool_calls placeholder | Task A | 2,053 (-40) |
-| 2025-12-09 | Task C completed: Removed dead truncate_tool_results wrapper | Task C | 2,036 (-17) |
-| 2025-12-09 | Task D completed: Extracted logging utilities to module-level functions | Task D | 2,052 (+16) |
-| 2025-12-09 | **Proposal 2 completed**: Extracted ToolMessageProcessor class to new file | Proposal 2 | 1,577 (-475) |
-| 2025-12-10 | **Proposal 1 completed**: Extracted ConversationManager class to new file | Proposal 1 | 1,139 (-438) |
-| 2025-12-10 | **Proposal 3 completed**: Extracted MessageChunker class to new file | Proposal 3 | 939 (-200) |
+| Date       | Change                                                                              | Proposals Affected | Lines        |
+| ---------- | ----------------------------------------------------------------------------------- | ------------------ | ------------ |
+| 2025-12-09 | Document created                                                                    | N/A                | 2,151        |
+| 2025-12-09 | Proposal 5 completed: Consolidated duplicate orphan detection into 4 helper methods | Proposal 5         | 2,093 (-58)  |
+| 2025-12-09 | Task A completed: Removed \_execute_tool_calls placeholder                          | Task A             | 2,053 (-40)  |
+| 2025-12-09 | Task C completed: Removed dead truncate_tool_results wrapper                        | Task C             | 2,036 (-17)  |
+| 2025-12-09 | Task D completed: Extracted logging utilities to module-level functions             | Task D             | 2,052 (+16)  |
+| 2025-12-09 | **Proposal 2 completed**: Extracted ToolMessageProcessor class to new file          | Proposal 2         | 1,577 (-475) |
+| 2025-12-10 | **Proposal 1 completed**: Extracted ConversationManager class to new file           | Proposal 1         | 1,139 (-438) |
+| 2025-12-10 | **Proposal 3 completed**: Extracted MessageChunker class to new file                | Proposal 3         | 939 (-200)   |
 
 ---
 
 ## Summary of Changes
 
 ### Files Created
+
 - `auto_bedrock_chat_fastapi/tool_message_processor.py` (686 lines)
 - `auto_bedrock_chat_fastapi/conversation_manager.py` (677 lines)
 - `auto_bedrock_chat_fastapi/message_chunker.py` (372 lines)
 
 ### bedrock_client.py Reduction
+
 - **Original:** 2,151 lines
 - **After Proposal 2:** 1,577 lines (-574 lines, -27%)
 - **After Proposal 1:** 1,139 lines (-1,012 lines, -47%)
 - **After Proposal 3:** 939 lines (-1,212 lines, **-56%**)
 
 ### Tests
+
 - All 137 tests pass after refactoring
 - Backward compatibility maintained via thin delegation wrappers
 

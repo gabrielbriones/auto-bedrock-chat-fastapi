@@ -43,10 +43,7 @@ def is_tool_message(msg: dict) -> bool:
 
     # Claude format: role="user" with content list containing tool_result
     if msg.get("role") == "user" and isinstance(content, list):
-        return any(
-            isinstance(item, dict) and item.get("type") == "tool_result"
-            for item in content
-        )
+        return any(isinstance(item, dict) and item.get("type") == "tool_result" for item in content)
 
     # Dict format: role="user" with tool_result dict
     if msg.get("role") == "user" and isinstance(content, dict):
@@ -121,10 +118,7 @@ def is_assistant_with_tool_use(msg: dict) -> bool:
 
     content = msg.get("content", [])
     if isinstance(content, list):
-        return any(
-            isinstance(item, dict) and item.get("type") == "tool_use"
-            for item in content
-        )
+        return any(isinstance(item, dict) and item.get("type") == "tool_use" for item in content)
     return False
 
 
@@ -146,10 +140,7 @@ def is_tool_result_message(msg: dict) -> bool:
 
     content = msg.get("content", [])
     if isinstance(content, list):
-        return any(
-            isinstance(item, dict) and item.get("type") == "tool_result"
-            for item in content
-        )
+        return any(isinstance(item, dict) and item.get("type") == "tool_result" for item in content)
     return False
 
 
@@ -222,7 +213,7 @@ class ToolMessageProcessor:
                 break
 
         num_trailing_tools = len(messages) - trailing_tool_start_idx
-        
+
         # Calculate total size of trailing tools
         trailing_tools_total_size = 0
         if num_trailing_tools > 0:
@@ -288,8 +279,7 @@ class ToolMessageProcessor:
                     new_msg["content"] = truncated
                     result.append(new_msg)
                     logger.debug(
-                        f"Truncated GPT tool_result in history from "
-                        f"{len(content)} to {len(truncated)} chars"
+                        f"Truncated GPT tool_result in history from " f"{len(content)} to {len(truncated)} chars"
                     )
                 else:
                     result.append(msg)
@@ -347,19 +337,19 @@ class ToolMessageProcessor:
                     f"Trailing tool group TOO LARGE ({trailing_tools_total_size:,} > "
                     f"{self.tool_result_new_response_threshold:,}). Truncating group proportionally."
                 )
-                
+
                 num_trailing = len(trailing_tools_messages)
                 per_tool_threshold = self.tool_result_new_response_threshold / num_trailing
                 per_tool_target = int(self.tool_result_new_response_target * 0.8 / num_trailing)
-                
-                for idx, (orig_idx, msg) in enumerate(trailing_tools_messages):
+
+                for idx, (_orig_idx, msg) in enumerate(trailing_tools_messages):
                     truncated_msg = self.process_tool_result_message(
                         msg,
                         is_conversation_history=True,
                         custom_threshold=per_tool_threshold,
                         custom_target=per_tool_target,
                     )
-                    
+
                     new_size = get_content_size(truncated_msg)
                     original_size = get_content_size(msg)
                     if new_size < original_size:
@@ -546,14 +536,16 @@ class ToolMessageProcessor:
             processed_content = []
 
             # Count tool_result items to distribute target size
-            tool_result_count = sum(1 for item in content if isinstance(item, dict) and item.get("type") == "tool_result")
+            tool_result_count = sum(
+                1 for item in content if isinstance(item, dict) and item.get("type") == "tool_result"
+            )
 
             # CRITICAL FIX: If there are multiple tool results in ONE message, divide BOTH
             # threshold and target proportionally across all results.
             # Previously, only the target was divided, causing threshold comparison to fail.
-            # Example: 2 tool results @ 375K each = 750K total
-            # - Old: threshold=750K, per_result_size=375K → 375K NOT > 750K → no truncation ❌
-            # - New: threshold=375K, per_result_size=375K → 375K > 375K → truncate ✅
+            # Example: 2 tool results @ 400K each = 800K total
+            # - Old: threshold=750K, per_result_size=400K → 400K NOT > 750K → no truncation ❌
+            # - New: threshold=375K, per_result_size=400K → 400K > 375K → truncate ✅
             if tool_result_count > 1:
                 # Distribute both threshold and target size across all tool results
                 per_item_threshold = large_threshold / tool_result_count
@@ -625,9 +617,7 @@ class ToolMessageProcessor:
         # Unknown format, return as-is
         return message
 
-    def _intelligently_truncate_tool_result(
-        self, content: Any, tool_id: str, max_size: int = 50_000
-    ) -> str:
+    def _intelligently_truncate_tool_result(self, content: Any, tool_id: str, max_size: int = 50_000) -> str:
         """
         Truncate large tool results while preserving context.
 
@@ -645,16 +635,13 @@ class ToolMessageProcessor:
         original_size = len(content_str)
 
         logger.debug(
-            f"_intelligently_truncate_tool_result called for {tool_id}: "
-            f"{original_size:,} chars → max {max_size:,}"
+            f"_intelligently_truncate_tool_result called for {tool_id}: " f"{original_size:,} chars → max {max_size:,}"
         )
 
         # Use simple text truncation with context
         return self._truncate_plain_text(content_str, tool_id, max_size, original_size)
 
-    def _truncate_plain_text(
-        self, text: str, tool_id: str, max_size: int, original_size: int
-    ) -> str:
+    def _truncate_plain_text(self, text: str, tool_id: str, max_size: int, original_size: int) -> str:
         """
         Truncate plain text with beginning + end preview.
 

@@ -1,6 +1,5 @@
 """Claude model parser"""
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -84,12 +83,14 @@ class ClaudeParser(Parser):
 
                     # Add tool_use blocks from tool_calls
                     for tool_call in tool_calls:
-                        content_array.append({
-                            "type": "tool_use",
-                            "id": tool_call.get("id"),
-                            "name": tool_call.get("name"),
-                            "input": tool_call.get("arguments", {}),
-                        })
+                        content_array.append(
+                            {
+                                "type": "tool_use",
+                                "id": tool_call.get("id"),
+                                "name": tool_call.get("name"),
+                                "input": tool_call.get("arguments", {}),
+                            }
+                        )
 
                     bedrock_messages.append({"role": "assistant", "content": content_array})
                 else:
@@ -103,18 +104,22 @@ class ClaudeParser(Parser):
                     tool_call_id = tool_calls[i].get("id") if i < len(tool_calls) else f"tool_call_{i}"
 
                     if "error" in tool_result:
-                        tool_result_content.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_call_id,
-                            "content": f"Error: {tool_result['error']}",
-                        })
+                        tool_result_content.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id,
+                                "content": f"Error: {tool_result['error']}",
+                            }
+                        )
                     else:
                         result_text = str(tool_result.get("result", "No result"))
-                        tool_result_content.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_call_id,
-                            "content": result_text,
-                        })
+                        tool_result_content.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id,
+                                "content": result_text,
+                            }
+                        )
 
                 if tool_result_content:
                     bedrock_messages.append({"role": "user", "content": tool_result_content})
@@ -127,7 +132,7 @@ class ClaudeParser(Parser):
         tools_desc: Optional[Dict] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Format messages for Claude API

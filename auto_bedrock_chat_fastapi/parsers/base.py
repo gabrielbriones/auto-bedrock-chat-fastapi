@@ -39,7 +39,7 @@ class Parser(ABC):
         tools_desc: Optional[Dict] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Format messages for the model's API
@@ -90,9 +90,7 @@ class Parser(ABC):
             return tool_results
 
         # Calculate total size
-        total_size = sum(
-            len(str(r.get("result", ""))) for r in tool_results if "error" not in r
-        )
+        total_size = sum(len(str(r.get("result", ""))) for r in tool_results if "error" not in r)
         threshold = self.config.tool_result_new_response_threshold
 
         if total_size <= threshold:
