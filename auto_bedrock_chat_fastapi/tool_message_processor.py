@@ -543,9 +543,9 @@ class ToolMessageProcessor:
             # CRITICAL FIX: If there are multiple tool results in ONE message, divide BOTH
             # threshold and target proportionally across all results.
             # Previously, only the target was divided, causing threshold comparison to fail.
-            # Example: 2 tool results @ 400K each = 800K total
-            # - Old: threshold=750K, per_result_size=400K → 400K NOT > 750K → no truncation ❌
-            # - New: threshold=375K, per_result_size=400K → 400K > 375K → truncate ✅
+            # Example: 2 tool results @ 400K chars each = 800K chars total
+            # - Old: threshold=750K chars, per_result_size=400K chars → 400K NOT > 750K → no truncation ❌
+            # - New: threshold=375K chars, per_result_size=400K chars → 400K > 375K → truncate ✅
             if tool_result_count > 1:
                 # Distribute both threshold and target size across all tool results
                 per_item_threshold = large_threshold / tool_result_count
