@@ -173,8 +173,19 @@ class WebSocketChatHandler:
             # Get conversation context
             context_messages = await self.session_manager.get_context_messages(session.session_id)
 
-            # Convert to Bedrock format
-            bedrock_messages = self._format_messages_for_bedrock(context_messages)
+            # Convert ChatMessage objects to dicts for bedrock formatting
+            message_dicts = [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "tool_calls": msg.tool_calls if hasattr(msg, "tool_calls") and msg.tool_calls else [],
+                    "tool_results": msg.tool_results if hasattr(msg, "tool_results") and msg.tool_results else [],
+                }
+                for msg in context_messages
+            ]
+
+            # Convert to Bedrock format using BedrockClient
+            bedrock_messages = self.bedrock_client.format_messages_for_bedrock(message_dicts)
 
             # Get tools description
             tools_desc = self.tools_generator.generate_tools_desc()
@@ -191,14 +202,14 @@ class WebSocketChatHandler:
                 final_response,
                 all_tool_results,
             ) = await self._handle_tool_calls_recursively(session.session_id, response, tools_desc, websocket, session)
-            content = final_response.get("content", "")
+            content = final_response.get("content") or ""  # Handle None content gracefully
             logger.debug(f"Bedrock response ({len(content):,} chars): {content[:100]}")
 
             # Add the final AI response to history (if not already added)
             if not final_response.get("tool_calls"):
                 ai_message = ChatMessage(
                     role="assistant",
-                    content=final_response.get("content", ""),
+                    content=final_response.get("content") or "",  # Handle None content gracefully
                     tool_calls=[],
                     tool_results=all_tool_results,
                     metadata=final_response.get("metadata", {}),
@@ -210,7 +221,7 @@ class WebSocketChatHandler:
                 websocket,
                 {
                     "type": "ai_response",
-                    "message": final_response.get("content", ""),
+                    "message": final_response.get("content") or "",  # Handle None content gracefully
                     "tool_calls": final_response.get("tool_calls", []),
                     "tool_results": all_tool_results,
                     "timestamp": datetime.now().isoformat(),
@@ -531,32 +542,49 @@ class WebSocketChatHandler:
                 websocket,
                 {
                     "type": "typing",
-                    "message": current_response.get("content", "Working on your request..."),
+                    "message": current_response.get("content") or "Working on your request...",  # Handle None content
                     "timestamp": datetime.now().isoformat(),
                 },
             )
 
             logger.debug(f"Tool call round {round_count}, processing {len(current_response['tool_calls'])} tool calls")
 
+            # Add assistant message with tool calls (before executing them)
+            # This preserves the actual assistant reasoning in the conversation
+            assistant_message = ChatMessage(
+                role="assistant",
+                content=current_response.get("content", ""),
+                tool_calls=current_response["tool_calls"],
+            )
+            await self.session_manager.add_message(session_id, assistant_message)
+
             # Execute the tool calls
-            # Note: We don't add the assistant message here because the tool message below
-            # will contain both tool_calls and tool_results, and _add_claude_tool_messages
-            # will reconstruct the proper assistant+user message format from it
             tool_results = await self._execute_tool_calls(current_response["tool_calls"], session)
             all_tool_results.extend(tool_results)
 
-            # Add tool results to context
+            # Add tool results to session for all models
+            # The message formatter (bedrock_client.format_messages_for_bedrock) will handle model-specific formatting
             tool_message = ChatMessage(
                 role="tool",
                 content=f"Tool results (round {round_count})",
                 tool_calls=current_response["tool_calls"],
                 tool_results=tool_results,
+                metadata={"is_tool_result": True},
             )
             await self.session_manager.add_message(session_id, tool_message)
 
             # Get updated context and make another request
             updated_context = await self.session_manager.get_context_messages(session_id)
-            updated_bedrock_messages = self._format_messages_for_bedrock(updated_context)
+            updated_message_dicts = [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "tool_calls": msg.tool_calls if hasattr(msg, "tool_calls") and msg.tool_calls else [],
+                    "tool_results": msg.tool_results if hasattr(msg, "tool_results") and msg.tool_results else [],
+                }
+                for msg in updated_context
+            ]
+            updated_bedrock_messages = self.bedrock_client.format_messages_for_bedrock(updated_message_dicts)
 
             # Get next response from AI
             current_response = await self.bedrock_client.chat_completion(
@@ -564,6 +592,20 @@ class WebSocketChatHandler:
                 tools_desc=tools_desc,
                 **self.config.get_bedrock_params(),
             )
+
+            # Check if response is just a placeholder (happens sometimes with Llama)
+            response_content = current_response.get("content", "").strip()
+            is_placeholder = response_content.startswith("Tool results (round")
+
+            if is_placeholder and not current_response.get("tool_calls"):
+                # This is an empty placeholder, force tool calling to continue or end
+                logger.warning(
+                    f"Received placeholder response '{response_content}' with no tool calls. "
+                    f"This likely indicates Llama confusion. Ending conversation loop."
+                )
+                # Clear content and treat as final response
+                current_response["content"] = ""
+                break
 
             if current_response.get("tool_calls"):
                 logger.debug(
@@ -581,137 +623,6 @@ class WebSocketChatHandler:
             current_response["tool_calls"] = []  # Stop further tool calls
 
         return current_response, all_tool_results
-
-    def _format_messages_for_bedrock(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
-        """Convert chat messages to Bedrock API format"""
-
-        bedrock_messages = []
-
-        # Check if system message is already present
-        has_system_message = any(msg.role == "system" for msg in messages)
-
-        # Add system prompt as first message if not present
-        if not has_system_message:
-            bedrock_messages.append({"role": "system", "content": self.config.get_system_prompt()})
-
-        # Determine if we're using Claude or OpenAI GPT format
-        is_claude_model = self.config.model_id.startswith("anthropic.claude") or self.config.model_id.startswith(
-            "us.anthropic.claude"
-        )
-
-        for msg in messages:
-            # Only include valid Bedrock message roles and content
-            if msg.role in ["user", "assistant", "system"]:
-                bedrock_msg = {"role": msg.role, "content": msg.content}
-                bedrock_messages.append(bedrock_msg)
-
-            # Handle tool result messages - format based on model type
-            elif msg.role == "tool" and msg.tool_results:
-                if is_claude_model:
-                    # Claude format: structured content with tool_use and
-                    # tool_result
-                    self._add_claude_tool_messages(bedrock_messages, msg)
-                else:
-                    # OpenAI GPT format: assistant message with tool_calls +
-                    # tool messages
-                    self._add_gpt_tool_messages(bedrock_messages, msg)
-
-        return bedrock_messages
-
-    def _add_claude_tool_messages(self, bedrock_messages: List[Dict], msg: ChatMessage):
-        """Add tool messages in Claude format"""
-
-        # First, add the assistant message that made the tool calls
-        if msg.tool_calls:
-            # Create content array for assistant message with tool calls
-            assistant_content = []
-
-            # Add any text content if present
-            if hasattr(msg, "content") and msg.content and msg.content.strip():
-                assistant_content.append({"type": "text", "text": msg.content})
-
-            # Add tool use blocks
-            for tool_call in msg.tool_calls:
-                assistant_content.append(
-                    {
-                        "type": "tool_use",
-                        "id": tool_call.get("id"),
-                        "name": tool_call.get("name"),
-                        "input": tool_call.get("arguments", {}),
-                    }
-                )
-
-            if assistant_content:
-                bedrock_messages.append({"role": "assistant", "content": assistant_content})
-
-        # Now add the user message with tool results
-        tool_result_content = []
-        for i, tool_result in enumerate(msg.tool_results):
-            tool_call_id = msg.tool_calls[i].get("id") if i < len(msg.tool_calls) else f"tool_call_{i}"
-
-            if "error" in tool_result:
-                # Tool error result
-                tool_result_content.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_call_id,
-                        "content": f"Error: {tool_result['error']}",
-                    }
-                )
-            else:
-                # Successful tool result
-                result_text = str(tool_result.get("result", "No result"))
-                tool_result_content.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_call_id,
-                        "content": result_text,
-                    }
-                )
-
-        if tool_result_content:
-            bedrock_messages.append({"role": "user", "content": tool_result_content})
-
-    def _add_gpt_tool_messages(self, bedrock_messages: List[Dict], msg: ChatMessage):
-        """Add tool messages in OpenAI GPT format"""
-
-        # First, add the assistant message that made the tool calls
-        if msg.tool_calls:
-            # Convert tool calls to GPT format
-            gpt_tool_calls = []
-            for tool_call in msg.tool_calls:
-                gpt_tool_calls.append(
-                    {
-                        "id": tool_call.get("id"),
-                        "type": "function",
-                        "function": {
-                            "name": tool_call.get("name"),
-                            "arguments": json.dumps(tool_call.get("arguments", {})),
-                        },
-                    }
-                )
-
-            assistant_msg = {
-                "role": "assistant",
-                "content": msg.content if msg.content else None,
-            }
-
-            # Only add tool_calls if there are any
-            if gpt_tool_calls:
-                assistant_msg["tool_calls"] = gpt_tool_calls
-
-            bedrock_messages.append(assistant_msg)
-
-        # Add individual tool result messages
-        for i, tool_result in enumerate(msg.tool_results):
-            tool_call_id = msg.tool_calls[i].get("id") if i < len(msg.tool_calls) else f"tool_call_{i}"
-
-            if "error" in tool_result:
-                content = f"Error: {tool_result['error']}"
-            else:
-                content = str(tool_result.get("result", "No result"))
-
-            bedrock_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
 
     async def _handle_ping(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle ping message"""

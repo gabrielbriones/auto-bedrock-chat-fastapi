@@ -873,6 +873,60 @@ BEDROCK_MAX_TOOL_CALL_ROUNDS=10
 ✅ **Automatic Operation**: Works transparently with existing code
 ✅ **Configurable**: Fine-tune limits for your specific use case
 
+#### Intelligent Tool Result Truncation (Multi-Tool Scenarios)
+
+When the assistant makes multiple sequential tool calls, the cumulative conversation history can exceed context limits even if individual responses are within thresholds. This system intelligently truncates historical tool responses to prevent overflow:
+
+```python
+# Configure tool result truncation
+add_bedrock_chat(
+    app,
+    # New/current tool response thresholds
+    tool_result_new_response_threshold=500_000,    # 500KB threshold
+    tool_result_new_response_target=425_000,       # Truncate to 425KB
+    # Historical tool response thresholds (LOWER - for conversation history)
+    tool_result_history_threshold=50_000,          # 50KB threshold
+    tool_result_history_target=42_500,             # Truncate to 42.5KB
+)
+```
+
+**How It Works:**
+
+- **Level 1**: When a new tool response arrives, if > 500KB → truncate to 425KB
+- **Level 2**: Before sending to assistant, if historical tool messages > 50KB each → truncate to 42.5KB
+- **Smart Preservation**: Last message (current response) is NEVER truncated, non-tool messages preserved in full
+
+**Real-world Scenario:**
+
+```
+5 sequential tool calls, each returning 60KB:
+Before: 300KB total (context overflow) ❌
+After:  230KB total (75% of original) ✅
+
+Individual truncation: 60KB → within new threshold (500KB), no change
+History truncation: 60KB > history threshold (50KB) → 42.5KB each (except last)
+Result: 4 × 42.5KB + 1 × 60KB = 230KB (safe margin)
+```
+
+**Environment Configuration:**
+
+```bash
+BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD=500000
+BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET=425000
+BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD=50000
+BEDROCK_TOOL_RESULT_HISTORY_TARGET=42500
+```
+
+**Benefits:**
+
+✅ **Prevents Multi-Tool Overflow**: No errors from cumulative tool responses
+✅ **Preserves Context**: User and assistant dialogue kept in full
+✅ **Two-Tier Strategy**: Different thresholds for new responses vs. history
+✅ **Configurable**: Adjust ratios based on your model and use case
+✅ **Transparent Logging**: Logs show when and how much truncation occurs
+
+**For More Details:** See [Intelligent Conversation History Truncation Guide](docs/CONVERSATION_HISTORY_TRUNCATION.md)
+
 ### Configuration Management
 
 The plugin reads and manages configuration from multiple sources:

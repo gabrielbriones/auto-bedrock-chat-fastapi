@@ -23,6 +23,7 @@ repos:
       - id: black
         language_version: python3
         args: [--line-length=120]
+        files: ^(auto_bedrock_chat_fastapi|tests|examples)/.*\.py$
 
   # isort - Import sorting
   - repo: https://github.com/PyCQA/isort
@@ -30,6 +31,7 @@ repos:
     hooks:
       - id: isort
         args: [--profile, black, --line-length, "120"]
+        files: ^(auto_bedrock_chat_fastapi|tests|examples)/.*\.py$
 
   # Flake8 - Python linting
   - repo: https://github.com/PyCQA/flake8
@@ -39,6 +41,7 @@ repos:
         args: [--max-line-length=120]
         additional_dependencies:
           - flake8-bugbear
+        files: ^(auto_bedrock_chat_fastapi|tests|examples)/.*\.py$
 
   # Markdownlint - Markdown linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
