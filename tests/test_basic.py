@@ -57,13 +57,16 @@ class TestPlugin:
         async def test_endpoint():
             return {"message": "test"}
 
-    @patch("auto_bedrock_chat_fastapi.plugin.BedrockClient")
-    @patch("auto_bedrock_chat_fastapi.plugin.ChatSessionManager")
-    def test_plugin_initialization(self, mock_session_manager, mock_bedrock_client):
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_plugin_initialization(self, mock_bedrock_boto3, mock_boto3):
         """Test plugin initialization"""
-        # Mock the dependencies
-        mock_bedrock_client.return_value = Mock()
-        mock_session_manager.return_value = Mock()
+        # Mock boto3 session to prevent AWS credential checks
+        mock_session_instance = Mock()
+        mock_client = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+        mock_session_instance.client.return_value = mock_client
 
         plugin = add_bedrock_chat(self.app, model_id="test-model", enable_ui=False)
 
@@ -71,19 +74,25 @@ class TestPlugin:
         assert plugin.config.model_id == "test-model"
         assert plugin.config.enable_ui is False
 
-    def test_plugin_routes_added(self):
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_plugin_routes_added(self, mock_bedrock_boto3, mock_boto3):
         """Test that plugin routes are added to app"""
-        with patch("auto_bedrock_chat_fastapi.plugin.BedrockClient"), patch(
-            "auto_bedrock_chat_fastapi.plugin.ChatSessionManager"
-        ), patch("auto_bedrock_chat_fastapi.plugin.WebSocketChatHandler"):
-            add_bedrock_chat(self.app, enable_ui=False)
+        # Mock boto3 session to prevent AWS credential checks
+        mock_session_instance = Mock()
+        mock_client = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+        mock_session_instance.client.return_value = mock_client
 
-            # Check that routes were added (using test environment defaults)
-            route_paths = [route.path for route in self.app.routes]
-            assert "/bedrock-chat/health" in route_paths
-            assert "/bedrock-chat/ws" in route_paths
-            assert "/bedrock-chat/stats" in route_paths
-            assert "/bedrock-chat/tools" in route_paths
+        add_bedrock_chat(self.app, enable_ui=False)
+
+        # Check that routes were added (using test environment defaults)
+        route_paths = [route.path for route in self.app.routes]
+        assert "/bedrock-chat/health" in route_paths
+        assert "/bedrock-chat/ws" in route_paths
+        assert "/bedrock-chat/stats" in route_paths
+        assert "/bedrock-chat/tools" in route_paths
 
 
 class TestToolsGenerator:
