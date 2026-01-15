@@ -5,4 +5,5 @@ knowledge_base:
   sources:
     - name: "README"
       type: "local"
+      # NOTE: This relative path is resolved from the repository root (project base directory).
       path: "./README.md"
