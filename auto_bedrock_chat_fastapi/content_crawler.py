@@ -473,8 +473,8 @@ class ContentCrawler:
     def _clean_markdown(self, markdown: str) -> str:
         """Clean and normalize markdown content."""
         # Remove excessive newlines (use iterative replacement for thorough cleaning)
-        while "\\n\\n\\n" in markdown:
-            markdown = markdown.replace("\\n\\n\\n", "\\n\\n")
+        while "\n\n\n" in markdown:
+            markdown = markdown.replace("\n\n\n", "\n\n")
 
         # Remove leading/trailing whitespace
         markdown = markdown.strip()
