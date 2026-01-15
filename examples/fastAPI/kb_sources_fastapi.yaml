@@ -1,0 +1,108 @@
+---
+# Knowledge Base Sources Configuration for FastAPI Assistant
+# This configuration crawls the official FastAPI documentation
+
+knowledge_base:
+  # Enable knowledge base features
+  enabled: true
+
+  # FastAPI documentation sources
+  sources:
+    - name: "FastAPI Tutorial"
+      type: "web"
+      urls:
+        - "https://fastapi.tiangolo.com/tutorial/"
+      max_depth: 2 # Crawl depth: 0=URL only, 1=+links, 2=+links from links
+      allowed_domains:
+        - "fastapi.tiangolo.com"
+      exclude_patterns:
+        - "/release-notes/"
+        - "/history/"
+        - "/external-links/"
+        - "/advanced/" # Exclude advanced guide (separate source)
+        - "/reference/" # Exclude reference docs (separate source)
+        - "/de/" # German docs
+        - "/es/" # Spanish docs
+        - "/pt/" # Portuguese docs
+        - "/ru/" # Russian docs
+        - "/fr/" # French docs
+        - "/ja/" # Japanese docs
+        - "/zh/" # Chinese docs
+        - "/ko/" # Korean docs
+        - "/uk/" # Ukrainian docs
+        - "/ja" # Japanese root (no trailing slash)
+        - "/zh" # Chinese root (no trailing slash)
+        - "/de" # German root (no trailing slash)
+        - "/es" # Spanish root (no trailing slash)
+        - "/pt" # Portuguese root (no trailing slash)
+        - "/ru" # Russian root (no trailing slash)
+        - "/fr" # French root (no trailing slash)
+        - "/ko" # Korean root (no trailing slash)
+        - "/uk" # Ukrainian root (no trailing slash)
+      respect_robots_txt: true
+
+    - name: "FastAPI Advanced User Guide"
+      type: "web"
+      urls:
+        - "https://fastapi.tiangolo.com/advanced/"
+      max_depth: 2 # Crawl depth: 0=URL only, 1=+links, 2=+links from links
+      allowed_domains:
+        - "fastapi.tiangolo.com"
+      exclude_patterns:
+        - "/release-notes/"
+        - "/tutorial/" # Exclude tutorial (separate source)
+        - "/reference/" # Exclude reference docs (separate source)
+        - "/de/" # German docs
+        - "/es/" # Spanish docs
+        - "/pt/" # Portuguese docs
+        - "/ru/" # Russian docs
+        - "/fr/" # French docs
+        - "/ja/" # Japanese docs
+        - "/zh/" # Chinese docs
+        - "/ko/" # Korean docs
+        - "/uk/" # Ukrainian docs
+        - "/ja" # Japanese root
+        - "/zh" # Chinese root
+        - "/de" # German root
+        - "/es" # Spanish root
+        - "/pt" # Portuguese root
+        - "/ru" # Russian root
+        - "/fr" # French root
+        - "/ko" # Korean root
+        - "/uk" # Ukrainian root
+      respect_robots_txt: true
+
+    - name: "FastAPI Reference"
+      type: "web"
+      urls:
+        - "https://fastapi.tiangolo.com/reference/"
+      max_depth: 2 # Crawl depth: 0=URL only, 1=+links, 2=+links from links
+      allowed_domains:
+        - "fastapi.tiangolo.com"
+      exclude_patterns:
+        - "/tutorial/" # Exclude tutorial (separate source)
+        - "/advanced/" # Exclude advanced guide (separate source)
+        - "/de/" # German docs
+        - "/es/" # Spanish docs
+        - "/pt/" # Portuguese docs
+        - "/ru/" # Russian docs
+        - "/fr/" # French docs
+        - "/ja/" # Japanese docs
+        - "/zh/" # Chinese docs
+        - "/ko/" # Korean docs
+        - "/uk/" # Ukrainian docs
+        - "/ja" # Japanese root
+        - "/zh" # Chinese root
+        - "/de" # German root
+        - "/es" # Spanish root
+        - "/pt" # Portuguese root
+        - "/ru" # Russian root
+        - "/fr" # French root
+        - "/ko" # Korean root
+        - "/uk" # Ukrainian root
+      respect_robots_txt: true
+# Note: The app is configured with:
+# - kb_populate_on_startup=True (auto-populate on first run)
+# - kb_allow_empty=True (graceful degradation if crawl fails)
+# - kb_top_k_results=5 (retrieve top 5 relevant chunks)
+# - kb_similarity_threshold=0.7 (minimum relevance score)

@@ -1,0 +1,9 @@
+---
+# Test Knowledge Base Configuration
+knowledge_base:
+  enabled: true
+  sources:
+    - name: "README"
+      type: "local"
+      # NOTE: This relative path is resolved from the repository root (project base directory).
+      path: "./README.md"

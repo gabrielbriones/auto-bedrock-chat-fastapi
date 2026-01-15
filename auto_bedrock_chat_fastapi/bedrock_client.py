@@ -1,6 +1,7 @@
 """Bedrock client for AI model interaction"""
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -604,3 +605,99 @@ class BedrockClient:
                 "model": self.config.model_id,
                 "region": self.config.aws_region,
             }
+
+    async def generate_embedding(self, text: str, model_id: str = "amazon.titan-embed-text-v1") -> List[float]:
+        """
+        Generate embedding vector for a single text using AWS Bedrock.
+
+        Args:
+            text: Input text to embed
+            model_id: Bedrock embedding model ID
+                - amazon.titan-embed-text-v1 (1536 dimensions)
+                - amazon.titan-embed-text-v2:0 (configurable dimensions)
+                - cohere.embed-english-v3
+                - cohere.embed-multilingual-v3
+
+        Returns:
+            Embedding vector as list of floats
+
+        Raises:
+            BedrockClientError: If embedding generation fails
+        """
+        try:
+            # Prepare request body based on model
+            if model_id.startswith("amazon.titan-embed"):
+                body = json.dumps({"inputText": text})
+            elif model_id.startswith("cohere.embed"):
+                body = json.dumps({"texts": [text], "input_type": "search_document"})  # or "search_query" for queries
+            else:
+                raise BedrockClientError(f"Unsupported embedding model: {model_id}")
+
+            # Rate limiting
+            await self._handle_rate_limiting()
+
+            # Invoke model
+            response = self._client.invoke_model(
+                modelId=model_id, body=body, contentType="application/json", accept="application/json"
+            )
+
+            # Parse response
+            response_body = json.loads(response["body"].read())
+
+            if model_id.startswith("amazon.titan-embed"):
+                embedding = response_body.get("embedding")
+            elif model_id.startswith("cohere.embed"):
+                embedding = response_body.get("embeddings", [None])[0]
+            else:
+                raise BedrockClientError(f"Unknown response format for model: {model_id}")
+
+            if not embedding:
+                raise BedrockClientError("No embedding returned from model")
+
+            logger.debug(f"Generated embedding: {len(embedding)} dimensions")
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Failed to generate embedding: {str(e)}")
+            raise BedrockClientError(f"Embedding generation failed: {str(e)}")
+
+    async def generate_embeddings_batch(
+        self, texts: List[str], model_id: str = "amazon.titan-embed-text-v1", batch_size: int = 25
+    ) -> List[List[float]]:
+        """
+        Generate embeddings for multiple texts in batches.
+
+        Args:
+            texts: List of input texts
+            model_id: Bedrock embedding model ID
+            batch_size: Number of texts to process concurrently (AWS limits apply)
+
+        Returns:
+            List of embedding vectors
+
+        Note:
+            AWS Bedrock has rate limits. Adjust batch_size based on your quota.
+            Default is 25 concurrent requests which is conservative.
+        """
+        embeddings = []
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+
+            logger.info(f"Processing embedding batch {i // batch_size + 1}/{(len(texts) - 1) // batch_size + 1}")
+
+            # Process batch concurrently
+            tasks = [self.generate_embedding(text, model_id) for text in batch]
+            batch_embeddings = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Handle any errors in the batch
+            for j, result in enumerate(batch_embeddings):
+                if isinstance(result, Exception):
+                    logger.error(f"Failed to embed text {i + j}: {str(result)}")
+                    # Return zero vector as fallback
+                    embeddings.append([0.0] * 1536)  # Titan v1 default dimension
+                else:
+                    embeddings.append(result)
+
+        logger.info(f"Generated {len(embeddings)} embeddings total")
+        return embeddings

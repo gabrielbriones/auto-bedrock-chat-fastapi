@@ -184,17 +184,47 @@ class WebSocketChatHandler:
                 for msg in context_messages
             ]
 
+            # RAG: Retrieve relevant KB context if enabled
+            kb_context_text = None
+            kb_results = None
+            if self.config.enable_rag:
+                kb_results = await self._retrieve_kb_context(user_message)
+                if kb_results:
+                    kb_context_text = self._format_kb_context(kb_results)
+                    logger.info(f"RAG: Injecting {len(kb_results)} KB chunks into context")
+                    logger.debug(f"RAG: KB context length: {len(kb_context_text)} chars")
+                    logger.debug(f"RAG: KB context preview (first 300 chars):\n{kb_context_text[:300]}...")
+
+            # Inject KB context into system message if available
+            if kb_context_text:
+                # Get the base system prompt
+                base_system_prompt = self.config.get_system_prompt()
+                # Prepend KB context to system prompt
+                enhanced_system_prompt = f"{kb_context_text}\n\n{base_system_prompt}"
+                logger.debug(f"RAG: Final system prompt length: {len(enhanced_system_prompt)} chars")
+                logger.debug(
+                    f"RAG: System prompt with KB context (first 500 chars):\n{enhanced_system_prompt[:500]}..."
+                )
+
+                # Add enhanced system message to the beginning of message_dicts
+                # First, remove any existing system messages
+                message_dicts = [msg for msg in message_dicts if msg.get("role") != "system"]
+                # Insert the enhanced system prompt at the beginning
+                message_dicts.insert(0, {"role": "system", "content": enhanced_system_prompt})
+
             # Convert to Bedrock format using BedrockClient
             bedrock_messages = self.bedrock_client.format_messages_for_bedrock(message_dicts)
 
             # Get tools description
             tools_desc = self.tools_generator.generate_tools_desc()
 
-            # Call Bedrock
+            # Call Bedrock with bedrock params
+            bedrock_params = self.config.get_bedrock_params()
+
             response = await self.bedrock_client.chat_completion(
                 messages=bedrock_messages,
                 tools_desc=tools_desc,
-                **self.config.get_bedrock_params(),
+                **bedrock_params,
             )
 
             # Process tool calls recursively if any
@@ -216,6 +246,21 @@ class WebSocketChatHandler:
                 )
                 await self.session_manager.add_message(session.session_id, ai_message)
 
+            # Prepare response metadata with KB info if RAG was used
+            response_metadata = final_response.get("metadata", {}).copy()
+            if kb_results:
+                response_metadata["kb_used"] = True
+                response_metadata["kb_chunks"] = len(kb_results)
+                response_metadata["kb_sources"] = [
+                    {
+                        "title": r.get("title"),
+                        "source": r.get("source"),
+                        "url": r.get("source_url"),
+                        "score": r["similarity_score"],
+                    }
+                    for r in kb_results
+                ]
+
             # Send response to client (use final response data)
             await self._send_message(
                 websocket,
@@ -225,7 +270,7 @@ class WebSocketChatHandler:
                     "tool_calls": final_response.get("tool_calls", []),
                     "tool_results": all_tool_results,
                     "timestamp": datetime.now().isoformat(),
-                    "metadata": final_response.get("metadata", {}),
+                    "metadata": response_metadata,
                 },
             )
 
@@ -893,6 +938,106 @@ class WebSocketChatHandler:
             "sessions": session_stats,
             "tools": self.tools_generator.get_tool_statistics(),
         }
+
+    async def _retrieve_kb_context(self, query: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Retrieve relevant knowledge base chunks for the given query.
+
+        Args:
+            query: User's message/question
+
+        Returns:
+            List of KB chunks with metadata, or None if RAG is disabled or retrieval fails
+        """
+        # Skip if RAG is disabled
+        if not self.config.enable_rag:
+            return None
+
+        try:
+            from .vector_db import VectorDB
+
+            # Initialize vector DB
+            vector_db = VectorDB(self.config.kb_database_path)
+
+            # Generate embedding for the query
+            query_embedding = await self.bedrock_client.generate_embedding(
+                text=query, model_id=self.config.kb_embedding_model
+            )
+
+            # Perform similarity search
+            results = vector_db.semantic_search(
+                query_embedding=query_embedding,
+                limit=self.config.kb_top_k_results,
+                min_score=self.config.kb_similarity_threshold,
+                filters=None,  # Could add dynamic filtering here
+            )
+
+            vector_db.close()
+
+            logger.info(
+                f"RAG retrieval: Found {len(results)} relevant chunks (threshold={self.config.kb_similarity_threshold})"
+            )
+
+            if results:
+                logger.debug(f"Top result score: {results[0]['similarity_score']:.4f}")
+                # Debug: Log each chunk's details
+                for i, result in enumerate(results, 1):
+                    title = result.get("title", "N/A")[:60]
+                    content_preview = result["content"][:150].replace("\n", " ")
+                    score = result["similarity_score"]
+                    logger.debug(f"  Chunk {i}: [{score:.4f}] {title} - {content_preview}...")
+
+            return results if results else None
+
+        except Exception as e:
+            logger.error(f"KB retrieval failed: {str(e)}")
+            return None
+
+    def _format_kb_context(self, kb_results: List[Dict[str, Any]]) -> str:
+        """
+        Format KB chunks for inclusion in system prompt.
+
+        Args:
+            kb_results: List of KB search results
+
+        Returns:
+            Formatted string with KB context
+        """
+        if not kb_results:
+            return ""
+
+        context_parts = ["RELEVANT KNOWLEDGE BASE CONTEXT:"]
+        context_parts.append("=" * 60)
+
+        for i, result in enumerate(kb_results, 1):
+            context_parts.append(f"\n[Context {i}] (Relevance: {result['similarity_score']:.2f})")
+
+            # Add source attribution
+            if result.get("title"):
+                context_parts.append(f"Title: {result['title']}")
+            if result.get("source"):
+                context_parts.append(f"Source: {result['source']}")
+            if result.get("source_url"):
+                context_parts.append(f"URL: {result['source_url']}")
+
+            context_parts.append(f"\n{result['content']}\n")
+            context_parts.append("-" * 60)
+
+        context_parts.append("\nINSTRUCTIONS:")
+        context_parts.append("- The context above is provided for your information only - the user cannot see it")
+        context_parts.append("- Use the context to inform your response when relevant")
+        context_parts.append("- When citing information from the context, reference the actual source Title and URL")
+        context_parts.append(
+            "  Example: 'According to [Article Title](URL)...' or 'As mentioned in the documentation...'"
+        )
+        context_parts.append(
+            "- DO NOT use internal references like '[Context 1]' or '[Context N]' - these mean nothing to the user"
+        )
+        context_parts.append("- If the context is not relevant to the question, answer from your general knowledge")
+        context_parts.append("- Always be accurate and acknowledge if you're unsure")
+        context_parts.append("=" * 60)
+
+        return "\n".join(context_parts)
 
     async def shutdown(self):
         """Shutdown the WebSocket handler"""

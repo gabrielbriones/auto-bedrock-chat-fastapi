@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from .bedrock_client import BedrockClient
 from .config import ChatConfig, load_config, validate_config
@@ -21,6 +22,48 @@ from .tools_generator import ToolsGenerator
 from .websocket_handler import WebSocketChatHandler
 
 logger = logging.getLogger(__name__)
+
+
+# Request/Response models for semantic search endpoint
+class SemanticSearchFilters(BaseModel):
+    """Filters for semantic search"""
+
+    source: Optional[str] = Field(None, description="Filter by source")
+    topic: Optional[str] = Field(None, description="Filter by topic")
+    date_after: Optional[str] = Field(None, description="Filter by date (ISO format)")
+    date_before: Optional[str] = Field(None, description="Filter by date (ISO format)")
+
+
+class SemanticSearchRequest(BaseModel):
+    """Request model for semantic search"""
+
+    query: str = Field(..., description="Search query text", min_length=1)
+    limit: int = Field(3, description="Number of results to return", ge=1, le=20)
+    min_score: float = Field(0.7, description="Minimum similarity score", ge=0.0, le=1.0)
+    filters: Optional[SemanticSearchFilters] = Field(None, description="Optional filters")
+
+
+class SemanticSearchResult(BaseModel):
+    """Individual search result"""
+
+    chunk_id: str = Field(..., description="Unique chunk identifier")
+    content: str = Field(..., description="Chunk content text")
+    similarity_score: float = Field(..., description="Similarity score (0-1)")
+    document_id: str = Field(..., description="Parent document ID")
+    title: Optional[str] = Field(None, description="Document title")
+    source: Optional[str] = Field(None, description="Content source")
+    source_url: Optional[str] = Field(None, description="Original URL")
+    topic: Optional[str] = Field(None, description="Content topic")
+    chunk_index: int = Field(..., description="Chunk position in document")
+
+
+class SemanticSearchResponse(BaseModel):
+    """Response model for semantic search"""
+
+    results: list[SemanticSearchResult] = Field(..., description="Search results")
+    query: str = Field(..., description="Original query")
+    total_results: int = Field(..., description="Number of results returned")
+    min_score: float = Field(..., description="Minimum score applied")
 
 
 def _setup_logging(config: ChatConfig):
@@ -98,7 +141,8 @@ class BedrockChatPlugin:
         self.templates = None
         if self.config.enable_ui:
             self._setup_templates()
-
+        # Check knowledge base status if RAG is enabled
+        self._check_kb_status()
         # Setup routes
         self._setup_routes()
 
@@ -320,16 +364,204 @@ class BedrockChatPlugin:
                 logger.error(f"Failed to get tools info: {str(e)}")
                 return JSONResponse({"error": str(e)}, status_code=500)
 
+        # Semantic search endpoint (Knowledge Base)
+        if self.config.enable_rag:
+
+            @self.app.post(f"{self.config.chat_endpoint}/knowledge/search", response_model=SemanticSearchResponse)
+            async def semantic_search(request: SemanticSearchRequest):
+                """
+                Perform semantic similarity search in the knowledge base.
+
+                Requires ENABLE_RAG=true in configuration.
+                Returns top-K most relevant chunks based on the query.
+                """
+                try:
+                    from .vector_db import VectorDB
+
+                    # Initialize vector DB
+                    vector_db = VectorDB(self.config.kb_vector_db_path)
+
+                    # Generate embedding for the query
+                    query_embedding = await self.bedrock_client.generate_embedding(
+                        text=request.query, model_id=self.config.kb_embedding_model
+                    )
+
+                    # Build filters dict
+                    filters = None
+                    if request.filters:
+                        filters = {}
+                        if request.filters.source:
+                            filters["source"] = request.filters.source
+                        if request.filters.topic:
+                            filters["topic"] = request.filters.topic
+                        if request.filters.date_after:
+                            filters["date_after"] = request.filters.date_after
+                        if request.filters.date_before:
+                            filters["date_before"] = request.filters.date_before
+
+                    # Perform similarity search
+                    results = vector_db.semantic_search(
+                        query_embedding=query_embedding,
+                        limit=request.limit,
+                        min_score=request.min_score,
+                        filters=filters,
+                    )
+
+                    # Format results
+                    formatted_results = [
+                        SemanticSearchResult(
+                            chunk_id=r["chunk_id"],
+                            content=r["content"],
+                            similarity_score=r["similarity_score"],
+                            document_id=r["document_id"],
+                            title=r.get("title"),
+                            source=r.get("source"),
+                            source_url=r.get("source_url"),
+                            topic=r.get("topic"),
+                            chunk_index=r["chunk_index"],
+                        )
+                        for r in results
+                    ]
+
+                    vector_db.close()
+
+                    return SemanticSearchResponse(
+                        results=formatted_results,
+                        query=request.query,
+                        total_results=len(formatted_results),
+                        min_score=request.min_score,
+                    )
+
+                except Exception as e:
+                    logger.error(f"Semantic search failed: {str(e)}")
+                    return JSONResponse({"error": f"Search failed: {str(e)}"}, status_code=500)
+
         logger.info("Chat routes setup complete:")
         logger.info(f"  WebSocket: {self.config.websocket_endpoint}")
         logger.info(f"  Health: {self.config.chat_endpoint}/health")
         logger.info(f"  Stats: {self.config.chat_endpoint}/stats")
         logger.info(f"  Tools: {self.config.chat_endpoint}/tools")
+        if self.config.enable_rag:
+            logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
 
+    def _check_kb_status(self):
+        """
+        Check knowledge base status on startup if RAG is enabled.
+
+        This method:
+        1. Does nothing if ENABLE_RAG=false (default - backward compatible)
+        2. Validates config exists if RAG is enabled
+        3. Checks if KB database exists
+        4. Defers actual population to async startup event if kb_populate_on_startup=True
+        """
+        # Skip all KB checks if RAG is disabled (backward compatible)
+        if not self.config.enable_rag:
+            logger.debug("RAG is disabled (ENABLE_RAG=false) - skipping KB checks")
+            return
+
+        logger.info("RAG is enabled (ENABLE_RAG=true) - checking knowledge base status")
+
+        try:
+            import os
+
+            # Check if KB database exists
+            db_path = self.config.kb_database_path
+            config_path = self.config.kb_sources_config
+
+            db_exists = os.path.exists(db_path)
+            config_exists = os.path.exists(config_path)
+
+            # Log status
+            logger.info(f"  KB Database: {db_path} {'✅ exists' if db_exists else '❌ missing'}")
+            logger.info(f"  KB Config: {config_path} {'✅ exists' if config_exists else '❌ missing'}")
+
+            # Store state for startup event
+            self._kb_needs_population = False
+
+            # Check if we should auto-populate
+            if self.config.kb_populate_on_startup and not db_exists:
+                if not config_exists:
+                    logger.error(
+                        f"Cannot auto-populate: configuration file not found: {config_path}\n"
+                        f"Create {config_path} with knowledge base sources"
+                    )
+                    if not self.config.kb_allow_empty:
+                        raise BedrockChatError(f"RAG is enabled but KB configuration not found: {config_path}")
+                else:
+                    # Mark for population during startup event
+                    self._kb_needs_population = True
+                    logger.info("KB_POPULATE_ON_STARTUP=true - will populate during startup event")
+
+            # Final validation (if not auto-populating)
+            if not db_exists and not self._kb_needs_population:
+                if self.config.kb_allow_empty:
+                    logger.warning(
+                        "⚠️  Knowledge base is missing but KB_ALLOW_EMPTY=true\n"
+                        "   RAG queries will fail until KB is populated.\n"
+                        "   Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
+                    )
+                else:
+                    error_msg = (
+                        f"RAG is enabled (ENABLE_RAG=true) but knowledge base is missing: {db_path}\n"
+                        "\n"
+                        "Solutions:\n"
+                        "1. Production: Populate KB before starting app\n"
+                        "   python -m auto_bedrock_chat_fastapi.commands.kb populate\n"
+                        "\n"
+                        "2. Development: Enable auto-population\n"
+                        "   Set KB_POPULATE_ON_STARTUP=true in .env\n"
+                        "\n"
+                        "3. Allow empty KB (not recommended)\n"
+                        "   Set KB_ALLOW_EMPTY=true in .env\n"
+                        "\n"
+                        "4. Disable RAG (backward compatible)\n"
+                        "   Set ENABLE_RAG=false in .env (default)"
+                    )
+                    logger.error(error_msg)
+                    raise BedrockChatError(error_msg)
+            elif db_exists:
+                # Check if DB has content
+                try:
+                    from .vector_db import VectorDB
+
+                    db = VectorDB(db_path)
+                    stats = db.get_stats()
+                    chunk_count = stats.get("chunks", 0)
+
+                    if chunk_count == 0:
+                        if self.config.kb_allow_empty:
+                            logger.warning(
+                                "⚠️  Knowledge base is empty but KB_ALLOW_EMPTY=true\n"
+                                "   RAG queries will return no results until KB is populated.\n"
+                                "   Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
+                            )
+                        else:
+                            error_msg = (
+                                f"Knowledge base exists but is empty: {db_path}\n"
+                                "Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
+                            )
+                            logger.error(error_msg)
+                            raise BedrockChatError(error_msg)
+                    else:
+                        logger.info(f"✅ Knowledge base is ready: {chunk_count} chunks indexed")
+
+                except Exception as e:
+                    logger.error(f"Failed to check KB content: {e}")
+                    if not self.config.kb_allow_empty:
+                        raise
+
+        except BedrockChatError:
+            # Re-raise configuration errors
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error checking KB status: {e}")
+            if not self.config.kb_allow_empty:
+                raise BedrockChatError(f"Failed to validate knowledge base: {e}")
+
     def _setup_shutdown(self):
-        """Setup shutdown handler using modern lifespan approach"""
+        """Setup shutdown handler and startup event for KB auto-population"""
 
         # Store reference to websocket_handler for cleanup
         if not hasattr(self.app.state, "bedrock_cleanup_handlers"):
@@ -341,23 +573,40 @@ class BedrockChatPlugin:
         # Register atexit handler as a fallback
         atexit.register(self._sync_shutdown)
 
-        # Try to set up lifespan handler if the app supports it and doesn't
-        # have one
-        try:
-            if not hasattr(self.app.router, "lifespan_context") or not self.app.router.lifespan_context:
+        # Register startup event for KB auto-population
+        @self.app.on_event("startup")
+        async def startup_populate_kb():
+            """Auto-populate KB on startup if needed"""
+            if hasattr(self, "_kb_needs_population") and self._kb_needs_population:
+                try:
+                    from .commands.kb import kb_populate
 
-                @asynccontextmanager
-                async def bedrock_lifespan(app: FastAPI):
-                    """Lifespan context manager for Bedrock chat plugin"""
-                    # Startup phase
-                    yield
-                    # Shutdown phase
-                    await self.shutdown()
+                    logger.info("Starting knowledge base auto-population...")
+                    success = await kb_populate(
+                        config_path=self.config.kb_sources_config,
+                        db_path=self.config.kb_database_path,
+                        force=True,
+                        config=self.config,  # Pass config object
+                    )
 
-                self.app.router.lifespan_context = bedrock_lifespan
-                logger.debug("Registered lifespan handler for Bedrock chat plugin")
-        except Exception as e:
-            logger.debug(f"Could not register lifespan handler, using fallback: {e}")
+                    if success:
+                        logger.info("✅ Knowledge base auto-population complete")
+                    else:
+                        logger.error("❌ Knowledge base auto-population failed")
+                        if not self.config.kb_allow_empty:
+                            raise BedrockChatError(
+                                "RAG is enabled but KB auto-population failed. " "Check logs for details."
+                            )
+                except Exception as e:
+                    logger.error(f"Failed to auto-populate KB: {e}")
+                    if not self.config.kb_allow_empty:
+                        raise
+
+        # Register shutdown event
+        @self.app.on_event("shutdown")
+        async def shutdown_cleanup():
+            """Cleanup on shutdown"""
+            await self.shutdown()
 
     async def shutdown(self):
         """Shutdown the Bedrock chat plugin"""

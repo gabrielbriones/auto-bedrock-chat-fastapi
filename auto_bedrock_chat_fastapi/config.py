@@ -378,6 +378,82 @@ class ChatConfig(BaseSettings):
         description="Enable graceful degradation on errors",
     )
 
+    # Knowledge Base / RAG Configuration (Hybrid Approach)
+    enable_rag: bool = Field(
+        default=False,
+        alias="ENABLE_RAG",
+        description=(
+            "Enable Retrieval-Augmented Generation (RAG) with knowledge base. "
+            "Default: False (backward compatible - existing apps work without changes). "
+            "Set to True to enable RAG features."
+        ),
+    )
+
+    kb_sources_config: str = Field(
+        default="kb_sources.yaml",
+        alias="KB_SOURCES_CONFIG",
+        description="Path to knowledge base sources configuration file",
+    )
+
+    kb_database_path: str = Field(
+        default="data/knowledge_base.db",
+        alias="KB_DATABASE_PATH",
+        description="Path to SQLite vector database file",
+    )
+
+    kb_populate_on_startup: bool = Field(
+        default=False,
+        alias="KB_POPULATE_ON_STARTUP",
+        description=(
+            "Auto-populate knowledge base on startup (development only). "
+            "Production should use CLI: python -m auto_bedrock_chat_fastapi.commands.kb populate"
+        ),
+    )
+
+    kb_allow_empty: bool = Field(
+        default=False,
+        alias="KB_ALLOW_EMPTY",
+        description=(
+            "Allow app to start with empty knowledge base when RAG is enabled. "
+            "If False, app will fail if RAG is enabled but KB is empty/missing."
+        ),
+    )
+
+    kb_embedding_model: str = Field(
+        default="amazon.titan-embed-text-v1",
+        alias="KB_EMBEDDING_MODEL",
+        description="AWS Bedrock model ID for generating embeddings",
+    )
+
+    kb_chunk_size: int = Field(
+        default=512,
+        alias="KB_CHUNK_SIZE",
+        gt=0,
+        description="Token size for text chunks (default: 512 tokens)",
+    )
+
+    kb_chunk_overlap: int = Field(
+        default=100,
+        alias="KB_CHUNK_OVERLAP",
+        ge=0,
+        description="Token overlap between chunks (default: 100 tokens)",
+    )
+
+    kb_top_k_results: int = Field(
+        default=5,
+        alias="KB_TOP_K_RESULTS",
+        gt=0,
+        description="Number of top similar chunks to retrieve for RAG (default: 5)",
+    )
+
+    kb_similarity_threshold: float = Field(
+        default=0.5,
+        alias="KB_SIMILARITY_THRESHOLD",
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity score for KB results (default: 0.5, lowered for broader coverage)",
+    )
+
     model_config = SettingsConfigDict(
         env_file=_get_env_file(),
         env_file_encoding="utf-8",
