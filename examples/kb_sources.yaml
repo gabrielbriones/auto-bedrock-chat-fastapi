@@ -1,0 +1,62 @@
+---
+# Knowledge Base Sources Configuration
+# This file defines sources for the knowledge base used in RAG (Retrieval-Augmented Generation)
+
+knowledge_base:
+  # Master switch - MUST be explicitly set to true to use RAG
+  # Default: false (backward compatible - existing apps work without changes)
+  enabled: false
+
+  # List of content sources to populate the knowledge base
+  sources:
+    # Example 1: Web crawling
+    - name: "Product Documentation"
+      type: "web"
+      urls:
+        - "https://docs.example.com/"
+      max_pages: 100
+      allowed_domains:
+        - "docs.example.com"
+      excluded_patterns:
+        - "/api/"
+        - "/changelog/"
+      respect_robots_txt: true
+
+    # Example 2: Multiple web sources
+    - name: "API Reference"
+      type: "web"
+      urls:
+        - "https://api-docs.example.com/reference"
+        - "https://api-docs.example.com/guides"
+      max_pages: 50
+      allowed_domains:
+        - "api-docs.example.com"
+
+    # Example 3: Local documentation files
+    - name: "Internal Docs"
+      type: "local"
+      path: "/path/to/docs"
+      extensions:
+        - ".md"
+        - ".txt"
+        - ".rst"
+
+    # Example 4: Single local file
+    - name: "README"
+      type: "local"
+      path: "./README.md"
+# Configuration notes:
+# 1. Set 'enabled: true' to activate knowledge base features
+# 2. Add your sources to the 'sources' list
+# 3. Each source requires:
+#    - name: Descriptive name for the source
+#    - type: 'web' or 'local'
+# 4. Web sources require:
+#    - urls: List of starting URLs to crawl
+#    - max_pages: Maximum pages to crawl per URL
+#    - allowed_domains (optional): Restrict crawling to these domains
+#    - excluded_patterns (optional): Skip URLs matching these patterns
+#    - respect_robots_txt (optional, default: true): Honor robots.txt
+# 5. Local sources require:
+#    - path: File or directory path
+#    - extensions (optional): File extensions to process (for directories)

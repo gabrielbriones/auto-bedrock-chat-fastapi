@@ -59,7 +59,7 @@ class TestPlugin:
 
     @patch("auto_bedrock_chat_fastapi.plugin.BedrockClient")
     @patch("auto_bedrock_chat_fastapi.plugin.ChatSessionManager")
-    def test_plugin_initialization(self, mock_session_manager, mock_bedrock_client, mock_aws_credentials):
+    def test_plugin_initialization(self, mock_session_manager, mock_bedrock_client):
         """Test plugin initialization"""
         # Mock the dependencies
         mock_bedrock_client.return_value = Mock()
@@ -71,7 +71,7 @@ class TestPlugin:
         assert plugin.config.model_id == "test-model"
         assert plugin.config.enable_ui is False
 
-    def test_plugin_routes_added(self, mock_aws_credentials):
+    def test_plugin_routes_added(self):
         """Test that plugin routes are added to app"""
         with patch("auto_bedrock_chat_fastapi.plugin.BedrockClient"), patch(
             "auto_bedrock_chat_fastapi.plugin.ChatSessionManager"

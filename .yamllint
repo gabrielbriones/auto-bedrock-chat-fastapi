@@ -8,7 +8,7 @@ rules:
   indentation:
     spaces: 2
   comments:
-    min-spaces-from-content: 2
+    min-spaces-from-content: 1
   comments-indentation: {}
   empty-lines:
     max: 2
