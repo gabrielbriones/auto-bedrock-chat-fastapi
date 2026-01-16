@@ -15,7 +15,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -26,7 +25,7 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<4.0"
+python = ">=3.10,<4.0"
 fastapi = ">=0.100.0"
 pydantic = ">=2.0.0"
 pydantic-settings = ">=2.0.0"
@@ -34,7 +33,7 @@ boto3 = ">=1.34.0"
 websockets = ">=11.0.0"
 uvicorn = ">=0.23.0"
 jinja2 = ">=3.1.0"
-python-multipart = ">=0.0.6"
+python-multipart = ">=0.0.18"
 httpx = ">=0.24.0"
 sqlite-vec = "^0.1.6"
 numpy = ">=1.21,<2.0"
@@ -49,7 +48,7 @@ pytest = ">=7.0.0"
 pytest-asyncio = ">=0.21.0"
 pytest-cov = ">=4.0.0"
 coverage-badge = ">=1.1.0"
-black = "==24.1.1"
+black = "==24.3.0"
 flake8 = ">=6.0.0"
 isort = ">=5.13.0"
 mypy = ">=1.0.0"
@@ -59,7 +58,7 @@ httpx = ">=0.24.0"
 [tool.poetry.group.security.dependencies]
 python-jose = {extras = ["cryptography"], version = ">=3.3.0"}
 passlib = {extras = ["bcrypt"], version = ">=1.7.4"}
-python-multipart = ">=0.0.6"
+python-multipart = ">=0.0.18"
 
 [tool.poetry.group.monitoring.dependencies]
 prometheus-client = ">=0.17.0"
@@ -73,7 +72,7 @@ Issues = "https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/issues"
 
 [tool.black]
 line-length = 120
-target-version = ['py38', 'py39', 'py310', 'py311']
+target-version = ['py310', 'py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -104,7 +103,7 @@ asyncio_mode = "auto"
 addopts = "-v --cov=auto_bedrock_chat_fastapi --cov-report=html --cov-report=term-missing"
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
