@@ -226,6 +226,9 @@ async def kb_populate(
         # Track processed document URLs across sources to avoid re-embedding duplicates
         processed_urls = set()
 
+        # Track visited URLs across sources to avoid re-crawling HTML pages
+        shared_visited_urls = set()
+
         # Process each source
         for i, source in enumerate(sources, 1):
             source_name = source.get("name", f"Source {i}")
@@ -245,7 +248,7 @@ async def kb_populate(
                 logger.info(f"   Crawling {len(urls)} URL(s), max_pages={max_pages}")
 
                 # Initialize crawler with shared visited_urls to skip already-crawled pages
-                crawler = ContentCrawler(visited_urls=processed_urls)
+                crawler = ContentCrawler(visited_urls=shared_visited_urls)
 
                 documents = []
                 for url in urls:
