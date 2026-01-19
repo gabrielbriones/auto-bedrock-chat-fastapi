@@ -116,29 +116,99 @@ knowledge_base:
 
 ## Manual KB Management
 
-### Check KB Status
+### KB Command Reference
+
+The Knowledge Base can be managed using CLI commands. The command format differs depending on whether you're developing this repository or using the package in your own project:
+
+#### When Developing This Repository
+
+Use `poetry run` to execute commands within the repository:
 
 ```bash
+# Check KB status
 ENABLE_RAG=true poetry run python -m auto_bedrock_chat_fastapi.commands.kb status \
   --config examples/fastAPI/kb_sources_fastapi.yaml \
   --db examples/fastAPI/fastapi_kb.db
-```
 
-### Rebuild KB (Force Refresh)
-
-```bash
+# Rebuild KB (force refresh)
 ENABLE_RAG=true poetry run python -m auto_bedrock_chat_fastapi.commands.kb populate \
   --config examples/fastAPI/kb_sources_fastapi.yaml \
   --db examples/fastAPI/fastapi_kb.db \
   --force
-```
 
-### Clear KB
-
-```bash
+# Clear KB
 ENABLE_RAG=true poetry run python -m auto_bedrock_chat_fastapi.commands.kb clear \
   --db examples/fastAPI/fastapi_kb.db \
   --yes
+```
+
+#### When Using as an Installed Package
+
+If you've installed `auto-bedrock-chat-fastapi` in your own project (via pip or poetry), use these commands:
+
+```bash
+# Check KB status
+ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb status \
+  --config path/to/your/kb_sources.yaml \
+  --db path/to/your/kb.db
+
+# Populate/rebuild KB
+ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb populate \
+  --config path/to/your/kb_sources.yaml \
+  --db path/to/your/kb.db \
+  --force
+
+# Clear KB
+ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb clear \
+  --db path/to/your/kb.db \
+  --yes
+```
+
+**Key Differences:**
+
+- **Development**: Use `poetry run python -m` (runs within Poetry's virtualenv)
+- **Production/Installed**: Use `python -m` or your project's virtualenv activation
+- **Paths**: Adjust `--config` and `--db` paths to match your project structure
+
+#### Available Commands
+
+| Command    | Description                   | Common Options                |
+| ---------- | ----------------------------- | ----------------------------- |
+| `status`   | Show KB statistics and health | `--config`, `--db`            |
+| `populate` | Build/update knowledge base   | `--config`, `--db`, `--force` |
+| `clear`    | Delete all KB data            | `--db`, `--yes`               |
+| `search`   | Test semantic search          | `--db`, `--query`, `--limit`  |
+
+#### Example: Production Setup
+
+If you've installed the package in your project:
+
+```bash
+# Install the package
+pip install git+https://github.com/gabrielbriones/auto-bedrock-chat-fastapi.git
+
+# Create your KB sources config
+cat > my_kb_sources.yaml << EOF
+---
+knowledge_base:
+  enabled: true
+  sources:
+    - name: "My Documentation"
+      type: "web"
+      urls:
+        - "https://docs.myproject.com/"
+      max_pages: 50
+EOF
+
+# Populate your knowledge base
+ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb populate \
+  --config my_kb_sources.yaml \
+  --db my_project_kb.db
+
+# Check status
+ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb status \
+  --config my_kb_sources.yaml \
+  --db my_project_kb.db
 ```
 
 ## Troubleshooting
