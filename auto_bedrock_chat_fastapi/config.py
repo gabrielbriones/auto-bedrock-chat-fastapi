@@ -454,6 +454,28 @@ class ChatConfig(BaseSettings):
         description="Minimum similarity score for KB results (default: 0.5, lowered for broader coverage)",
     )
 
+    kb_hybrid_search_enabled: bool = Field(
+        default=False,
+        alias="KB_HYBRID_SEARCH_ENABLED",
+        description="Enable hybrid search (semantic + BM25) instead of pure semantic search (default: False)",
+    )
+
+    kb_semantic_weight: float = Field(
+        default=0.7,
+        alias="KB_SEMANTIC_WEIGHT",
+        ge=0.0,
+        le=1.0,
+        description="Weight for semantic similarity in hybrid search (default: 0.7)",
+    )
+
+    kb_bm25_weight: float = Field(
+        default=0.3,
+        alias="KB_BM25_WEIGHT",
+        ge=0.0,
+        le=1.0,
+        description="Weight for BM25 keyword score in hybrid search (default: 0.3)",
+    )
+
     model_config = SettingsConfigDict(
         env_file=_get_env_file(),
         env_file_encoding="utf-8",

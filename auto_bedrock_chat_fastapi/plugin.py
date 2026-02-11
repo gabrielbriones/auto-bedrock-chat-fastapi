@@ -399,13 +399,24 @@ class BedrockChatPlugin:
                         if request.filters.date_before:
                             filters["date_before"] = request.filters.date_before
 
-                    # Perform similarity search
-                    results = vector_db.semantic_search(
-                        query_embedding=query_embedding,
-                        limit=request.limit,
-                        min_score=request.min_score,
-                        filters=filters,
-                    )
+                    # Perform search (hybrid or pure semantic based on config)
+                    if self.config.kb_hybrid_search_enabled:
+                        results = vector_db.hybrid_search(
+                            query=request.query,
+                            query_embedding=query_embedding,
+                            limit=request.limit,
+                            min_score=request.min_score,
+                            filters=filters,
+                            semantic_weight=self.config.kb_semantic_weight,
+                            bm25_weight=self.config.kb_bm25_weight,
+                        )
+                    else:
+                        results = vector_db.semantic_search(
+                            query_embedding=query_embedding,
+                            limit=request.limit,
+                            min_score=request.min_score,
+                            filters=filters,
+                        )
 
                     # Format results
                     formatted_results = [
@@ -442,7 +453,8 @@ class BedrockChatPlugin:
         logger.info(f"  Stats: {self.config.chat_endpoint}/stats")
         logger.info(f"  Tools: {self.config.chat_endpoint}/tools")
         if self.config.enable_rag:
-            logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search")
+            search_mode = "Hybrid (Semantic + BM25)" if self.config.kb_hybrid_search_enabled else "Semantic"
+            logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
 
