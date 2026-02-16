@@ -94,6 +94,23 @@ class VectorDB:
         """
         )
 
+        # Backfill FTS5 index for any chunks not yet indexed
+        cursor.execute(
+            """
+            INSERT INTO fts_chunks (chunk_id, content)
+            SELECT c.id, c.content
+            FROM chunks c
+            WHERE c.id NOT IN (
+                SELECT chunk_id FROM fts_chunks
+            )
+        """
+        )
+        backfilled = cursor.rowcount
+        if backfilled > 0:
+            import logging
+
+            logging.getLogger(__name__).info(f"Backfilled {backfilled} chunks into FTS5 index")
+
         # Create indexes for faster filtering
         cursor.execute(
             """
@@ -330,14 +347,45 @@ class VectorDB:
 
         return formatted_results
 
-    def bm25_search(
+    @staticmethod
+    def _sanitize_fts5_query(query: str) -> str:
+        """
+        Sanitize a raw text query for use with FTS5 MATCH.
+
+        Strips characters that FTS5 interprets as syntax operators
+        and joins remaining words with OR so that natural-language
+        queries match documents containing *any* of the terms
+        (FTS5 default is implicit AND, which is too strict for
+        conversational user input).
+
+        Args:
+            query: Raw user query text
+
+        Returns:
+            Sanitized query safe for FTS5 MATCH, or empty string
+        """
+        import re
+
+        # Remove FTS5 special characters: " ( ) * + - ^ ~ : ? { } $ / \ @ # & | < > = [ ] ! %
+        # The $ and / are common in paths like $SNIPER_ROOT/lib/...
+        sanitized = re.sub(r'["\(\)\*\+\-\^~:\?\{\}\$\\/\@#&\|<>=\[\]!%]', " ", query)
+        # Collapse whitespace and strip
+        words = sanitized.split()
+        # Filter out FTS5 boolean keywords when used standalone
+        fts5_keywords = {"AND", "OR", "NOT", "NEAR"}
+        words = [w for w in words if w.upper() not in fts5_keywords]
+        # Join with OR so natural-language queries match any term
+        # (FTS5 default is implicit AND which is too restrictive)
+        return " OR ".join(words)
+
+    def keyword_search(
         self,
         query: str,
         limit: int = 3,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Perform BM25 keyword-based full-text search.
+        Perform keyword-based full-text search (BM25 ranking).
 
         Args:
             query: Search query text
@@ -345,9 +393,14 @@ class VectorDB:
             filters: Optional filters (source, topic, date_after, date_before)
 
         Returns:
-            List of matching chunks with metadata and BM25 scores
+            List of matching chunks with metadata and keyword scores
         """
         cursor = self.conn.cursor()
+
+        # Sanitize query for FTS5 syntax safety
+        safe_query = self._sanitize_fts5_query(query)
+        if not safe_query:
+            return []
 
         # Build FTS5 query with filters
         sql_query = """
@@ -369,7 +422,7 @@ class VectorDB:
             WHERE fts_chunks MATCH ?
         """
 
-        params = [query]
+        params = [safe_query]
 
         # Apply filters
         if filters:
@@ -416,7 +469,7 @@ class VectorDB:
                     "topic": row[7],
                     "date_published": row[8],
                     "metadata": json.loads(row[9]) if row[9] else {},
-                    "bm25_score": round(normalized_score, 4),
+                    "keyword_score": round(normalized_score, 4),
                 }
             )
 
@@ -430,10 +483,10 @@ class VectorDB:
         min_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
         semantic_weight: float = 0.7,
-        bm25_weight: float = 0.3,
+        keyword_weight: float = 0.3,
     ) -> List[Dict[str, Any]]:
         """
-        Perform hybrid search combining semantic similarity and BM25 keyword search.
+        Perform combined search using semantic similarity and keyword matching.
 
         Args:
             query: Search query text
@@ -442,7 +495,7 @@ class VectorDB:
             min_score: Minimum combined score (0-1)
             filters: Optional filters (source, topic, date_after, date_before)
             semantic_weight: Weight for semantic similarity (default 0.7)
-            bm25_weight: Weight for BM25 score (default 0.3)
+            keyword_weight: Weight for keyword matching score (default 0.3)
 
         Returns:
             List of matching chunks with combined scores
@@ -454,7 +507,7 @@ class VectorDB:
             query_embedding=query_embedding, limit=candidate_limit, min_score=0.0, filters=filters
         )
 
-        bm25_results = self.bm25_search(query=query, limit=candidate_limit, filters=filters)
+        bm25_results = self.keyword_search(query=query, limit=candidate_limit, filters=filters)
 
         # Combine results by chunk_id
         combined = {}
@@ -464,26 +517,26 @@ class VectorDB:
             chunk_id = result["chunk_id"]
             combined[chunk_id] = result.copy()
             combined[chunk_id]["semantic_score"] = result["similarity_score"]
-            combined[chunk_id]["bm25_score"] = 0.0  # Default if not found in BM25
+            combined[chunk_id]["keyword_score"] = 0.0  # Default if not found in keyword search
 
-        # Add/update with BM25 results
+        # Add/update with keyword results
         for result in bm25_results:
             chunk_id = result["chunk_id"]
             if chunk_id in combined:
-                combined[chunk_id]["bm25_score"] = result["bm25_score"]
+                combined[chunk_id]["keyword_score"] = result["keyword_score"]
             else:
                 combined[chunk_id] = result.copy()
                 combined[chunk_id]["semantic_score"] = 0.0  # Default if not found in semantic
-                combined[chunk_id]["bm25_score"] = result["bm25_score"]
+                combined[chunk_id]["keyword_score"] = result["keyword_score"]
 
         # Calculate hybrid scores
         hybrid_results = []
         for _, data in combined.items():
             semantic_score = data.get("semantic_score", 0.0)
-            bm25_score_val = data.get("bm25_score", 0.0)
+            keyword_score_val = data.get("keyword_score", 0.0)
 
             # Combined score using weighted average
-            combined_score = (semantic_weight * semantic_score) + (bm25_weight * bm25_score_val)
+            combined_score = (semantic_weight * semantic_score) + (keyword_weight * keyword_score_val)
 
             # Skip if below minimum threshold
             if combined_score < min_score:
@@ -493,7 +546,7 @@ class VectorDB:
             data["similarity_score"] = round(combined_score, 4)  # Main score for compatibility
             data["hybrid_score"] = round(combined_score, 4)
             data["semantic_component"] = round(semantic_score, 4)
-            data["bm25_component"] = round(bm25_score_val, 4)
+            data["keyword_component"] = round(keyword_score_val, 4)
 
             hybrid_results.append(data)
 

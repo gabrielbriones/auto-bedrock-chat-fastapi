@@ -379,7 +379,7 @@ class BedrockChatPlugin:
                     from .vector_db import VectorDB
 
                     # Initialize vector DB
-                    vector_db = VectorDB(self.config.kb_vector_db_path)
+                    vector_db = VectorDB(self.config.kb_database_path)
 
                     # Generate embedding for the query
                     query_embedding = await self.bedrock_client.generate_embedding(
@@ -399,24 +399,16 @@ class BedrockChatPlugin:
                         if request.filters.date_before:
                             filters["date_before"] = request.filters.date_before
 
-                    # Perform search (hybrid or pure semantic based on config)
-                    if self.config.kb_hybrid_search_enabled:
-                        results = vector_db.hybrid_search(
-                            query=request.query,
-                            query_embedding=query_embedding,
-                            limit=request.limit,
-                            min_score=request.min_score,
-                            filters=filters,
-                            semantic_weight=self.config.kb_semantic_weight,
-                            bm25_weight=self.config.kb_bm25_weight,
-                        )
-                    else:
-                        results = vector_db.semantic_search(
-                            query_embedding=query_embedding,
-                            limit=request.limit,
-                            min_score=request.min_score,
-                            filters=filters,
-                        )
+                    # Perform search using configured weights
+                    results = vector_db.hybrid_search(
+                        query=request.query,
+                        query_embedding=query_embedding,
+                        limit=request.limit,
+                        min_score=request.min_score,
+                        filters=filters,
+                        semantic_weight=self.config.kb_semantic_weight,
+                        keyword_weight=self.config.kb_keyword_weight,
+                    )
 
                     # Format results
                     formatted_results = [
@@ -453,7 +445,7 @@ class BedrockChatPlugin:
         logger.info(f"  Stats: {self.config.chat_endpoint}/stats")
         logger.info(f"  Tools: {self.config.chat_endpoint}/tools")
         if self.config.enable_rag:
-            search_mode = "Hybrid (Semantic + BM25)" if self.config.kb_hybrid_search_enabled else "Semantic"
+            search_mode = f"Semantic={self.config.kb_semantic_weight}, Keyword={self.config.kb_keyword_weight}"
             logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
