@@ -379,7 +379,7 @@ class BedrockChatPlugin:
                     from .vector_db import VectorDB
 
                     # Initialize vector DB
-                    vector_db = VectorDB(self.config.kb_vector_db_path)
+                    vector_db = VectorDB(self.config.kb_database_path)
 
                     # Generate embedding for the query
                     query_embedding = await self.bedrock_client.generate_embedding(
@@ -399,12 +399,15 @@ class BedrockChatPlugin:
                         if request.filters.date_before:
                             filters["date_before"] = request.filters.date_before
 
-                    # Perform similarity search
-                    results = vector_db.semantic_search(
+                    # Perform search using configured weights
+                    results = vector_db.hybrid_search(
+                        query=request.query,
                         query_embedding=query_embedding,
                         limit=request.limit,
                         min_score=request.min_score,
                         filters=filters,
+                        semantic_weight=self.config.kb_semantic_weight,
+                        keyword_weight=self.config.kb_keyword_weight,
                     )
 
                     # Format results
@@ -442,7 +445,8 @@ class BedrockChatPlugin:
         logger.info(f"  Stats: {self.config.chat_endpoint}/stats")
         logger.info(f"  Tools: {self.config.chat_endpoint}/tools")
         if self.config.enable_rag:
-            logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search")
+            search_mode = f"Semantic={self.config.kb_semantic_weight}, Keyword={self.config.kb_keyword_weight}"
+            logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
 

@@ -447,11 +447,27 @@ class ChatConfig(BaseSettings):
     )
 
     kb_similarity_threshold: float = Field(
-        default=0.5,
+        default=0.0,
         alias="KB_SIMILARITY_THRESHOLD",
         ge=0.0,
         le=1.0,
-        description="Minimum similarity score for KB results (default: 0.5, lowered for broader coverage)",
+        description="Minimum similarity score for KB results (default: 0.0). Set higher (e.g. 0.3-0.5) to filter low-relevance results.",
+    )
+
+    kb_semantic_weight: float = Field(
+        default=0.7,
+        alias="KB_SEMANTIC_WEIGHT",
+        ge=0.0,
+        le=1.0,
+        description="Weight for semantic (embedding) similarity in KB search (default: 0.7). Set to 0 to disable semantic matching.",
+    )
+
+    kb_keyword_weight: float = Field(
+        default=0.3,
+        alias="KB_KEYWORD_WEIGHT",
+        ge=0.0,
+        le=1.0,
+        description="Weight for keyword (word-matching) score in KB search (default: 0.3). Set to 0 to disable keyword matching.",
     )
 
     model_config = SettingsConfigDict(

@@ -964,28 +964,45 @@ class WebSocketChatHandler:
                 text=query, model_id=self.config.kb_embedding_model
             )
 
-            # Perform similarity search
-            results = vector_db.semantic_search(
+            # Perform search using configured weights
+            # (set kb_keyword_weight=0 for pure semantic, kb_semantic_weight=0 for pure keyword)
+            search_mode = f"semantic={self.config.kb_semantic_weight}, keyword={self.config.kb_keyword_weight}"
+            logger.debug(f"RAG search mode: {search_mode}")
+            results = vector_db.hybrid_search(
+                query=query,
                 query_embedding=query_embedding,
                 limit=self.config.kb_top_k_results,
                 min_score=self.config.kb_similarity_threshold,
-                filters=None,  # Could add dynamic filtering here
+                filters=None,
+                semantic_weight=self.config.kb_semantic_weight,
+                keyword_weight=self.config.kb_keyword_weight,
             )
 
             vector_db.close()
 
+            # Log with the actual threshold used
             logger.info(
                 f"RAG retrieval: Found {len(results)} relevant chunks (threshold={self.config.kb_similarity_threshold})"
             )
 
             if results:
                 logger.debug(f"Top result score: {results[0]['similarity_score']:.4f}")
-                # Debug: Log each chunk's details
+                # Debug: Log each chunk's details with component scores
                 for i, result in enumerate(results, 1):
                     title = result.get("title", "N/A")[:60]
                     content_preview = result["content"][:150].replace("\n", " ")
                     score = result["similarity_score"]
-                    logger.debug(f"  Chunk {i}: [{score:.4f}] {title} - {content_preview}...")
+                    semantic = result.get("semantic_component", "N/A")
+                    keyword = result.get("keyword_component", "N/A")
+                    if isinstance(semantic, float) and isinstance(keyword, float):
+                        logger.debug(
+                            f"  Chunk {i}: [hybrid={score:.4f}] "
+                            f"(semantic={semantic:.4f} × {self.config.kb_semantic_weight} "
+                            f"+ keyword={keyword:.4f} × {self.config.kb_keyword_weight}) "
+                            f"{title} - {content_preview}..."
+                        )
+                    else:
+                        logger.debug(f"  Chunk {i}: [{score:.4f}] {title} - {content_preview}...")
 
             return results if results else None
 
