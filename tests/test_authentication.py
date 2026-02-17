@@ -686,8 +686,8 @@ class TestAuthVerificationEndpointConfig:
         config = ChatConfig()
         assert config.auth_verification_endpoint is None
 
-    def test_set_via_constructor(self):
-        """Test setting auth_verification_endpoint"""
+    def test_set_via_attribute_assignment(self):
+        """Test setting auth_verification_endpoint after construction"""
         config = ChatConfig()
         config.auth_verification_endpoint = "https://api.example.com/verify"
         assert config.auth_verification_endpoint == "https://api.example.com/verify"
