@@ -135,21 +135,39 @@ function submitAuth() {
         return;
     }
 
-    console.log('submitAuth: Setting up authentication...');
-
-    // Always create a new connection with auth to ensure clean state
-    // Close existing connection if any
-    if (window.chatClient && window.chatClient.ws) {
-        console.log('submitAuth: Closing existing connection to establish new authenticated session');
-        window.chatClient.intentionalClose = true;
-        window.chatClient.ws.close();
+    // Disable submit button to prevent multiple submissions
+    const submitBtn = document.querySelector('.auth-submit');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Authenticating...';
     }
 
-    // Create new chat client with auth payload
-    console.log('submitAuth: Creating new ChatClient with auth credentials');
-    window.chatClient = new ChatClient(payload);
+    console.log('submitAuth: Setting up authentication...');
 
-    document.getElementById('authModal').classList.add('hidden');
+    // If there's already an open connection, reuse it by just sending a
+    // new auth message.  This avoids creating a brand-new session on
+    // every retry (e.g. after entering wrong credentials).
+    if (window.chatClient && window.chatClient.ws &&
+        window.chatClient.ws.readyState === WebSocket.OPEN) {
+        console.log('submitAuth: Reusing existing connection, sending new auth payload');
+        window.chatClient.authPayload = payload;
+        window.chatClient.authSent = false;
+        window.chatClient.sendAuth();
+    } else {
+        // No usable connection — create a fresh one
+        if (window.chatClient && window.chatClient.ws) {
+            console.log('submitAuth: Closing stale connection');
+            window.chatClient.intentionalClose = true;
+            window.chatClient.ws.close();
+        }
+        console.log('submitAuth: Creating new ChatClient with auth credentials');
+        window.chatClient = new ChatClient(payload);
+    }
+
+    // Don't hide auth modal yet — wait for server to confirm via
+    // auth_configured (success) or auth_failed (failure) message.
+    // The modal will be hidden by handleMessage() on auth_configured,
+    // or re-shown with an error on auth_failed.
 }
 
 function skipAuth() {

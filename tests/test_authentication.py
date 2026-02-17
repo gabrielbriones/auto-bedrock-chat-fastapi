@@ -511,3 +511,183 @@ class TestAuthenticationIntegration:
         assert session1.credentials.bearer_token == "token1"
         assert session2.credentials.api_key == "key2"
         assert session1.credentials != session2.credentials
+
+
+class TestVerifyCredentialsRemote:
+    """Test remote credential verification"""
+
+    @pytest.mark.asyncio
+    async def test_verify_success_returns_true(self):
+        """Test that a 2XX response from the verification endpoint returns True"""
+        creds = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="valid-token")
+        handler = AuthenticationHandler(creds)
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        is_valid, message = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
+
+        assert is_valid is True
+        assert "200" in message
+        mock_client.get.assert_called_once()
+        # Verify auth headers were sent
+        call_kwargs = mock_client.get.call_args
+        assert "Authorization" in call_kwargs[1]["headers"]
+        assert call_kwargs[1]["headers"]["Authorization"] == "Bearer valid-token"
+
+    @pytest.mark.asyncio
+    async def test_verify_success_201(self):
+        """Test that a 201 response also counts as valid"""
+        creds = Credentials(auth_type=AuthType.API_KEY, api_key="my-key")
+        handler = AuthenticationHandler(creds)
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 201
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        is_valid, _ = await handler.verify_credentials_remote("https://api.example.com/verify", http_client=mock_client)
+
+        assert is_valid is True
+
+    @pytest.mark.asyncio
+    async def test_verify_failure_401(self):
+        """Test that a 401 response returns False with message"""
+        creds = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="bad-token")
+        handler = AuthenticationHandler(creds)
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 401
+        mock_response.json = Mock(return_value={"detail": "Invalid token"})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        is_valid, message = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
+
+        assert is_valid is False
+        assert "401" in message
+        assert "Invalid token" in message
+
+    @pytest.mark.asyncio
+    async def test_verify_failure_403(self):
+        """Test that a 403 response returns False"""
+        creds = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="forbidden-token")
+        handler = AuthenticationHandler(creds)
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 403
+        mock_response.json = Mock(side_effect=Exception("not json"))
+        mock_response.text = "Forbidden"
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        is_valid, message = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
+
+        assert is_valid is False
+        assert "403" in message
+
+    @pytest.mark.asyncio
+    async def test_verify_timeout(self):
+        """Test that a timeout returns False with descriptive message"""
+        import httpx
+
+        creds = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="token")
+        handler = AuthenticationHandler(creds)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+
+        is_valid, message = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
+
+        assert is_valid is False
+        assert "timed out" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_connection_error(self):
+        """Test that a connection error returns False"""
+        import httpx
+
+        creds = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="token")
+        handler = AuthenticationHandler(creds)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+
+        is_valid, message = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
+
+        assert is_valid is False
+        assert "connect" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_sends_basic_auth_headers(self):
+        """Test that basic auth credentials are sent in the verification request"""
+        import base64
+
+        creds = Credentials(auth_type=AuthType.BASIC_AUTH, username="user", password="pass")
+        handler = AuthenticationHandler(creds)
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        is_valid, _ = await handler.verify_credentials_remote("https://api.example.com/verify", http_client=mock_client)
+
+        assert is_valid is True
+        call_kwargs = mock_client.get.call_args
+        expected = base64.b64encode(b"user:pass").decode()
+        assert call_kwargs[1]["headers"]["Authorization"] == f"Basic {expected}"
+
+    @pytest.mark.asyncio
+    async def test_verify_creates_temp_client_when_none_provided(self):
+        """Test that a temporary httpx client is created when none is passed"""
+        creds = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="token")
+        handler = AuthenticationHandler(creds)
+
+        # Patch httpx.AsyncClient to track creation
+        from unittest.mock import patch
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+
+        mock_temp_client = AsyncMock()
+        mock_temp_client.get = AsyncMock(return_value=mock_response)
+        mock_temp_client.aclose = AsyncMock()
+
+        with patch("auto_bedrock_chat_fastapi.auth_handler.httpx.AsyncClient", return_value=mock_temp_client):
+            is_valid, _ = await handler.verify_credentials_remote("https://api.example.com/verify")
+
+        assert is_valid is True
+        mock_temp_client.aclose.assert_called_once()
+
+
+class TestAuthVerificationEndpointConfig:
+    """Test auth_verification_endpoint configuration"""
+
+    def test_default_is_none(self):
+        """Test that auth_verification_endpoint defaults to None"""
+        config = ChatConfig()
+        assert config.auth_verification_endpoint is None
+
+    def test_set_via_constructor(self):
+        """Test setting auth_verification_endpoint"""
+        config = ChatConfig()
+        config.auth_verification_endpoint = "https://api.example.com/verify"
+        assert config.auth_verification_endpoint == "https://api.example.com/verify"

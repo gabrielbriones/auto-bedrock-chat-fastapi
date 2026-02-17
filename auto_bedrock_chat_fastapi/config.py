@@ -328,6 +328,17 @@ class ChatConfig(BaseSettings):
         description="Cache TTL for OAuth2 tokens in seconds",
     )
 
+    auth_verification_endpoint: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_AUTH_VERIFICATION_ENDPOINT",
+        description=(
+            "URL of an endpoint that verifies credentials at authentication time. "
+            "When set, credentials are forwarded to this endpoint before being accepted. "
+            "The endpoint must return a 2XX status code to confirm the credentials are valid. "
+            "This prevents users from seeing an 'authenticated' status with invalid credentials."
+        ),
+    )
+
     # Logging Configuration
     log_level: str = Field(default="INFO", alias="BEDROCK_LOG_LEVEL", description="Logging level")
 

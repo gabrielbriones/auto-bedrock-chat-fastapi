@@ -421,3 +421,161 @@ class TestToolCallAuthentication:
 
                 # Verify auth handler was attempted
                 mock_session.auth_handler.apply_auth_to_headers.assert_called_once()
+
+
+class TestWebSocketAuthVerification:
+    """Test WebSocket authentication with verification endpoint"""
+
+    @pytest.mark.asyncio
+    async def test_auth_verified_successfully(self):
+        """Test auth succeeds when verification endpoint returns 200"""
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        config = ChatConfig()
+        config.auth_verification_endpoint = "https://api.example.com/verify"
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+
+                # Mock the HTTP client to return 200 for verification
+                mock_response = AsyncMock()
+                mock_response.status_code = 200
+                handler.http_client = AsyncMock()
+                handler.http_client.get = AsyncMock(return_value=mock_response)
+
+                auth_data = {"type": "auth", "auth_type": "bearer_token", "token": "valid-token"}
+
+                await handler._handle_auth_message(mock_websocket, auth_data)
+
+                # Credentials should be stored
+                assert mock_session.credentials is not None
+                assert mock_session.credentials.auth_type == AuthType.BEARER_TOKEN
+
+                # Should send auth_configured
+                sent_message = mock_websocket.send_json.call_args[0][0]
+                assert sent_message["type"] == "auth_configured"
+
+    @pytest.mark.asyncio
+    async def test_auth_rejected_by_verification_endpoint(self):
+        """Test auth is rejected when verification endpoint returns 401"""
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        config = ChatConfig()
+        config.auth_verification_endpoint = "https://api.example.com/verify"
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+
+                # Mock the HTTP client to return 401 for verification
+                mock_response = AsyncMock()
+                mock_response.status_code = 401
+                mock_response.json = Mock(return_value={"detail": "Invalid token"})
+                handler.http_client = AsyncMock()
+                handler.http_client.get = AsyncMock(return_value=mock_response)
+
+                auth_data = {"type": "auth", "auth_type": "bearer_token", "token": "bad-token"}
+
+                await handler._handle_auth_message(mock_websocket, auth_data)
+
+                # Credentials should NOT be stored (session attributes unchanged)
+                # The mock starts with no credentials attribute set by our code
+                sent_message = mock_websocket.send_json.call_args[0][0]
+                assert sent_message["type"] == "auth_failed"
+                assert "401" in sent_message["message"]
+
+    @pytest.mark.asyncio
+    async def test_auth_no_verification_when_endpoint_not_configured(self):
+        """Test auth proceeds without verification when endpoint is not set"""
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        # No verification endpoint configured (default)
+        config = ChatConfig()
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+
+                auth_data = {"type": "auth", "auth_type": "bearer_token", "token": "any-token"}
+
+                await handler._handle_auth_message(mock_websocket, auth_data)
+
+                # Should succeed without any HTTP calls for verification
+                assert mock_session.credentials is not None
+                assert mock_session.credentials.auth_type == AuthType.BEARER_TOKEN
+                sent_message = mock_websocket.send_json.call_args[0][0]
+                assert sent_message["type"] == "auth_configured"
+
+    @pytest.mark.asyncio
+    async def test_auth_verification_timeout_rejects(self):
+        """Test auth is rejected when verification endpoint times out"""
+        import httpx
+
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        config = ChatConfig()
+        config.auth_verification_endpoint = "https://api.example.com/verify"
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+
+                handler.http_client = AsyncMock()
+                handler.http_client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+
+                auth_data = {"type": "auth", "auth_type": "bearer_token", "token": "token"}
+
+                await handler._handle_auth_message(mock_websocket, auth_data)
+
+                sent_message = mock_websocket.send_json.call_args[0][0]
+                assert sent_message["type"] == "auth_failed"
+                assert "timed out" in sent_message["message"].lower()

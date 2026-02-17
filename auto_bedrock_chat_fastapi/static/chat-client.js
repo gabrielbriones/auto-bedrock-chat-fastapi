@@ -3,6 +3,7 @@ class ChatClient {
     constructor(authPayload = null) {
         this.ws = null;
         this.authPayload = authPayload;
+        this.authenticated = false;  // True only after server confirms auth_configured
         this.authSent = false;
         this.intentionalClose = false;
         this.connecting = false;
@@ -15,7 +16,7 @@ class ChatClient {
         this.typingText = document.getElementById('typingText');
 
         this.setupEventListeners();
-        this.updateAuthButtonUI();  // Update button on page load
+        this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
 
@@ -129,7 +130,7 @@ class ChatClient {
     }
 
     handleAuthButtonClick() {
-        if (this.authPayload) {
+        if (this.authenticated) {
             // Logout: send logout message and clear auth
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -137,6 +138,7 @@ class ChatClient {
                 }));
             }
             this.authPayload = null;
+            this.authenticated = false;
             this.authSent = false;
             // Send logout message to server - it will respond with logout_success
             // which triggers connection close in handleMessage()
@@ -156,7 +158,7 @@ class ChatClient {
     }
 
     updateAuthButtonUI() {
-        if (this.authPayload) {
+        if (this.authenticated) {
             this.authButton.textContent = 'Log out';
             this.authButton.classList.add('logout');
         } else {
@@ -190,12 +192,45 @@ class ChatClient {
     handleMessage(data) {
         switch (data.type) {
             case 'auth_configured':
+                this.authenticated = true;
                 this.addMessage('system', `🔐 Authenticated with ${data.auth_type}`);
                 this.updateAuthButtonUI();  // Update button after auth
                 this.enableInput();
+                // Re-enable auth submit button for future use (e.g. after logout)
+                const authSubmitBtnOk = document.querySelector('.auth-submit');
+                if (authSubmitBtnOk) {
+                    authSubmitBtnOk.disabled = false;
+                    authSubmitBtnOk.textContent = 'Authenticate';
+                }
+                // Hide auth modal now that server confirmed credentials
+                const authModal = document.getElementById('authModal');
+                if (authModal) authModal.classList.add('hidden');
+                break;
+
+            case 'auth_failed':
+                this.authenticated = false;
+                this.addMessage('system', `❌ Authentication failed: ${data.message}`);
+                // Clear auth state so button shows "Log in"
+                this.authPayload = null;
+                this.authSent = false;
+                this.updateAuthButtonUI();
+                this.enableInput();
+                // Re-enable the auth submit button for retry
+                const authSubmitBtn = document.querySelector('.auth-submit');
+                if (authSubmitBtn) {
+                    authSubmitBtn.disabled = false;
+                    authSubmitBtn.textContent = 'Authenticate';
+                }
+                // Re-show auth modal so user can retry
+                const authModalRetry = document.getElementById('authModal');
+                if (authModalRetry) {
+                    authModalRetry.classList.remove('hidden');
+                    initializeAuthModal();
+                }
                 break;
 
             case 'logout_success':
+                this.authenticated = false;
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
                 // Close connection after logout - mark as intentional to prevent auto-reconnect
