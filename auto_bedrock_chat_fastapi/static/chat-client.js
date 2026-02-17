@@ -68,15 +68,23 @@ class ChatClient {
         console.log('Creating new WebSocket connection...');
         this.ws = new WebSocket(wsUrl);
 
+        // Reset auth state for the new connection — the server creates a fresh
+        // session that knows nothing about previous authentication.  Credentials
+        // will be re-sent in onopen if authPayload is set, and input will only
+        // be enabled once the server confirms via auth_configured.
+        this.authSent = false;
+        this.authenticated = false;
+        this.updateAuthButtonUI();
+
         this.ws.onopen = (event) => {
             console.log('Connected to chat');
             this.connecting = false;
             this.updateConnectionStatus(true);
 
-            // Send authentication if provided
-            if (this.authPayload && !this.authSent) {
+            // Re-send authentication on every new connection if credentials exist
+            if (this.authPayload) {
                 this.sendAuth();
-            } else if (!window.CONFIG.requireAuth || this.authenticated) {
+            } else if (!window.CONFIG.requireAuth) {
                 this.enableInput();
             }
         };
