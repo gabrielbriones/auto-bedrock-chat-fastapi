@@ -364,9 +364,9 @@ class AuthenticationHandler:
             logger.error(msg)
             return False, msg
         except Exception as e:
-            msg = f"Credential verification error: {str(e)}"
-            logger.error(msg)
-            return False, msg
+            # Log full exception details server-side, but return a generic message to the caller
+            logger.error("Credential verification error during remote verification", exc_info=True)
+            return False, "Credential verification error"
         finally:
             if created_client and client:
                 await client.aclose()
