@@ -76,7 +76,7 @@ class ChatClient {
             // Send authentication if provided
             if (this.authPayload && !this.authSent) {
                 this.sendAuth();
-            } else {
+            } else if (!window.CONFIG.requireAuth || this.authenticated) {
                 this.enableInput();
             }
         };
@@ -93,6 +93,10 @@ class ChatClient {
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
 
+            // Re-enable auth submit button if the modal is still open
+            // (server never replied with auth_configured / auth_failed)
+            this._recoverAuthSubmitButton();
+
             // Only reconnect if close wasn't intentional (e.g., not from logout)
             if (!this.intentionalClose) {
                 console.log('Scheduling reconnect in 3 seconds...');
@@ -108,6 +112,9 @@ class ChatClient {
             console.error('WebSocket error:', error);
             this.connecting = false;
             this.addMessage('system', 'Connection error occurred');
+
+            // Re-enable auth submit button if the modal is still open
+            this._recoverAuthSubmitButton();
         };
     }
 
@@ -127,6 +134,15 @@ class ChatClient {
     enableInput() {
         this.messageInput.disabled = false;
         this.sendButton.disabled = false;
+    }
+
+    _recoverAuthSubmitButton() {
+        const authModal = document.getElementById('authModal');
+        const authSubmitBtn = document.querySelector('.auth-submit');
+        if (authModal && !authModal.classList.contains('hidden') && authSubmitBtn && authSubmitBtn.disabled) {
+            authSubmitBtn.disabled = false;
+            authSubmitBtn.textContent = 'Authenticate';
+        }
     }
 
     handleAuthButtonClick() {
@@ -252,9 +268,12 @@ class ChatClient {
 
             case 'connection_established':
                 this.addMessage('system', `Connected! Session ID: ${data.session_id}`);
-                // Only enable input if auth is not required or user is already authenticated
                 if (!window.CONFIG.requireAuth || this.authenticated) {
                     this.enableInput();
+                } else {
+                    // Ensure input stays disabled when auth is required but user hasn't authenticated
+                    this.messageInput.disabled = true;
+                    this.sendButton.disabled = true;
                 }
                 break;
 
