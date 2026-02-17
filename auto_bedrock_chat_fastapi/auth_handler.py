@@ -365,7 +365,7 @@ class AuthenticationHandler:
             logger.error(log_msg)
             user_msg = "Could not connect to verification endpoint"
             return False, user_msg
-        except Exception as e:
+        except Exception:
             # Log full exception details server-side, but return a generic message to the caller
             logger.error("Credential verification error during remote verification", exc_info=True)
             return False, "Credential verification error"
