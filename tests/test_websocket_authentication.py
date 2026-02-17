@@ -644,14 +644,14 @@ class TestRequireToolAuth:
                     tools_generator=Mock(),
                     config=config,
                 )
-                # Mock bedrock to avoid actual API calls
-                handler.bedrock_client = AsyncMock()
-                handler.bedrock_client.converse = AsyncMock(
-                    return_value={
-                        "output": {"message": {"content": [{"text": "Hello!"}]}},
-                        "stopReason": "end_turn",
-                    }
-                )
+                # Mock the full chat pipeline
+                mock_session_manager.get_context_messages = AsyncMock(return_value=[])
+                handler.bedrock_client = Mock()
+                handler.bedrock_client.format_messages_for_bedrock = Mock(return_value=[])
+                handler.bedrock_client.chat_completion = AsyncMock(return_value={"content": "Hello!", "tool_calls": []})
+                handler.tools_generator = Mock()
+                handler.tools_generator.generate_tools_desc = Mock(return_value=[])
+                handler._handle_tool_calls_recursively = AsyncMock(return_value=({"content": "Hello!"}, []))
 
                 chat_data = {"type": "chat", "message": "Hello"}
                 await handler._handle_chat_message(mock_websocket, chat_data)
@@ -690,13 +690,14 @@ class TestRequireToolAuth:
                     tools_generator=Mock(),
                     config=config,
                 )
-                handler.bedrock_client = AsyncMock()
-                handler.bedrock_client.converse = AsyncMock(
-                    return_value={
-                        "output": {"message": {"content": [{"text": "Hello!"}]}},
-                        "stopReason": "end_turn",
-                    }
-                )
+                # Mock the full chat pipeline
+                mock_session_manager.get_context_messages = AsyncMock(return_value=[])
+                handler.bedrock_client = Mock()
+                handler.bedrock_client.format_messages_for_bedrock = Mock(return_value=[])
+                handler.bedrock_client.chat_completion = AsyncMock(return_value={"content": "Hello!", "tool_calls": []})
+                handler.tools_generator = Mock()
+                handler.tools_generator.generate_tools_desc = Mock(return_value=[])
+                handler._handle_tool_calls_recursively = AsyncMock(return_value=({"content": "Hello!"}, []))
 
                 chat_data = {"type": "chat", "message": "Hello"}
                 await handler._handle_chat_message(mock_websocket, chat_data)
