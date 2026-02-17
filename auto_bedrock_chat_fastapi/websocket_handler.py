@@ -149,11 +149,13 @@ class WebSocketChatHandler:
 
         try:
             # Check if authentication is required before sending messages to LLM
-            if self.config.require_tool_auth and not session.credentials:
-                await self._send_error(
-                    websocket, "Authentication is required before sending messages. Please authenticate first."
-                )
-                return
+            if self.config.require_tool_auth:
+                auth_type_str = session.credentials.get_auth_type_string() if session.credentials else "none"
+                if auth_type_str == "none":
+                    await self._send_error(
+                        websocket, "Authentication is required before sending messages. Please authenticate first."
+                    )
+                    return
 
             # Add user message to history
             user_chat_message = ChatMessage(role="user", content=user_message, metadata={"source": "websocket"})
@@ -806,16 +808,43 @@ class WebSocketChatHandler:
                 await self._send_error(websocket, "Invalid credentials provided")
                 return
 
+            # Set HTTP client for OAuth2 if needed
+            if auth_type == "oauth2" or auth_type == "oauth2_client_credentials":
+                auth_handler.set_http_client(self.http_client)
+
+            # Verify credentials against remote endpoint if configured
+            if self.config.auth_verification_endpoint:
+                verification_url = self.config.auth_verification_endpoint
+                # Resolve relative paths (e.g. "/api/v1/auth/verify") against app base URL
+                if verification_url.startswith("/"):
+                    verification_url = f"{self.app_base_url}{verification_url}"
+                logger.info(f"Verifying credentials for session {session.session_id} against {verification_url}")
+                is_valid, message = await auth_handler.verify_credentials_remote(
+                    verification_url, http_client=self.http_client
+                )
+                if not is_valid:
+                    await self._send_message(
+                        websocket,
+                        {
+                            "type": "auth_failed",
+                            "message": message,
+                            "auth_type": auth_type,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                    )
+                    return
+
             # Store credentials in session
             session.credentials = credentials
             session.auth_handler = auth_handler
 
-            # Set HTTP client for OAuth2 if needed
-            if auth_type == "oauth2" or auth_type == "oauth2_client_credentials":
-                session.auth_handler.set_http_client(self.http_client)
-
             logger.info(f"Authentication configured for session {session.session_id}: {auth_type}")
-            logger.debug(f"Session credentials: {credentials}")
+            logger.debug(
+                "Session credentials configured for session %s: auth_type=%s, has_credentials=%s",
+                session.session_id,
+                auth_type,
+                bool(credentials),
+            )
 
             await self._send_message(
                 websocket,

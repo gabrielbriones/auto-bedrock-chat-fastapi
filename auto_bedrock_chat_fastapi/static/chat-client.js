@@ -3,6 +3,7 @@ class ChatClient {
     constructor(authPayload = null) {
         this.ws = null;
         this.authPayload = authPayload;
+        this.authenticated = false;  // True only after server confirms auth_configured
         this.authSent = false;
         this.intentionalClose = false;
         this.connecting = false;
@@ -15,7 +16,7 @@ class ChatClient {
         this.typingText = document.getElementById('typingText');
 
         this.setupEventListeners();
-        this.updateAuthButtonUI();  // Update button on page load
+        this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
 
@@ -67,15 +68,23 @@ class ChatClient {
         console.log('Creating new WebSocket connection...');
         this.ws = new WebSocket(wsUrl);
 
+        // Reset auth state for the new connection — the server creates a fresh
+        // session that knows nothing about previous authentication.  Credentials
+        // will be re-sent in onopen if authPayload is set, and input will only
+        // be enabled once the server confirms via auth_configured.
+        this.authSent = false;
+        this.authenticated = false;
+        this.updateAuthButtonUI();
+
         this.ws.onopen = (event) => {
             console.log('Connected to chat');
             this.connecting = false;
             this.updateConnectionStatus(true);
 
-            // Send authentication if provided
-            if (this.authPayload && !this.authSent) {
+            // Re-send authentication on every new connection if credentials exist
+            if (this.authPayload) {
                 this.sendAuth();
-            } else {
+            } else if (!window.CONFIG.requireAuth) {
                 this.enableInput();
             }
         };
@@ -92,6 +101,10 @@ class ChatClient {
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
 
+            // Re-enable auth submit button if the modal is still open
+            // (server never replied with auth_configured / auth_failed)
+            this._recoverAuthSubmitButton();
+
             // Only reconnect if close wasn't intentional (e.g., not from logout)
             if (!this.intentionalClose) {
                 console.log('Scheduling reconnect in 3 seconds...');
@@ -107,6 +120,9 @@ class ChatClient {
             console.error('WebSocket error:', error);
             this.connecting = false;
             this.addMessage('system', 'Connection error occurred');
+
+            // Re-enable auth submit button if the modal is still open
+            this._recoverAuthSubmitButton();
         };
     }
 
@@ -128,8 +144,17 @@ class ChatClient {
         this.sendButton.disabled = false;
     }
 
+    _recoverAuthSubmitButton() {
+        const authModal = document.getElementById('authModal');
+        const authSubmitBtn = document.querySelector('.auth-submit');
+        if (authModal && !authModal.classList.contains('hidden') && authSubmitBtn && authSubmitBtn.disabled) {
+            authSubmitBtn.disabled = false;
+            authSubmitBtn.textContent = 'Authenticate';
+        }
+    }
+
     handleAuthButtonClick() {
-        if (this.authPayload) {
+        if (this.authenticated) {
             // Logout: send logout message and clear auth
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -137,6 +162,7 @@ class ChatClient {
                 }));
             }
             this.authPayload = null;
+            this.authenticated = false;
             this.authSent = false;
             // Send logout message to server - it will respond with logout_success
             // which triggers connection close in handleMessage()
@@ -156,7 +182,7 @@ class ChatClient {
     }
 
     updateAuthButtonUI() {
-        if (this.authPayload) {
+        if (this.authenticated) {
             this.authButton.textContent = 'Log out';
             this.authButton.classList.add('logout');
         } else {
@@ -190,14 +216,55 @@ class ChatClient {
     handleMessage(data) {
         switch (data.type) {
             case 'auth_configured':
+                this.authenticated = true;
                 this.addMessage('system', `🔐 Authenticated with ${data.auth_type}`);
                 this.updateAuthButtonUI();  // Update button after auth
                 this.enableInput();
+                // Re-enable auth submit button for future use (e.g. after logout)
+                const authSubmitBtnOk = document.querySelector('.auth-submit');
+                if (authSubmitBtnOk) {
+                    authSubmitBtnOk.disabled = false;
+                    authSubmitBtnOk.textContent = 'Authenticate';
+                }
+                // Hide auth modal now that server confirmed credentials
+                const authModal = document.getElementById('authModal');
+                if (authModal) authModal.classList.add('hidden');
+                break;
+
+            case 'auth_failed':
+                this.authenticated = false;
+                this.addMessage('system', `❌ Authentication failed: ${data.message}`);
+                // Clear auth state so button shows "Log in"
+                this.authPayload = null;
+                this.authSent = false;
+                this.updateAuthButtonUI();
+                // Only enable input if auth is not required
+                if (!window.CONFIG.requireAuth) {
+                    this.enableInput();
+                }
+                // Re-enable the auth submit button for retry
+                const authSubmitBtn = document.querySelector('.auth-submit');
+                if (authSubmitBtn) {
+                    authSubmitBtn.disabled = false;
+                    authSubmitBtn.textContent = 'Authenticate';
+                }
+                // Re-show auth modal so user can retry
+                const authModalRetry = document.getElementById('authModal');
+                if (authModalRetry) {
+                    authModalRetry.classList.remove('hidden');
+                    initializeAuthModal();
+                }
                 break;
 
             case 'logout_success':
+                this.authenticated = false;
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
+                // Disable input if auth is required
+                if (window.CONFIG.requireAuth) {
+                    this.messageInput.disabled = true;
+                    this.sendButton.disabled = true;
+                }
                 // Close connection after logout - mark as intentional to prevent auto-reconnect
                 // Set flag BEFORE checking/closing to avoid race conditions
                 this.intentionalClose = true;
@@ -209,7 +276,13 @@ class ChatClient {
 
             case 'connection_established':
                 this.addMessage('system', `Connected! Session ID: ${data.session_id}`);
-                this.enableInput();
+                if (!window.CONFIG.requireAuth || this.authenticated) {
+                    this.enableInput();
+                } else {
+                    // Ensure input stays disabled when auth is required but user hasn't authenticated
+                    this.messageInput.disabled = true;
+                    this.sendButton.disabled = true;
+                }
                 break;
 
             case 'typing':
