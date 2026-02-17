@@ -818,9 +818,7 @@ class WebSocketChatHandler:
                 # Resolve relative paths (e.g. "/api/v1/auth/verify") against app base URL
                 if verification_url.startswith("/"):
                     verification_url = f"{self.app_base_url}{verification_url}"
-                logger.info(
-                    f"Verifying credentials for session {session.session_id} against {verification_url}"
-                )
+                logger.info(f"Verifying credentials for session {session.session_id} against {verification_url}")
                 is_valid, message = await auth_handler.verify_credentials_remote(
                     verification_url, http_client=self.http_client
                 )
