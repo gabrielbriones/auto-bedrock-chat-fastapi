@@ -214,7 +214,10 @@ class ChatClient {
                 this.authPayload = null;
                 this.authSent = false;
                 this.updateAuthButtonUI();
-                this.enableInput();
+                // Only enable input if auth is not required
+                if (!window.CONFIG.requireAuth) {
+                    this.enableInput();
+                }
                 // Re-enable the auth submit button for retry
                 const authSubmitBtn = document.querySelector('.auth-submit');
                 if (authSubmitBtn) {
@@ -233,6 +236,11 @@ class ChatClient {
                 this.authenticated = false;
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
+                // Disable input if auth is required
+                if (window.CONFIG.requireAuth) {
+                    this.messageInput.disabled = true;
+                    this.sendButton.disabled = true;
+                }
                 // Close connection after logout - mark as intentional to prevent auto-reconnect
                 // Set flag BEFORE checking/closing to avoid race conditions
                 this.intentionalClose = true;
@@ -244,7 +252,10 @@ class ChatClient {
 
             case 'connection_established':
                 this.addMessage('system', `Connected! Session ID: ${data.session_id}`);
-                this.enableInput();
+                // Only enable input if auth is not required or user is already authenticated
+                if (!window.CONFIG.requireAuth || this.authenticated) {
+                    this.enableInput();
+                }
                 break;
 
             case 'typing':

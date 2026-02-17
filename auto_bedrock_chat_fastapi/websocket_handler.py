@@ -149,11 +149,13 @@ class WebSocketChatHandler:
 
         try:
             # Check if authentication is required before sending messages to LLM
-            if self.config.require_tool_auth and not session.credentials:
-                await self._send_error(
-                    websocket, "Authentication is required before sending messages. Please authenticate first."
-                )
-                return
+            if self.config.require_tool_auth:
+                auth_type_str = session.credentials.get_auth_type_string() if session.credentials else "none"
+                if auth_type_str == "none":
+                    await self._send_error(
+                        websocket, "Authentication is required before sending messages. Please authenticate first."
+                    )
+                    return
 
             # Add user message to history
             user_chat_message = ChatMessage(role="user", content=user_message, metadata={"source": "websocket"})

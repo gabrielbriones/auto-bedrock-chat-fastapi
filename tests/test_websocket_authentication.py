@@ -579,3 +579,133 @@ class TestWebSocketAuthVerification:
                 sent_message = mock_websocket.send_json.call_args[0][0]
                 assert sent_message["type"] == "auth_failed"
                 assert "timed out" in sent_message["message"].lower()
+
+
+class TestRequireToolAuth:
+    """Test that require_tool_auth blocks unauthenticated chat messages"""
+
+    @pytest.mark.asyncio
+    async def test_chat_blocked_when_require_auth_and_no_credentials(self):
+        """Test that chat messages are rejected when require_tool_auth is True and user has not authenticated"""
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        # Default credentials with auth_type=NONE (as created by ChatSession dataclass)
+        mock_session.credentials = Credentials()
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        config = ChatConfig()
+        config.require_tool_auth = True
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+
+                chat_data = {"type": "chat", "message": "Hello"}
+                await handler._handle_chat_message(mock_websocket, chat_data)
+
+                # Should send error about authentication required
+                sent_message = mock_websocket.send_json.call_args[0][0]
+                assert sent_message["type"] == "error"
+                assert "authentication" in sent_message["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_chat_allowed_when_require_auth_and_authenticated(self):
+        """Test that chat messages are allowed when require_tool_auth is True and user has authenticated"""
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        # Authenticated credentials
+        mock_session.credentials = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="valid-token")
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+        mock_session_manager.add_message = AsyncMock()
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        config = ChatConfig()
+        config.require_tool_auth = True
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+                # Mock bedrock to avoid actual API calls
+                handler.bedrock_client = AsyncMock()
+                handler.bedrock_client.converse = AsyncMock(
+                    return_value={
+                        "output": {"message": {"content": [{"text": "Hello!"}]}},
+                        "stopReason": "end_turn",
+                    }
+                )
+
+                chat_data = {"type": "chat", "message": "Hello"}
+                await handler._handle_chat_message(mock_websocket, chat_data)
+
+                # Should NOT have sent an auth error — message was accepted
+                calls = mock_websocket.send_json.call_args_list
+                error_calls = [
+                    c
+                    for c in calls
+                    if c[0][0].get("type") == "error" and "authentication" in c[0][0].get("message", "").lower()
+                ]
+                assert len(error_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_chat_allowed_when_require_auth_false(self):
+        """Test that chat messages work without auth when require_tool_auth is False"""
+        mock_websocket = AsyncMock()
+        mock_session_manager = AsyncMock()
+        mock_session = Mock(spec=ChatSession)
+        mock_session.session_id = "test-session"
+        mock_session.credentials = Credentials()  # Default NONE credentials
+        mock_session_manager.get_session = AsyncMock(return_value=mock_session)
+        mock_session_manager.add_message = AsyncMock()
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+        from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
+
+        config = ChatConfig()
+        config.require_tool_auth = False
+
+        with patch("auto_bedrock_chat_fastapi.websocket_handler.BedrockClient"):
+            with patch("auto_bedrock_chat_fastapi.websocket_handler.ToolsGenerator"):
+                handler = WebSocketChatHandler(
+                    session_manager=mock_session_manager,
+                    bedrock_client=Mock(),
+                    tools_generator=Mock(),
+                    config=config,
+                )
+                handler.bedrock_client = AsyncMock()
+                handler.bedrock_client.converse = AsyncMock(
+                    return_value={
+                        "output": {"message": {"content": [{"text": "Hello!"}]}},
+                        "stopReason": "end_turn",
+                    }
+                )
+
+                chat_data = {"type": "chat", "message": "Hello"}
+                await handler._handle_chat_message(mock_websocket, chat_data)
+
+                # Should NOT have sent an auth error
+                calls = mock_websocket.send_json.call_args_list
+                error_calls = [
+                    c
+                    for c in calls
+                    if c[0][0].get("type") == "error" and "authentication" in c[0][0].get("message", "").lower()
+                ]
+                assert len(error_calls) == 0
