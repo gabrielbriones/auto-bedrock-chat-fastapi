@@ -839,7 +839,12 @@ class WebSocketChatHandler:
             session.auth_handler = auth_handler
 
             logger.info(f"Authentication configured for session {session.session_id}: {auth_type}")
-            logger.debug(f"Session credentials: {credentials}")
+            logger.debug(
+                "Session credentials configured for session %s: auth_type=%s, has_credentials=%s",
+                session.session_id,
+                auth_type,
+                bool(credentials),
+            )
 
             await self._send_message(
                 websocket,
