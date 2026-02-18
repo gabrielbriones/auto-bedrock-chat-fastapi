@@ -187,7 +187,22 @@ function getAuthPayload() {
                 if (!customHeadersText.trim()) {
                     missing.push({ id: 'customHeaders' });
                 } else {
-                    payload.custom_headers = JSON.parse(customHeadersText);
+                    const parsed = JSON.parse(customHeadersText);
+                    const isPlainObject =
+                        parsed !== null &&
+                        typeof parsed === 'object' &&
+                        !Array.isArray(parsed);
+                    const valuesAreStrings = isPlainObject
+                        ? Object.values(parsed).every(v => typeof v === 'string')
+                        : false;
+                    if (!isPlainObject || !valuesAreStrings) {
+                        missing.push({
+                            id: 'customHeaders',
+                            message: 'Must be a JSON object mapping header names to string values.',
+                        });
+                    } else {
+                        payload.custom_headers = parsed;
+                    }
                 }
             } catch (e) {
                 missing.push({ id: 'customHeaders', message: 'Invalid JSON syntax.' });
