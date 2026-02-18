@@ -132,6 +132,24 @@ body {
     display: none;
 }
 
+.auth-input-error {
+    border-color: #e53e3e !important;
+    box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.15) !important;
+}
+
+.auth-input-error::placeholder {
+    color: #e53e3e;
+    opacity: 0.6;
+}
+
+.auth-error-message {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #b91c1c;
+}
+
 #authTypeSelector.hidden {
     display: none;
 }

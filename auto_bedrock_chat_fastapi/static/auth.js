@@ -1,4 +1,58 @@
 // Authentication functions
+
+// --- Validation helpers ---
+function markInvalid(inputId, message = 'This field is required.') {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.classList.add('auth-input-error');
+    el.setAttribute('aria-invalid', 'true');
+
+    // Add inline error message if not already present
+    const errorId = inputId + '-error';
+    if (!document.getElementById(errorId)) {
+        const errorEl = document.createElement('span');
+        errorEl.id = errorId;
+        errorEl.className = 'auth-error-message';
+        errorEl.setAttribute('role', 'alert');
+        errorEl.textContent = message;
+        el.setAttribute('aria-describedby', errorId);
+        el.parentNode.appendChild(errorEl);
+    }
+}
+
+function clearInvalid(inputId) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.classList.remove('auth-input-error');
+    el.removeAttribute('aria-invalid');
+    el.removeAttribute('aria-describedby');
+
+    const errorEl = document.getElementById(inputId + '-error');
+    if (errorEl) errorEl.remove();
+}
+
+function clearAllValidation() {
+    document.querySelectorAll('.auth-input-error').forEach(el => {
+        el.classList.remove('auth-input-error');
+        el.removeAttribute('aria-invalid');
+        el.removeAttribute('aria-describedby');
+    });
+    document.querySelectorAll('.auth-error-message').forEach(el => el.remove());
+}
+
+// Clear error highlight as soon as the user starts typing (scoped to auth form)
+function attachValidationListeners() {
+    const authForm = document.getElementById('authForm');
+    if (authForm && !authForm.dataset.validationListenerAttached) {
+        authForm.addEventListener('input', (e) => {
+            if (e.target.id && e.target.classList.contains('auth-input-error')) {
+                clearInvalid(e.target.id);
+            }
+        });
+        authForm.dataset.validationListenerAttached = 'true';
+    }
+}
+
 function initializeAuthModal() {
     const supportedTypes = window.CONFIG.supportedAuthTypes;
     const authTypeSelector = document.getElementById('authTypeSelector');
@@ -47,11 +101,16 @@ function initializeAuthModal() {
         skipButton.addEventListener('click', skipAuth);
         skipButton.dataset.listenerAttached = 'true';
     }
+
+    attachValidationListeners();
 }
 
 function updateAuthFields() {
     const authType = document.getElementById('authType').value;
     const fieldsContainer = document.getElementById('authFields');
+
+    // Clear any validation highlights from the previous auth type
+    clearAllValidation();
 
     // Get all field group divs
     const allFieldGroups = fieldsContainer.querySelectorAll('div[id$="-fields"]');
@@ -90,39 +149,92 @@ function getAuthPayload() {
 
     if (!authType) return null;
 
+    clearAllValidation();
+
     const payload = { type: 'auth', auth_type: authType };
+    const missing = [];
 
     switch (authType) {
-        case 'bearer_token':
-            payload.token = document.getElementById('bearerToken').value;
+        case 'bearer_token': {
+            const token = document.getElementById('bearerToken').value.trim();
+            payload.token = token;
+            if (!token) missing.push('bearerToken');
             break;
-        case 'basic_auth':
-            payload.username = document.getElementById('username').value;
-            payload.password = document.getElementById('password').value;
+        }
+        case 'basic_auth': {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            payload.username = username;
+            payload.password = password;
+            if (!username) missing.push('username');
+            if (!password) missing.push('password');
             break;
-        case 'api_key':
-            payload.api_key = document.getElementById('apiKey').value;
-            payload.api_key_header = document.getElementById('apiKeyHeader').value;
+        }
+        case 'api_key': {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const apiKeyHeader = document.getElementById('apiKeyHeader').value.trim();
+            payload.api_key = apiKey;
+            payload.api_key_header = apiKeyHeader;
+            if (!apiKey) missing.push('apiKey');
+            if (!apiKeyHeader) missing.push('apiKeyHeader');
             break;
-        case 'oauth2_client_credentials':
-            payload.client_id = document.getElementById('clientId').value;
-            payload.client_secret = document.getElementById('clientSecret').value;
-            payload.token_url = document.getElementById('tokenUrl').value;
-            const scope = document.getElementById('scope').value;
+        }
+        case 'oauth2_client_credentials': {
+            const clientId = document.getElementById('clientId').value.trim();
+            const clientSecret = document.getElementById('clientSecret').value.trim();
+            const tokenUrl = document.getElementById('tokenUrl').value.trim();
+            payload.client_id = clientId;
+            payload.client_secret = clientSecret;
+            payload.token_url = tokenUrl;
+            if (!clientId) missing.push('clientId');
+            if (!clientSecret) missing.push('clientSecret');
+            if (!tokenUrl) missing.push('tokenUrl');
+            const scope = document.getElementById('scope').value.trim();
             if (scope) payload.scope = scope;
             break;
+        }
         case 'custom':
             try {
                 const customHeadersText = document.getElementById('customHeaders').value;
-                payload.custom_headers = JSON.parse(customHeadersText);
+                if (!customHeadersText.trim()) {
+                    missing.push({ id: 'customHeaders' });
+                } else {
+                    const parsed = JSON.parse(customHeadersText);
+                    const isPlainObject =
+                        parsed !== null &&
+                        typeof parsed === 'object' &&
+                        !Array.isArray(parsed);
+                    const valuesAreStrings = isPlainObject
+                        ? Object.values(parsed).every(v => typeof v === 'string')
+                        : false;
+                    if (!isPlainObject || !valuesAreStrings) {
+                        missing.push({
+                            id: 'customHeaders',
+                            message: 'Must be a JSON object mapping header names to string values.',
+                        });
+                    } else {
+                        payload.custom_headers = parsed;
+                    }
+                }
             } catch (e) {
-                const fullInput = document.getElementById('customHeaders').value;
-                const preview = fullInput.substring(0, 50);
-                const truncated = fullInput.length > 50 ? '...' : '';
-                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input (first 50 chars): ${preview}${truncated}`);
-                return null;
+                missing.push({ id: 'customHeaders', message: 'Invalid JSON syntax.' });
             }
             break;
+    }
+
+    if (missing.length > 0) {
+        missing.forEach(entry => {
+            if (typeof entry === 'string') {
+                markInvalid(entry);
+            } else {
+                markInvalid(entry.id, entry.message);
+            }
+        });
+        // Focus the first invalid field
+        const firstId = typeof missing[0] === 'string' ? missing[0] : missing[0].id;
+        const first = document.getElementById(firstId);
+        if (first) first.focus();
+        return null;
     }
 
     return payload;
@@ -130,10 +242,7 @@ function getAuthPayload() {
 
 function submitAuth() {
     const payload = getAuthPayload();
-    if (!payload) {
-        alert('Please fill in all required fields');
-        return;
-    }
+    if (!payload) return;
 
     // Disable submit button to prevent multiple submissions
     const submitBtn = document.querySelector('.auth-submit');
