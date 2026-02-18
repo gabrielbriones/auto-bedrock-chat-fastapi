@@ -45,7 +45,7 @@ function attachValidationListeners() {
     const authForm = document.getElementById('authForm');
     if (authForm && !authForm.dataset.validationListenerAttached) {
         authForm.addEventListener('input', (e) => {
-            if (e.target.classList.contains('auth-input-error')) {
+            if (e.target.id && e.target.classList.contains('auth-input-error')) {
                 clearInvalid(e.target.id);
             }
         });
@@ -155,32 +155,44 @@ function getAuthPayload() {
     const missing = [];
 
     switch (authType) {
-        case 'bearer_token':
-            payload.token = document.getElementById('bearerToken').value;
-            if (!payload.token) missing.push('bearerToken');
+        case 'bearer_token': {
+            const token = document.getElementById('bearerToken').value.trim();
+            payload.token = token;
+            if (!token) missing.push('bearerToken');
             break;
-        case 'basic_auth':
-            payload.username = document.getElementById('username').value;
-            payload.password = document.getElementById('password').value;
-            if (!payload.username) missing.push('username');
-            if (!payload.password) missing.push('password');
+        }
+        case 'basic_auth': {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            payload.username = username;
+            payload.password = password;
+            if (!username) missing.push('username');
+            if (!password) missing.push('password');
             break;
-        case 'api_key':
-            payload.api_key = document.getElementById('apiKey').value;
-            payload.api_key_header = document.getElementById('apiKeyHeader').value;
-            if (!payload.api_key) missing.push('apiKey');
-            if (!payload.api_key_header) missing.push('apiKeyHeader');
+        }
+        case 'api_key': {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const apiKeyHeader = document.getElementById('apiKeyHeader').value.trim();
+            payload.api_key = apiKey;
+            payload.api_key_header = apiKeyHeader;
+            if (!apiKey) missing.push('apiKey');
+            if (!apiKeyHeader) missing.push('apiKeyHeader');
             break;
-        case 'oauth2_client_credentials':
-            payload.client_id = document.getElementById('clientId').value;
-            payload.client_secret = document.getElementById('clientSecret').value;
-            payload.token_url = document.getElementById('tokenUrl').value;
-            if (!payload.client_id) missing.push('clientId');
-            if (!payload.client_secret) missing.push('clientSecret');
-            if (!payload.token_url) missing.push('tokenUrl');
-            const scope = document.getElementById('scope').value;
+        }
+        case 'oauth2_client_credentials': {
+            const clientId = document.getElementById('clientId').value.trim();
+            const clientSecret = document.getElementById('clientSecret').value.trim();
+            const tokenUrl = document.getElementById('tokenUrl').value.trim();
+            payload.client_id = clientId;
+            payload.client_secret = clientSecret;
+            payload.token_url = tokenUrl;
+            if (!clientId) missing.push('clientId');
+            if (!clientSecret) missing.push('clientSecret');
+            if (!tokenUrl) missing.push('tokenUrl');
+            const scope = document.getElementById('scope').value.trim();
             if (scope) payload.scope = scope;
             break;
+        }
         case 'custom':
             try {
                 const customHeadersText = document.getElementById('customHeaders').value;
