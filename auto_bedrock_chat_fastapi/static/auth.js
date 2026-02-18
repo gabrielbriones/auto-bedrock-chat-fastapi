@@ -3,24 +3,47 @@
 // --- Validation helpers ---
 function markInvalid(inputId) {
     const el = document.getElementById(inputId);
-    if (el) el.classList.add('auth-input-error');
+    if (!el) return;
+    el.classList.add('auth-input-error');
+    el.setAttribute('aria-invalid', 'true');
+
+    // Add inline error message if not already present
+    const errorId = inputId + '-error';
+    if (!document.getElementById(errorId)) {
+        const errorEl = document.createElement('span');
+        errorEl.id = errorId;
+        errorEl.className = 'auth-error-message';
+        errorEl.setAttribute('role', 'alert');
+        errorEl.textContent = 'This field is required.';
+        el.setAttribute('aria-describedby', errorId);
+        el.parentNode.appendChild(errorEl);
+    }
 }
 
 function clearInvalid(inputId) {
     const el = document.getElementById(inputId);
-    if (el) el.classList.remove('auth-input-error');
+    if (!el) return;
+    el.classList.remove('auth-input-error');
+    el.removeAttribute('aria-invalid');
+    el.removeAttribute('aria-describedby');
+
+    const errorEl = document.getElementById(inputId + '-error');
+    if (errorEl) errorEl.remove();
 }
 
 function clearAllValidation() {
     document.querySelectorAll('.auth-input-error').forEach(el => {
         el.classList.remove('auth-input-error');
+        el.removeAttribute('aria-invalid');
+        el.removeAttribute('aria-describedby');
     });
+    document.querySelectorAll('.auth-error-message').forEach(el => el.remove());
 }
 
 // Clear error highlight as soon as the user starts typing
 document.addEventListener('input', (e) => {
     if (e.target.classList.contains('auth-input-error')) {
-        e.target.classList.remove('auth-input-error');
+        clearInvalid(e.target.id);
     }
 });
 
