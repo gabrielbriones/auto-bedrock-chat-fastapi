@@ -1,7 +1,7 @@
 // Authentication functions
 
 // --- Validation helpers ---
-function markInvalid(inputId) {
+function markInvalid(inputId, message = 'This field is required.') {
     const el = document.getElementById(inputId);
     if (!el) return;
     el.classList.add('auth-input-error');
@@ -14,7 +14,7 @@ function markInvalid(inputId) {
         errorEl.id = errorId;
         errorEl.className = 'auth-error-message';
         errorEl.setAttribute('role', 'alert');
-        errorEl.textContent = 'This field is required.';
+        errorEl.textContent = message;
         el.setAttribute('aria-describedby', errorId);
         el.parentNode.appendChild(errorEl);
     }
@@ -40,12 +40,18 @@ function clearAllValidation() {
     document.querySelectorAll('.auth-error-message').forEach(el => el.remove());
 }
 
-// Clear error highlight as soon as the user starts typing
-document.addEventListener('input', (e) => {
-    if (e.target.classList.contains('auth-input-error')) {
-        clearInvalid(e.target.id);
+// Clear error highlight as soon as the user starts typing (scoped to auth form)
+function attachValidationListeners() {
+    const authForm = document.getElementById('authForm');
+    if (authForm && !authForm.dataset.validationListenerAttached) {
+        authForm.addEventListener('input', (e) => {
+            if (e.target.classList.contains('auth-input-error')) {
+                clearInvalid(e.target.id);
+            }
+        });
+        authForm.dataset.validationListenerAttached = 'true';
     }
-});
+}
 
 function initializeAuthModal() {
     const supportedTypes = window.CONFIG.supportedAuthTypes;
@@ -95,6 +101,8 @@ function initializeAuthModal() {
         skipButton.addEventListener('click', skipAuth);
         skipButton.dataset.listenerAttached = 'true';
     }
+
+    attachValidationListeners();
 }
 
 function updateAuthFields() {
@@ -161,6 +169,7 @@ function getAuthPayload() {
             payload.api_key = document.getElementById('apiKey').value;
             payload.api_key_header = document.getElementById('apiKeyHeader').value;
             if (!payload.api_key) missing.push('apiKey');
+            if (!payload.api_key_header) missing.push('apiKeyHeader');
             break;
         case 'oauth2_client_credentials':
             payload.client_id = document.getElementById('clientId').value;
@@ -175,17 +184,28 @@ function getAuthPayload() {
         case 'custom':
             try {
                 const customHeadersText = document.getElementById('customHeaders').value;
-                payload.custom_headers = JSON.parse(customHeadersText);
+                if (!customHeadersText.trim()) {
+                    missing.push({ id: 'customHeaders' });
+                } else {
+                    payload.custom_headers = JSON.parse(customHeadersText);
+                }
             } catch (e) {
-                missing.push('customHeaders');
+                missing.push({ id: 'customHeaders', message: 'Invalid JSON syntax.' });
             }
             break;
     }
 
     if (missing.length > 0) {
-        missing.forEach(id => markInvalid(id));
+        missing.forEach(entry => {
+            if (typeof entry === 'string') {
+                markInvalid(entry);
+            } else {
+                markInvalid(entry.id, entry.message);
+            }
+        });
         // Focus the first invalid field
-        const first = document.getElementById(missing[0]);
+        const firstId = typeof missing[0] === 'string' ? missing[0] : missing[0].id;
+        const first = document.getElementById(firstId);
         if (first) first.focus();
         return null;
     }
