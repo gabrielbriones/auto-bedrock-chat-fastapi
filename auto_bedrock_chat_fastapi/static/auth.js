@@ -1,4 +1,29 @@
 // Authentication functions
+
+// --- Validation helpers ---
+function markInvalid(inputId) {
+    const el = document.getElementById(inputId);
+    if (el) el.classList.add('auth-input-error');
+}
+
+function clearInvalid(inputId) {
+    const el = document.getElementById(inputId);
+    if (el) el.classList.remove('auth-input-error');
+}
+
+function clearAllValidation() {
+    document.querySelectorAll('.auth-input-error').forEach(el => {
+        el.classList.remove('auth-input-error');
+    });
+}
+
+// Clear error highlight as soon as the user starts typing
+document.addEventListener('input', (e) => {
+    if (e.target.classList.contains('auth-input-error')) {
+        e.target.classList.remove('auth-input-error');
+    }
+});
+
 function initializeAuthModal() {
     const supportedTypes = window.CONFIG.supportedAuthTypes;
     const authTypeSelector = document.getElementById('authTypeSelector');
@@ -53,6 +78,9 @@ function updateAuthFields() {
     const authType = document.getElementById('authType').value;
     const fieldsContainer = document.getElementById('authFields');
 
+    // Clear any validation highlights from the previous auth type
+    clearAllValidation();
+
     // Get all field group divs
     const allFieldGroups = fieldsContainer.querySelectorAll('div[id$="-fields"]');
 
@@ -90,24 +118,34 @@ function getAuthPayload() {
 
     if (!authType) return null;
 
+    clearAllValidation();
+
     const payload = { type: 'auth', auth_type: authType };
+    const missing = [];
 
     switch (authType) {
         case 'bearer_token':
             payload.token = document.getElementById('bearerToken').value;
+            if (!payload.token) missing.push('bearerToken');
             break;
         case 'basic_auth':
             payload.username = document.getElementById('username').value;
             payload.password = document.getElementById('password').value;
+            if (!payload.username) missing.push('username');
+            if (!payload.password) missing.push('password');
             break;
         case 'api_key':
             payload.api_key = document.getElementById('apiKey').value;
             payload.api_key_header = document.getElementById('apiKeyHeader').value;
+            if (!payload.api_key) missing.push('apiKey');
             break;
         case 'oauth2_client_credentials':
             payload.client_id = document.getElementById('clientId').value;
             payload.client_secret = document.getElementById('clientSecret').value;
             payload.token_url = document.getElementById('tokenUrl').value;
+            if (!payload.client_id) missing.push('clientId');
+            if (!payload.client_secret) missing.push('clientSecret');
+            if (!payload.token_url) missing.push('tokenUrl');
             const scope = document.getElementById('scope').value;
             if (scope) payload.scope = scope;
             break;
@@ -116,13 +154,17 @@ function getAuthPayload() {
                 const customHeadersText = document.getElementById('customHeaders').value;
                 payload.custom_headers = JSON.parse(customHeadersText);
             } catch (e) {
-                const fullInput = document.getElementById('customHeaders').value;
-                const preview = fullInput.substring(0, 50);
-                const truncated = fullInput.length > 50 ? '...' : '';
-                alert(`Invalid JSON for custom headers.\n\nError: ${e.message}\n\nYour input (first 50 chars): ${preview}${truncated}`);
-                return null;
+                missing.push('customHeaders');
             }
             break;
+    }
+
+    if (missing.length > 0) {
+        missing.forEach(id => markInvalid(id));
+        // Focus the first invalid field
+        const first = document.getElementById(missing[0]);
+        if (first) first.focus();
+        return null;
     }
 
     return payload;
@@ -130,10 +172,7 @@ function getAuthPayload() {
 
 function submitAuth() {
     const payload = getAuthPayload();
-    if (!payload) {
-        alert('Please fill in all required fields');
-        return;
-    }
+    if (!payload) return;
 
     // Disable submit button to prevent multiple submissions
     const submitBtn = document.querySelector('.auth-submit');
