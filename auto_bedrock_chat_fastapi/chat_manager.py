@@ -346,9 +346,10 @@ class ChatManager:
         Recovery sequence (each layer tried only if the previous fails):
 
         1. **Normal call** — preprocess → format → send.
-        2. **Context-window recovery** — aggressive message reduction → retry.
-        3. **Fallback model** — switch to ``config.fallback_model`` (if configured)
-           with the reduced messages and retry.
+        2. **Context-window recovery** — aggressive message reduction → re-format → retry.
+        3. **Fallback model** — re-format messages for the fallback model's parser
+           (Claude/Llama/GPT message shapes differ), switch to
+           ``config.fallback_model`` (if configured), and retry.
         4. **Graceful degradation** — if ``config.graceful_degradation`` is enabled,
            return a synthetic apology response instead of raising.
 
@@ -373,8 +374,11 @@ class ChatManager:
         messages = await self._preprocess_messages(messages, metadata, on_progress=on_progress)
 
         # ---- Format for LLM ---------------------------------------------
+        # Use the caller-supplied model_id (if any) so the correct
+        # model-specific parser is selected (Claude / Llama / GPT).
+        effective_model_id = llm_params.get("model_id")
         tools_desc = self.tool_manager.tools_desc if self.tool_manager else None
-        formatted = self.llm_client.format_messages(messages)
+        formatted = self.llm_client.format_messages(messages, model_id=effective_model_id)
 
         # ---- Layer 1: Normal call ----------------------------------------
         try:
@@ -391,7 +395,7 @@ class ChatManager:
             metadata["context_window_retries"] += 1
 
             messages = self._aggressive_message_reduction(messages)
-            formatted = self.llm_client.format_messages(messages)
+            formatted = self.llm_client.format_messages(messages, model_id=effective_model_id)
 
             logger.info(
                 f"Retrying LLM call with reduced messages: " f"{len(messages)} messages after aggressive reduction"
@@ -417,6 +421,12 @@ class ChatManager:
             )
             metadata["fallback_model_used"] = True
             fallback_params = {**llm_params, "model_id": fallback_model}
+
+            # Re-format messages for the fallback model — different model
+            # families (Claude / Llama / GPT) use different message shapes,
+            # so the ``formatted`` variable from the primary model cannot be
+            # reused safely.
+            formatted = self.llm_client.format_messages(messages, model_id=fallback_model)
 
             try:
                 result = await self.llm_client.chat_completion(

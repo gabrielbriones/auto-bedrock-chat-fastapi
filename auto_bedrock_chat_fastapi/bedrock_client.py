@@ -346,7 +346,11 @@ class BedrockClient:
             messages, tools_desc=tools_desc, temperature=temperature, max_tokens=max_tokens, **kwargs
         )
 
-    def format_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        model_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Convert ChatMessage-compatible dicts to Bedrock API format using model-specific parsers.
 
@@ -357,6 +361,10 @@ class BedrockClient:
 
         Args:
             messages: List of message dicts with role, content, tool_calls, tool_results
+            model_id: Optional model ID to select the parser.  When ``None``
+                (the default), ``self.config.model_id`` is used.  Pass an
+                explicit model ID when formatting for a fallback model so
+                the correct parser is selected.
 
         Returns:
             Messages formatted for Bedrock API in model-specific format
@@ -370,8 +378,8 @@ class BedrockClient:
         if not has_system_message:
             bedrock_messages.append({"role": "system", "content": self.config.get_system_prompt()})
 
-        # Get parser for current model
-        parser = self._get_parser(self.config.model_id)
+        # Get parser for the requested (or default) model
+        parser = self._get_parser(model_id or self.config.model_id)
 
         # Use parser to format messages (handles model-specific formatting)
         formatted_messages = parser.format_bedrock_messages(messages)

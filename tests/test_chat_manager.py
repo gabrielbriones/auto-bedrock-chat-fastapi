@@ -33,7 +33,7 @@ def mock_llm_client():
     """Mock LLM client that mimics BedrockClient interface."""
     client = MagicMock()
     # format_messages is sync
-    client.format_messages = MagicMock(side_effect=lambda msgs: msgs)
+    client.format_messages = MagicMock(side_effect=lambda msgs, **kwargs: msgs)
     # chat_completion is async
     client.chat_completion = AsyncMock(
         return_value={
@@ -582,7 +582,9 @@ class TestPipelineOrdering:
             side_effect=lambda msgs, **kw: (call_order.append("preprocess"), msgs)[1]
         )
 
-        mock_llm_client.format_messages = MagicMock(side_effect=lambda msgs: (call_order.append("format"), msgs)[1])
+        mock_llm_client.format_messages = MagicMock(
+            side_effect=lambda msgs, **kwargs: (call_order.append("format"), msgs)[1]
+        )
         mock_llm_client.chat_completion = AsyncMock(
             side_effect=lambda **kw: (
                 call_order.append("llm_call"),
@@ -971,7 +973,9 @@ class TestToolCallLoop:
             side_effect=lambda msgs, **kw: (call_order.append("preprocess"), msgs)[1]
         )
 
-        mock_llm_client.format_messages = MagicMock(side_effect=lambda msgs: (call_order.append("format"), msgs)[1])
+        mock_llm_client.format_messages = MagicMock(
+            side_effect=lambda msgs, **kwargs: (call_order.append("format"), msgs)[1]
+        )
 
         tc = [{"id": "tc_1", "name": "fn", "arguments": {}}]
         tr = [{"tool_call_id": "tc_1", "name": "fn", "result": "ok"}]

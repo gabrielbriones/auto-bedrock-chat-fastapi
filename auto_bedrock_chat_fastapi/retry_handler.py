@@ -126,7 +126,8 @@ class RetryHandler:
                     enhanced_message = (
                         f"Input is too long for the model's context window. "
                         f"Max conversation messages: {self.max_conversation_messages}. "
-                        f"Consider reducing max_conversation_messages or changing conversation_strategy. "
+                        f"Consider reducing max_conversation_messages or adjusting "
+                        f"the truncation / AI summarization settings. "
                         f"Original error: {error_message}"
                     )
                     last_exception = BedrockClientError(enhanced_message)

@@ -800,23 +800,19 @@ Prevents "Input too long" errors from lengthy conversation history:
 add_bedrock_chat(
     app,
     max_conversation_messages=20,              # Keep last 20 messages
-    conversation_strategy="sliding_window",    # How to trim history
-    preserve_system_message=True              # Always keep system prompt
+    preserve_system_message=True,              # Always keep system prompt
+    enable_ai_summarization=False,             # LLM-powered summarization (opt-in)
 )
 ```
 
-**Available Strategies:**
-
-- **`sliding_window`** (default): Preserves system message + most recent messages
-- **`truncate`**: Simple truncation keeping newest messages
-- **`smart_prune`**: Removes tool messages first, prioritizes user/assistant conversation
+History management is handled by the unified truncation pipeline (see
+[docs/AI_SUMMARIZATION.md](docs/AI_SUMMARIZATION.md) for presets and tuning).
 
 #### Environment Configuration
 
 ```bash
 # Conversation Management
 BEDROCK_MAX_CONVERSATION_MESSAGES=20
-BEDROCK_CONVERSATION_STRATEGY=sliding_window
 BEDROCK_PRESERVE_SYSTEM_MESSAGE=true
 
 # Recursive Tool Calls
@@ -971,12 +967,6 @@ class ChatConfig(BaseSettings):
         env="BEDROCK_MAX_CONVERSATION_MESSAGES",
         gt=0,
         description="Maximum messages to keep in conversation history"
-    )
-
-    conversation_strategy: str = Field(
-        default="sliding_window",
-        env="BEDROCK_CONVERSATION_STRATEGY",
-        description="Strategy for handling long conversations: 'sliding_window', 'truncate', 'smart_prune'"
     )
 
     preserve_system_message: bool = Field(
