@@ -352,9 +352,8 @@ class RetryHandler:
                     f"Tried {original_count} messages (1st attempt), then "
                     f"{fallback_count} messages (fallback). "
                     f"The conversation with chunked messages is too large for a single request. "
-                    f"Recommendations: (1) Much smaller BEDROCK_CHUNK_SIZE (10000-20000), "
-                    f"(2) Very low BEDROCK_MAX_CONVERSATION_MESSAGES (5-10), "
-                    f"(3) Start new conversation for large inputs, or (4) use Claude models. "
+                    f"Recommendations: (1) Very low BEDROCK_MAX_CONVERSATION_MESSAGES (5-10), "
+                    f"(2) Start new conversation for large inputs, or (3) use Claude models. "
                     f"Original error: {error_str}"
                 )
             elif "Unexpected token" in error_str or "expecting start token" in error_str:
@@ -373,8 +372,7 @@ class RetryHandler:
                     f"GPT OSS model context window exceeded even with aggressive trimming. "
                     f"Tried {original_count} messages (1st attempt), then "
                     f"{fallback_count} messages (fallback). "
-                    f"For very large inputs, consider: (1) smaller BEDROCK_CHUNK_SIZE, "
-                    f"(2) lower BEDROCK_MAX_CONVERSATION_MESSAGES, or "
+                    f"For very large inputs, consider: (1) lower BEDROCK_MAX_CONVERSATION_MESSAGES, or "
                     f"(3) using Claude models which handle large contexts better. "
                     f"Original error: {error_str}"
                 )

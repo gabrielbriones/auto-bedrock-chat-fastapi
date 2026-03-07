@@ -234,6 +234,18 @@ class ChatManager:
         round_count = 0
         max_rounds = self.config.max_tool_call_rounds
 
+        # Build tool-progress wrapper once (outside the loop)
+        async def _wrap_tool_progress(progress_message: str) -> None:
+            await on_progress(
+                {
+                    "type": "tool_progress",
+                    "message": progress_message,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+
+        tool_on_progress = _wrap_tool_progress if on_progress is not None else None
+
         while current_response.get("tool_calls") and round_count < max_rounds:
             round_count += 1
             tool_calls = current_response["tool_calls"]
@@ -260,7 +272,9 @@ class ChatManager:
             messages.append(assistant_msg)
 
             # 3. Execute tools
-            tool_results = await self.tool_manager.execute_tool_calls(tool_calls, auth_info=auth_info)
+            tool_results = await self.tool_manager.execute_tool_calls(
+                tool_calls, auth_info=auth_info, on_progress=tool_on_progress
+            )
             all_tool_results.extend(tool_results)
 
             # 4. Append tool-result message

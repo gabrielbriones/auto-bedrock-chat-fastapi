@@ -129,6 +129,11 @@ class BedrockChatPlugin:
         # ToolManager owns ToolsGenerator internally and resolves base_url
         self.tool_manager = ToolManager(app=self.app, config=self.config)
         self.app_base_url = self.tool_manager.base_url
+
+        # Sync config.tools_desc so get_system_prompt() sees the correct tool count
+        # and BedrockClient.chat_completion() fallback has the right descriptions
+        self.config.tools_desc = self.tool_manager.tools_desc
+
         self.chat_manager = ChatManager(
             llm_client=self.bedrock_client,
             config=self.config,
@@ -602,7 +607,10 @@ class BedrockChatPlugin:
         """Update tools description from current FastAPI routes"""
 
         try:
-            new_tools_desc = self.tool_manager.generator.generate_tools_desc()
+            # Refresh ToolManager's cached tools so ChatManager sees updated descriptions
+            self.tool_manager.refresh_tools()
+            # Keep config in sync with the refreshed tools description
+            new_tools_desc = self.tool_manager.tools_desc
             self.config.tools_desc = new_tools_desc
             logger.info(f"Updated tools: {len(new_tools_desc.get('functions', []))} functions")
         except Exception as e:
