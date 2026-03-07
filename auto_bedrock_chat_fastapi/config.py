@@ -7,6 +7,28 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
+from .defaults import (
+    DEFAULT_ENABLE_AI_SUMMARIZATION,
+    DEFAULT_EXPONENTIAL_BACKOFF,
+    DEFAULT_GRACEFUL_DEGRADATION,
+    DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
+    DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
+    DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
+    DEFAULT_LLM_CLIENT_TYPE,
+    DEFAULT_MAX_CONVERSATION_MESSAGES,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_MAX_SESSIONS,
+    DEFAULT_MAX_TOOL_CALL_ROUNDS,
+    DEFAULT_MAX_TOOL_CALLS,
+    DEFAULT_MAX_TRUNCATION_RECURSION,
+    DEFAULT_PRESERVE_SYSTEM_MESSAGE,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_SESSION_TIMEOUT,
+    DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
+    DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
+    DEFAULT_TIMEOUT,
+    VALID_LLM_CLIENT_TYPES,
+)
 from .exceptions import ConfigurationError
 
 
@@ -104,14 +126,14 @@ class ChatConfig(BaseSettings):
 
     # Session Configuration
     max_tool_calls: int = Field(
-        default=10,
+        default=DEFAULT_MAX_TOOL_CALLS,
         alias="BEDROCK_MAX_TOOL_CALLS",
         gt=0,
         description="Maximum tool calls per conversation turn",
     )
 
     max_tool_call_rounds: int = Field(
-        default=10,
+        default=DEFAULT_MAX_TOOL_CALL_ROUNDS,
         alias="BEDROCK_MAX_TOOL_CALL_ROUNDS",
         gt=0,
         description="Maximum rounds of recursive tool calls",
@@ -119,105 +141,118 @@ class ChatConfig(BaseSettings):
 
     # Conversation History Management
     max_conversation_messages: int = Field(
-        default=20,
+        default=DEFAULT_MAX_CONVERSATION_MESSAGES,
         alias="BEDROCK_MAX_CONVERSATION_MESSAGES",
         gt=0,
         description="Maximum messages to keep in conversation history",
     )
 
-    conversation_strategy: str = Field(
-        default="sliding_window",
-        alias="BEDROCK_CONVERSATION_STRATEGY",
-        description="Strategy for handling long conversations: 'sliding_window', 'truncate', 'smart_prune'",
-    )
-
     preserve_system_message: bool = Field(
-        default=True,
+        default=DEFAULT_PRESERVE_SYSTEM_MESSAGE,
         alias="BEDROCK_PRESERVE_SYSTEM_MESSAGE",
         description="Whether to always preserve the system message when trimming history",
     )
 
-    # Message Chunking Configuration
-    max_message_size: int = Field(
-        default=100000,
-        alias="BEDROCK_MAX_MESSAGE_SIZE",
-        gt=0,
-        description="Maximum characters in a single message before chunking (default ~100KB)",
-    )
-
-    chunk_size: int = Field(
-        default=80000,
-        alias="BEDROCK_CHUNK_SIZE",
-        gt=0,
-        description="Size of each chunk when splitting large messages (default ~80KB)",
-    )
-
-    chunking_strategy: str = Field(
-        default="preserve_context",
-        alias="BEDROCK_CHUNKING_STRATEGY",
-        description="Strategy for chunking large messages: 'simple', 'preserve_context', 'semantic'",
-    )
-
-    chunk_overlap: int = Field(
-        default=1000,
-        alias="BEDROCK_CHUNK_OVERLAP",
-        ge=0,
-        description="Number of characters to overlap between chunks for context continuity",
-    )
-
-    enable_message_chunking: bool = Field(
-        default=False,
-        alias="BEDROCK_ENABLE_MESSAGE_CHUNKING",
-        description="Whether to enable automatic chunking of large messages",
-    )
-
-    # Tool Result Truncation Configuration (Two-Tier System)
-    tool_result_new_response_threshold: int = Field(
-        default=500_000,
-        alias="BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD",
-        gt=0,
+    # LLM Client Configuration
+    llm_client_type: str = Field(
+        default=DEFAULT_LLM_CLIENT_TYPE,
+        alias="BEDROCK_LLM_CLIENT_TYPE",
         description=(
-            "Size threshold for truncating tool results in new/first responses (chars). "
-            "Default: 500K chars (~125K tokens) - optimized for all models including GPT OSS. "
-            "For Claude models with larger context, increase to 1M chars if needed."
+            "LLM client to use for chat completions. " "Currently supported: 'bedrock'. Future: 'openai', 'anthropic'."
         ),
     )
 
-    tool_result_new_response_target: int = Field(
-        default=425_000,
-        alias="BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET",
-        gt=0,
+    # AI Summarization Configuration
+    enable_ai_summarization: bool = Field(
+        default=DEFAULT_ENABLE_AI_SUMMARIZATION,
+        alias="BEDROCK_ENABLE_AI_SUMMARIZATION",
         description=(
-            "Target size after truncating tool results in new responses (chars, 85% of threshold). "
-            "Default: 425K chars (~106K tokens) - optimized for all models. "
-            "Maintains ~85% of threshold for consistency."
+            "Enable AI-based summarization for oversized messages and conversation history. "
+            "When enabled, uses LLM calls to intelligently condense content instead of plain text truncation. "
+            "Default: False (uses plain text truncation). Enabling this will increase LLM token usage."
         ),
     )
 
-    tool_result_history_threshold: int = Field(
-        default=50_000,
-        alias="BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD",
+    # Single-Message Truncation Configuration (Character-Based)
+    single_msg_length_threshold: int = Field(
+        default=DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
+        alias="BEDROCK_SINGLE_MSG_LENGTH_THRESHOLD",
         gt=0,
         description=(
-            "Size threshold for truncating tool results in conversation history (chars). "
-            "Default: 50K chars (~12.5K tokens) - optimized for all models. "
-            "More aggressive truncation for history to preserve context space."
+            "Single-message truncation threshold in characters. "
+            "Messages exceeding this size are truncated (plain text) or summarized (AI). "
+            "Default: 500K chars (~125K tokens). "
+            "AI summarization chunk size is derived as half of this value."
         ),
     )
 
-    tool_result_history_target: int = Field(
-        default=42_500,
-        alias="BEDROCK_TOOL_RESULT_HISTORY_TARGET",
+    single_msg_truncation_target: int = Field(
+        default=DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
+        alias="BEDROCK_SINGLE_MSG_TRUNCATION_TARGET",
         gt=0,
         description=(
-            "Target size after truncating tool results in history (chars, 85% of threshold). "
-            "Default: 42.5K chars (~10.6K tokens) - optimized for all models. "
-            "Maintains ~85% of threshold for consistent truncation behavior."
+            "Target size after single-message truncation in characters (85% of threshold). "
+            "Default: 425K chars (~106K tokens)."
         ),
     )
+
+    # History Truncation Configuration (Character-Based)
+    history_total_length_threshold: int = Field(
+        default=DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
+        alias="BEDROCK_HISTORY_TOTAL_LENGTH_THRESHOLD",
+        gt=0,
+        description=(
+            "Total conversation history threshold in characters. "
+            "When the sum of all message sizes exceeds this, history truncation is triggered. "
+            "Default: 650K chars (~163K-217K tokens depending on content type)."
+        ),
+    )
+
+    history_msg_length_threshold: int = Field(
+        default=DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
+        alias="BEDROCK_HISTORY_MSG_LENGTH_THRESHOLD",
+        gt=0,
+        description=(
+            "Per-message threshold during history truncation in characters. "
+            "Messages exceeding this size are truncated during history-level processing. "
+            "Default: 100K chars (~25K tokens)."
+        ),
+    )
+
+    history_msg_truncation_target: int = Field(
+        default=DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
+        alias="BEDROCK_HISTORY_MSG_TRUNCATION_TARGET",
+        gt=0,
+        description=(
+            "Per-message target during history truncation in characters "
+            "(85% of history_msg_length_threshold). "
+            "Default: 85K chars (~21K tokens)."
+        ),
+    )
+
+    max_truncation_recursion: int = Field(
+        default=DEFAULT_MAX_TRUNCATION_RECURSION,
+        alias="BEDROCK_MAX_TRUNCATION_RECURSION",
+        ge=1,
+        le=10,
+        description=(
+            "Maximum recursion depth for history truncation safety-net halving. "
+            "If history still exceeds threshold after all 3 truncation steps, the process "
+            "re-runs with halved thresholds, up to this many times. Default: 3."
+        ),
+    )
+
+    # NOTE: Legacy tool_result_* settings (BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD,
+    # BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET, BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD,
+    # BEDROCK_TOOL_RESULT_HISTORY_TARGET) have been removed in Task 3.6.
+    # Use the generalized settings instead:
+    #   new_response_threshold → single_msg_length_threshold
+    #   new_response_target    → single_msg_truncation_target
+    #   history_msg_threshold  → history_msg_length_threshold
+    #   history_msg_target     → history_msg_truncation_target
 
     timeout: int = Field(
-        default=30,
+        default=DEFAULT_TIMEOUT,
         alias="BEDROCK_TIMEOUT",
         gt=0,
         description="Timeout for API calls in seconds",
@@ -225,14 +260,14 @@ class ChatConfig(BaseSettings):
 
     # WebSocket Configuration
     max_sessions: int = Field(
-        default=1000,
+        default=DEFAULT_MAX_SESSIONS,
         alias="BEDROCK_MAX_SESSIONS",
         gt=0,
         description="Maximum concurrent WebSocket sessions",
     )
 
     session_timeout: int = Field(
-        default=3600,
+        default=DEFAULT_SESSION_TIMEOUT,
         alias="BEDROCK_SESSION_TIMEOUT",
         gt=0,
         description="Session timeout in seconds",
@@ -358,21 +393,21 @@ class ChatConfig(BaseSettings):
 
     # Error Handling Configuration
     max_retries: int = Field(
-        default=3,
+        default=DEFAULT_MAX_RETRIES,
         alias="BEDROCK_MAX_RETRIES",
         ge=0,
         description="Maximum retries for failed requests",
     )
 
     retry_delay: float = Field(
-        default=1.0,
+        default=DEFAULT_RETRY_DELAY,
         alias="BEDROCK_RETRY_DELAY",
         ge=0.0,
         description="Delay between retries in seconds",
     )
 
     exponential_backoff: bool = Field(
-        default=True,
+        default=DEFAULT_EXPONENTIAL_BACKOFF,
         alias="BEDROCK_EXPONENTIAL_BACKOFF",
         description="Use exponential backoff for retries",
     )
@@ -384,7 +419,7 @@ class ChatConfig(BaseSettings):
     )
 
     graceful_degradation: bool = Field(
-        default=True,
+        default=DEFAULT_GRACEFUL_DEGRADATION,
         alias="BEDROCK_GRACEFUL_DEGRADATION",
         description="Enable graceful degradation on errors",
     )
@@ -547,30 +582,37 @@ class ChatConfig(BaseSettings):
 
         return v
 
-    @field_validator("conversation_strategy")
+    @field_validator("llm_client_type")
     @classmethod
-    def validate_conversation_strategy(cls, v):
-        """Validate conversation strategy"""
-        valid_strategies = {"sliding_window", "truncate", "smart_prune"}
-        if v not in valid_strategies:
-            raise ValueError(f"conversation_strategy must be one of: {', '.join(valid_strategies)}")
+    def validate_llm_client_type(cls, v):
+        """Validate LLM client type"""
+        if v not in VALID_LLM_CLIENT_TYPES:
+            raise ValueError(f"llm_client_type must be one of: {', '.join(sorted(VALID_LLM_CLIENT_TYPES))}")
         return v
 
-    @field_validator("chunking_strategy")
+    @field_validator("single_msg_truncation_target")
     @classmethod
-    def validate_chunking_strategy(cls, v):
-        """Validate chunking strategy"""
-        valid_strategies = {"simple", "preserve_context", "semantic"}
-        if v not in valid_strategies:
-            raise ValueError(f"chunking_strategy must be one of: {', '.join(valid_strategies)}")
+    def validate_single_msg_truncation_target(cls, v, info):
+        """Validate single_msg_truncation_target < single_msg_length_threshold"""
+        # Access threshold from info.data (already validated fields)
+        threshold = info.data.get("single_msg_length_threshold")
+        if threshold is not None and v >= threshold:
+            raise ValueError(
+                f"single_msg_truncation_target ({v:,}) must be less than "
+                f"single_msg_length_threshold ({threshold:,})"
+            )
         return v
 
-    @field_validator("chunk_size", "max_message_size")
+    @field_validator("history_msg_truncation_target")
     @classmethod
-    def validate_chunk_sizes(cls, v, info):
-        """Validate chunk and message sizes"""
-        if v <= 0:
-            raise ValueError(f"{info.field_name} must be positive")
+    def validate_history_msg_truncation_target(cls, v, info):
+        """Validate history_msg_truncation_target < history_msg_length_threshold"""
+        threshold = info.data.get("history_msg_length_threshold")
+        if threshold is not None and v >= threshold:
+            raise ValueError(
+                f"history_msg_truncation_target ({v:,}) must be less than "
+                f"history_msg_length_threshold ({threshold:,})"
+            )
         return v
 
     def get_system_prompt(self) -> str:
@@ -615,8 +657,8 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
 
         return config
 
-    def get_bedrock_params(self) -> Dict[str, Any]:
-        """Get parameters for Bedrock API calls"""
+    def get_llm_params(self) -> Dict[str, Any]:
+        """Get parameters for LLM API calls."""
         return {
             "model_id": self.model_id,
             "temperature": self.temperature,
@@ -675,43 +717,36 @@ def load_config(
                         raise ConfigurationError(f"Invalid model ID: {model_val}")
 
             # Validate conversation management fields
-            if "conversation_strategy" in overrides:
-                strategy_val = overrides["conversation_strategy"]
-                valid_strategies = {"sliding_window", "truncate", "smart_prune"}
-                if strategy_val not in valid_strategies:
-                    raise ConfigurationError(f"conversation_strategy must be one of: {', '.join(valid_strategies)}")
-
             if "max_conversation_messages" in overrides:
                 max_msg_val = overrides["max_conversation_messages"]
                 if not isinstance(max_msg_val, int) or max_msg_val <= 0:
                     raise ConfigurationError("max_conversation_messages must be a positive integer")
 
-            # Validate chunking fields
-            if "chunking_strategy" in overrides:
-                strategy_val = overrides["chunking_strategy"]
-                valid_strategies = {"simple", "preserve_context", "semantic"}
-                if strategy_val not in valid_strategies:
-                    raise ConfigurationError(f"chunking_strategy must be one of: {', '.join(valid_strategies)}")
+            # Validate LLM client type
+            if "llm_client_type" in overrides:
+                if overrides["llm_client_type"] not in VALID_LLM_CLIENT_TYPES:
+                    raise ConfigurationError(
+                        f"llm_client_type must be one of: {', '.join(sorted(VALID_LLM_CLIENT_TYPES))}"
+                    )
 
-            if "max_message_size" in overrides:
-                size_val = overrides["max_message_size"]
-                if not isinstance(size_val, int) or size_val <= 0:
-                    raise ConfigurationError("max_message_size must be a positive integer")
+            # Validate truncation target < threshold relationships
+            if "single_msg_truncation_target" in overrides and "single_msg_length_threshold" in overrides:
+                if overrides["single_msg_truncation_target"] >= overrides["single_msg_length_threshold"]:
+                    raise ConfigurationError(
+                        "single_msg_truncation_target must be less than single_msg_length_threshold"
+                    )
 
-            if "chunk_size" in overrides:
-                chunk_val = overrides["chunk_size"]
-                if not isinstance(chunk_val, int) or chunk_val <= 0:
-                    raise ConfigurationError("chunk_size must be a positive integer")
+            if "history_msg_truncation_target" in overrides and "history_msg_length_threshold" in overrides:
+                if overrides["history_msg_truncation_target"] >= overrides["history_msg_length_threshold"]:
+                    raise ConfigurationError(
+                        "history_msg_truncation_target must be less than history_msg_length_threshold"
+                    )
 
-            if "chunk_overlap" in overrides:
-                overlap_val = overrides["chunk_overlap"]
-                if not isinstance(overlap_val, int) or overlap_val < 0:
-                    raise ConfigurationError("chunk_overlap must be a non-negative integer")
-
-            # Validate chunk_size vs max_message_size relationship
-            if "chunk_size" in overrides and "max_message_size" in overrides:
-                if overrides["chunk_size"] >= overrides["max_message_size"]:
-                    raise ConfigurationError("chunk_size must be smaller than max_message_size")
+            # Validate max_truncation_recursion
+            if "max_truncation_recursion" in overrides:
+                val = overrides["max_truncation_recursion"]
+                if not isinstance(val, int) or val < 1 or val > 10:
+                    raise ConfigurationError("max_truncation_recursion must be between 1 and 10")
 
             # Create base config from .env
             config = ChatConfig()

@@ -9,38 +9,40 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
-from .bedrock_client import BedrockClient
+from .chat_manager import ChatManager
 from .config import ChatConfig
 from .exceptions import WebSocketError
 from .session_manager import ChatMessage, ChatSessionManager
-from .tools_generator import ToolsGenerator
+from .tool_manager import AuthInfo
 
 logger = logging.getLogger(__name__)
 
 
 class WebSocketChatHandler:
-    """Handles WebSocket connections and chat communication"""
+    """Handles WebSocket connections and chat communication.
+
+    The handler manages WebSocket transport, session lifecycle, authentication,
+    and tool execution.  LLM calls and message preprocessing are delegated to
+    :class:`~auto_bedrock_chat_fastapi.chat_manager.ChatManager`.
+    """
 
     def __init__(
         self,
         session_manager: ChatSessionManager,
-        bedrock_client: BedrockClient,
-        tools_generator: ToolsGenerator,
         config: ChatConfig,
+        chat_manager: ChatManager,
         app_base_url: str = "http://localhost:8000",
     ):
         self.session_manager = session_manager
-        self.bedrock_client = bedrock_client
-        self.tools_generator = tools_generator
         self.config = config
         self.app_base_url = app_base_url.rstrip("/")
+        self.chat_manager = chat_manager
 
         # HTTP client for making internal API calls
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
         # Statistics
         self._total_messages_handled = 0
-        self._total_tool_calls_executed = 0
         self._total_errors = 0
 
     async def handle_connection(self, websocket: WebSocket, user_id: Optional[str] = None):
@@ -175,7 +177,7 @@ class WebSocketChatHandler:
             # Get conversation context
             context_messages = await self.session_manager.get_context_messages(session.session_id)
 
-            # Convert ChatMessage objects to dicts for bedrock formatting
+            # Convert ChatMessage objects to dicts for LLM formatting
             message_dicts = [
                 {
                     "role": msg.role,
@@ -214,36 +216,65 @@ class WebSocketChatHandler:
                 # Insert the enhanced system prompt at the beginning
                 message_dicts.insert(0, {"role": "system", "content": enhanced_system_prompt})
 
-            # Convert to Bedrock format using BedrockClient
-            bedrock_messages = self.bedrock_client.format_messages_for_bedrock(message_dicts)
+            # Get LLM parameters
+            llm_params = self.config.get_llm_params()
 
-            # Get tools description
-            tools_desc = self.tools_generator.generate_tools_desc()
+            # ------------------------------------------------------------------
+            # Delegate to ChatManager (preprocessing + LLM call + tool loop)
+            # ------------------------------------------------------------------
 
-            # Call Bedrock with bedrock params
-            bedrock_params = self.config.get_bedrock_params()
-
-            response = await self.bedrock_client.chat_completion(
-                messages=bedrock_messages,
-                tools_desc=tools_desc,
-                **bedrock_params,
+            # Build auth_info from session for tool call execution
+            auth_info = AuthInfo(
+                credentials=session.credentials,
+                auth_handler=session.auth_handler,
             )
 
-            # Process tool calls recursively if any
-            (
-                final_response,
-                all_tool_results,
-            ) = await self._handle_tool_calls_recursively(session.session_id, response, tools_desc, websocket, session)
-            content = final_response.get("content") or ""  # Handle None content gracefully
-            logger.debug(f"Bedrock response ({len(content):,} chars): {content[:100]}")
+            # Closure: send progress updates to the WebSocket client
+            async def _on_progress(msg_dict: Dict[str, Any]) -> None:
+                await self._send_message(websocket, msg_dict)
 
-            # Add the final AI response to history (if not already added)
+            result = await self.chat_manager.chat_completion(
+                messages=message_dicts,
+                auth_info=auth_info,
+                on_progress=_on_progress,
+                **llm_params,
+            )
+
+            final_response = result.response
+            content = final_response.get("content") or ""
+            logger.debug(f"Chat completion response ({len(content):,} chars): {content[:100]}")
+
+            # ------------------------------------------------------------------
+            # Sync intermediate tool-loop messages back to session history
+            # ------------------------------------------------------------------
+            tool_rounds = result.metadata.get("tool_call_rounds", 0)
+            if tool_rounds > 0:
+                # Find the last user message in result.messages — everything
+                # after it was appended during the tool call loop.
+                last_user_idx = None
+                for i in range(len(result.messages) - 1, -1, -1):
+                    if result.messages[i].get("role") == "user":
+                        last_user_idx = i
+                        break
+
+                if last_user_idx is not None:
+                    for msg_dict in result.messages[last_user_idx + 1 :]:
+                        chat_msg = ChatMessage(
+                            role=msg_dict["role"],
+                            content=msg_dict.get("content", ""),
+                            tool_calls=msg_dict.get("tool_calls", []),
+                            tool_results=msg_dict.get("tool_results", []),
+                            metadata=msg_dict.get("metadata", {}),
+                        )
+                        await self.session_manager.add_message(session.session_id, chat_msg)
+
+            # Add the final AI response to history (if not a dangling tool call)
             if not final_response.get("tool_calls"):
                 ai_message = ChatMessage(
                     role="assistant",
-                    content=final_response.get("content") or "",  # Handle None content gracefully
+                    content=final_response.get("content") or "",
                     tool_calls=[],
-                    tool_results=all_tool_results,
+                    tool_results=[],
                     metadata=final_response.get("metadata", {}),
                 )
                 await self.session_manager.add_message(session.session_id, ai_message)
@@ -263,14 +294,14 @@ class WebSocketChatHandler:
                     for r in kb_results
                 ]
 
-            # Send response to client (use final response data)
+            # Send response to client
             await self._send_message(
                 websocket,
                 {
                     "type": "ai_response",
-                    "message": final_response.get("content") or "",  # Handle None content gracefully
+                    "message": final_response.get("content") or "",
                     "tool_calls": final_response.get("tool_calls", []),
-                    "tool_results": all_tool_results,
+                    "tool_results": result.tool_results,
                     "timestamp": datetime.now().isoformat(),
                     "metadata": response_metadata,
                 },
@@ -291,385 +322,6 @@ class WebSocketChatHandler:
                     "timestamp": datetime.now().isoformat(),
                 },
             )
-
-    async def _execute_tool_calls(self, tool_calls: List[Dict[str, Any]], session=None) -> List[Dict[str, Any]]:
-        """Execute tool calls by making HTTP requests to API endpoints
-
-        Args:
-            tool_calls: List of tool calls to execute
-            session: ChatSession with authentication info (optional)
-        """
-
-        results = []
-
-        for tool_call in tool_calls[: self.config.max_tool_calls]:
-            try:
-                logger.debug(f"Executing tool call: {tool_call}")
-                self._total_tool_calls_executed += 1
-
-                function_name = tool_call.get("name")
-                arguments = tool_call.get("arguments", {})
-
-                # Get tool metadata
-                tool_metadata = self.tools_generator.get_tool_metadata(function_name)
-                if not tool_metadata:
-                    logger.warning(f"Unknown tool requested: {function_name}")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call.get("id"),
-                            "name": function_name,
-                            "error": f"Unknown tool: {function_name}",
-                        }
-                    )
-                    continue
-
-                # Validate arguments
-                if not self.tools_generator.validate_tool_call(function_name, arguments):
-                    logger.warning(f"Invalid arguments for tool {function_name}: {arguments}")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call.get("id"),
-                            "name": function_name,
-                            "error": "Invalid arguments",
-                        }
-                    )
-                    continue
-
-                # Execute tool call with authentication if available
-                result = await self._execute_single_tool_call(tool_metadata, arguments, session)
-                # logger.debug(f"Tool call result for {function_name}: {result}")
-
-                results.append(
-                    {
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "result": result,
-                    }
-                )
-
-            except Exception as e:
-                logger.error(f"Error executing tool call {function_name}: {str(e)}")
-                results.append(
-                    {
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "error": str(e),
-                    }
-                )
-
-        return results
-
-    async def _execute_tool_calls_with_progress(
-        self, tool_calls: List[Dict[str, Any]], websocket: WebSocket, round_number: int
-    ) -> List[Dict[str, Any]]:
-        """Execute tool calls with progress updates to the UI"""
-
-        results = []
-        total_tools = len(tool_calls[: self.config.max_tool_calls])
-
-        for i, tool_call in enumerate(tool_calls[: self.config.max_tool_calls], 1):
-            try:
-                logger.debug(f"Executing tool call {i}/{total_tools}: {tool_call}")
-                self._total_tool_calls_executed += 1
-
-                function_name = tool_call.get("name")
-                arguments = tool_call.get("arguments", {})
-
-                # Send progress update
-                await self._send_message(
-                    websocket,
-                    {
-                        "type": "typing",
-                        "message": f"Calling {function_name}... ({i}/{total_tools})",
-                        "timestamp": datetime.now().isoformat(),
-                    },
-                )
-
-                # Get tool metadata
-                tool_metadata = self.tools_generator.get_tool_metadata(function_name)
-                if not tool_metadata:
-                    logger.warning(f"Unknown tool requested: {function_name}")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call.get("id"),
-                            "name": function_name,
-                            "error": f"Unknown tool: {function_name}",
-                        }
-                    )
-                    continue
-
-                # Validate arguments
-                if not self.tools_generator.validate_tool_call(function_name, arguments):
-                    results.append(
-                        {
-                            "tool_call_id": tool_call.get("id"),
-                            "name": function_name,
-                            "error": "Invalid arguments",
-                        }
-                    )
-                    continue
-
-                # Execute tool call
-                result = await self._execute_single_tool_call(tool_metadata, arguments)
-                logger.debug(f"Tool call result for {function_name}: {result}")
-
-                results.append(
-                    {
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "result": result,
-                    }
-                )
-
-            except Exception as e:
-                logger.error(f"Error executing tool call {function_name}: {str(e)}")
-                results.append(
-                    {
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "error": str(e),
-                    }
-                )
-
-        # Final progress update
-        await self._send_message(
-            websocket,
-            {
-                "type": "typing",
-                "message": f"Processing results... (Round {round_number} complete)",
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
-
-        return results
-
-    async def _execute_single_tool_call(self, tool_metadata: Dict, arguments: Dict, session=None) -> Any:
-        """Execute a single tool call
-
-        Args:
-            tool_metadata: Tool metadata including path, method, and auth config
-            arguments: Tool call arguments
-            session: ChatSession with authentication info (optional)
-        """
-
-        method = tool_metadata["method"]
-        path = tool_metadata["path"]
-
-        # Build URL
-        url = f"{self.app_base_url}{path}"
-
-        # Substitute path parameters
-        path_params = {}
-        query_params = {}
-        body_data = {}
-
-        # Categorize arguments
-        for arg_name, arg_value in arguments.items():
-            if f"{{{arg_name}}}" in path:
-                path_params[arg_name] = arg_value
-                url = url.replace(f"{{{arg_name}}}", str(arg_value))
-            else:
-                if method in ["GET", "DELETE"]:
-                    query_params[arg_name] = arg_value
-                else:
-                    body_data[arg_name] = arg_value
-
-        # Prepare request
-        request_kwargs = {
-            "url": url,
-            "params": query_params if query_params else None,
-        }
-
-        # Add body data for POST/PUT/PATCH
-        if method in ["POST", "PUT", "PATCH"] and body_data:
-            request_kwargs["json"] = body_data
-
-        # Add headers
-        request_kwargs["headers"] = {
-            "Content-Type": "application/json",
-            "User-Agent": "auto-bedrock-chat-fastapi/internal",
-        }
-
-        # Apply authentication if session has credentials configured
-        if session and session.credentials and session.auth_handler:
-            auth_type_str = session.credentials.get_auth_type_string()
-            if auth_type_str != "none":
-                try:
-                    # Get tool-specific auth config from metadata
-                    tool_auth_config = tool_metadata.get("_metadata", {}).get("authentication")
-
-                    # Apply authentication to headers
-                    request_kwargs["headers"] = await session.auth_handler.apply_auth_to_headers(
-                        request_kwargs["headers"],
-                        tool_auth_config,
-                    )
-                    logger.debug(f"Applied {auth_type_str} authentication to tool call")
-
-                except Exception as e:
-                    logger.error(f"Error applying authentication: {str(e)}")
-                    return {"error": f"Authentication failed: {str(e)}"}
-
-        # Make HTTP request
-        try:
-            if method == "GET":
-                response = await self.http_client.get(**request_kwargs)
-            elif method == "POST":
-                response = await self.http_client.post(**request_kwargs)
-            elif method == "PUT":
-                response = await self.http_client.put(**request_kwargs)
-            elif method == "PATCH":
-                response = await self.http_client.patch(**request_kwargs)
-            elif method == "DELETE":
-                response = await self.http_client.delete(**request_kwargs)
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
-
-            # Handle response
-            if response.status_code >= 400:
-                error_detail = response.text
-                try:
-                    error_json = response.json()
-                    error_detail = error_json.get("detail", error_detail)
-                except BaseException:
-                    pass
-
-                return {
-                    "error": f"HTTP {response.status_code}: {error_detail}",
-                    "status_code": response.status_code,
-                }
-
-            # Return successful response
-            try:
-                return response.json()
-            except BaseException:
-                return {"result": response.text, "status_code": response.status_code}
-
-        except httpx.TimeoutException:
-            return {"error": "Request timeout"}
-        except httpx.RequestError as e:
-            return {"error": f"Request failed: {str(e)}"}
-        except Exception as e:
-            return {"error": f"Unexpected error: {str(e)}"}
-
-    async def _handle_tool_calls_recursively(
-        self,
-        session_id: str,
-        initial_response: Dict[str, Any],
-        tools_desc: Optional[Dict],
-        websocket: WebSocket,
-        session=None,
-    ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        """
-        Handle tool calls recursively until AI provides a final response without more tool calls.
-
-        Args:
-            session_id: The chat session ID
-            initial_response: The initial AI response that may contain tool calls
-            tools_desc: Available tools description
-            websocket: WebSocket connection
-            session: ChatSession object with authentication info
-
-        Returns:
-            Tuple of (final_response, all_tool_results)
-        """
-        current_response = initial_response
-        all_tool_results = []
-        round_count = 0
-        max_rounds = self.config.max_tool_call_rounds
-
-        # If no initial tool calls, return the response as-is
-        if not current_response.get("tool_calls"):
-            logger.debug("No tool calls in response, returning directly")
-            return current_response, all_tool_results
-
-        while current_response.get("tool_calls") and round_count < max_rounds:
-            round_count += 1
-
-            await self._send_message(
-                websocket,
-                {
-                    "type": "typing",
-                    "message": current_response.get("content") or "Working on your request...",  # Handle None content
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-
-            logger.debug(f"Tool call round {round_count}, processing {len(current_response['tool_calls'])} tool calls")
-
-            # Add assistant message with tool calls (before executing them)
-            # This preserves the actual assistant reasoning in the conversation
-            assistant_message = ChatMessage(
-                role="assistant",
-                content=current_response.get("content", ""),
-                tool_calls=current_response["tool_calls"],
-            )
-            await self.session_manager.add_message(session_id, assistant_message)
-
-            # Execute the tool calls
-            tool_results = await self._execute_tool_calls(current_response["tool_calls"], session)
-            all_tool_results.extend(tool_results)
-
-            # Add tool results to session for all models
-            # The message formatter (bedrock_client.format_messages_for_bedrock) will handle model-specific formatting
-            tool_message = ChatMessage(
-                role="tool",
-                content=f"Tool results (round {round_count})",
-                tool_calls=current_response["tool_calls"],
-                tool_results=tool_results,
-                metadata={"is_tool_result": True},
-            )
-            await self.session_manager.add_message(session_id, tool_message)
-
-            # Get updated context and make another request
-            updated_context = await self.session_manager.get_context_messages(session_id)
-            updated_message_dicts = [
-                {
-                    "role": msg.role,
-                    "content": msg.content,
-                    "tool_calls": msg.tool_calls if hasattr(msg, "tool_calls") and msg.tool_calls else [],
-                    "tool_results": msg.tool_results if hasattr(msg, "tool_results") and msg.tool_results else [],
-                }
-                for msg in updated_context
-            ]
-            updated_bedrock_messages = self.bedrock_client.format_messages_for_bedrock(updated_message_dicts)
-
-            # Get next response from AI
-            current_response = await self.bedrock_client.chat_completion(
-                messages=updated_bedrock_messages,
-                tools_desc=tools_desc,
-                **self.config.get_bedrock_params(),
-            )
-
-            # Check if response is just a placeholder (happens sometimes with Llama)
-            response_content = current_response.get("content", "").strip()
-            is_placeholder = response_content.startswith("Tool results (round")
-
-            if is_placeholder and not current_response.get("tool_calls"):
-                # This is an empty placeholder, force tool calling to continue or end
-                logger.warning(
-                    f"Received placeholder response '{response_content}' with no tool calls. "
-                    f"This likely indicates Llama confusion. Ending conversation loop."
-                )
-                # Clear content and treat as final response
-                current_response["content"] = ""
-                break
-
-            if current_response.get("tool_calls"):
-                logger.debug(
-                    f"AI requested {len(current_response['tool_calls'])} more tool calls in round {round_count + 1}"
-                )
-            else:
-                logger.debug(f"AI provided final response after {round_count} tool call rounds")
-
-        if round_count >= max_rounds and current_response.get("tool_calls"):
-            logger.warning(f"Reached maximum tool call rounds ({max_rounds}), stopping recursion")
-            # Add a note to the response about hitting the limit
-            content = current_response.get("content", "")
-            content += f"\n\n[Note: Reached maximum tool call limit of {max_rounds} rounds]"
-            current_response["content"] = content
-            current_response["tool_calls"] = []  # Stop further tool calls
-
-        return current_response, all_tool_results
 
     async def _handle_ping(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle ping message"""
@@ -958,14 +610,14 @@ class WebSocketChatHandler:
 
         session_stats = await self.session_manager.get_statistics()
 
+        tool_manager = getattr(self.chat_manager, "tool_manager", None)
         return {
             "websocket": {
                 "total_messages_handled": self._total_messages_handled,
-                "total_tool_calls_executed": self._total_tool_calls_executed,
                 "total_errors": self._total_errors,
             },
             "sessions": session_stats,
-            "tools": self.tools_generator.get_tool_statistics(),
+            "tools": tool_manager.get_statistics() if tool_manager else {},
         }
 
     async def _retrieve_kb_context(self, query: str) -> Optional[List[Dict[str, Any]]]:
@@ -989,7 +641,7 @@ class WebSocketChatHandler:
             vector_db = VectorDB(self.config.kb_database_path)
 
             # Generate embedding for the query
-            query_embedding = await self.bedrock_client.generate_embedding(
+            query_embedding = await self.chat_manager.llm_client.generate_embedding(
                 text=query, model_id=self.config.kb_embedding_model
             )
 

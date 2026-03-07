@@ -120,7 +120,9 @@ class RetryHandler:
                 error_code, error_message = self._extract_error_info(e)
 
                 # Check for context length issues and enhance error message
-                if error_code == "ValidationException" and "Input is too long" in error_message:
+                if error_code == "ValidationException" and (
+                    "Input is too long" in error_message or "prompt is too long" in error_message
+                ):
                     enhanced_message = (
                         f"Input is too long for the model's context window. "
                         f"Max conversation messages: {self.max_conversation_messages}. "
@@ -207,6 +209,7 @@ class RetryHandler:
         error_str = str(error)
         return (
             "Input is too long" in error_str
+            or "prompt is too long" in error_str  # Claude/Bedrock token-limit error
             or "max_tokens must be at least 1" in error_str
             or "got -" in error_str  # Negative max_tokens
             or "length limit exceeded" in error_str  # Request body too large

@@ -1,21 +1,44 @@
-"""Tools generator to convert FastAPI routes to AI-callable tools"""
+"""Tool Manager — owns tool generation, validation, and execution.
+
+This module encapsulates all tool-related concerns:
+
+- **Tool generation**: ``ToolsGenerator`` converts OpenAPI specs (from FastAPI
+  apps or standalone spec files) into AI-callable tool descriptions.
+- **Tool management**: ``ToolManager`` creates and owns a ``ToolsGenerator``,
+  caches the resulting ``tools_desc`` so it is not regenerated on every user
+  message, and provides a single entry point for validation and execution.
+- **Tool execution**: ``ToolManager`` makes HTTP requests to API endpoints,
+  applying authentication from an ``AuthInfo`` dataclass.
+
+``ToolManager`` is injected into ``ChatManager`` which calls it during the
+tool-call loop.  ``websocket_handler.py`` no longer owns tool execution.
+"""
 
 import json
 import logging
+import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
+import httpx
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from .config import ChatConfig
+from .auth_handler import AuthenticationHandler, Credentials
+from .config import ChatConfig, load_config
 from .exceptions import ToolsGenerationError
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# ToolsGenerator
+# ---------------------------------------------------------------------------
+
+
 class ToolsGenerator:
-    """Generates tool descriptions from FastAPI routes or OpenAPI specs for AI model consumption"""
+    """Generates tool descriptions from FastAPI routes or OpenAPI specs for AI model consumption."""
 
     def __init__(
         self,
@@ -154,32 +177,76 @@ class ToolsGenerator:
         except OSError as e:
             raise ToolsGenerationError(f"Failed to open OpenAPI spec file {spec_path}: {e}")
 
-    def get_api_base_url(self) -> Optional[str]:
-        """Extract API base URL from OpenAPI spec or configuration"""
+    def get_api_base_url(self) -> str:
+        """
+        Determine API base URL for internal API calls.
+
+        Priority order:
+        1. Explicit api_base_url configuration (recommended for production)
+        2. OpenAPI spec servers[0].url (auto-detected from framework specs)
+        3. Environment variables (HOST/PORT, SERVER_HOST/SERVER_PORT, etc.)
+        4. Default fallback (http://localhost:8000)
+
+        For production deployments, it's strongly recommended to explicitly
+        configure the api_base_url parameter rather than relying on auto-detection.
+        """
 
         # Priority 1: Explicit configuration
         if self.config.api_base_url:
+            logger.debug(f"Using configured API base URL: {self.config.api_base_url}")
             return self.config.api_base_url
 
         # Priority 2: Extract from OpenAPI spec
-        # Ensure schema is loaded
         try:
             schema = self._get_openapi_schema()
             servers = schema.get("servers", [])
             if servers:
-                # Use the first server URL
                 first_server = servers[0]
                 if isinstance(first_server, dict) and "url" in first_server:
+                    logger.debug(f"Using API base URL from OpenAPI spec: {first_server['url']}")
                     return first_server["url"]
         except Exception as e:
             logger.debug(f"Could not extract base URL from OpenAPI spec: {e}")
 
-        # Priority 3: Default for FastAPI apps
-        if self.app:
-            return "http://localhost:8000"  # Will be improved in plugin
+        # Priority 3: Detect from environment variables
+        detected_url = self._detect_runtime_base_url()
+        if detected_url:
+            logger.debug(f"Detected runtime API base URL: {detected_url}")
+            return detected_url
 
-        # Priority 4: Generic default
+        # Priority 4: Default fallback
+        logger.debug("Using default API base URL: http://localhost:8000")
         return "http://localhost:8000"
+
+    def _detect_runtime_base_url(self) -> Optional[str]:
+        """
+        Try to detect the base URL from runtime environment.
+
+        Checks standard environment variables used by common deployment
+        platforms and tools. For production deployments, it's recommended
+        to explicitly set the api_base_url configuration parameter.
+        """
+
+        # Priority 1: Check standard environment variables
+        host_env = os.getenv("HOST")
+        port_env = os.getenv("PORT")
+        if host_env is not None and port_env is not None:
+            scheme = "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
+            return f"{scheme}://{host_env}:{port_env}"
+
+        # Priority 2: Check common deployment environment variables
+        for host_var, port_var in [
+            ("SERVER_HOST", "SERVER_PORT"),
+            ("APP_HOST", "APP_PORT"),
+            ("WEB_HOST", "WEB_PORT"),
+        ]:
+            host = os.getenv(host_var)
+            port = os.getenv(port_var)
+            if host and port:
+                scheme = "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
+                return f"{scheme}://{host}:{port}"
+
+        return None
 
     def _create_function_description(self, path: str, method: str, operation: Dict) -> Optional[Dict]:
         """Create function description for Bedrock tool calling"""
@@ -589,3 +656,423 @@ class ToolsGenerator:
 
         # Return None if no auth config found, otherwise return the config
         return auth_config if auth_config else None
+
+
+# ---------------------------------------------------------------------------
+# AuthInfo — lightweight, session-free authentication data
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AuthInfo:
+    """Authentication information for tool call execution.
+
+    This is a transport-agnostic representation of auth state.  The WebSocket
+    handler (or any other caller) builds an ``AuthInfo`` from the session's
+    ``Credentials`` / ``AuthenticationHandler`` before passing it to
+    ``ToolManager`` or ``ChatManager``.
+
+    Attributes:
+        credentials: The ``Credentials`` dataclass (bearer token, API key, etc.).
+        auth_handler: The ``AuthenticationHandler`` that knows how to apply
+            ``credentials`` to HTTP request headers.
+    """
+
+    credentials: Optional[Credentials] = None
+    auth_handler: Optional[AuthenticationHandler] = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Return ``True`` if usable credentials are present."""
+        if self.credentials is None:
+            return False
+        auth_type_str = self.credentials.get_auth_type_string()
+        return auth_type_str != "none"
+
+
+# ---------------------------------------------------------------------------
+# ToolManager
+# ---------------------------------------------------------------------------
+
+
+class ToolManager:
+    """Manages tool generation, validation, and execution.
+
+    ``ToolManager`` owns a ``ToolsGenerator`` (exposed as ``self.generator``)
+    and handles the full lifecycle: generate tool descriptions from an OpenAPI
+    spec, cache them, validate tool calls, and execute them via HTTP.
+
+    The constructor accepts the same parameters as ``ToolsGenerator`` (``app``,
+    ``openapi_spec``) so callers don't need to create one separately.  For
+    testing, pass a pre-built or mock generator via ``tools_generator=``.
+
+    Args:
+        app: FastAPI application instance (creates ``ToolsGenerator`` internally).
+        config: Application configuration (``ChatConfig`` instance).
+        openapi_spec: OpenAPI spec (path, dict, or ``Path``) for standalone usage.
+        tools_generator: Pre-built ``ToolsGenerator`` instance (overrides
+            ``app``/``openapi_spec``).  Useful for testing with mocks.
+        base_url: Override the auto-detected base URL.
+
+    Example::
+
+        # Typical usage in plugin.py — one line:
+        tool_manager = ToolManager(app=app, config=config)
+
+        # tools_desc is already cached
+        print(tool_manager.tools_desc)
+
+        # Access underlying generator
+        print(tool_manager.generator.get_api_base_url())
+
+        results = await tool_manager.execute_tool_calls(tool_calls, auth_info=auth)
+    """
+
+    def __init__(
+        self,
+        *,
+        app: Optional[FastAPI] = None,
+        config: Optional[ChatConfig] = None,
+        openapi_spec: Optional[Union[str, Path, Dict]] = None,
+        tools_generator: Optional[ToolsGenerator] = None,
+        base_url: Optional[str] = None,
+    ):
+        self._config = config or ChatConfig()
+
+        # Build or accept the generator
+        if tools_generator is not None:
+            self._generator = tools_generator
+        else:
+            self._generator = ToolsGenerator(
+                app=app,
+                config=self._config,
+                openapi_spec=openapi_spec,
+            )
+
+        # Resolve base URL: explicit override > generator auto-detection
+        if base_url is not None:
+            self._base_url = base_url.rstrip("/")
+        else:
+            self._base_url = self._generator.get_api_base_url().rstrip("/")
+
+        self._http_client = httpx.AsyncClient(timeout=self._config.timeout)
+
+        # Generate and cache tools_desc once at init
+        self._tools_desc: Optional[Dict[str, Any]] = self._generator.generate_tools_desc()
+
+        # Statistics
+        self._total_tool_calls_executed: int = 0
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def generator(self) -> ToolsGenerator:
+        """The underlying ``ToolsGenerator`` instance."""
+        return self._generator
+
+    @property
+    def base_url(self) -> str:
+        """The resolved API base URL."""
+        return self._base_url
+
+    @property
+    def tools_desc(self) -> Optional[Dict[str, Any]]:
+        """Cached tool descriptions generated at init."""
+        return self._tools_desc
+
+    def refresh_tools(self) -> None:
+        """Re-generate and cache tool descriptions.
+
+        Call this if the OpenAPI spec or route configuration changes at
+        runtime (e.g. dynamic route registration).
+        """
+        self._tools_desc = self._generator.generate_tools_desc()
+        logger.info("Tool descriptions refreshed")
+
+    async def execute_tool_calls(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        auth_info: Optional[AuthInfo] = None,
+        on_progress: Optional[Callable] = None,
+    ) -> List[Dict[str, Any]]:
+        """Execute a list of tool calls by making HTTP requests.
+
+        Each tool call is validated, then dispatched as an HTTP request to
+        the appropriate API endpoint.  Authentication headers are applied
+        from ``auth_info`` when provided.
+
+        Args:
+            tool_calls: List of tool call dicts, each containing ``id``,
+                ``name``, and ``arguments``.
+            auth_info: Optional authentication data to apply to HTTP headers.
+            on_progress: Optional async callback ``(message: str) -> None``
+                invoked before each tool call for progress reporting.
+
+        Returns:
+            List of result dicts, each containing ``tool_call_id``, ``name``,
+            and either ``result`` or ``error``.
+        """
+        results: List[Dict[str, Any]] = []
+        capped_calls = tool_calls[: self._config.max_tool_calls]
+        total_tools = len(capped_calls)
+
+        for i, tool_call in enumerate(capped_calls, 1):
+            function_name = tool_call.get("name")
+
+            try:
+                logger.debug(f"Executing tool call {i}/{total_tools}: {tool_call}")
+                self._total_tool_calls_executed += 1
+
+                # Optional progress callback
+                if on_progress is not None:
+                    await on_progress(f"Calling {function_name}... ({i}/{total_tools})")
+
+                # Validate: tool exists
+                tool_metadata = self._generator.get_tool_metadata(function_name)
+                if not tool_metadata:
+                    logger.warning(f"Unknown tool requested: {function_name}")
+                    results.append(
+                        {
+                            "tool_call_id": tool_call.get("id"),
+                            "name": function_name,
+                            "error": f"Unknown tool: {function_name}",
+                        }
+                    )
+                    continue
+
+                # Validate: arguments
+                arguments = tool_call.get("arguments", {})
+                if not self._generator.validate_tool_call(function_name, arguments):
+                    logger.warning(f"Invalid arguments for tool {function_name}: {arguments}")
+                    results.append(
+                        {
+                            "tool_call_id": tool_call.get("id"),
+                            "name": function_name,
+                            "error": "Invalid arguments",
+                        }
+                    )
+                    continue
+
+                # Execute
+                result = await self._execute_single_tool_call(tool_metadata, arguments, auth_info)
+
+                results.append(
+                    {
+                        "tool_call_id": tool_call.get("id"),
+                        "name": function_name,
+                        "result": result,
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Error executing tool call {function_name}: {str(e)}")
+                results.append(
+                    {
+                        "tool_call_id": tool_call.get("id"),
+                        "name": function_name,
+                        "error": str(e),
+                    }
+                )
+
+        return results
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Return tool execution statistics."""
+        tool_stats = self._generator.get_tool_statistics()
+        return {
+            "total_tool_calls_executed": self._total_tool_calls_executed,
+            **tool_stats,
+        }
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    async def _execute_single_tool_call(
+        self,
+        tool_metadata: Dict[str, Any],
+        arguments: Dict[str, Any],
+        auth_info: Optional[AuthInfo] = None,
+    ) -> Any:
+        """Execute a single tool call via HTTP.
+
+        Args:
+            tool_metadata: Tool metadata from ``ToolsGenerator`` (path, method, etc.).
+            arguments: Validated arguments for the tool call.
+            auth_info: Optional authentication data for the request.
+
+        Returns:
+            The parsed response (JSON dict, or error dict on failure).
+        """
+        method: str = tool_metadata["method"]
+        path: str = tool_metadata["path"]
+
+        # Build URL with path parameter substitution
+        url = f"{self._base_url}{path}"
+        query_params: Dict[str, Any] = {}
+        body_data: Dict[str, Any] = {}
+
+        for arg_name, arg_value in arguments.items():
+            if f"{{{arg_name}}}" in path:
+                url = url.replace(f"{{{arg_name}}}", str(arg_value))
+            elif method in ("GET", "DELETE"):
+                query_params[arg_name] = arg_value
+            else:
+                body_data[arg_name] = arg_value
+
+        # Prepare request kwargs
+        request_kwargs: Dict[str, Any] = {
+            "url": url,
+            "params": query_params if query_params else None,
+        }
+
+        if method in ("POST", "PUT", "PATCH") and body_data:
+            request_kwargs["json"] = body_data
+
+        request_kwargs["headers"] = {
+            "Content-Type": "application/json",
+            "User-Agent": "auto-bedrock-chat-fastapi/internal",
+        }
+
+        # Apply authentication
+        if auth_info and auth_info.is_authenticated and auth_info.auth_handler:
+            try:
+                tool_auth_config = tool_metadata.get("_metadata", {}).get("authentication")
+                request_kwargs["headers"] = await auth_info.auth_handler.apply_auth_to_headers(
+                    request_kwargs["headers"],
+                    tool_auth_config,
+                )
+                auth_type_str = auth_info.credentials.get_auth_type_string()
+                logger.debug(f"Applied {auth_type_str} authentication to tool call")
+            except Exception as e:
+                logger.error(f"Error applying authentication: {str(e)}")
+                return {"error": f"Authentication failed: {str(e)}"}
+
+        # Dispatch HTTP request
+        return await self._make_http_request(method, request_kwargs)
+
+    async def _make_http_request(
+        self,
+        method: str,
+        request_kwargs: Dict[str, Any],
+    ) -> Any:
+        """Send the HTTP request and parse the response.
+
+        Args:
+            method: HTTP method (GET, POST, PUT, PATCH, DELETE).
+            request_kwargs: kwargs dict for the httpx request.
+
+        Returns:
+            Parsed JSON response, or an error dict.
+        """
+        try:
+            dispatch = {
+                "GET": self._http_client.get,
+                "POST": self._http_client.post,
+                "PUT": self._http_client.put,
+                "PATCH": self._http_client.patch,
+                "DELETE": self._http_client.delete,
+            }
+            http_fn = dispatch.get(method)
+            if http_fn is None:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+
+            response = await http_fn(**request_kwargs)
+
+            # Error responses
+            if response.status_code >= 400:
+                error_detail = response.text
+                try:
+                    error_json = response.json()
+                    error_detail = error_json.get("detail", error_detail)
+                except Exception:
+                    pass
+                return {
+                    "error": f"HTTP {response.status_code}: {error_detail}",
+                    "status_code": response.status_code,
+                }
+
+            # Success
+            try:
+                return response.json()
+            except Exception:
+                return {"result": response.text, "status_code": response.status_code}
+
+        except httpx.TimeoutException:
+            return {"error": "Request timeout"}
+        except httpx.RequestError as e:
+            return {"error": f"Request failed: {str(e)}"}
+        except Exception as e:
+            return {"error": f"Unexpected error: {str(e)}"}
+
+
+# ---------------------------------------------------------------------------
+# Factory helper
+# ---------------------------------------------------------------------------
+
+
+def create_tools_generator_from_spec(
+    openapi_spec_file: str,
+    allowed_paths: Optional[list] = None,
+    excluded_paths: Optional[list] = None,
+    api_base_url: Optional[str] = None,
+    **config_kwargs,
+) -> ToolsGenerator:
+    """Create a ToolsGenerator from an OpenAPI spec file for framework-agnostic usage.
+
+    This allows using the tool generation capabilities with any framework
+    (Express.js, Flask, etc.) by providing an OpenAPI spec file instead of
+    requiring a FastAPI app.
+
+    Args:
+        openapi_spec_file: Path to OpenAPI specification file (JSON or YAML)
+        allowed_paths: List of API paths to expose as tools
+        excluded_paths: List of API paths to exclude from tools
+        api_base_url: Base URL for API calls (auto-detected from spec if not provided)
+        **config_kwargs: Additional configuration parameters for ChatConfig
+
+    Returns:
+        ToolsGenerator instance
+
+    Example:
+        ```python
+        from auto_bedrock_chat_fastapi import create_tools_generator_from_spec
+
+        # Generate tools from Express.js OpenAPI spec
+        generator = create_tools_generator_from_spec(
+            openapi_spec_file="./express-api-spec.json",
+            allowed_paths=["/api/users", "/api/products"],
+            excluded_paths=["/api/internal"],
+            api_base_url="http://localhost:3000"  # Express.js server URL
+        )
+
+        # Generate tool descriptions
+        tools_desc = generator.generate_tools_desc()
+
+        # Use with any Bedrock-compatible client
+        # bedrock_client.chat_completion(messages=messages, tools_desc=tools_desc)
+        ```
+
+    Raises:
+        ToolsGenerationError: If spec file is invalid or not found
+    """
+    # Prepare config overrides
+    config_overrides = {
+        "openapi_spec_file": openapi_spec_file,
+        **config_kwargs,
+    }
+
+    if allowed_paths is not None:
+        config_overrides["allowed_paths"] = allowed_paths
+    if excluded_paths is not None:
+        config_overrides["excluded_paths"] = excluded_paths
+    if api_base_url is not None:
+        config_overrides["api_base_url"] = api_base_url
+
+    # Create config
+    config = load_config(**config_overrides)
+
+    # Create and return ToolsGenerator
+    return ToolsGenerator(app=None, config=config)

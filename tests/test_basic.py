@@ -8,7 +8,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from auto_bedrock_chat_fastapi import BedrockChatPlugin, add_bedrock_chat
+from auto_bedrock_chat_fastapi.chat_manager import ChatManager
 from auto_bedrock_chat_fastapi.config import load_config
+from auto_bedrock_chat_fastapi.message_preprocessor import MessagePreprocessor
 from auto_bedrock_chat_fastapi.session_manager import ChatSessionManager
 
 
@@ -94,6 +96,66 @@ class TestPlugin:
         assert "/bedrock-chat/stats" in route_paths
         assert "/bedrock-chat/tools" in route_paths
 
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_plugin_instantiates_orchestration_components(self, mock_bedrock_boto3, mock_boto3):
+        """Test that plugin creates ChatManager and its dependencies."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        plugin = add_bedrock_chat(self.app, enable_ui=False)
+
+        # Verify all orchestration components are created
+        assert isinstance(plugin.chat_manager.message_preprocessor, MessagePreprocessor)
+        assert isinstance(plugin.chat_manager, ChatManager)
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_plugin_chat_manager_wired_correctly(self, mock_bedrock_boto3, mock_boto3):
+        """Test that ChatManager receives the correct component references."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        plugin = add_bedrock_chat(self.app, enable_ui=False)
+
+        cm = plugin.chat_manager
+        assert cm.llm_client is plugin.bedrock_client
+        assert cm.config is plugin.config
+        assert isinstance(cm.message_preprocessor, MessagePreprocessor)
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_plugin_websocket_handler_receives_chat_manager(self, mock_bedrock_boto3, mock_boto3):
+        """Test that WebSocketChatHandler is passed the chat_manager."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        plugin = add_bedrock_chat(self.app, enable_ui=False)
+
+        assert plugin.websocket_handler.chat_manager is plugin.chat_manager
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_plugin_message_preprocessor_uses_config(self, mock_bedrock_boto3, mock_boto3):
+        """Test MessagePreprocessor is configured from ChatConfig."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        plugin = add_bedrock_chat(self.app, enable_ui=False)
+
+        mp = plugin.chat_manager.message_preprocessor
+        assert mp.config is plugin.config
+        assert mp.history_msg_threshold == plugin.config.history_msg_length_threshold
+        assert mp.single_msg_threshold == plugin.config.single_msg_length_threshold
+
 
 class TestToolsGenerator:
     """Test tools generator functionality"""
@@ -117,7 +179,7 @@ class TestToolsGenerator:
 
     def test_tools_generation(self):
         """Test basic tools generation"""
-        from auto_bedrock_chat_fastapi.tools_generator import ToolsGenerator
+        from auto_bedrock_chat_fastapi.tool_manager import ToolsGenerator
 
         config = load_config(enable_ui=False)
         generator = ToolsGenerator(self.app, config)
@@ -136,7 +198,7 @@ class TestToolsGenerator:
 
     def test_tools_filtering(self):
         """Test tools filtering by allowed/excluded paths"""
-        from auto_bedrock_chat_fastapi.tools_generator import ToolsGenerator
+        from auto_bedrock_chat_fastapi.tool_manager import ToolsGenerator
 
         config = load_config(allowed_paths=["/simple"], enable_ui=False)
         generator = ToolsGenerator(self.app, config)
