@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .exceptions import ContextWindowExceededError, LLMClientError
-from .message_preprocessor import MessagePreprocessor
+from .message_preprocessor import MessagePreprocessor, get_content_size
 from .models import ChatCompletionResult
 from .tool_manager import AuthInfo, ToolManager
 
@@ -184,6 +184,7 @@ class ChatManager:
             Preprocessed messages ready for LLM formatting.
         """
         before_count = len(messages)
+        before_size = sum(get_content_size(m) for m in messages)
 
         messages = await self.message_preprocessor.preprocess_messages(
             messages,
@@ -191,9 +192,14 @@ class ChatManager:
         )
 
         after_count = len(messages)
-        if after_count != before_count:
+        after_size = sum(get_content_size(m) for m in messages)
+        if after_count != before_count or after_size != before_size:
             metadata["preprocessing_applied"] = True
-            logger.info(f"Preprocessing: {before_count} → {after_count} messages " f"(truncation applied)")
+            logger.info(
+                f"Preprocessing: {before_count} → {after_count} messages, "
+                f"{before_size:,} → {after_size:,} chars "
+                f"(truncation applied)"
+            )
 
         return messages
 
