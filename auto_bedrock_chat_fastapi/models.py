@@ -17,7 +17,8 @@ class ChatCompletionResult:
             system, user, assistant, and tool messages after processing).
         response: The final assistant response dict (the last assistant message).
         tool_results: All tool results collected across all tool call rounds.
-            Each entry is a dict with keys like 'tool_use_id', 'name', 'content'.
+            Each entry is a dict with keys 'tool_call_id', 'name', and
+            either 'result' (on success) or 'error' (on failure).
         metadata: Stats and diagnostics from the completion run, e.g.:
             - 'tool_call_rounds': number of recursive tool call rounds executed
             - 'total_tool_calls': total number of individual tool calls made

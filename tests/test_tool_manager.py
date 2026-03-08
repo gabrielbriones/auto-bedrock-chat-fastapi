@@ -30,7 +30,7 @@ def config():
 @pytest.fixture
 def mock_tools_generator():
     gen = MagicMock()
-    gen.generate_tools_desc.return_value = [{"type": "function", "function": {"name": "get_users"}}]
+    gen.generate_tools_desc.return_value = {"type": "function", "functions": [{"name": "get_users"}]}
     gen.get_tool_metadata.return_value = {"method": "GET", "path": "/api/users"}
     gen.validate_tool_call.return_value = True
     gen.get_tool_statistics.return_value = {"total_tools": 1}
@@ -128,7 +128,7 @@ class TestToolManagerInit:
         )
         tm._http_client = mock_http_client
         mock_tools_generator.generate_tools_desc.assert_called_once()
-        assert tm.tools_desc == [{"type": "function", "function": {"name": "get_users"}}]
+        assert tm.tools_desc == {"type": "function", "functions": [{"name": "get_users"}]}
 
     def test_tools_desc_not_regenerated_on_property_access(self, tool_manager, mock_tools_generator):
         _ = tool_manager.tools_desc
@@ -137,10 +137,13 @@ class TestToolManagerInit:
         mock_tools_generator.generate_tools_desc.assert_called_once()
 
     def test_refresh_tools_regenerates(self, tool_manager, mock_tools_generator):
-        mock_tools_generator.generate_tools_desc.return_value = [{"type": "function", "function": {"name": "new_tool"}}]
+        mock_tools_generator.generate_tools_desc.return_value = {
+            "type": "function",
+            "functions": [{"name": "new_tool"}],
+        }
         tool_manager.refresh_tools()
         assert mock_tools_generator.generate_tools_desc.call_count == 2
-        assert tool_manager.tools_desc == [{"type": "function", "function": {"name": "new_tool"}}]
+        assert tool_manager.tools_desc == {"type": "function", "functions": [{"name": "new_tool"}]}
 
     def test_base_url_trailing_slash_stripped(self, mock_tools_generator, mock_http_client, config):
         tm = ToolManager(
