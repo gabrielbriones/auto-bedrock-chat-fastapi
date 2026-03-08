@@ -21,9 +21,13 @@ logger = logging.getLogger(__name__)
 class WebSocketChatHandler:
     """Handles WebSocket connections and chat communication.
 
-    The handler manages WebSocket transport, session lifecycle, authentication,
-    and tool execution.  LLM calls and message preprocessing are delegated to
-    :class:`~auto_bedrock_chat_fastapi.chat_manager.ChatManager`.
+    The handler manages WebSocket transport, session lifecycle, and
+    authentication, and constructs
+    :class:`~auto_bedrock_chat_fastapi.tool_manager.AuthInfo` objects and
+    forwards progress callbacks for tool usage.  LLM calls, message
+    preprocessing, and actual tool execution are delegated to
+    :class:`~auto_bedrock_chat_fastapi.chat_manager.ChatManager` and the
+    tool manager.
     """
 
     def __init__(
