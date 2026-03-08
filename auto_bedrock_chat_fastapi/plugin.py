@@ -553,6 +553,7 @@ class BedrockChatPlugin:
         """Shutdown the Bedrock chat plugin"""
         try:
             await self.websocket_handler.shutdown()
+            await self.tool_manager.shutdown()
             logger.info("Bedrock chat plugin shutdown complete")
         except Exception as e:
             logger.error(f"Error during shutdown: {str(e)}")

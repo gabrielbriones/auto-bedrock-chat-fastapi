@@ -357,14 +357,32 @@ class TestContextWindowRecovery:
 
     @pytest.mark.asyncio
     async def test_non_context_errors_propagate_immediately(self, chat_manager, mock_llm_client):
-        """Non-context-window LLM errors on Layer 1 propagate without reduction/retry."""
+        """Non-context-window LLM errors on Layer 1 skip reduction/retry but
+        still reach fallback-model / graceful-degradation layers."""
+        mock_llm_client.chat_completion = AsyncMock(side_effect=BedrockClientError("Some other error"))
+
+        messages = _make_messages(4)
+
+        # Default config has graceful_degradation=True, so the error is caught
+        # and a synthetic response is returned instead of raising.
+        result = await chat_manager.chat_completion(messages=messages)
+        assert result.metadata.get("graceful_degradation_used") is True
+        assert "trouble processing" in result.response["content"]
+
+        # Should only have been called once (no reduction-based retry)
+        assert mock_llm_client.chat_completion.await_count == 1
+
+    async def test_non_context_errors_propagate_without_graceful_degradation(self, mock_llm_client):
+        """Non-context-window errors propagate when graceful_degradation is disabled."""
+        config = ChatConfig(BEDROCK_GRACEFUL_DEGRADATION=False)
+        chat_manager = ChatManager(llm_client=mock_llm_client, config=config)
         mock_llm_client.chat_completion = AsyncMock(side_effect=BedrockClientError("Some other error"))
 
         messages = _make_messages(4)
         with pytest.raises(LLMClientError):
             await chat_manager.chat_completion(messages=messages)
 
-        # Should only have been called once (no retry)
+        # Should only have been called once (no reduction-based retry)
         assert mock_llm_client.chat_completion.await_count == 1
 
 

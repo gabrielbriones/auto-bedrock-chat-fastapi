@@ -533,3 +533,23 @@ class TestHTTPDispatch:
 
         call_kwargs = mock_http_client.delete.call_args[1]
         assert call_kwargs["params"] == {"scope": "all"}
+
+
+# ---------------------------------------------------------------------------
+# ToolManager — shutdown
+# ---------------------------------------------------------------------------
+
+
+class TestToolManagerShutdown:
+    """Test ToolManager.shutdown() closes the HTTP client."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_http_client(self, tool_manager, mock_http_client):
+        await tool_manager.shutdown()
+        mock_http_client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_tolerates_aclose_error(self, tool_manager, mock_http_client):
+        mock_http_client.aclose.side_effect = RuntimeError("already closed")
+        # Should not raise
+        await tool_manager.shutdown()

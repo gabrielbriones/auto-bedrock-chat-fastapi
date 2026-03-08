@@ -387,6 +387,7 @@ class ChatManager:
         formatted = self.llm_client.format_messages(messages, model_id=effective_model_id)
 
         # ---- Layer 1: Normal call ----------------------------------------
+        last_error: Optional[Exception] = None
         try:
             result = await self.llm_client.chat_completion(
                 messages=formatted,
@@ -406,18 +407,27 @@ class ChatManager:
             logger.info(
                 f"Retrying LLM call with reduced messages: " f"{len(messages)} messages after aggressive reduction"
             )
+        except LLMClientError as exc:
+            # Non-context-window error (throttling, network, etc.)
+            # Skip the reduction-based Layer 2 retry (won't help) and
+            # fall through to fallback model / graceful degradation.
+            logger.warning(f"LLM call failed: {exc.__class__.__name__}: {exc}")
+            last_error = exc
 
         # ---- Layer 2: Retry with reduced messages ------------------------
-        try:
-            result = await self.llm_client.chat_completion(
-                messages=formatted,
-                tools_desc=tools_desc,
-                **llm_params,
-            )
-            return result, messages
-        except (ContextWindowExceededError, LLMClientError) as exc:
-            logger.warning(f"Retry with reduced messages failed: {exc.__class__.__name__}: {exc}")
-            last_error = exc
+        # Only attempted after context-window recovery (aggressive reduction).
+        # Skipped when Layer 1 failed with a non-context error.
+        if last_error is None:
+            try:
+                result = await self.llm_client.chat_completion(
+                    messages=formatted,
+                    tools_desc=tools_desc,
+                    **llm_params,
+                )
+                return result, messages
+            except (ContextWindowExceededError, LLMClientError) as exc:
+                logger.warning(f"Retry with reduced messages failed: {exc.__class__.__name__}: {exc}")
+                last_error = exc
 
         # ---- Layer 3: Fallback model (if configured) ---------------------
         fallback_model = getattr(self.config, "fallback_model", None)

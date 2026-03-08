@@ -878,6 +878,18 @@ class ToolManager:
 
         return results
 
+    async def shutdown(self) -> None:
+        """Close the internal HTTP client and release resources.
+
+        Call this during application shutdown to avoid leaking
+        connections / file descriptors.
+        """
+        try:
+            await self._http_client.aclose()
+            logger.info("ToolManager HTTP client closed")
+        except Exception as e:
+            logger.error(f"Error closing ToolManager HTTP client: {e}")
+
     def get_statistics(self) -> Dict[str, Any]:
         """Return tool execution statistics."""
         tool_stats = self._generator.get_tool_statistics()
