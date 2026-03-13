@@ -11,25 +11,25 @@ class TestTruncationConfiguration:
         config = ChatConfig()
 
         # Verify new response thresholds (conservative defaults: 500K → 425K)
-        assert config.tool_result_new_response_threshold == 500_000
-        assert config.tool_result_new_response_target == 425_000
+        assert config.single_msg_length_threshold == 500_000
+        assert config.single_msg_truncation_target == 425_000
 
-        # Verify history thresholds (conservative defaults: 50K → 42.5K)
-        assert config.tool_result_history_threshold == 50_000
-        assert config.tool_result_history_target == 42_500
+        # Verify history thresholds (defaults: 100K → 85K)
+        assert config.history_msg_length_threshold == 100_000
+        assert config.history_msg_truncation_target == 85_000
 
     def test_configuration_maintains_tier_ratio(self):
         """Test that default configuration maintains proper tier ratios"""
         config = ChatConfig()
 
-        # Verify recommended 10x ratio between new response and history thresholds
+        # Verify recommended 5x ratio between new response and history thresholds
         # (not enforced, but recommended for balanced truncation behavior)
-        ratio = config.tool_result_new_response_threshold / config.tool_result_history_threshold
-        assert ratio == 10  # Recommended but not required
+        ratio = config.single_msg_length_threshold / config.history_msg_length_threshold
+        assert ratio == 5  # Recommended but not required
 
         # Both tiers MUST maintain 85% target/threshold ratio for consistent truncation behavior
-        new_response_ratio = config.tool_result_new_response_target / config.tool_result_new_response_threshold
-        history_ratio = config.tool_result_history_target / config.tool_result_history_threshold
+        new_response_ratio = config.single_msg_truncation_target / config.single_msg_length_threshold
+        history_ratio = config.history_msg_truncation_target / config.history_msg_length_threshold
 
         assert new_response_ratio == 0.85
         assert history_ratio == 0.85
@@ -38,31 +38,31 @@ class TestTruncationConfiguration:
         """Verify all truncation threshold values are positive integers"""
         config = ChatConfig()
 
-        assert config.tool_result_new_response_threshold > 0
-        assert config.tool_result_new_response_target > 0
-        assert config.tool_result_history_threshold > 0
-        assert config.tool_result_history_target > 0
+        assert config.single_msg_length_threshold > 0
+        assert config.single_msg_truncation_target > 0
+        assert config.history_msg_length_threshold > 0
+        assert config.history_msg_truncation_target > 0
 
     def test_configuration_targets_less_than_thresholds(self):
         """Verify target sizes are less than their corresponding thresholds"""
         config = ChatConfig()
 
-        assert config.tool_result_new_response_target < config.tool_result_new_response_threshold
-        assert config.tool_result_history_target < config.tool_result_history_threshold
+        assert config.single_msg_truncation_target < config.single_msg_length_threshold
+        assert config.history_msg_truncation_target < config.history_msg_length_threshold
 
     def test_configuration_via_environment_variables(self, monkeypatch):
         """Test that environment variables can configure truncation thresholds"""
         # Set custom environment variables
-        monkeypatch.setenv("BEDROCK_TOOL_RESULT_NEW_RESPONSE_THRESHOLD", "1500000")
-        monkeypatch.setenv("BEDROCK_TOOL_RESULT_NEW_RESPONSE_TARGET", "1275000")
-        monkeypatch.setenv("BEDROCK_TOOL_RESULT_HISTORY_THRESHOLD", "150000")
-        monkeypatch.setenv("BEDROCK_TOOL_RESULT_HISTORY_TARGET", "127500")
+        monkeypatch.setenv("BEDROCK_SINGLE_MSG_LENGTH_THRESHOLD", "1500000")
+        monkeypatch.setenv("BEDROCK_SINGLE_MSG_TRUNCATION_TARGET", "1275000")
+        monkeypatch.setenv("BEDROCK_HISTORY_MSG_LENGTH_THRESHOLD", "150000")
+        monkeypatch.setenv("BEDROCK_HISTORY_MSG_TRUNCATION_TARGET", "127500")
 
         # Create config - pydantic-settings will read from environment
         config = ChatConfig()
 
         # Verify the environment variables were applied
-        assert config.tool_result_new_response_threshold == 1_500_000
-        assert config.tool_result_new_response_target == 1_275_000
-        assert config.tool_result_history_threshold == 150_000
-        assert config.tool_result_history_target == 127_500
+        assert config.single_msg_length_threshold == 1_500_000
+        assert config.single_msg_truncation_target == 1_275_000
+        assert config.history_msg_length_threshold == 150_000
+        assert config.history_msg_truncation_target == 127_500

@@ -86,12 +86,12 @@ class Parser(ABC):
         Returns:
             Truncated tool results
         """
-        if not self.config or not hasattr(self.config, "tool_result_new_response_threshold"):
+        if not self.config or not hasattr(self.config, "single_msg_length_threshold"):
             return tool_results
 
         # Calculate total size
         total_size = sum(len(str(r.get("result", ""))) for r in tool_results if "error" not in r)
-        threshold = self.config.tool_result_new_response_threshold
+        threshold = self.config.single_msg_length_threshold
 
         if total_size <= threshold:
             # Under threshold, return as-is
