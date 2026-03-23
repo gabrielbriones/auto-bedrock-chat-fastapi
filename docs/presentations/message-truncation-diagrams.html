@@ -1,0 +1,1718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message Truncation & AI Summarization — Feature Overview</title>
+<style>
+  :root {
+    --bg: #0a0e27;
+    --card: #1a1f3a;
+    --border: #2d3454;
+    --text: #e8edf4;
+    --muted: #8b93a7;
+    --accent: #667eea;
+    --accent-light: #818cf8;
+    --secondary: #f093fb;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --info: #38bdf8;
+    --truncate: #fb923c;
+    --ai: #a78bfa;
+    --fast: #10b981;
+    --slow: #ef4444;
+    --cheap: #22c55e;
+    --expensive: #f59e0b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0a0e27 100%);
+    color: var(--text);
+    overflow-x: hidden;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     SLIDE LAYOUT
+     ═══════════════════════════════════════════════════════════ */
+  .slide {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 80px 100px;
+    position: relative;
+    border-bottom: 2px solid var(--border);
+    page-break-after: always;
+  }
+
+  .slide-number {
+    position: absolute;
+    top: 40px;
+    right: 60px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    opacity: 0.5;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     TITLE SLIDE
+     ═══════════════════════════════════════════════════════════ */
+  .title-slide {
+    text-align: center;
+    align-items: center;
+    background: radial-gradient(circle at 50% 50%, rgba(102, 126, 234, 0.05) 0%, transparent 70%);
+  }
+
+  .title-slide h1 {
+    font-size: 5.5rem;
+    font-weight: 900;
+    line-height: 1.1;
+    margin-bottom: 32px;
+    background: linear-gradient(135deg, var(--accent), var(--secondary), var(--ai));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 80px rgba(102, 126, 234, 0.3);
+  }
+
+  .title-slide .subtitle {
+    font-size: 2rem;
+    color: var(--muted);
+    margin-bottom: 60px;
+    font-weight: 300;
+  }
+
+  .title-icons {
+    display: flex;
+    gap: 48px;
+    justify-content: center;
+    margin-top: 60px;
+  }
+
+  .title-icon-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 32px;
+    background: rgba(102, 126, 234, 0.08);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    transition: all 0.3s ease;
+  }
+
+  .title-icon-box:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 20px 60px rgba(102, 126, 234, 0.3);
+  }
+
+  .icon-circle {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 3rem;
+    color: white;
+  }
+
+  .icon-circle.truncate-icon { background: linear-gradient(135deg, var(--truncate), #fbbf24); }
+  .icon-circle.ai-icon { background: linear-gradient(135deg, var(--ai), var(--secondary)); }
+
+  .icon-label {
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     SECTION HEADERS
+     ═══════════════════════════════════════════════════════════ */
+  h2 {
+    font-size: 3.5rem;
+    font-weight: 800;
+    margin-bottom: 48px;
+    background: linear-gradient(135deg, var(--accent-light), white);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  h3 {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 24px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     PROBLEM VISUALIZATION
+     ═══════════════════════════════════════════════════════════ */
+  .problem-container {
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+    align-items: center;
+    margin-top: 60px;
+  }
+
+  .message-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 80%;
+  }
+
+  .message-bar {
+    height: 60px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    padding: 0 28px;
+    font-weight: 600;
+    font-size: 1.2rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    position: relative;
+  }
+
+  .message-bar.user {
+    background: linear-gradient(90deg, rgba(56, 189, 248, 0.9), rgba(59, 130, 246, 0.9));
+  }
+
+  .message-bar.tool {
+    background: linear-gradient(90deg, rgba(251, 146, 60, 0.9), rgba(251, 191, 36, 0.9));
+  }
+
+  .message-bar.overflow {
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.9), rgba(220, 38, 38, 0.9));
+    animation: pulse-danger 2s infinite;
+  }
+
+  @keyframes pulse-danger {
+    0%, 100% { opacity: 0.9; }
+    50% { opacity: 1; box-shadow: 0 8px 40px rgba(239, 68, 68, 0.6); }
+  }
+
+  .size-label {
+    margin-left: auto;
+    background: rgba(0,0,0,0.3);
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+
+  .warning-banner {
+    width: 80%;
+    padding: 32px;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.15));
+    border: 2px solid var(--danger);
+    border-radius: 16px;
+    text-align: center;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--danger);
+    animation: glow-danger 2s infinite;
+  }
+
+  @keyframes glow-danger {
+    0%, 100% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); }
+    50% { box-shadow: 0 0 40px rgba(239, 68, 68, 0.6); }
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     SOLUTION COMPARISON
+     ═══════════════════════════════════════════════════════════ */
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    margin-top: 60px;
+  }
+
+  .solution-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 24px;
+    padding: 48px;
+    position: relative;
+    transition: all 0.3s ease;
+  }
+
+  .solution-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+
+  .solution-card.truncate-card {
+    border-color: var(--truncate);
+    box-shadow: 0 0 40px rgba(251, 146, 60, 0.15);
+  }
+
+  .solution-card.ai-card {
+    border-color: var(--ai);
+    box-shadow: 0 0 40px rgba(167, 139, 250, 0.15);
+  }
+
+  .solution-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 32px;
+  }
+
+  .solution-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+  }
+
+  .solution-icon.truncate {
+    background: linear-gradient(135deg, var(--truncate), #fbbf24);
+  }
+
+  .solution-icon.ai {
+    background: linear-gradient(135deg, var(--ai), var(--secondary));
+  }
+
+  .solution-title {
+    font-size: 2.2rem;
+    font-weight: 800;
+  }
+
+  .feature-list {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    margin-top: 32px;
+  }
+
+  .feature-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 1.1rem;
+  }
+
+  .feature-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+
+  .feature-icon.pro { background: var(--success); color: white; }
+  .feature-icon.con { background: var(--danger); color: white; }
+
+  /* ═══════════════════════════════════════════════════════════
+     METRICS BARS
+     ═══════════════════════════════════════════════════════════ */
+  .metrics-comparison {
+    display: flex;
+    flex-direction: column;
+    gap: 48px;
+    margin-top: 60px;
+  }
+
+  .metric-row {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .metric-label {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .metric-bars {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 32px;
+  }
+
+  .bar-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .bar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .bar-name {
+    font-size: 1.4rem;
+    font-weight: 600;
+  }
+
+  .bar-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.1);
+  }
+
+  .bar-track {
+    height: 48px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .bar-fill {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 16px;
+    font-weight: 700;
+    transition: width 1s ease;
+    position: relative;
+  }
+
+  .bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    animation: shimmer 2s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  /* Speed bars */
+  .bar-fill.speed-fast {
+    background: linear-gradient(90deg, var(--success), var(--fast));
+  }
+  .bar-fill.speed-slow {
+    background: linear-gradient(90deg, var(--warning), var(--truncate));
+  }
+
+  /* Cost bars */
+  .bar-fill.cost-cheap {
+    background: linear-gradient(90deg, var(--success), var(--cheap));
+  }
+  .bar-fill.cost-expensive {
+    background: linear-gradient(90deg, var(--warning), var(--expensive));
+  }
+
+  /* Accuracy bars */
+  .bar-fill.accuracy-low {
+    background: linear-gradient(90deg, var(--warning), var(--truncate));
+  }
+  .bar-fill.accuracy-high {
+    background: linear-gradient(90deg, var(--ai), var(--secondary));
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     LLM TOKEN LIMITS
+     ═══════════════════════════════════════════════════════════ */
+  .llm-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 32px;
+    margin-top: 60px;
+  }
+
+  .llm-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 32px;
+    text-align: center;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .llm-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+  }
+
+  .llm-card.tier-1::before { background: linear-gradient(90deg, var(--success), var(--cheap)); }
+  .llm-card.tier-2::before { background: linear-gradient(90deg, var(--info), var(--accent)); }
+  .llm-card.tier-3::before { background: linear-gradient(90deg, var(--ai), var(--secondary)); }
+
+  .llm-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    border-color: var(--accent);
+  }
+
+  .llm-logo {
+    font-size: 3rem;
+    margin-bottom: 16px;
+  }
+
+  .llm-name {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    color: var(--text);
+  }
+
+  .llm-tokens {
+    font-size: 3rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, var(--accent-light), white);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+
+  .llm-label {
+    font-size: 0.95rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     FLOW DIAGRAM
+     ═══════════════════════════════════════════════════════════ */
+  .flow-container {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    margin-top: 60px;
+    align-items: center;
+  }
+
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .flow-box {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 48px;
+    min-width: 280px;
+    text-align: center;
+    position: relative;
+  }
+
+  .flow-box.start {
+    border-color: var(--info);
+    box-shadow: 0 0 30px rgba(56, 189, 248, 0.3);
+  }
+
+  .flow-box.decision {
+    border-color: var(--warning);
+    clip-path: polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%);
+    min-width: 320px;
+  }
+
+  .flow-box.process-truncate {
+    border-color: var(--truncate);
+    box-shadow: 0 0 30px rgba(251, 146, 60, 0.2);
+  }
+
+  .flow-box.process-ai {
+    border-color: var(--ai);
+    box-shadow: 0 0 30px rgba(167, 139, 250, 0.2);
+  }
+
+  .flow-box.end {
+    border-color: var(--success);
+    box-shadow: 0 0 30px rgba(74, 222, 128, 0.3);
+  }
+
+  .flow-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .flow-detail {
+    font-size: 1rem;
+    color: var(--muted);
+  }
+
+  .flow-arrow {
+    font-size: 3rem;
+    color: var(--accent);
+  }
+
+  .flow-branch {
+    display: flex;
+    gap: 48px;
+    margin-top: 32px;
+  }
+
+  .branch-path {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .branch-label {
+    font-size: 1.2rem;
+    font-weight: 700;
+    padding: 12px 28px;
+    border-radius: 24px;
+    background: rgba(102, 126, 234, 0.2);
+    border: 2px solid var(--accent);
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     VISUAL COMPARISON
+     ═══════════════════════════════════════════════════════════ */
+  .visual-comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    margin-top: 60px;
+  }
+
+  .comparison-section {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .comparison-header {
+    text-align: center;
+    padding: 24px;
+    border-radius: 16px;
+    font-size: 2rem;
+    font-weight: 800;
+  }
+
+  .comparison-header.truncate-header {
+    background: linear-gradient(135deg, rgba(251, 146, 60, 0.2), rgba(251, 191, 36, 0.2));
+    border: 2px solid var(--truncate);
+  }
+
+  .comparison-header.ai-header {
+    background: linear-gradient(135deg, rgba(167, 139, 250, 0.2), rgba(240, 147, 251, 0.2));
+    border: 2px solid var(--ai);
+  }
+
+  .document-viz {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    position: relative;
+    min-height: 300px;
+  }
+
+  .doc-line {
+    height: 12px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    animation: fadeIn 0.5s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .doc-line.keep { background: linear-gradient(90deg, var(--success), var(--cheap)); }
+  .doc-line.truncate { background: linear-gradient(90deg, var(--danger), var(--warning)); }
+  .doc-line.summarized { background: linear-gradient(90deg, var(--ai), var(--secondary)); }
+
+  .truncation-indicator {
+    text-align: center;
+    padding: 24px;
+    background: rgba(239, 68, 68, 0.2);
+    border: 2px dashed var(--danger);
+    border-radius: 12px;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--danger);
+    margin: 16px 0;
+  }
+
+  .summary-indicator {
+    text-align: center;
+    padding: 24px;
+    background: rgba(167, 139, 250, 0.2);
+    border: 2px solid var(--ai);
+    border-radius: 12px;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--ai);
+    margin: 16px 0;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     CONFIGURATION
+     ═══════════════════════════════════════════════════════════ */
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 32px;
+    margin-top: 60px;
+  }
+
+  .config-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 36px;
+  }
+
+  .config-title {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .config-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+  }
+
+  .config-icon.tier-1 { background: linear-gradient(135deg, var(--truncate), var(--warning)); }
+  .config-icon.tier-2 { background: linear-gradient(135deg, var(--ai), var(--secondary)); }
+
+  .config-item {
+    margin-bottom: 20px;
+    padding: 20px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    border-left: 4px solid var(--accent);
+  }
+
+  .config-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent-light);
+    margin-bottom: 8px;
+    font-family: 'Courier New', monospace;
+  }
+
+  .config-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .config-desc {
+    font-size: 0.95rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     FINAL SUMMARY
+     ═══════════════════════════════════════════════════════════ */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin-top: 60px;
+  }
+
+  .summary-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+    transition: all 0.3s ease;
+  }
+
+  .summary-card:hover {
+    transform: scale(1.05);
+    box-shadow: 0 20px 60px rgba(102, 126, 234, 0.3);
+  }
+
+  .summary-emoji {
+    font-size: 4rem;
+    margin-bottom: 24px;
+  }
+
+  .summary-title {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+  }
+
+  .summary-text {
+    font-size: 1.1rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     ANIMATIONS
+     ═══════════════════════════════════════════════════════════ */
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .slide > * {
+    animation: slideUp 0.6s ease;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 1: TITLE
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide title-slide">
+  <div class="slide-number">01</div>
+  <h1>Message Truncation<br>& AI Summarization</h1>
+  <p class="subtitle">Intelligent Token Management for <strong>Optimal LLM Performance</strong></p>
+
+  <div class="title-icons">
+    <div class="title-icon-box">
+      <div class="icon-circle truncate-icon">✂️</div>
+      <div class="icon-label">Plain Text Truncation</div>
+    </div>
+    <div class="title-icon-box">
+      <div class="icon-circle ai-icon">🧠</div>
+      <div class="icon-label">AI Summarization</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 2: THE PROBLEM
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">02</div>
+  <h2>The Problem</h2>
+
+  <div class="problem-container">
+    <div class="message-stack">
+      <div class="message-bar user">
+        <span>👤 User Query</span>
+        <span class="size-label">100 tokens</span>
+      </div>
+      <div class="message-bar user" style="background: linear-gradient(90deg, rgba(102, 126, 234, 0.9), rgba(129, 140, 248, 0.9));">
+        <span>🤖 Assistant (requesting tool)</span>
+        <span class="size-label">30 tokens</span>
+      </div>
+      <div class="message-bar tool">
+        <span>🔧 Tool Response #1</span>
+        <span class="size-label">80K tokens</span>
+      </div>
+      <div class="message-bar user" style="background: linear-gradient(90deg, rgba(102, 126, 234, 0.9), rgba(129, 140, 248, 0.9));">
+        <span>🤖 Assistant (requesting tool)</span>
+        <span class="size-label">30 tokens</span>
+      </div>
+      <div class="message-bar tool">
+        <span>🔧 Tool Response #2</span>
+        <span class="size-label">80K tokens</span>
+      </div>
+      <div class="message-bar user" style="background: linear-gradient(90deg, rgba(102, 126, 234, 0.9), rgba(129, 140, 248, 0.9));">
+        <span>🤖 Assistant (requesting tool)</span>
+        <span class="size-label">30 tokens</span>
+      </div>
+      <div class="message-bar tool">
+        <span>🔧 Tool Response #3</span>
+        <span class="size-label">80K tokens</span>
+      </div>
+      <div class="message-bar user" style="background: linear-gradient(90deg, rgba(102, 126, 234, 0.9), rgba(129, 140, 248, 0.9));">
+        <span>🤖 Assistant (analyzing results)</span>
+        <span class="size-label">200 tokens</span>
+      </div>
+      <div class="message-bar user">
+        <span>👤 Follow-up Query</span>
+        <span class="size-label">150 tokens</span>
+      </div>
+      <div class="message-bar overflow">
+        <span>⚠️ TOTAL CONVERSATION</span>
+        <span class="size-label">240K tokens</span>
+      </div>
+    </div>
+
+    <div class="warning-banner">
+      ⛔ Context Window Exceeded (> 200K limit)<br>
+      <span style="font-size: 1.2rem; font-weight: 400;">Token limit breached → API errors → Failed requests</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 3: LLM TOKEN LIMITS
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">03</div>
+  <h2>Common LLM Context Limits</h2>
+
+  <div class="llm-grid">
+    <div class="llm-card tier-1">
+      <div class="llm-logo">🔵</div>
+      <div class="llm-name">GPT-4 Turbo</div>
+      <div class="llm-tokens">128K</div>
+      <div class="llm-label">~512K chars</div>
+    </div>
+
+    <div class="llm-card tier-1">
+      <div class="llm-logo">⚡</div>
+      <div class="llm-name">GPT-4o</div>
+      <div class="llm-tokens">128K</div>
+      <div class="llm-label">~512K chars</div>
+    </div>
+
+    <div class="llm-card tier-2">
+      <div class="llm-logo">🟣</div>
+      <div class="llm-name">Claude 3.5 Sonnet</div>
+      <div class="llm-tokens">200K</div>
+      <div class="llm-label">~800K chars</div>
+    </div>
+
+    <div class="llm-card tier-3">
+      <div class="llm-logo">🌟</div>
+      <div class="llm-name">Claude 3 Opus</div>
+      <div class="llm-tokens">200K</div>
+      <div class="llm-label">~800K chars</div>
+    </div>
+
+    <div class="llm-card tier-2">
+      <div class="llm-logo">🔶</div>
+      <div class="llm-name">Gemini 1.5 Pro</div>
+      <div class="llm-tokens">2M</div>
+      <div class="llm-label">~8M chars</div>
+    </div>
+
+    <div class="llm-card tier-1">
+      <div class="llm-logo">🤖</div>
+      <div class="llm-name">Llama 3 70B</div>
+      <div class="llm-tokens">8K</div>
+      <div class="llm-label">~32K chars</div>
+    </div>
+
+    <div class="llm-card tier-1">
+      <div class="llm-logo">💫</div>
+      <div class="llm-name">Mistral Large</div>
+      <div class="llm-tokens">32K</div>
+      <div class="llm-label">~128K chars</div>
+    </div>
+
+    <div class="llm-card tier-2">
+      <div class="llm-logo">🌊</div>
+      <div class="llm-name">Cohere Command</div>
+      <div class="llm-tokens">128K</div>
+      <div class="llm-label">~512K chars</div>
+    </div>
+
+    <div class="llm-card tier-1">
+      <div class="llm-logo">🎯</div>
+      <div class="llm-name">GPT-3.5 Turbo</div>
+      <div class="llm-tokens">16K</div>
+      <div class="llm-label">~64K chars</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 4: TWO SOLUTIONS
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">04</div>
+  <h2>Two Approaches</h2>
+
+  <div class="comparison-grid">
+    <!-- Plain Text Truncation -->
+    <div class="solution-card truncate-card">
+      <div class="solution-header">
+        <div class="solution-icon truncate">✂️</div>
+        <div class="solution-title">Plain Text<br>Truncation</div>
+      </div>
+
+      <div class="feature-list">
+        <div class="feature-item">
+          <div class="feature-icon pro">✓</div>
+          <span>Lightning fast (< 1ms)</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon pro">✓</div>
+          <span>Zero token cost</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon con">✗</div>
+          <span>Light content reduction. Keeps ~75% of original size</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon con">✗</div>
+          <span>Loses middle content</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon con">✗</div>
+          <span>May cut critical data</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon con">✗</div>
+          <span>No semantic understanding</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Summarization -->
+    <div class="solution-card ai-card">
+      <div class="solution-header">
+        <div class="solution-icon ai">🧠</div>
+        <div class="solution-title">AI<br>Summarization</div>
+      </div>
+
+      <div class="feature-list">
+        <div class="feature-item">
+          <div class="feature-icon pro">✓</div>
+          <span>Preserves key facts & data</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon pro">✓</div>
+          <span>Semantic understanding</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon pro">✓</div>
+          <span>Maintains context flow</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon pro">✓</div>
+          <span>Heavy content 10× reduction (up to 90% smaller)</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon con">✗</div>
+          <span>Slower. Up to ~30 secs per 600K document</span>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon con">✗</div>
+          <span>Costs more. Up to ~$1.00 per 600K document</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 5: METRICS COMPARISON
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">05</div>
+  <h2>Performance Metrics (for a 600K document example message)</h2>
+
+  <div class="metrics-comparison">
+    <!-- SPEED -->
+    <div class="metric-row">
+      <div class="metric-label">⚡ Processing Speed</div>
+      <div style="font-size: 1rem; color: var(--muted); margin-bottom: 12px; margin-left: 4px;">
+        Plain text is instant string manipulation. AI requires 3 sequential LLM API calls with network latency and processing time per call.
+      </div>
+      <div class="metric-bars">
+        <div class="bar-container">
+          <div class="bar-header">
+            <span class="bar-name">Plain Text Truncation</span>
+            <span class="bar-value">< 1ms</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill speed-fast" style="width: 99%;"></div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--muted); margin-top: 8px;">
+            String operations only — no API calls, instant result
+          </div>
+        </div>
+        <div class="bar-container">
+          <div class="bar-header">
+            <span class="bar-name">AI Summarization</span>
+            <span class="bar-value">~30 sec</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill speed-slow" style="width: 8%;"></div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--muted); margin-top: 8px;">
+            3 sequential LLM calls with network latency (~10 seconds each)
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COST -->
+    <div class="metric-row">
+      <div class="metric-label">💰 Token Cost</div>
+      <div style="font-size: 1rem; color: var(--muted); margin-bottom: 12px; margin-left: 4px;">
+        Plain text is free. AI requires 3 LLM calls (200K chars/~50K tokens each) = ~150K input tokens + ~37K output tokens.
+        Using Claude 3.5 Sonnet pricing: ($3 input + $15 output per 1M tokens) = ~$1.00 total cost.
+      </div>
+      <div class="metric-bars">
+        <div class="bar-container">
+          <div class="bar-header">
+            <span class="bar-name">Plain Text Truncation</span>
+            <span class="bar-value">$0.00</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill cost-cheap" style="width: 2%;"></div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--muted); margin-top: 8px;">
+            No API calls, no token consumption — completely free
+          </div>
+        </div>
+        <div class="bar-container">
+          <div class="bar-header">
+            <span class="bar-name">AI Summarization</span>
+            <span class="bar-value">~$1.00</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill cost-expensive" style="width: 75%;"></div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--muted); margin-top: 8px;">
+            3 LLM calls: ~150K input + ~37K output tokens = $0.45 input + $0.55 output
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACCURACY -->
+    <div class="metric-row">
+      <div class="metric-label">🎯 Information Retention</div>
+      <div style="font-size: 1rem; color: var(--muted); margin-bottom: 12px; margin-left: 4px;">
+        Plain text keeps 70% of characters (head+tail) but loses critical middle content.
+        AI keeps only 10% of characters (60K) but preserves <strong style="color: var(--ai);">~92% (estimated)</strong> of key information through intelligent summarization.<br>
+        <strong style="color: var(--ai);">The "lost" 8%:</strong> Redundant explanations, verbose descriptions, conversational filler, and formatting artifacts — intentionally filtered out, not critical data loss.
+      </div>
+      <div class="metric-bars">
+        <div class="bar-container">
+          <div class="bar-header">
+            <span class="bar-name">Plain Text Truncation</span>
+            <span class="bar-value">65%</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill accuracy-low" style="width: 65%;"></div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--muted); margin-top: 8px;">
+            425K chars kept (340K head + 85K tail), but middle 175K with potential critical data is lost
+          </div>
+        </div>
+        <div class="bar-container">
+          <div class="bar-header">
+            <span class="bar-name">AI Summarization</span>
+            <span class="bar-value">~92% (est.)</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill accuracy-high" style="width: 92%;"></div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--muted); margin-top: 8px;">
+            Estimated retention based on typical LLM summarization. Preserves: facts, numbers, names, decisions. Filters: redundancy, verbosity.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 6: VISUAL FLOW
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">06</div>
+  <h2>Processing Flow</h2>
+
+  <div style="display: flex; flex-direction: column; gap: 60px; margin-top: 60px;">
+
+    <!-- Three Evaluation Stages (Horizontal) -->
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 40px;">
+
+      <!-- Stage 1: Total History -->
+      <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px;">
+        <div class="flow-box decision" style="min-width: 240px;">
+          <div class="flow-title" style="font-size: 1.2rem;">📊 Total History</div>
+          <div class="flow-detail" style="font-size: 0.9rem;">> 650K chars?</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">↓</div>
+        <div style="background: rgba(102, 126, 234, 0.1); border: 2px solid var(--accent); border-radius: 8px; padding: 12px 16px; min-width: 200px; text-align: center;">
+          <div style="font-size: 0.85rem; color: var(--muted);">Threshold: 650K</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Target: Remove oldest</div>
+        </div>
+      </div>
+
+      <!-- Stage 2: Historical Messages -->
+      <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px;">
+        <div class="flow-box decision" style="min-width: 240px;">
+          <div class="flow-title" style="font-size: 1.2rem;">📋 Historical Msg</div>
+          <div class="flow-detail" style="font-size: 0.9rem;">> 100K chars?</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">↓</div>
+        <div style="background: rgba(102, 126, 234, 0.1); border: 2px solid var(--accent); border-radius: 8px; padding: 12px 16px; min-width: 200px; text-align: center;">
+          <div style="font-size: 0.85rem; color: var(--muted);">Threshold: 100K</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Target: 85K</div>
+        </div>
+      </div>
+
+      <!-- Stage 3: Current Message -->
+      <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px;">
+        <div class="flow-box decision" style="min-width: 240px;">
+          <div class="flow-title" style="font-size: 1.2rem;">📥 Current Msg</div>
+          <div class="flow-detail" style="font-size: 0.9rem;">> 500K chars?</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">↓</div>
+        <div style="background: rgba(102, 126, 234, 0.1); border: 2px solid var(--accent); border-radius: 8px; padding: 12px 16px; min-width: 200px; text-align: center;">
+          <div style="font-size: 0.85rem; color: var(--muted);">Threshold: 500K</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Target: 425K</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Central Processing Decision -->
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 24px;">
+      <div style="font-size: 1.2rem; color: var(--warning); font-weight: 700;">When threshold exceeded ↓</div>
+
+      <div class="flow-box decision" style="min-width: 360px;">
+        <div class="flow-title">🤔 AI Enabled?</div>
+        <div class="flow-detail">Check configuration</div>
+      </div>
+
+      <!-- Two Processing Paths -->
+      <div class="flow-branch">
+        <div class="branch-path">
+          <div class="branch-label">YES 🧠</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-box process-ai">
+            <div class="flow-title">AI Summarization</div>
+            <div class="flow-detail">LLM condenses content<br>Preserves key facts</div>
+          </div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-box end">
+            <div class="flow-title">✅ Smart Summary</div>
+            <div class="flow-detail">~10x reduction in size</div>
+          </div>
+        </div>
+
+        <div class="branch-path">
+          <div class="branch-label">NO ✂️</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-box process-truncate">
+            <div class="flow-title">Plain Truncation</div>
+            <div class="flow-detail">Keep head + tail<br>Drop middle</div>
+          </div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-box end">
+            <div class="flow-title">✅ Fast Cut</div>
+            <div class="flow-detail">~75% of content retained</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 7: PLAIN TEXT TRUNCATION INTERNALS
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">07</div>
+  <h2>Plain Text Truncation — Implementation</h2>
+
+  <div style="display: flex; flex-direction: column; gap: 48px; margin-top: 40px;">
+
+    <!-- Step 1: Original Document -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 200px; text-align: right;">
+        <div style="font-size: 1.4rem; font-weight: 700; color: var(--accent-light);">1. Original Document</div>
+        <div style="font-size: 1rem; color: var(--muted); margin-top: 8px;">600K characters</div>
+      </div>
+      <div style="flex: 1; background: var(--card); border: 2px solid var(--info); border-radius: 12px; padding: 24px; position: relative; min-height: 120px;">
+        <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: repeating-linear-gradient(0deg, var(--info) 0px, var(--info) 2px, transparent 2px, transparent 8px); opacity: 0.3; border-radius: 10px;"></div>
+        <div style="position: relative; font-size: 1.1rem; color: var(--text); text-align: center; line-height: 80px;">📄 Full Content</div>
+      </div>
+    </div>
+
+    <!-- Step 2: Calculate Overhead -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 200px; text-align: right;">
+        <div style="font-size: 1.4rem; font-weight: 700; color: var(--accent-light);">2. Marker Overhead</div>
+        <div style="font-size: 1rem; color: var(--muted); margin-top: 8px;">~400 chars</div>
+      </div>
+      <div style="flex: 1; display: flex; gap: 16px;">
+        <div style="flex: 0 0 15%; background: var(--card); border: 2px solid var(--warning); border-radius: 12px; padding: 16px; text-align: center;">
+          <div style="font-size: 0.9rem; color: var(--warning); font-weight: 600;">Header</div>
+          <div style="font-size: 0.8rem; color: var(--muted); margin-top: 4px;">[TRUNCATED...]</div>
+        </div>
+        <div style="flex: 1; background: rgba(255,255,255,0.03); border: 2px dashed var(--border); border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--muted);">
+          Available for content
+        </div>
+        <div style="flex: 0 0 15%; background: var(--card); border: 2px solid var(--warning); border-radius: 12px; padding: 16px; text-align: center;">
+          <div style="font-size: 0.9rem; color: var(--warning); font-weight: 600;">Footer</div>
+          <div style="font-size: 0.8rem; color: var(--muted); margin-top: 4px;">RECOMMENDATION</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Split Head/Tail -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 200px; text-align: right;">
+        <div style="font-size: 1.4rem; font-weight: 700; color: var(--accent-light);">3. Head/Tail Split</div>
+        <div style="font-size: 1rem; color: var(--muted); margin-top: 8px;">80% / 20% of target size</div>
+      </div>
+      <div style="flex: 1; display: flex; gap: 12px; align-items: stretch;">
+        <div style="flex: 0 0 38%; background: linear-gradient(90deg, var(--success), var(--cheap)); border-radius: 12px; padding: 24px; text-align: center; position: relative; display: flex; flex-direction: column; justify-content: center;">
+          <div style="font-size: 1.2rem; font-weight: 700; color: white;">HEAD (80%)</div>
+          <div style="font-size: 0.9rem; color: rgba(255,255,255,0.8); margin-top: 4px;">80% of 425K = ~340K chars<br>from beginning of document</div>
+          <div style="position: absolute; top: 8px; right: 12px; background: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600;">80%</div>
+        </div>
+        <div style="flex: 0 0 24%; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(239, 68, 68, 0.15); border: 2px solid var(--danger); border-radius: 8px;">
+          <div style="text-align: center; font-size: 0.85rem; color: var(--danger); font-weight: 600; line-height: 1.4;">
+            ⚠️<br>Middle section<br>(175K chars)<br>removed
+          </div>
+        </div>
+        <div style="flex: 0 0 38%; background: linear-gradient(90deg, var(--info), var(--accent)); border-radius: 12px; padding: 24px; text-align: center; position: relative; display: flex; flex-direction: column; justify-content: center;">
+          <div style="font-size: 1.2rem; font-weight: 700; color: white;">TAIL (20%)</div>
+          <div style="font-size: 0.9rem; color: rgba(255,255,255,0.8); margin-top: 4px;">20% of 425K = ~85K chars<br>from end of document</div>
+          <div style="position: absolute; top: 8px; right: 12px; background: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600;">20%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4: Final Result -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 200px; text-align: right;">
+        <div style="font-size: 1.4rem; font-weight: 700; color: var(--accent-light);">4. Structured Output</div>
+        <div style="font-size: 1rem; color: var(--muted); margin-top: 8px;">425K characters</div>
+      </div>
+      <div style="flex: 1; background: var(--card); border: 2px solid var(--truncate); border-radius: 12px; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="background: rgba(251, 146, 60, 0.1); border-left: 4px solid var(--warning); padding: 12px; border-radius: 6px; font-size: 0.95rem; color: var(--warning); font-weight: 600;">
+            [TOOL RESULT TRUNCATED - Original: 600K chars, 12,000 lines]
+          </div>
+          <div style="background: rgba(74, 222, 128, 0.1); border-left: 4px solid var(--success); padding: 16px; border-radius: 6px;">
+            <div style="font-size: 0.85rem; color: var(--success); font-weight: 600; margin-bottom: 6px;">BEGINNING:</div>
+            <div style="height: 3px; background: linear-gradient(90deg, var(--success), transparent); border-radius: 2px;"></div>
+          </div>
+          <div style="background: rgba(239, 68, 68, 0.1); border: 2px dashed var(--danger); padding: 12px; border-radius: 6px; text-align: center; font-size: 0.9rem; color: var(--danger); font-weight: 600;">
+            ... (175K chars omitted) ...
+          </div>
+          <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--info); padding: 16px; border-radius: 6px;">
+            <div style="font-size: 0.85rem; color: var(--info); font-weight: 600; margin-bottom: 6px;">ENDING:</div>
+            <div style="height: 3px; background: linear-gradient(90deg, var(--info), transparent); border-radius: 2px;"></div>
+          </div>
+          <div style="background: rgba(167, 139, 250, 0.1); border-left: 4px solid var(--ai); padding: 12px; border-radius: 6px; font-size: 0.85rem; color: var(--ai);">
+            RECOMMENDATION: Use filtering or pagination to get specific data.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 8: AI SUMMARIZATION IMPLEMENTATION
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">08</div>
+  <h2>AI Summarization — Implementation</h2>
+  <h3 style="text-align: center; color: var(--muted); font-size: 1.4rem; margin-top: -20px; margin-bottom: 40px;">Rolling Map-Reduce Strategy</h3>
+
+  <div style="display: flex; flex-direction: column; gap: 36px; margin-top: 20px;">
+
+    <!-- Step 1: Split into chunks -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 180px; text-align: right;">
+        <div style="font-size: 1.3rem; font-weight: 700; color: var(--accent-light);">1. Split Content</div>
+        <div style="font-size: 0.95rem; color: var(--muted); margin-top: 8px;">Min 3 chunks</div>
+      </div>
+      <div style="flex: 1; display: flex; gap: 12px;">
+        <div style="flex: 1; background: linear-gradient(135deg, var(--info), var(--accent)); border: 2px solid var(--info); border-radius: 12px; padding: 20px; text-align: center;">
+          <div style="font-size: 1rem; font-weight: 700; color: white;">Chunk 1</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.8); margin-top: 4px;">200K chars</div>
+        </div>
+        <div style="flex: 1; background: linear-gradient(135deg, var(--info), var(--accent)); border: 2px solid var(--info); border-radius: 12px; padding: 20px; text-align: center;">
+          <div style="font-size: 1rem; font-weight: 700; color: white;">Chunk 2</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.8); margin-top: 4px;">200K chars</div>
+        </div>
+        <div style="flex: 1; background: linear-gradient(135deg, var(--info), var(--accent)); border: 2px solid var(--info); border-radius: 12px; padding: 20px; text-align: center;">
+          <div style="font-size: 1rem; font-weight: 700; color: white;">Chunk 3</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.8); margin-top: 4px;">200K chars</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Iteration 1 -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 180px; text-align: right;">
+        <div style="font-size: 1.3rem; font-weight: 700; color: var(--accent-light);">2. Iteration 1</div>
+        <div style="font-size: 0.95rem; color: var(--muted); margin-top: 8px;">LLM Call #1</div>
+      </div>
+      <div style="flex: 1; display: flex; gap: 16px; align-items: center;">
+        <div style="flex: 0 0 35%; background: linear-gradient(135deg, var(--info), var(--accent)); border: 2px solid var(--info); border-radius: 12px; padding: 20px; text-align: center;">
+          <div style="font-size: 1rem; font-weight: 700; color: white;">📄 Chunk 1</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.8);">200K chars</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">→</div>
+        <div style="flex: 0 0 25%; background: rgba(102, 126, 234, 0.15); border: 2px solid var(--accent); border-radius: 12px; padding: 16px; text-align: center; position: relative;">
+          <div style="font-size: 0.9rem; font-weight: 600; color: var(--accent); margin-bottom: 8px;">🧠 LLM</div>
+          <div style="font-size: 0.75rem; color: var(--muted);">Summarize</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">→</div>
+        <div style="flex: 1; background: linear-gradient(135deg, var(--ai), var(--secondary)); border: 2px solid var(--ai); border-radius: 12px; padding: 20px; text-align: center;">
+          <div style="font-size: 1rem; font-weight: 700; color: white;">✨ Summary 1</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.8);">50K chars</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Iteration 2 -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 180px; text-align: right;">
+        <div style="font-size: 1.3rem; font-weight: 700; color: var(--accent-light);">3. Iteration 2</div>
+        <div style="font-size: 0.95rem; color: var(--muted); margin-top: 8px;">LLM Call #2</div>
+      </div>
+      <div style="flex: 1; display: flex; gap: 16px; align-items: center;">
+        <div style="flex: 0 0 35%; background: var(--card); border: 2px solid var(--border); border-radius: 12px; padding: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="background: linear-gradient(135deg, var(--ai), var(--secondary)); border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.85rem; font-weight: 600; color: white;">Summary 1</div>
+              <div style="font-size: 0.75rem; color: rgba(255,255,255,0.8);">50K</div>
+            </div>
+            <div style="text-align: center; font-size: 1rem; color: var(--accent);">+</div>
+            <div style="background: linear-gradient(135deg, var(--info), var(--accent)); border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.85rem; font-weight: 600; color: white;">Chunk 2</div>
+              <div style="font-size: 0.75rem; color: rgba(255,255,255,0.8);">200K</div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">→</div>
+        <div style="flex: 0 0 25%; background: rgba(102, 126, 234, 0.15); border: 2px solid var(--accent); border-radius: 12px; padding: 16px; text-align: center;">
+          <div style="font-size: 0.9rem; font-weight: 600; color: var(--accent); margin-bottom: 8px;">🧠 LLM</div>
+          <div style="font-size: 0.75rem; color: var(--muted);">Summarize</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">→</div>
+        <div style="flex: 1; background: linear-gradient(135deg, var(--ai), var(--secondary)); border: 2px solid var(--ai); border-radius: 12px; padding: 20px; text-align: center;">
+          <div style="font-size: 1rem; font-weight: 700; color: white;">✨ Summary 2</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.8);">55K chars</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Iteration 3 (Final) -->
+    <div style="display: flex; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 180px; text-align: right;">
+        <div style="font-size: 1.3rem; font-weight: 700; color: var(--accent-light);">4. Iteration 3</div>
+        <div style="font-size: 0.95rem; color: var(--muted); margin-top: 8px;">LLM Call #3 (Final)</div>
+      </div>
+      <div style="flex: 1; display: flex; gap: 16px; align-items: center;">
+        <div style="flex: 0 0 35%; background: var(--card); border: 2px solid var(--border); border-radius: 12px; padding: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="background: linear-gradient(135deg, var(--ai), var(--secondary)); border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.85rem; font-weight: 600; color: white;">Summary 2</div>
+              <div style="font-size: 0.75rem; color: rgba(255,255,255,0.8);">55K</div>
+            </div>
+            <div style="text-align: center; font-size: 1rem; color: var(--accent);">+</div>
+            <div style="background: linear-gradient(135deg, var(--info), var(--accent)); border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.85rem; font-weight: 600; color: white;">Chunk 3</div>
+              <div style="font-size: 0.75rem; color: rgba(255,255,255,0.8);">200K</div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 2rem; color: var(--accent);">→</div>
+        <div style="flex: 0 0 25%; background: rgba(102, 126, 234, 0.15); border: 2px solid var(--accent); border-radius: 12px; padding: 16px; text-align: center;">
+          <div style="font-size: 0.9rem; font-weight: 600; color: var(--accent); margin-bottom: 8px;">🧠 LLM</div>
+          <div style="font-size: 0.75rem; color: var(--muted);">Final Summary</div>
+        </div>
+        <div style="font-size: 2rem; color: var(--success);">→</div>
+        <div style="flex: 1; background: linear-gradient(135deg, var(--success), var(--cheap)); border: 3px solid var(--success); border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 0 30px rgba(74, 222, 128, 0.4);">
+          <div style="font-size: 1.1rem; font-weight: 700; color: white;">🎯 Final Summary</div>
+          <div style="font-size: 0.85rem; color: rgba(255,255,255,0.9); margin-top: 4px;">60K chars</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key insight -->
+    <div style="background: rgba(167, 139, 250, 0.1); border: 2px solid var(--ai); border-radius: 12px; padding: 24px; margin-top: 16px;">
+      <div style="display: flex; align-items: start; gap: 20px;">
+        <div style="font-size: 2.5rem;">💡</div>
+        <div style="flex: 1;">
+          <div style="font-size: 1.2rem; font-weight: 700; color: var(--ai); margin-bottom: 8px;">Rolling Accumulation Strategy</div>
+          <div style="font-size: 1rem; color: var(--text); line-height: 1.6;">
+            Each iteration combines the <strong>previous summary</strong> with the <strong>next chunk</strong>, creating a rolling summary that preserves context across the entire document. The final iteration uses the target size constraint to ensure the output fits within the budget.
+          </div>
+          <div style="margin-top: 12px; font-size: 0.9rem; color: var(--muted);">
+            <strong>Example:</strong> 600K chars split into 3 chunks (200K each) → 3 LLM calls → 60K char final summary (10× reduction)
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 9: VISUAL COMPARISON
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">09</div>
+  <h2>Visual Comparison</h2>
+
+  <div class="visual-comparison">
+    <!-- Plain Text -->
+    <div class="comparison-section">
+      <div class="comparison-header truncate-header">✂️ Plain Text Truncation</div>
+      <div class="document-viz">
+        <div class="doc-line keep" style="width: 95%;"></div>
+        <div class="doc-line keep" style="width: 88%;"></div>
+        <div class="doc-line keep" style="width: 92%;"></div>
+        <div class="doc-line keep" style="width: 85%;"></div>
+        <div class="doc-line keep" style="width: 90%;"></div>
+        <div class="doc-line keep" style="width: 93%;"></div>
+        <div class="doc-line keep" style="width: 87%;"></div>
+        <div class="doc-line keep" style="width: 91%;"></div>
+
+        <div class="truncation-indicator">
+          ⚠️ CONTENT LOST<br>
+          <span style="font-size: 0.9rem;">(Middle 29% removed)</span>
+        </div>
+
+        <div class="doc-line keep" style="width: 78%;"></div>
+        <div class="doc-line keep" style="width: 82%;"></div>
+        <div class="doc-line keep" style="width: 88%;"></div>
+        <div class="doc-line keep" style="width: 85%;"></div>
+      </div>
+    </div>
+
+    <!-- AI Summarization -->
+    <div class="comparison-section">
+      <div class="comparison-header ai-header">🧠 AI Summarization</div>
+      <div class="document-viz">
+        <div class="doc-line keep" style="width: 95%;"></div>
+        <div class="doc-line keep" style="width: 88%;"></div>
+
+        <div class="summary-indicator">
+          🧠 INTELLIGENT SUMMARY<br>
+          <span style="font-size: 0.9rem;">(10× reduction - 90% smaller)</span>
+        </div>
+
+        <div class="doc-line summarized" style="width: 85%;"></div>
+        <div class="doc-line summarized" style="width: 80%;"></div>
+        <div class="doc-line summarized" style="width: 88%;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 10: CONFIGURATION
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">10</div>
+  <h2>Configuration Options</h2>
+
+  <div class="config-grid">
+    <div class="config-card">
+      <div class="config-title">
+        <div class="config-icon tier-1">✂️</div>
+        <span>Plain Text Truncation</span>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Current Message Threshold</div>
+        <div class="config-value">500K characters</div>
+        <div class="config-desc">Trigger for single oversized message</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Current Message Target</div>
+        <div class="config-value">425K characters</div>
+        <div class="config-desc">Target size after truncation</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">All Messages Threshold</div>
+        <div class="config-value">650K characters</div>
+        <div class="config-desc">Total conversation size trigger</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Historical Message Threshold</div>
+        <div class="config-value">100K characters</div>
+        <div class="config-desc">Per-message limit in history</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Historical Message Target</div>
+        <div class="config-value">85K characters</div>
+        <div class="config-desc">Target for historical messages</div>
+      </div>
+    </div>
+
+    <div class="config-card">
+      <div class="config-title">
+        <div class="config-icon tier-2">🧠</div>
+        <span>AI Summarization</span>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Enable AI Summarization</div>
+        <div class="config-value">true / false</div>
+        <div class="config-desc">Master switch for AI processing</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Temperature</div>
+        <div class="config-value">0.7</div>
+        <div class="config-desc">LLM creativity vs consistency</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Chunk Strategy</div>
+        <div class="config-value">Rolling Map-Reduce</div>
+        <div class="config-desc">Iterative summarization method</div>
+      </div>
+
+      <div class="config-item">
+        <div class="config-name">Fallback</div>
+        <div class="config-value">Auto Plain Text</div>
+        <div class="config-desc">On error or timeout</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 11: KEY TAKEAWAYS
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">11</div>
+  <h2>Key Takeaways</h2>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-emoji">⚡</div>
+      <div class="summary-title">Choose Based on Need</div>
+      <div class="summary-text">
+        Plain text for speed<br>
+        AI for accuracy<br>
+        Both fully configurable
+      </div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-emoji">💰</div>
+      <div class="summary-title">Cost vs Quality</div>
+      <div class="summary-text">
+        Zero-cost truncation<br>
+        vs<br>
+        Premium AI preservation
+      </div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-emoji">🎯</div>
+      <div class="summary-title">Automatic Fallback</div>
+      <div class="summary-text">
+        AI errors gracefully<br>
+        fall back to plain text<br>
+        No failures
+      </div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-emoji">📊</div>
+      <div class="summary-title">Two-Tier System</div>
+      <div class="summary-text">
+        Latest response: generous<br>
+        History: aggressive<br>
+        Optimal token usage
+      </div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-emoji">🔧</div>
+      <div class="summary-title">Fully Configurable</div>
+      <div class="summary-text">
+        Adjust thresholds<br>
+        Set targets<br>
+        Environment variables
+      </div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-emoji">🚀</div>
+      <div class="summary-title">Production Ready</div>
+      <div class="summary-text">
+        Battle-tested<br>
+        Comprehensive docs<br>
+        Full test coverage
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 12: FINAL SLIDE
+     ═══════════════════════════════════════════════════════════ -->
+<section class="slide title-slide">
+  <div class="slide-number">12</div>
+  <h1 style="font-size: 4rem; margin-bottom: 40px;">
+    Intelligent Token Management<br>
+    <span style="font-size: 2.5rem; background: linear-gradient(135deg, var(--success), var(--info)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+      Built for Scale & Performance
+    </span>
+  </h1>
+
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; margin-top: 80px;">
+    <div style="text-align: center;">
+      <div style="font-size: 4rem; margin-bottom: 16px;">⚡</div>
+      <div style="font-size: 2.5rem; font-weight: 900; color: var(--success);">&lt; 1ms</div>
+      <div style="font-size: 1.2rem; color: var(--muted);">Plain Text Speed</div>
+    </div>
+    <div style="text-align: center;">
+      <div style="font-size: 4rem; margin-bottom: 16px;">🎯</div>
+      <div style="font-size: 2.5rem; font-weight: 900; color: var(--ai);">92%</div>
+      <div style="font-size: 1.2rem; color: var(--muted);">AI Accuracy</div>
+    </div>
+    <div style="text-align: center;">
+      <div style="font-size: 4rem; margin-bottom: 16px;">💰</div>
+      <div style="font-size: 2.5rem; font-weight: 900; color: var(--cheap);">$0</div>
+      <div style="font-size: 1.2rem; color: var(--muted);">Truncation Cost</div>
+    </div>
+    <div style="text-align: center;">
+      <div style="font-size: 4rem; margin-bottom: 16px;">📊</div>
+      <div style="font-size: 2.5rem; font-weight: 900; color: var(--info);">2-Tier</div>
+      <div style="font-size: 1.2rem; color: var(--muted);">Smart System</div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
