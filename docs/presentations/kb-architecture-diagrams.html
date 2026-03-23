@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KB Architecture Comparison — RAG vs Tool Calling vs Hybrid</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --rag: #3b82f6;
+    --rag-light: #60a5fa;
+    --tool: #8b5cf6;
+    --tool-light: #a78bfa;
+    --hybrid: #10b981;
+    --hybrid-light: #34d399;
+    --user: #f59e0b;
+    --llm: #ec4899;
+    --kb: #06b6d4;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* ── Slide Layout ── */
+  .slide {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 60px 80px;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+    page-break-after: always;
+  }
+
+  .slide-label {
+    position: absolute;
+    top: 32px;
+    right: 48px;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 4px 14px;
+    border-radius: 6px;
+  }
+
+  .slide-label.sl-rag    { background: rgba(59,130,246,0.15); color: var(--rag-light); }
+  .slide-label.sl-tool   { background: rgba(139,92,246,0.15); color: var(--tool-light); }
+  .slide-label.sl-hybrid { background: rgba(16,185,129,0.15); color: var(--hybrid-light); }
+  .slide-label.sl-all    { background: rgba(255,255,255,0.06); color: var(--muted); }
+
+  /* ── Title Slide ── */
+  .title-slide {
+    text-align: center;
+    align-items: center;
+  }
+
+  .title-slide h1 {
+    font-size: 4.5rem;
+    font-weight: 800;
+    line-height: 1.15;
+    margin-bottom: 24px;
+    background: linear-gradient(135deg, var(--rag), var(--tool), var(--hybrid));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .title-slide .subtitle {
+    font-size: 1.8rem;
+    color: var(--muted);
+    margin-bottom: 48px;
+  }
+
+  .title-slide .subtitle strong {
+    color: var(--text);
+  }
+
+  .title-pills {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .title-pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-size: 1.4rem;
+    font-weight: 600;
+  }
+
+  .title-pill.tp-rag    { background: rgba(59,130,246,0.12); border: 1.5px solid var(--rag); color: var(--rag-light); }
+  .title-pill.tp-tool   { background: rgba(139,92,246,0.12); border: 1.5px solid var(--tool); color: var(--tool-light); }
+  .title-pill.tp-hybrid { background: rgba(16,185,129,0.12); border: 1.5px solid var(--hybrid); color: var(--hybrid-light); }
+
+  /* ── Slide Headings ── */
+  .slide h2 {
+    font-size: 3.2rem;
+    font-weight: 800;
+    margin-bottom: 16px;
+    line-height: 1.2;
+  }
+
+  .slide h2.c-rag    { color: var(--rag-light); }
+  .slide h2.c-tool   { color: var(--tool-light); }
+  .slide h2.c-hybrid { color: var(--hybrid-light); }
+
+  .slide .tagline {
+    font-size: 1.5rem;
+    color: var(--muted);
+    margin-bottom: 48px;
+  }
+
+  /* ── Flow Steps ── */
+  .flow-h {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+    margin-bottom: 48px;
+  }
+
+  .fh-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    min-width: 130px;
+  }
+
+  .fh-icon {
+    width: 90px;
+    height: 90px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.6rem;
+  }
+
+  .fh-label {
+    font-size: 1.25rem;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .fh-sub {
+    font-size: 1.05rem;
+    color: var(--muted);
+    text-align: center;
+    max-width: 150px;
+  }
+
+  .fh-arrow {
+    font-size: 2.2rem;
+    color: var(--border);
+    margin: 28px 10px 0;
+    flex-shrink: 0;
+  }
+
+  .ic-user   { background: rgba(245,158,11,0.15); border: 2px solid var(--user); color: var(--user); }
+  .ic-sys    { background: rgba(59,130,246,0.15);  border: 2px solid var(--rag);  color: var(--rag); }
+  .ic-kb     { background: rgba(6,182,212,0.15);   border: 2px solid var(--kb);   color: var(--kb); }
+  .ic-llm    { background: rgba(236,72,153,0.15);  border: 2px solid var(--llm);  color: var(--llm); }
+  .ic-tool   { background: rgba(139,92,246,0.15);  border: 2px solid var(--tool); color: var(--tool); }
+  .ic-ok     { background: rgba(34,197,94,0.15);   border: 2px solid var(--green);color: var(--green); }
+  .ic-hybrid { background: rgba(16,185,129,0.15);  border: 2px solid var(--hybrid);color: var(--hybrid); }
+
+  /* ── Pros/Cons Row ── */
+  .pc-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+
+  .pc-box {
+    border-radius: 14px;
+    padding: 28px 32px;
+  }
+
+  .pc-box.pro { background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.25); }
+  .pc-box.con { background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.25); }
+
+  .pc-box h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+  }
+
+  .pc-box.pro h3 { color: var(--green); }
+  .pc-box.con h3 { color: var(--red); }
+
+  .pc-box ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .pc-box li {
+    font-size: 1.3rem;
+    padding: 7px 0;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .pc-box.pro li::before { content: "✅"; flex-shrink: 0; }
+  .pc-box.con li::before { content: "❌"; flex-shrink: 0; }
+
+  /* ── Comparison Table ── */
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--card);
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  th, td {
+    padding: 20px 24px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 1.25rem;
+  }
+
+  th {
+    font-weight: 700;
+    font-size: 1.1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: rgba(255,255,255,0.03);
+  }
+
+  th:nth-child(2) { color: var(--rag-light); }
+  th:nth-child(3) { color: var(--tool-light); }
+  th:nth-child(4) { color: var(--hybrid-light); }
+
+  td:first-child { font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .b {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+  .bg { background: rgba(34,197,94,0.15);  color: var(--green); }
+  .by { background: rgba(234,179,8,0.15);  color: var(--yellow); }
+  .br { background: rgba(239,68,68,0.15);  color: var(--red); }
+
+  /* ── Use Case Cards ── */
+  .uc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+  }
+
+  .uc-col h3 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .uc-col.col-rag h3  { color: var(--rag-light); }
+  .uc-col.col-tool h3 { color: var(--tool-light); }
+  .uc-col.col-hybrid h3 { color: var(--hybrid-light); }
+
+  .uc-card {
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+
+  .uc-card .q {
+    font-size: 1.25rem;
+    font-style: italic;
+    color: var(--muted);
+    margin-bottom: 10px;
+    padding-left: 16px;
+    border-left: 3px solid var(--border);
+  }
+
+  .col-rag .uc-card .q    { border-left-color: var(--rag); }
+  .col-tool .uc-card .q   { border-left-color: var(--tool); }
+  .col-hybrid .uc-card .q { border-left-color: var(--hybrid); }
+
+  .uc-card .why {
+    font-size: 1.15rem;
+    color: var(--text);
+  }
+
+  /* ── Decision Tree ── */
+  .tree-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    display: flex;
+    justify-content: center;
+  }
+
+  /* ── Architecture Cards ── */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .arch-item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .arch-item .ai-icon {
+    font-size: 2.4rem;
+    flex-shrink: 0;
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.04);
+  }
+
+  .arch-item .ai-text strong {
+    display: block;
+    font-size: 1.35rem;
+    margin-bottom: 3px;
+  }
+
+  .arch-item .ai-text span {
+    color: var(--muted);
+    font-size: 1.15rem;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 30px;
+    color: var(--muted);
+    font-size: 1.1rem;
+    border-top: 1px solid var(--border);
+  }
+  .footer strong { color: var(--text); }
+
+  @media print {
+    body { background: #fff; color: #1e293b; }
+    .slide { min-height: auto; padding: 40px; border: none; }
+    .diagram-card, table, .uc-card, .tree-wrap, .arch-item { background: #f8fafc; border-color: #e2e8f0; }
+    .slide { page-break-after: always; }
+  }
+
+  @media (max-width: 900px) {
+    .slide { padding: 36px 28px; }
+    .slide h2 { font-size: 1.8rem; }
+    .title-slide h1 { font-size: 2.2rem; }
+    .flow-h { flex-direction: column; align-items: center; gap: 8px; }
+    .fh-arrow { transform: rotate(90deg); margin: 0; }
+    .pc-row, .uc-grid, .arch-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 1: TITLE -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide title-slide">
+  <h1>Knowledge Base<br>Architecture Comparison</h1>
+  <p class="subtitle"><strong>Auto Bedrock Chat FastAPI</strong> — February 2026</p>
+  <div class="title-pills">
+    <div class="title-pill tp-rag">🔵 RAG</div>
+    <div class="title-pill tp-tool">🟣 Tool Calling</div>
+    <div class="title-pill tp-hybrid">🟢 Hybrid</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 2: RAG -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-rag">Approach 1</span>
+  <h2 class="c-rag">RAG — Retrieval-Augmented Generation</h2>
+  <p class="tagline">Auto-inject relevant KB chunks into every prompt — invisible to the user</p>
+
+  <div class="flow-h">
+    <div class="fh-step">
+      <div class="fh-icon ic-user">👤</div>
+      <div class="fh-label">User asks</div>
+      <div class="fh-sub">"How do I set up OAuth?"</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-sys">🔍</div>
+      <div class="fh-label">Embed query</div>
+      <div class="fh-sub">Text → vector</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-kb">📚</div>
+      <div class="fh-label">Vector search</div>
+      <div class="fh-sub">Top-K chunks</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-sys">📝</div>
+      <div class="fh-label">Inject context</div>
+      <div class="fh-sub">Into system prompt</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-llm">🤖</div>
+      <div class="fh-label">LLM answers</div>
+      <div class="fh-sub">Grounded response</div>
+    </div>
+  </div>
+
+  <div class="pc-row">
+    <div class="pc-box pro">
+      <h3>Strengths</h3>
+      <ul>
+        <li>Always provides context — no missed queries</li>
+        <li>Zero user effort — fully automatic</li>
+        <li>Simple to implement and maintain</li>
+      </ul>
+    </div>
+    <div class="pc-box con">
+      <h3>Limitations</h3>
+      <ul>
+        <li>No filtering by date, source, or topic</li>
+        <li>Can't browse, paginate, or discover</li>
+        <li>May inject irrelevant context (wastes tokens)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 3: TOOL CALLING -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-tool">Approach 2</span>
+  <h2 class="c-tool">Tool Calling — LLM-Driven Retrieval</h2>
+  <p class="tagline">The LLM decides when and how to query the KB using structured tool calls</p>
+
+  <div class="flow-h">
+    <div class="fh-step">
+      <div class="fh-icon ic-user">👤</div>
+      <div class="fh-label">User asks</div>
+      <div class="fh-sub">"Auth docs from 2025"</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-llm">🤖</div>
+      <div class="fh-label">LLM decides</div>
+      <div class="fh-sub">Pick tool + params</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-tool">🔧</div>
+      <div class="fh-label">Tool call</div>
+      <div class="fh-sub">search_kb(filters)</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-kb">📚</div>
+      <div class="fh-label">Filtered results</div>
+      <div class="fh-sub">Structured data</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-llm">🤖</div>
+      <div class="fh-label">LLM synthesizes</div>
+      <div class="fh-sub">Final answer</div>
+    </div>
+  </div>
+
+  <div class="pc-row">
+    <div class="pc-box pro">
+      <h3>Strengths</h3>
+      <ul>
+        <li>Structured queries — filter by date, source, topic</li>
+        <li>Only queries KB when needed (saves tokens)</li>
+        <li>Multi-step reasoning and chained tool calls</li>
+      </ul>
+    </div>
+    <div class="pc-box con">
+      <h3>Limitations</h3>
+      <ul>
+        <li>LLM may skip the tool call → no KB context</li>
+        <li>Extra round-trip latency (LLM → tool → LLM)</li>
+        <li>Requires careful prompt engineering</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 4: HYBRID -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-hybrid">Our Approach</span>
+  <h2 class="c-hybrid">Hybrid — Best of Both Worlds</h2>
+  <p class="tagline">Automatic RAG baseline + on-demand tool calls for deep research</p>
+
+  <div class="flow-h">
+    <div class="fh-step">
+      <div class="fh-icon ic-user">👤</div>
+      <div class="fh-label">User asks</div>
+      <div class="fh-sub">Any question</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-kb">📚</div>
+      <div class="fh-label" style="color:var(--rag-light)">RAG auto-injects</div>
+      <div class="fh-sub">Always runs</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-llm">🤖</div>
+      <div class="fh-label">LLM: enough?</div>
+      <div class="fh-sub">Decides next step</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-tool">🔧</div>
+      <div class="fh-label" style="color:var(--tool-light)">Tool call</div>
+      <div class="fh-sub">Only if needed</div>
+    </div>
+    <div class="fh-arrow">→</div>
+    <div class="fh-step">
+      <div class="fh-icon ic-ok">✅</div>
+      <div class="fh-label">Rich answer</div>
+      <div class="fh-sub">Full coverage</div>
+    </div>
+  </div>
+
+  <div class="pc-row">
+    <div class="pc-box pro">
+      <h3>Why Hybrid Wins</h3>
+      <ul>
+        <li>No missed queries — RAG always provides a baseline</li>
+        <li>Deep research — tools add filters when needed</li>
+        <li>Graceful degradation — if tools fail, RAG still works</li>
+        <li>Best accuracy — Semantic + BM25 + structured queries</li>
+      </ul>
+    </div>
+    <div class="pc-box pro" style="background: rgba(16,185,129,0.06); border-color: rgba(16,185,129,0.25);">
+      <h3 style="color: var(--hybrid-light);">Decision Logic</h3>
+      <ul>
+        <li><strong>RAG only:</strong> "What is OAuth?" → chunks are enough</li>
+        <li><strong>RAG + Tool:</strong> "Auth docs from 2025" → date filter</li>
+        <li><strong>RAG + Tool:</strong> "List all topics" → browse tool</li>
+        <li><strong>RAG + Tool:</strong> "Compare OAuth vs API keys" → research</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 5: COMPARISON TABLE -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-all">Comparison</span>
+  <h2>📊 Side-by-Side</h2>
+  <p class="tagline">How the three approaches compare across key dimensions</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22%">Dimension</th>
+        <th>🔵 RAG Only</th>
+        <th>🟣 Tool Calling</th>
+        <th>🟢 Hybrid (Ours)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Query Coverage</td>
+        <td><span class="b bg">100%</span> Always injects</td>
+        <td><span class="b by">~70-80%</span> May skip</td>
+        <td><span class="b bg">100%</span> RAG + tools</td>
+      </tr>
+      <tr>
+        <td>Filtering</td>
+        <td><span class="b br">None</span></td>
+        <td><span class="b bg">Full</span> date, source, topic</td>
+        <td><span class="b bg">Full</span> via tools</td>
+      </tr>
+      <tr>
+        <td>Latency (simple)</td>
+        <td><span class="b bg">~1.5s</span></td>
+        <td><span class="b by">~2.5s</span></td>
+        <td><span class="b bg">~1.5s</span> RAG only</td>
+      </tr>
+      <tr>
+        <td>Exact Match</td>
+        <td><span class="b br">Weak</span></td>
+        <td><span class="b by">Medium</span></td>
+        <td><span class="b bg">Strong</span> BM25 + semantic</td>
+      </tr>
+      <tr>
+        <td>Token Cost</td>
+        <td><span class="b by">Medium</span> always injects</td>
+        <td><span class="b bg">Low</span> on-demand</td>
+        <td><span class="b by">Medium</span> RAG + sometimes tools</td>
+      </tr>
+      <tr>
+        <td>Failure Mode</td>
+        <td>Irrelevant chunks</td>
+        <td>No context at all</td>
+        <td><strong>Falls back to RAG</strong></td>
+      </tr>
+      <tr>
+        <td>Best For</td>
+        <td>Simple Q&A</td>
+        <td>Research & filtering</td>
+        <td><strong>All use cases ✅</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 6: USE CASES -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-all">Use Cases</span>
+  <h2>🎯 When Each Approach Shines</h2>
+  <p class="tagline">Example queries mapped to the best retrieval strategy</p>
+
+  <div class="uc-grid">
+    <div class="uc-col col-rag">
+      <h3>🔵 RAG Handles It</h3>
+      <div class="uc-card">
+        <div class="q">"What is dependency injection?"</div>
+        <div class="why">Auto-retrieved chunks are enough</div>
+      </div>
+      <div class="uc-card">
+        <div class="q">"How do I add middleware?"</div>
+        <div class="why">Semantic search finds tutorials</div>
+      </div>
+    </div>
+    <div class="uc-col col-tool">
+      <h3>🟣 Tool Call Needed</h3>
+      <div class="uc-card">
+        <div class="q">"Auth articles after Jan 2025"</div>
+        <div class="why">RAG can't filter by date</div>
+      </div>
+      <div class="uc-card">
+        <div class="q">"What topics are in the KB?"</div>
+        <div class="why">Needs browse_topics tool</div>
+      </div>
+    </div>
+    <div class="uc-col col-hybrid">
+      <h3>🟢 Hybrid Excels</h3>
+      <div class="uc-card">
+        <div class="q">"RuntimeError: Task attached to a different loop"</div>
+        <div class="why">BM25 catches exact error text</div>
+      </div>
+      <div class="uc-card">
+        <div class="q">"Compare OAuth vs API keys"</div>
+        <div class="why">RAG baseline + tools fetch more</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 7: DECISION TREE -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-hybrid">Flow</span>
+  <h2>🌳 How Hybrid Routes Each Message</h2>
+  <p class="tagline">The decision flow inside our system for every user query</p>
+
+  <div class="tree-wrap">
+    <svg viewBox="0 0 900 480" width="100%" style="max-width:860px" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+      <line x1="450" y1="52" x2="450" y2="85" stroke="#475569" stroke-width="2.5"/>
+      <line x1="450" y1="125" x2="190" y2="175" stroke="#ef4444" stroke-width="2.5"/>
+      <line x1="450" y1="125" x2="450" y2="175" stroke="#22c55e" stroke-width="2.5"/>
+      <line x1="450" y1="225" x2="450" y2="262" stroke="#475569" stroke-width="2.5"/>
+      <line x1="450" y1="302" x2="265" y2="345" stroke="#3b82f6" stroke-width="2.5"/>
+      <line x1="450" y1="302" x2="635" y2="345" stroke="#8b5cf6" stroke-width="2.5"/>
+      <line x1="635" y1="395" x2="450" y2="420" stroke="#475569" stroke-width="2.5"/>
+      <line x1="265" y1="395" x2="450" y2="420" stroke="#475569" stroke-width="2.5"/>
+
+      <rect x="325" y="10" width="250" height="42" rx="21" fill="#f59e0b" opacity="0.15" stroke="#f59e0b" stroke-width="2"/>
+      <text x="450" y="38" text-anchor="middle" fill="#f59e0b" font-size="18" font-weight="700">👤  User sends message</text>
+
+      <rect x="350" y="85" width="200" height="40" rx="8" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+      <text x="450" y="111" text-anchor="middle" fill="#e2e8f0" font-size="17" font-weight="700">RAG Enabled?</text>
+
+      <text x="300" y="164" text-anchor="middle" fill="#ef4444" font-size="16" font-weight="800">NO</text>
+      <rect x="90" y="175" width="200" height="42" rx="8" fill="rgba(239,68,68,0.1)" stroke="#ef4444" stroke-width="2"/>
+      <text x="190" y="201" text-anchor="middle" fill="#ef4444" font-size="16" font-weight="700">LLM Only (no KB)</text>
+
+      <text x="475" y="164" text-anchor="start" fill="#22c55e" font-size="16" font-weight="800">YES</text>
+      <rect x="330" y="175" width="240" height="50" rx="8" fill="rgba(59,130,246,0.1)" stroke="#3b82f6" stroke-width="2"/>
+      <text x="450" y="198" text-anchor="middle" fill="#60a5fa" font-size="16" font-weight="700">📚  Auto RAG Retrieval</text>
+      <text x="450" y="217" text-anchor="middle" fill="#94a3b8" font-size="14">Embed → Top-K chunks → Inject</text>
+
+      <rect x="340" y="262" width="220" height="40" rx="8" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+      <text x="450" y="288" text-anchor="middle" fill="#e2e8f0" font-size="17" font-weight="700">Need more data?</text>
+
+      <text x="335" y="338" text-anchor="middle" fill="#3b82f6" font-size="16" font-weight="800">NO</text>
+      <rect x="150" y="345" width="230" height="50" rx="8" fill="rgba(59,130,246,0.1)" stroke="#3b82f6" stroke-width="2"/>
+      <text x="265" y="368" text-anchor="middle" fill="#60a5fa" font-size="16" font-weight="700">🔵  RAG is sufficient</text>
+      <text x="265" y="387" text-anchor="middle" fill="#94a3b8" font-size="14">Answer from auto-retrieved chunks</text>
+
+      <text x="565" y="338" text-anchor="middle" fill="#8b5cf6" font-size="16" font-weight="800">YES</text>
+      <rect x="520" y="345" width="230" height="50" rx="8" fill="rgba(139,92,246,0.1)" stroke="#8b5cf6" stroke-width="2"/>
+      <text x="635" y="368" text-anchor="middle" fill="#a78bfa" font-size="16" font-weight="700">🟣  Tool Call</text>
+      <text x="635" y="387" text-anchor="middle" fill="#94a3b8" font-size="14">search_kb / browse / get_article</text>
+
+      <rect x="320" y="420" width="260" height="50" rx="14" fill="rgba(16,185,129,0.15)" stroke="#10b981" stroke-width="2.5"/>
+      <text x="450" y="443" text-anchor="middle" fill="#34d399" font-size="17" font-weight="700">🟢  Hybrid Response</text>
+      <text x="450" y="462" text-anchor="middle" fill="#94a3b8" font-size="14">RAG + tool results → cited answer</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- SLIDE 8: OUR STACK -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="slide">
+  <span class="slide-label sl-hybrid">Stack</span>
+  <h2>🏗️ Our Implementation</h2>
+  <p class="tagline">Current architecture powering the Hybrid KB system</p>
+
+  <div class="arch-grid">
+    <div class="arch-item">
+      <div class="ai-icon">🗄️</div>
+      <div class="ai-text">
+        <strong>Vector Database</strong>
+        <span>SQLite + sqlite-vec — 1536 dimensions</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">🔤</div>
+      <div class="ai-text">
+        <strong>Full-Text Index</strong>
+        <span>SQLite FTS5 — BM25 keyword search</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">🧠</div>
+      <div class="ai-text">
+        <strong>Embedding Model</strong>
+        <span>Bedrock Titan Embed v1 (1536 dims)</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">⚖️</div>
+      <div class="ai-text">
+        <strong>Search Strategy</strong>
+        <span>0.7 × Semantic + 0.3 × BM25</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">✂️</div>
+      <div class="ai-text">
+        <strong>Chunking</strong>
+        <span>512 tokens, 100 token overlap</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">🌐</div>
+      <div class="ai-text">
+        <strong>Content Sources</strong>
+        <span>Async web crawler + local Markdown</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">🤖</div>
+      <div class="ai-text">
+        <strong>LLM Integration</strong>
+        <span>AWS Bedrock Converse API</span>
+      </div>
+    </div>
+    <div class="arch-item">
+      <div class="ai-icon">🚩</div>
+      <div class="ai-text">
+        <strong>Feature Flag</strong>
+        <span>ENABLE_RAG=false (opt-in, backward safe)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <strong>Auto Bedrock Chat FastAPI</strong> — Hybrid KB Architecture &nbsp;|&nbsp; February 2026 &nbsp;|&nbsp; Phase 1 ✅ &nbsp; Phase 2 🔄
+</div>
+
+</body>
+</html>
