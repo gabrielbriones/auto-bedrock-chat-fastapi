@@ -52,6 +52,11 @@ class TestPlugin:
 
     def setup_method(self):
         """Setup test environment"""
+        import os
+        # Clear proxy env vars that cause httpx to fail with unsupported socks:// scheme
+        for var in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            os.environ.pop(var, None)
+
         self.app = FastAPI(title="Test App")
 
         # Add a simple test endpoint
@@ -155,6 +160,113 @@ class TestPlugin:
         assert mp.config is plugin.config
         assert mp.history_msg_threshold == plugin.config.history_msg_length_threshold
         assert mp.single_msg_threshold == plugin.config.single_msg_length_threshold
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_preset_prompts_kwarg_stored_on_plugin(self, mock_bedrock_boto3, mock_boto3):
+        """preset_prompts passed directly to add_bedrock_chat are stored on the plugin."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        prompts = [{"label": "Test", "template": "Hello {{JOB_ID}}"}]
+        plugin = add_bedrock_chat(self.app, enable_ui=False, preset_prompts=prompts)
+
+        assert plugin._preset_prompts == prompts
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_preset_prompts_falls_back_to_config(self, mock_bedrock_boto3, mock_boto3):
+        """When no preset_prompts kwarg is given, _preset_prompts falls back to config.preset_prompts."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        from auto_bedrock_chat_fastapi.config import ChatConfig
+
+        prompts = [{"label": "From config", "template": "Hello"}]
+        config = load_config(enable_ui=False)
+        config.preset_prompts = prompts
+
+        plugin = BedrockChatPlugin(self.app, config=config)
+
+        assert plugin._preset_prompts == prompts
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_preset_prompts_kwarg_overrides_config(self, mock_bedrock_boto3, mock_boto3):
+        """preset_prompts kwarg takes priority over config.preset_prompts."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        config = load_config(enable_ui=False)
+        config.preset_prompts = [{"label": "From config", "template": "Config prompt"}]
+
+        override_prompts = [{"label": "From kwarg", "template": "Kwarg prompt"}]
+        plugin = BedrockChatPlugin(self.app, config=config, preset_prompts=override_prompts)
+
+        assert plugin._preset_prompts == override_prompts
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_preset_prompts_file_loaded_when_no_direct_prompts(self, mock_bedrock_boto3, mock_boto3, tmp_path):
+        """preset_prompts_file is loaded when neither kwarg nor config.preset_prompts is set."""
+        import textwrap
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        yaml_file = tmp_path / "prompts.yaml"
+        yaml_file.write_text(textwrap.dedent("""\
+            prompts:
+              - label: "From YAML"
+                template: "Hello {{JOB_ID}}"
+        """), encoding="utf-8")
+
+        plugin = add_bedrock_chat(
+            self.app, enable_ui=False, preset_prompts_file=str(yaml_file)
+        )
+
+        assert len(plugin._preset_prompts) == 1
+        assert plugin._preset_prompts[0]["label"] == "From YAML"
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_preset_prompts_in_template_context(self, mock_bedrock_boto3, mock_boto3):
+        """_preset_prompts are passed to the template context when enable_ui=True."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        prompts = [{"label": "UI Test", "template": "Run analysis for {{JOB_ID}}"}]
+
+        captured_context = {}
+
+        original_response = None
+
+        plugin = add_bedrock_chat(self.app, enable_ui=True, preset_prompts=prompts)
+
+        # Verify the plugin holds the prompts that will be injected into the template context
+        assert plugin._preset_prompts == prompts
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_no_preset_prompts_defaults_to_empty_list(self, mock_bedrock_boto3, mock_boto3):
+        """Plugin initializes with an empty preset_prompts list when none are configured."""
+        mock_session_instance = Mock()
+        mock_session_instance.client.return_value = Mock()
+        mock_bedrock_boto3.return_value = mock_session_instance
+        mock_boto3.return_value = mock_session_instance
+
+        plugin = add_bedrock_chat(self.app, enable_ui=False)
+
+        assert plugin._preset_prompts == []
 
 
 class TestToolsGenerator:

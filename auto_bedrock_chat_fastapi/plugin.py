@@ -114,7 +114,23 @@ class BedrockChatPlugin:
 
     def __init__(self, app: FastAPI, config: Optional[ChatConfig] = None, **config_overrides):
         self.app = app
+        # Extract preset_prompts before passing to load_config so it never hits ChatConfig
+        # (allows use with installed library versions that predate this field)
+        self._preset_prompts = config_overrides.pop("preset_prompts", [])
+        preset_prompts_file = config_overrides.pop("preset_prompts_file", None)
         self.config = config or load_config(**config_overrides)
+
+        # Resolve preset prompts with the following priority:
+        # 1. Direct override (preset_prompts kwarg)
+        # 2. config.preset_prompts (set via env-var or a pre-built ChatConfig)
+        # 3. YAML file (preset_prompts_file kwarg or config.preset_prompts_file env-var)
+        if not self._preset_prompts:
+            self._preset_prompts = self.config.preset_prompts  # [] when not configured
+        if not self._preset_prompts:
+            file_path = preset_prompts_file or self.config.preset_prompts_file
+            if file_path:
+                from .config import load_preset_prompts_from_yaml
+                self._preset_prompts = load_preset_prompts_from_yaml(file_path)
 
         # Setup logging configuration
         _setup_logging(self.config)
@@ -257,6 +273,7 @@ class BedrockChatPlugin:
                             "model_id": self.config.model_id,
                             "ui_welcome_message": self.config.ui_welcome_message,
                             "app_title": self.app.title or "API",
+                            "preset_prompts": self._preset_prompts,
                         },
                     )
                 except Exception as e:
@@ -636,6 +653,8 @@ def add_bedrock_chat(
     auth_dependency: Optional[Callable] = None,
     openapi_spec_file: Optional[str] = None,
     api_base_url: Optional[str] = None,
+    preset_prompts: Optional[list] = None,
+    preset_prompts_file: Optional[str] = None,
     **kwargs,
 ) -> BedrockChatPlugin:
     """
@@ -709,6 +728,10 @@ def add_bedrock_chat(
             config_overrides["openapi_spec_file"] = openapi_spec_file
         if api_base_url is not None:
             config_overrides["api_base_url"] = api_base_url
+        if preset_prompts is not None:
+            config_overrides["preset_prompts"] = preset_prompts
+        if preset_prompts_file is not None:
+            config_overrides["preset_prompts_file"] = preset_prompts_file
 
         # Add any additional kwargs
         config_overrides.update(kwargs)

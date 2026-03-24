@@ -26,6 +26,7 @@ Open your browser to `http://localhost:8000/bedrock-chat/ui`.
 - **Conversation history** — persists within the session
 - **Authentication modal** — UI for providing credentials (bearer token, API key, basic auth, OAuth2)
 - **Session management** — clear history, ping, logout
+- **Preset prompt buttons** — one-click buttons that send pre-defined prompts; see [Preset Prompts](preset-prompts.md)
 
 ---
 

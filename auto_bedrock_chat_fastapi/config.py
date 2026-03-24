@@ -322,6 +322,25 @@ class ChatConfig(BaseSettings):
         description="Welcome message displayed when chat UI first loads",
     )
 
+    preset_prompts: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Preset prompt buttons displayed in the chat UI. Each entry should have 'label' (button text) "
+            "and 'template' (prompt text). Use {{JOB_ID}} as a placeholder for a job ID. "
+            "Optional 'description' field shown as a tooltip."
+        ),
+    )
+
+    preset_prompts_file: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_PRESET_PROMPTS_FILE",
+        description=(
+            "Path to a YAML file containing preset prompt button definitions. "
+            "The file must have a top-level 'prompts' list, each entry with 'label' and 'template' keys. "
+            "Loaded at startup; takes effect only when preset_prompts is empty."
+        ),
+    )
+
     # Security Configuration
     auth_dependency: Optional[Callable] = Field(default=None, description="Authentication dependency function")
 
@@ -765,6 +784,50 @@ def load_config(
         raise
     except Exception as e:
         raise ConfigurationError(f"Failed to load configuration: {str(e)}")
+
+
+def load_preset_prompts_from_yaml(path: str) -> List[Dict[str, Any]]:
+    """
+    Load preset prompt button definitions from a YAML file.
+
+    The file must have a top-level ``prompts`` key whose value is a list of
+    mappings with at minimum ``label`` and ``template`` keys::
+
+        prompts:
+          - label: "Workload Analysis"
+            description: "Full CPU characterization"
+            template: |
+              JOB_ID = {{JOB_ID}}
+              ...
+
+    Returns an empty list and logs a warning if the file is missing or invalid
+    so that the chat UI still starts normally.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        import yaml  # pyyaml — listed as an optional dependency
+    except ImportError:  # pragma: no cover
+        logger.warning(
+            "pyyaml is not installed; cannot load preset prompts from '%s'. "
+            "Install it with: pip install pyyaml",
+            path,
+        )
+        return []
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+        prompts = data.get("prompts", []) if isinstance(data, dict) else []
+        logger.info("Loaded %d preset prompt(s) from %s", len(prompts), path)
+        return prompts
+    except FileNotFoundError:
+        logger.debug("Preset prompts file not found: %s", path)
+        return []
+    except Exception as exc:
+        logger.warning("Could not load preset prompts from '%s': %s", path, exc)
+        return []
 
 
 def validate_config(config: ChatConfig) -> None:

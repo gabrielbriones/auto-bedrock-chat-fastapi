@@ -15,7 +15,11 @@ class ChatClient {
         this.typingIndicator = document.getElementById('typingIndicator');
         this.typingText = document.getElementById('typingText');
 
+        this.currentPromptCache = {};       // Cache of resolved placeholder values, e.g. { JOB_ID: '...', PLATFORM: '...' }
+        this.pendingPromptTemplate = null;  // Template waiting for one or more variable values
+
         this.setupEventListeners();
+        this._setupVariablePanel();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
@@ -100,6 +104,10 @@ class ChatClient {
             this.updateConnectionStatus(false);
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
+            this._disablePresetButtons();
+            this.pendingPromptTemplate = null;
+            const variablePanel = document.getElementById('variablePanel');
+            if (variablePanel) variablePanel.classList.add('hidden');
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
@@ -142,6 +150,174 @@ class ChatClient {
     enableInput() {
         this.messageInput.disabled = false;
         this.sendButton.disabled = false;
+        this._renderPresetButtons();
+        document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = false; });
+    }
+
+    _disablePresetButtons() {
+        document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = true; });
+    }
+
+    _renderPresetButtons() {
+        const bar = document.getElementById('presetPromptsBar');
+        if (!bar || bar.dataset.rendered) return;  // render only once
+        bar.dataset.rendered = 'true';
+
+        const prompts = window.CONFIG.presetPrompts || [];
+        prompts.forEach(prompt => {
+            const btn = document.createElement('button');
+            btn.className = 'preset-prompt-btn';
+            btn.textContent = prompt.label || 'Prompt';
+            if (prompt.description) btn.title = prompt.description;
+            btn.addEventListener('click', () => this._handlePresetPrompt(prompt));
+            bar.appendChild(btn);
+        });
+    }
+
+    // Return the list of unique placeholder names found in a template string.
+    _getPlaceholders(template) {
+        const re = /\{\{(\w+)\}\}/g;
+        const found = new Set();
+        let m;
+        while ((m = re.exec(template)) !== null) found.add(m[1]);
+        return [...found];
+    }
+
+    // Prettify a SCREAMING_SNAKE_CASE variable name for display.
+    // e.g. JOB_ID → "Job ID",  PLATFORM → "Platform"
+    _prettifyVarName(name) {
+        return name.split('_')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+            .join(' ');
+    }
+
+    // Validate a single placeholder value.
+    // Variables whose name ends with _ID must be valid UUIDs; others must be non-empty.
+    _validateVar(varName, value) {
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (varName.endsWith('_ID')) return UUID_RE.test(value.trim());
+        return value.trim().length > 0;
+    }
+
+    _handlePresetPrompt(prompt) {
+        const template = prompt.template || '';
+        const allVars = this._getPlaceholders(template);
+
+        if (allVars.length === 0) {
+            this._sendPresetMessage(template);
+            return;
+        }
+
+        const missingVars = allVars.filter(v => !this.currentPromptCache[v]);
+
+        if (missingVars.length === 0) {
+            // All placeholders already resolved from cache
+            const resolved = allVars.reduce(
+                (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
+                template
+            );
+            this._sendPresetMessage(resolved);
+            return;
+        }
+
+        // Show the inline panel to collect the missing variable values
+        this.pendingPromptTemplate = template;
+        this._showVariablePanel(missingVars);
+    }
+
+    _showVariablePanel(vars) {
+        const panel = document.getElementById('variablePanel');
+        const container = document.getElementById('variableInputs');
+        if (!panel || !container) return;
+
+        container.innerHTML = '';
+        vars.forEach(varName => {
+            const row = document.createElement('div');
+            row.className = 'variable-row';
+
+            const label = document.createElement('label');
+            label.htmlFor = `varInput_${varName}`;
+            label.textContent = `${this._prettifyVarName(varName)}:`;
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.id = `varInput_${varName}`;
+            input.dataset.varName = varName;
+            if (varName.endsWith('_ID')) {
+                input.placeholder = 'e.g. e62f2481-b56e-4d2a-9c16-11cd8db76caa';
+            }
+
+            row.appendChild(label);
+            row.appendChild(input);
+            container.appendChild(row);
+        });
+
+        panel.classList.remove('hidden');
+        container.querySelector('input')?.focus();
+    }
+
+    _sendPresetMessage(text) {
+        if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.addMessage('user', text);
+        this.ws.send(JSON.stringify({ type: 'chat', message: text }));
+    }
+
+    _setupVariablePanel() {
+        const panel     = document.getElementById('variablePanel');
+        const submitBtn = document.getElementById('varPanelSubmit');
+        const cancelBtn = document.getElementById('varPanelCancel');
+
+        if (!panel || !submitBtn || !cancelBtn) return;
+
+        const doSubmit = () => {
+            const inputs = panel.querySelectorAll('input[data-var-name]');
+            let allValid = true;
+
+            inputs.forEach(input => {
+                const varName = input.dataset.varName;
+                const value   = input.value.trim();
+                if (!this._validateVar(varName, value)) {
+                    input.classList.add('input-error');
+                    allValid = false;
+                } else {
+                    input.classList.remove('input-error');
+                    this.currentPromptCache[varName] = value;
+                }
+            });
+
+            if (!allValid) {
+                panel.querySelector('.input-error')?.focus();
+                return;
+            }
+
+            panel.classList.add('hidden');
+            if (this.pendingPromptTemplate) {
+                const allVars = this._getPlaceholders(this.pendingPromptTemplate);
+                const resolved = allVars.reduce(
+                    (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
+                    this.pendingPromptTemplate
+                );
+                this.pendingPromptTemplate = null;
+                this._sendPresetMessage(resolved);
+            }
+        };
+
+        submitBtn.addEventListener('click', doSubmit);
+
+        // Delegate key events for dynamically-created inputs
+        panel.addEventListener('keydown', (e) => {
+            if (e.target.tagName !== 'INPUT') return;
+            if (e.key === 'Enter')  { e.preventDefault(); doSubmit(); }
+            if (e.key === 'Escape') { cancelBtn.click(); }
+        });
+        panel.addEventListener('input', (e) => {
+            if (e.target.tagName === 'INPUT') e.target.classList.remove('input-error');
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            this.pendingPromptTemplate = null;
+            panel.classList.add('hidden');
+        });
     }
 
     _recoverAuthSubmitButton() {
@@ -195,6 +371,14 @@ class ChatClient {
         const message = this.messageInput.value.trim();
         if (!message || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
             return;
+        }
+
+        // Keep the prompt cache up to date with values mentioned in free-form messages.
+        // UUIDs are stored as JOB_ID so that subsequent preset prompts referencing
+        // {{JOB_ID}} can be resolved without asking the user again.
+        const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        if (uuidMatch) {
+            this.currentPromptCache['JOB_ID'] = uuidMatch[0];
         }
 
         // Add user message to chat
@@ -264,6 +448,7 @@ class ChatClient {
                 if (window.CONFIG.requireAuth) {
                     this.messageInput.disabled = true;
                     this.sendButton.disabled = true;
+                    this._disablePresetButtons();
                 }
                 // Close connection after logout - mark as intentional to prevent auto-reconnect
                 // Set flag BEFORE checking/closing to avoid race conditions
@@ -320,8 +505,19 @@ class ChatClient {
             // Process content with markdown and reasoning removal
             const processedContent = processMessageContent(messageText, window.CONFIG.modelId);
             contentDiv.innerHTML = processedContent;
+        } else if (role === 'user') {
+            // Render user messages as markdown so preset prompts (with headers,
+            // tables, lists) are readable instead of a wall of plain text.
+            // DOMPurify sanitizes the marked output to prevent XSS from raw HTML
+            // that marked passes through by default.
+            if (window.marked) {
+                const raw = marked.parse(messageText);
+                contentDiv.innerHTML = window.DOMPurify ? DOMPurify.sanitize(raw) : raw;
+            } else {
+                contentDiv.textContent = messageText;
+            }
         } else {
-            // For user and system messages, use plain text
+            // system messages — plain text only
             contentDiv.textContent = messageText;
         }
 
