@@ -15,7 +15,11 @@ class ChatClient {
         this.typingIndicator = document.getElementById('typingIndicator');
         this.typingText = document.getElementById('typingText');
 
+        this.currentJobId = null;         // Last UUID seen in user messages this session
+        this.pendingPromptTemplate = null;  // Template waiting for a job ID
+
         this.setupEventListeners();
+        this._setupJobIdPanel();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
@@ -100,6 +104,7 @@ class ChatClient {
             this.updateConnectionStatus(false);
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
+            this._disablePresetButtons();
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
@@ -142,6 +147,101 @@ class ChatClient {
     enableInput() {
         this.messageInput.disabled = false;
         this.sendButton.disabled = false;
+        this._renderPresetButtons();
+        document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = false; });
+    }
+
+    _disablePresetButtons() {
+        document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = true; });
+    }
+
+    _renderPresetButtons() {
+        const bar = document.getElementById('presetPromptsBar');
+        if (!bar || bar.dataset.rendered) return;  // render only once
+        bar.dataset.rendered = 'true';
+
+        const prompts = window.CONFIG.presetPrompts || [];
+        prompts.forEach(prompt => {
+            const btn = document.createElement('button');
+            btn.className = 'preset-prompt-btn';
+            btn.textContent = prompt.label || 'Prompt';
+            if (prompt.description) btn.title = prompt.description;
+            btn.addEventListener('click', () => this._handlePresetPrompt(prompt));
+            bar.appendChild(btn);
+        });
+    }
+
+    _handlePresetPrompt(prompt) {
+        const template = prompt.template || '';
+        const needsJobId = template.includes('{{JOB_ID}}');
+
+        if (!needsJobId) {
+            this._sendPresetMessage(template);
+            return;
+        }
+
+        if (this.currentJobId) {
+            this._sendPresetMessage(template.replaceAll('{{JOB_ID}}', this.currentJobId));
+            return;
+        }
+
+        // No job ID known yet — show the inline panel
+        this.pendingPromptTemplate = template;
+        const panel = document.getElementById('jobIdPanel');
+        if (panel) {
+            panel.classList.remove('hidden');
+            const input = document.getElementById('jobIdInput');
+            if (input) {
+                input.value = '';
+                input.classList.remove('input-error');
+                input.focus();
+            }
+        }
+    }
+
+    _sendPresetMessage(text) {
+        if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.addMessage('user', text);
+        this.ws.send(JSON.stringify({ type: 'chat', message: text }));
+    }
+
+    _setupJobIdPanel() {
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        const submitBtn = document.getElementById('jobIdSubmit');
+        const cancelBtn = document.getElementById('jobIdCancel');
+        const input    = document.getElementById('jobIdInput');
+        const panel    = document.getElementById('jobIdPanel');
+
+        if (!submitBtn || !cancelBtn || !input || !panel) return;
+
+        const doSubmit = () => {
+            const val = input.value.trim();
+            if (!UUID_RE.test(val)) {
+                input.classList.add('input-error');
+                input.focus();
+                return;
+            }
+            this.currentJobId = val;
+            panel.classList.add('hidden');
+            if (this.pendingPromptTemplate) {
+                const resolved = this.pendingPromptTemplate.replaceAll('{{JOB_ID}}', val);
+                this.pendingPromptTemplate = null;
+                this._sendPresetMessage(resolved);
+            }
+        };
+
+        submitBtn.addEventListener('click', doSubmit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); doSubmit(); }
+            if (e.key === 'Escape') { cancelBtn.click(); }
+        });
+        input.addEventListener('input', () => input.classList.remove('input-error'));
+
+        cancelBtn.addEventListener('click', () => {
+            this.pendingPromptTemplate = null;
+            panel.classList.add('hidden');
+        });
     }
 
     _recoverAuthSubmitButton() {
@@ -195,6 +295,12 @@ class ChatClient {
         const message = this.messageInput.value.trim();
         if (!message || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
             return;
+        }
+
+        // Auto-track the first UUID found in user messages to use with preset prompts
+        const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        if (uuidMatch) {
+            this.currentJobId = uuidMatch[0];
         }
 
         // Add user message to chat
@@ -264,6 +370,7 @@ class ChatClient {
                 if (window.CONFIG.requireAuth) {
                     this.messageInput.disabled = true;
                     this.sendButton.disabled = true;
+                    this._disablePresetButtons();
                 }
                 // Close connection after logout - mark as intentional to prevent auto-reconnect
                 // Set flag BEFORE checking/closing to avoid race conditions
@@ -320,8 +427,16 @@ class ChatClient {
             // Process content with markdown and reasoning removal
             const processedContent = processMessageContent(messageText, window.CONFIG.modelId);
             contentDiv.innerHTML = processedContent;
+        } else if (role === 'user') {
+            // Render user messages as markdown so preset prompts (with headers,
+            // tables, lists) are readable instead of a wall of plain text.
+            if (window.marked) {
+                contentDiv.innerHTML = marked.parse(messageText);
+            } else {
+                contentDiv.textContent = messageText;
+            }
         } else {
-            // For user and system messages, use plain text
+            // system messages — plain text only
             contentDiv.textContent = messageText;
         }
 

@@ -601,3 +601,212 @@ body {
         padding: 8px;
     }
 }
+
+/* ── User message bubble: markdown overrides ────────────────────────────── */
+/* User bubbles have a purple (#667eea) background with white text.
+   Override markdown-generated elements so they remain legible. */
+
+.message.user .message-content p { margin: 6px 0; }
+
+.message.user .message-content h1,
+.message.user .message-content h2,
+.message.user .message-content h3,
+.message.user .message-content h4 {
+    color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.3);
+    padding-bottom: 3px;
+    margin: 10px 0 4px;
+}
+
+.message.user .message-content hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.35);
+    margin: 8px 0;
+}
+
+.message.user .message-content ul,
+.message.user .message-content ol {
+    padding-left: 18px;
+    margin: 4px 0;
+}
+
+.message.user .message-content code {
+    background: rgba(0,0,0,0.2);
+    color: #e8f0ff;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.88em;
+}
+
+.message.user .message-content pre {
+    background: rgba(0,0,0,0.2);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    padding: 10px;
+    overflow-x: auto;
+    margin: 8px 0;
+}
+
+.message.user .message-content pre code {
+    background: none;
+    padding: 0;
+    color: #e8f0ff;
+}
+
+.message.user .message-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+    font-size: 0.88em;
+}
+
+.message.user .message-content table th,
+.message.user .message-content table td {
+    border: 1px solid rgba(255,255,255,0.3);
+    padding: 5px 10px;
+    text-align: left;
+    color: #fff;
+}
+
+.message.user .message-content table th {
+    background: rgba(0,0,0,0.15);
+    font-weight: 600;
+}
+
+.message.user .message-content table tr:nth-child(even) {
+    background: rgba(0,0,0,0.08);
+}
+
+.message.user .message-content a {
+    color: #c7d8ff;
+}
+
+.message.user .message-content strong { font-weight: 700; }
+.message.user .message-content em { font-style: italic; opacity: 0.9; }
+
+/* ── Preset Prompt Buttons ─────────────────────────────────────────────── */
+
+.preset-prompts {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px 20px;
+    background: white;
+    border-top: 1px solid #e2e8f0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e0 transparent;
+    /* hide bar when empty */
+    min-height: 0;
+}
+
+.preset-prompts:empty {
+    display: none;
+}
+
+.preset-prompts::-webkit-scrollbar {
+    height: 4px;
+}
+
+.preset-prompts::-webkit-scrollbar-thumb {
+    background: #cbd5e0;
+    border-radius: 2px;
+}
+
+.preset-prompt-btn {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    background: #eef0fd;
+    color: #4a56c1;
+    border: 1px solid #c7cdf7;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    line-height: 1.4;
+}
+
+.preset-prompt-btn:hover:not(:disabled) {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
+}
+
+.preset-prompt-btn:disabled {
+    background: #f0f0f0;
+    color: #a0aec0;
+    border-color: #e2e8f0;
+    cursor: not-allowed;
+}
+
+/* ── Job ID Inline Panel ────────────────────────────────────────────────── */
+
+.job-id-panel {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 20px;
+    background: #fffbeb;
+    border-top: 1px solid #f6e05e;
+}
+
+.job-id-panel.hidden {
+    display: none;
+}
+
+.job-id-panel label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #744210;
+    white-space: nowrap;
+}
+
+.job-id-panel input[type="text"] {
+    flex: 1;
+    padding: 7px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    outline: none;
+}
+
+.job-id-panel input[type="text"]:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.job-id-panel input[type="text"].input-error {
+    border-color: #e53e3e;
+    box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.15);
+}
+
+.job-id-panel button {
+    padding: 7px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+#jobIdSubmit {
+    background: #667eea;
+    color: white;
+}
+
+#jobIdSubmit:hover {
+    background: #5a67d8;
+}
+
+#jobIdCancel {
+    background: #e2e8f0;
+    color: #4a5568;
+}
+
+#jobIdCancel:hover {
+    background: #cbd5e0;
+}

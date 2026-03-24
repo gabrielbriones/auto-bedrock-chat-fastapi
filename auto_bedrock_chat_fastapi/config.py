@@ -322,6 +322,15 @@ class ChatConfig(BaseSettings):
         description="Welcome message displayed when chat UI first loads",
     )
 
+    preset_prompts: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Preset prompt buttons displayed in the chat UI. Each entry should have 'label' (button text) "
+            "and 'template' (prompt text). Use {{JOB_ID}} as a placeholder for a job ID. "
+            "Optional 'description' field shown as a tooltip."
+        ),
+    )
+
     # Security Configuration
     auth_dependency: Optional[Callable] = Field(default=None, description="Authentication dependency function")
 
