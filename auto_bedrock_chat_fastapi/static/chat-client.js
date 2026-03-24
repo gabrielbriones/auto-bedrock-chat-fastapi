@@ -300,7 +300,7 @@ class ChatClient {
             return;
         }
 
-        // Auto-track the first UUID found in user messages to use with preset prompts
+        // Track the most recent UUID seen in user messages for use with preset prompts
         const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
         if (uuidMatch) {
             this.currentJobId = uuidMatch[0];
