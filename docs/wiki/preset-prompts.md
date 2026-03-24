@@ -1,6 +1,6 @@
 # Preset Prompts
 
-Preset prompts are one-click buttons displayed at the bottom of the chat UI. Clicking a button immediately sends a pre-defined message to the AI — no copy-pasting required. Templates can include a `{{JOB_ID}}` placeholder that is resolved automatically from the session context or by prompting the user for a UUID.
+Preset prompts are one-click buttons displayed at the bottom of the chat UI. Clicking a button immediately sends a pre-defined message to the AI — no copy-pasting required. Templates can contain `{{VARIABLE_NAME}}` placeholders (e.g. `{{JOB_ID}}`, `{{PLATFORM}}`, `{{TENANT}}`) that are resolved from a per-session cache or by prompting the user for the missing values.
 
 ---
 
@@ -57,21 +57,49 @@ Each entry supports these keys:
 
 | Key           | Required | Description                                                  |
 | ------------- | -------- | ------------------------------------------------------------ |
-| `label`       | ✅        | Button text shown in the UI                                  |
-| `template`    | ✅        | Prompt text sent to the AI; may contain `{{JOB_ID}}`        |
-| `description` | ❌        | Tooltip shown on hover                                       |
+| `label`       | ✅        | Button text shown in the UI                                            |
+| `template`    | ✅        | Prompt text sent to the AI; may contain `{{VARIABLE_NAME}}` placeholders |
+| `description` | ❌        | Tooltip shown on hover                                                 |
 
 ---
 
-## The `{{JOB_ID}}` Placeholder
+## Template Placeholders
 
-Templates may contain the literal string `{{JOB_ID}}`. The client resolves it in one of two ways:
+Templates may contain any number of `{{VARIABLE_NAME}}` placeholders (double curly braces, SCREAMING\_SNAKE\_CASE). The client resolves each placeholder from a per-session **prompt cache** (`currentPromptCache`) in one of two ways:
 
-1. **Auto-detected** — the UI scans every user message for a UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) and caches the most recent one as the current job ID. When a preset button is clicked the cached value is substituted in automatically.
+1. **Auto-detected (JOB\_ID only)** — the UI scans every user message for a UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) and caches the most recent one under the key `JOB_ID`. When a preset button is clicked, any `{{JOB_ID}}` is substituted automatically from this cache.
 
-2. **Inline panel** — if no job ID has been seen yet, a small input panel appears below the message box asking the user to enter one. The input is validated as a UUID before submission; invalid values are highlighted with a red border.
+2. **Inline panel** — for each placeholder whose value is not yet in the cache, a small input panel appears below the message box with one labelled field per missing variable. Entering a value stores it in the cache so that subsequent prompts requiring the same placeholder do not ask again.
 
-The job ID is retained for the rest of the browser session, so subsequent preset buttons that need it are resolved immediately.
+### Validation rules
+
+The panel validates each field before sending:
+
+| Variable name pattern | Validation           |
+| --------------------- | -------------------- |
+| Ends with `_ID`       | Must be a valid UUID |
+| Any other name        | Must be non-empty    |
+
+Invalid fields are highlighted with a red border; focus moves to the first failing field.
+
+### Adding new variable types
+
+You can use any `{{VARIABLE_NAME}}` in a template — the system is generic. For example:
+
+```yaml
+prompts:
+  - label: "Platform Analysis"
+    description: "Platform resource utilization breakdown"
+    template: |
+      Give me a resource utilization breakdown for platform {{PLATFORM}}.
+
+  - label: "Tenant Report"
+    description: "Generate report for a tenant"
+    template: |
+      Generate a full report for tenant {{TENANT}} (job {{JOB_ID}}).
+```
+
+When the user clicks "Tenant Report" and neither `TENANT` nor `JOB_ID` is in the cache, the panel will show two input rows — one for each missing value — and cache both on submit.
 
 ---
 
@@ -144,7 +172,7 @@ BEDROCK_PRESET_PROMPTS_FILE=/etc/myapp/prompts.yaml
 
 - Button labels and descriptions are set as `textContent` / `title` attributes — no HTML injection risk.
 - Prompt templates are passed through `marked.parse()` then sanitized with **DOMPurify** before being rendered in the chat bubble, preventing XSS from raw HTML in templates.
-- The `{{JOB_ID}}` substitution is done with `String.replaceAll()` on the resolved plain-text template before it is rendered.
+- Placeholder substitution uses `String.replaceAll()` on the resolved plain-text template before it is rendered as markdown — there is no risk of a placeholder expanding into executable code.
 
 ---
 

@@ -741,29 +741,42 @@ body {
     cursor: not-allowed;
 }
 
-/* ── Job ID Inline Panel ────────────────────────────────────────────────── */
+/* ── Variable Prompt Panel ───────────────────────────────────────────────── */
 
-.job-id-panel {
+.variable-panel {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 20px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 20px;
     background: #fffbeb;
     border-top: 1px solid #f6e05e;
 }
 
-.job-id-panel.hidden {
+.variable-panel.hidden {
     display: none;
 }
 
-.job-id-panel label {
+.variable-panel-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.variable-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.variable-row label {
     font-size: 0.85rem;
     font-weight: 600;
     color: #744210;
     white-space: nowrap;
+    min-width: 100px;
 }
 
-.job-id-panel input[type="text"] {
+.variable-row input[type="text"] {
     flex: 1;
     padding: 7px 12px;
     border: 1px solid #e2e8f0;
@@ -773,17 +786,22 @@ body {
     outline: none;
 }
 
-.job-id-panel input[type="text"]:focus {
+.variable-row input[type="text"]:focus {
     border-color: #667eea;
     box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
 }
 
-.job-id-panel input[type="text"].input-error {
+.variable-row input[type="text"].input-error {
     border-color: #e53e3e;
     box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.15);
 }
 
-.job-id-panel button {
+.variable-panel-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.variable-panel-actions button {
     padding: 7px 16px;
     border: none;
     border-radius: 8px;
@@ -793,20 +811,20 @@ body {
     white-space: nowrap;
 }
 
-#jobIdSubmit {
+#varPanelSubmit {
     background: #667eea;
     color: white;
 }
 
-#jobIdSubmit:hover {
+#varPanelSubmit:hover {
     background: #5a67d8;
 }
 
-#jobIdCancel {
+#varPanelCancel {
     background: #e2e8f0;
     color: #4a5568;
 }
 
-#jobIdCancel:hover {
+#varPanelCancel:hover {
     background: #cbd5e0;
 }

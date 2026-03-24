@@ -15,11 +15,11 @@ class ChatClient {
         this.typingIndicator = document.getElementById('typingIndicator');
         this.typingText = document.getElementById('typingText');
 
-        this.currentJobId = null;         // Last UUID seen in user messages this session
-        this.pendingPromptTemplate = null;  // Template waiting for a job ID
+        this.currentPromptCache = {};       // Cache of resolved placeholder values, e.g. { JOB_ID: '...', PLATFORM: '...' }
+        this.pendingPromptTemplate = null;  // Template waiting for one or more variable values
 
         this.setupEventListeners();
-        this._setupJobIdPanel();
+        this._setupVariablePanel();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
@@ -106,8 +106,8 @@ class ChatClient {
             this.sendButton.disabled = true;
             this._disablePresetButtons();
             this.pendingPromptTemplate = null;
-            const jobIdPanel = document.getElementById('jobIdPanel');
-            if (jobIdPanel) jobIdPanel.classList.add('hidden');
+            const variablePanel = document.getElementById('variablePanel');
+            if (variablePanel) variablePanel.classList.add('hidden');
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
@@ -174,32 +174,86 @@ class ChatClient {
         });
     }
 
+    // Return the list of unique placeholder names found in a template string.
+    _getPlaceholders(template) {
+        const re = /\{\{(\w+)\}\}/g;
+        const found = new Set();
+        let m;
+        while ((m = re.exec(template)) !== null) found.add(m[1]);
+        return [...found];
+    }
+
+    // Prettify a SCREAMING_SNAKE_CASE variable name for display.
+    // e.g. JOB_ID → "Job ID",  PLATFORM → "Platform"
+    _prettifyVarName(name) {
+        return name.split('_')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+            .join(' ');
+    }
+
+    // Validate a single placeholder value.
+    // Variables whose name ends with _ID must be valid UUIDs; others must be non-empty.
+    _validateVar(varName, value) {
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (varName.endsWith('_ID')) return UUID_RE.test(value.trim());
+        return value.trim().length > 0;
+    }
+
     _handlePresetPrompt(prompt) {
         const template = prompt.template || '';
-        const needsJobId = template.includes('{{JOB_ID}}');
+        const allVars = this._getPlaceholders(template);
 
-        if (!needsJobId) {
+        if (allVars.length === 0) {
             this._sendPresetMessage(template);
             return;
         }
 
-        if (this.currentJobId) {
-            this._sendPresetMessage(template.replaceAll('{{JOB_ID}}', this.currentJobId));
+        const missingVars = allVars.filter(v => !this.currentPromptCache[v]);
+
+        if (missingVars.length === 0) {
+            // All placeholders already resolved from cache
+            const resolved = allVars.reduce(
+                (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
+                template
+            );
+            this._sendPresetMessage(resolved);
             return;
         }
 
-        // No job ID known yet — show the inline panel
+        // Show the inline panel to collect the missing variable values
         this.pendingPromptTemplate = template;
-        const panel = document.getElementById('jobIdPanel');
-        if (panel) {
-            panel.classList.remove('hidden');
-            const input = document.getElementById('jobIdInput');
-            if (input) {
-                input.value = '';
-                input.classList.remove('input-error');
-                input.focus();
+        this._showVariablePanel(missingVars);
+    }
+
+    _showVariablePanel(vars) {
+        const panel = document.getElementById('variablePanel');
+        const container = document.getElementById('variableInputs');
+        if (!panel || !container) return;
+
+        container.innerHTML = '';
+        vars.forEach(varName => {
+            const row = document.createElement('div');
+            row.className = 'variable-row';
+
+            const label = document.createElement('label');
+            label.htmlFor = `varInput_${varName}`;
+            label.textContent = `${this._prettifyVarName(varName)}:`;
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.id = `varInput_${varName}`;
+            input.dataset.varName = varName;
+            if (varName.endsWith('_ID')) {
+                input.placeholder = 'e.g. e62f2481-b56e-4d2a-9c16-11cd8db76caa';
             }
-        }
+
+            row.appendChild(label);
+            row.appendChild(input);
+            container.appendChild(row);
+        });
+
+        panel.classList.remove('hidden');
+        container.querySelector('input')?.focus();
     }
 
     _sendPresetMessage(text) {
@@ -208,38 +262,57 @@ class ChatClient {
         this.ws.send(JSON.stringify({ type: 'chat', message: text }));
     }
 
-    _setupJobIdPanel() {
-        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    _setupVariablePanel() {
+        const panel     = document.getElementById('variablePanel');
+        const submitBtn = document.getElementById('varPanelSubmit');
+        const cancelBtn = document.getElementById('varPanelCancel');
 
-        const submitBtn = document.getElementById('jobIdSubmit');
-        const cancelBtn = document.getElementById('jobIdCancel');
-        const input    = document.getElementById('jobIdInput');
-        const panel    = document.getElementById('jobIdPanel');
-
-        if (!submitBtn || !cancelBtn || !input || !panel) return;
+        if (!panel || !submitBtn || !cancelBtn) return;
 
         const doSubmit = () => {
-            const val = input.value.trim();
-            if (!UUID_RE.test(val)) {
-                input.classList.add('input-error');
-                input.focus();
+            const inputs = panel.querySelectorAll('input[data-var-name]');
+            let allValid = true;
+
+            inputs.forEach(input => {
+                const varName = input.dataset.varName;
+                const value   = input.value.trim();
+                if (!this._validateVar(varName, value)) {
+                    input.classList.add('input-error');
+                    allValid = false;
+                } else {
+                    input.classList.remove('input-error');
+                    this.currentPromptCache[varName] = value;
+                }
+            });
+
+            if (!allValid) {
+                panel.querySelector('.input-error')?.focus();
                 return;
             }
-            this.currentJobId = val;
+
             panel.classList.add('hidden');
             if (this.pendingPromptTemplate) {
-                const resolved = this.pendingPromptTemplate.replaceAll('{{JOB_ID}}', val);
+                const allVars = this._getPlaceholders(this.pendingPromptTemplate);
+                const resolved = allVars.reduce(
+                    (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
+                    this.pendingPromptTemplate
+                );
                 this.pendingPromptTemplate = null;
                 this._sendPresetMessage(resolved);
             }
         };
 
         submitBtn.addEventListener('click', doSubmit);
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); doSubmit(); }
+
+        // Delegate key events for dynamically-created inputs
+        panel.addEventListener('keydown', (e) => {
+            if (e.target.tagName !== 'INPUT') return;
+            if (e.key === 'Enter')  { e.preventDefault(); doSubmit(); }
             if (e.key === 'Escape') { cancelBtn.click(); }
         });
-        input.addEventListener('input', () => input.classList.remove('input-error'));
+        panel.addEventListener('input', (e) => {
+            if (e.target.tagName === 'INPUT') e.target.classList.remove('input-error');
+        });
 
         cancelBtn.addEventListener('click', () => {
             this.pendingPromptTemplate = null;
@@ -300,10 +373,12 @@ class ChatClient {
             return;
         }
 
-        // Track the most recent UUID seen in user messages for use with preset prompts
+        // Keep the prompt cache up to date with values mentioned in free-form messages.
+        // UUIDs are stored as JOB_ID so that subsequent preset prompts referencing
+        // {{JOB_ID}} can be resolved without asking the user again.
         const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
         if (uuidMatch) {
-            this.currentJobId = uuidMatch[0];
+            this.currentPromptCache['JOB_ID'] = uuidMatch[0];
         }
 
         // Add user message to chat

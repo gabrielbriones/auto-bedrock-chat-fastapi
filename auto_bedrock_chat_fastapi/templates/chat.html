@@ -52,11 +52,14 @@
 
         <div class="preset-prompts" id="presetPromptsBar"></div>
 
-        <div class="job-id-panel hidden" id="jobIdPanel">
-            <label for="jobIdInput">Job ID:</label>
-            <input type="text" id="jobIdInput" placeholder="e.g. e62f2481-b56e-4d2a-9c16-11cd8db76caa" />
-            <button id="jobIdSubmit">Send</button>
-            <button id="jobIdCancel">Cancel</button>
+        <div class="variable-panel hidden" id="variablePanel">
+            <div class="variable-panel-inputs" id="variableInputs">
+                <!-- Dynamically populated per-prompt by chat-client.js -->
+            </div>
+            <div class="variable-panel-actions">
+                <button id="varPanelSubmit">Send</button>
+                <button id="varPanelCancel">Cancel</button>
+            </div>
         </div>
 
         <div class="chat-input">
