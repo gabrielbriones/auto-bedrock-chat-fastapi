@@ -105,6 +105,9 @@ class ChatClient {
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
             this._disablePresetButtons();
+            this.pendingPromptTemplate = null;
+            const jobIdPanel = document.getElementById('jobIdPanel');
+            if (jobIdPanel) jobIdPanel.classList.add('hidden');
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
