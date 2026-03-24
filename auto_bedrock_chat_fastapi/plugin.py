@@ -120,8 +120,12 @@ class BedrockChatPlugin:
         preset_prompts_file = config_overrides.pop("preset_prompts_file", None)
         self.config = config or load_config(**config_overrides)
 
-        # Auto-load from file when no prompts were passed directly.
-        # Also honour preset_prompts_file coming from the env-var-backed config field.
+        # Resolve preset prompts with the following priority:
+        # 1. Direct override (preset_prompts kwarg)
+        # 2. config.preset_prompts (set via env-var or a pre-built ChatConfig)
+        # 3. YAML file (preset_prompts_file kwarg or config.preset_prompts_file env-var)
+        if not self._preset_prompts:
+            self._preset_prompts = self.config.preset_prompts  # [] when not configured
         if not self._preset_prompts:
             file_path = preset_prompts_file or self.config.preset_prompts_file
             if file_path:
