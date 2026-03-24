@@ -261,6 +261,13 @@ class BedrockChatPlugin:
                     if self.config.enable_tool_auth:
                         supported_auth_types = self.config.supported_auth_types
 
+                    # Read SSO config from app.state (set by workload_analyzer main.py
+                    # when Cognito SSO is configured).  Falls back to False / None so
+                    # the plugin works standalone without these attributes.
+                    sso_enabled = getattr(self.app.state, "sso_enabled", False)
+                    sso_login_url = getattr(self.app.state, "sso_login_url", None)
+                    sso_logout_url = getattr(self.app.state, "sso_logout_url", None)
+
                     return self.templates.TemplateResponse(
                         "chat.html",
                         {
@@ -274,6 +281,10 @@ class BedrockChatPlugin:
                             "ui_welcome_message": self.config.ui_welcome_message,
                             "app_title": self.app.title or "API",
                             "preset_prompts": self._preset_prompts,
+                            # SSO / session-based auth
+                            "sso_enabled": sso_enabled,
+                            "sso_login_url": sso_login_url or "/auth/login",
+                            "sso_logout_url": sso_logout_url or "/auth/logout",
                         },
                     )
                 except Exception as e:

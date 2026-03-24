@@ -6,8 +6,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Check if auth is enabled
     const authEnabled = window.CONFIG.authEnabled;
     const requireAuth = window.CONFIG.requireAuth;
+    const ssoEnabled  = window.CONFIG.ssoEnabled;
 
-    // Handle skip auth button
+    // Handle skip auth button (form-based auth only)
     if (skipAuthButton) {
         skipAuthButton.addEventListener('click', function() {
             if (requireAuth) {
@@ -24,20 +25,25 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Initialize chat client
-    // If auth is not enabled, start chat immediately without modal
     if (!authEnabled) {
+        // Auth completely disabled — start immediately with no modal
         authModal.classList.add('hidden');
         if (!window.chatClient) {
             window.chatClient = new ChatClient();
         }
+    } else if (ssoEnabled) {
+        // SSO path: authenticate transparently using the server-side session.
+        // initializeSSOAuth() is defined in auth.js and handles the /auth/token
+        // fetch plus WebSocket setup — the user never sees a credential form.
+        initializeSSOAuth();
     } else if (!requireAuth) {
-        // Auth is enabled but not required, hide modal and start chat
+        // Form-based auth enabled but not required — hide modal and start chat
         authModal.classList.add('hidden');
         if (!window.chatClient) {
             window.chatClient = new ChatClient();
         }
     } else {
-        // Auth is required, keep modal visible
+        // Form-based auth required — keep modal visible and render the form
         authModal.classList.remove('hidden');
         initializeAuthModal();
     }

@@ -1,5 +1,104 @@
 // Authentication functions
 
+// ---------------------------------------------------------------------------
+// SSO (Intel SSO via Cognito) authentication
+// ---------------------------------------------------------------------------
+
+/**
+ * Attempt to authenticate the WebSocket session using the server-side SSO
+ * session.  On success the chat becomes ready with no credential prompts; on
+ * failure the user is shown an "Login with Intel SSO" button.
+ *
+ * Called from app.js when window.CONFIG.ssoEnabled === true.
+ */
+async function initializeSSOAuth() {
+    const authButton = document.getElementById('authButton');
+    const authModal  = document.getElementById('authModal');
+
+    // Ensure the old form-based modal stays hidden — SSO replaces it entirely.
+    if (authModal) authModal.classList.add('hidden');
+
+    if (authButton) {
+        authButton.textContent = 'Signing in…';
+        authButton.disabled = true;
+    }
+
+    try {
+        const resp = await fetch('/auth/token', {
+            method: 'GET',
+            credentials: 'include',                    // send session cookie
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store',
+        });
+
+        if (resp.ok) {
+            const data = await resp.json();
+            const token = data.access_token;
+
+            if (token) {
+                // Build an auth payload exactly as the manual form would, then
+                // hand it to a new ChatClient that will send it over the WebSocket.
+                const authPayload = {
+                    type:       'auth',
+                    auth_type:  'bearer_token',
+                    token:      token,
+                };
+                console.log('SSO: session token retrieved — connecting with bearer_token auth');
+                window.chatClient = new ChatClient(authPayload);
+
+                // Label the button as a logout link once the client is live.
+                // updateAuthButtonUI() in chat-client.js will also do this on
+                // auth_configured, but we set it early for immediate feedback.
+                _setSSOLogoutButton();
+                return;
+            }
+        }
+
+        // 401 or missing token — not authenticated yet.
+        console.log('SSO: no active session (' + resp.status + '), showing login button');
+        _setSSOLoginButton();
+
+    } catch (err) {
+        console.error('SSO: token fetch failed:', err);
+        _setSSOLoginButton();
+    }
+}
+
+/** Render the auth header button as "Login with Intel SSO" (redirects to /auth/login). */
+function _setSSOLoginButton() {
+    const btn = document.getElementById('authButton');
+    if (!btn) return;
+    btn.textContent = 'Login with Intel SSO';
+    btn.disabled    = false;
+    btn.classList.remove('logout');
+
+    // Remove any old listeners by replacing the element
+    const clone = btn.cloneNode(true);
+    btn.parentNode.replaceChild(clone, btn);
+    clone.addEventListener('click', () => {
+        window.location.href = window.CONFIG.ssoLoginUrl || '/auth/login';
+    });
+}
+
+/** Render the auth header button as "Sign out" (redirects to /auth/logout). */
+function _setSSOLogoutButton() {
+    const btn = document.getElementById('authButton');
+    if (!btn) return;
+    btn.textContent = 'Sign out';
+    btn.disabled    = false;
+    btn.classList.add('logout');
+
+    const clone = btn.cloneNode(true);
+    btn.parentNode.replaceChild(clone, btn);
+    clone.addEventListener('click', () => {
+        window.location.href = window.CONFIG.ssoLogoutUrl || '/auth/logout';
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Existing form-based authentication (used when ssoEnabled === false)
+// ---------------------------------------------------------------------------
+
 // --- Validation helpers ---
 function markInvalid(inputId, message = 'This field is required.') {
     const el = document.getElementById(inputId);
