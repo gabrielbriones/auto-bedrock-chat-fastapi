@@ -117,7 +117,16 @@ class BedrockChatPlugin:
         # Extract preset_prompts before passing to load_config so it never hits ChatConfig
         # (allows use with installed library versions that predate this field)
         self._preset_prompts = config_overrides.pop("preset_prompts", [])
+        preset_prompts_file = config_overrides.pop("preset_prompts_file", None)
         self.config = config or load_config(**config_overrides)
+
+        # Auto-load from file when no prompts were passed directly.
+        # Also honour preset_prompts_file coming from the env-var-backed config field.
+        if not self._preset_prompts:
+            file_path = preset_prompts_file or self.config.preset_prompts_file
+            if file_path:
+                from .config import load_preset_prompts_from_yaml
+                self._preset_prompts = load_preset_prompts_from_yaml(file_path)
 
         # Setup logging configuration
         _setup_logging(self.config)
@@ -641,6 +650,7 @@ def add_bedrock_chat(
     openapi_spec_file: Optional[str] = None,
     api_base_url: Optional[str] = None,
     preset_prompts: Optional[list] = None,
+    preset_prompts_file: Optional[str] = None,
     **kwargs,
 ) -> BedrockChatPlugin:
     """
@@ -716,6 +726,8 @@ def add_bedrock_chat(
             config_overrides["api_base_url"] = api_base_url
         if preset_prompts is not None:
             config_overrides["preset_prompts"] = preset_prompts
+        if preset_prompts_file is not None:
+            config_overrides["preset_prompts_file"] = preset_prompts_file
 
         # Add any additional kwargs
         config_overrides.update(kwargs)
