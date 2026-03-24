@@ -6,6 +6,8 @@
     <title>AI Chat - {{ app_title }}</title>
     <!-- Markdown parsing library -->
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <!-- HTML sanitizer — used to guard marked output from XSS before setting innerHTML -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
     <script>
         // Enable GFM line breaks: single newline → <br> (prevents all lines collapsing into one)
         marked.use({ breaks: true });

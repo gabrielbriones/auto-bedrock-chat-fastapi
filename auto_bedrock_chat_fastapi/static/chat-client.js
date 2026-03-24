@@ -433,8 +433,11 @@ class ChatClient {
         } else if (role === 'user') {
             // Render user messages as markdown so preset prompts (with headers,
             // tables, lists) are readable instead of a wall of plain text.
+            // DOMPurify sanitizes the marked output to prevent XSS from raw HTML
+            // that marked passes through by default.
             if (window.marked) {
-                contentDiv.innerHTML = marked.parse(messageText);
+                const raw = marked.parse(messageText);
+                contentDiv.innerHTML = window.DOMPurify ? DOMPurify.sanitize(raw) : raw;
             } else {
                 contentDiv.textContent = messageText;
             }
