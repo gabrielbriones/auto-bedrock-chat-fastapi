@@ -10,7 +10,8 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
     <script>
         // Enable GFM line breaks: single newline → <br> (prevents all lines collapsing into one)
-        marked.use({ breaks: true });
+        // Guard against CDN load failure (network error, CSP block, etc.)
+        if (window.marked) { marked.use({ breaks: true }); }
     </script>
     <!-- Syntax highlighting for code blocks -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
