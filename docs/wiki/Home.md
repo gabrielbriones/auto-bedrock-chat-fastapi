@@ -14,6 +14,7 @@ Welcome to the **auto-bedrock-chat-fastapi** documentation wiki. This library le
 | [OpenAPI Integration](openapi-integration)   | Framework-agnostic usage via OpenAPI specs (Express.js, Flask, etc.) |
 | [Tool Calling](tool-calling)                 | How tools are generated from OpenAPI specs and called by the AI      |
 | [Chat UI](chat-ui)                           | Built-in web chat interface, endpoints, and UI customization         |
+| [Preset Prompts](preset-prompts)             | One-click prompt buttons, YAML format, `{{JOB_ID}}` placeholder     |
 | [WebSocket Client](websocket-client)         | Python WebSocket client script, connection options, auth examples    |
 | [Authentication](authentication)             | All auth methods, credential flow, and verification endpoint         |
 | [RAG Feature](rag-feature)                   | Web crawler, vector DB, embedding pipeline, hybrid search            |
@@ -26,6 +27,8 @@ Welcome to the **auto-bedrock-chat-fastapi** documentation wiki. This library le
 ## 🚀 Quick Navigation
 
 **New to the project?** Start with [Architecture](architecture), then [FastAPI Plugin Integration](fastapi-plugin).
+
+**Adding preset prompt buttons to the UI?** See [Preset Prompts](preset-prompts).
 
 **Configuring the plugin?** See [Configuration](configuration).
 
