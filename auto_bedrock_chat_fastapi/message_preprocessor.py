@@ -395,11 +395,11 @@ class MessagePreprocessor:
                 notifications (e.g. ``"Summarizing result 1/5..."``) so
                 the UI can display live feedback during AI summarization.
             threshold_factor: Multiplier applied to all truncation
-                thresholds/targets (default ``1.0``).  After a
+                thresholds/targets (default ``1.0``). After a
                 context-window error and aggressive message reduction,
-                the caller can pass e.g. ``0.5`` to halve every limit
-                so that remaining oversized content is truncated further.
-
+                the caller can pass e.g. ``0.8`` (or any value < ``1.0``)
+                to tighten all limits so that remaining oversized content
+                is truncated further.
         Returns:
             Preprocessed message list, ready for LLM formatting.
         """
