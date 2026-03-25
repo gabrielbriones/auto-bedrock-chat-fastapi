@@ -160,6 +160,8 @@ class ChatManager:
         messages: List[Dict[str, Any]],
         metadata: Dict[str, Any],
         on_progress: Optional[Callable] = None,
+        *,
+        threshold_factor: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """Run the full message preprocessing pipeline.
 
@@ -179,6 +181,10 @@ class ChatManager:
             messages: Raw conversation messages.
             metadata: Mutable metadata dict — updated with preprocessing stats.
             on_progress: Optional async callback for progress updates.
+            threshold_factor: Multiplier for all truncation thresholds
+                (default ``1.0``).  Pass a value < ``1.0`` after a context-window
+                error to tighten thresholds and force further truncation (the
+                built-in recovery path currently uses ``0.8``).
 
         Returns:
             Preprocessed messages ready for LLM formatting.
@@ -189,6 +195,7 @@ class ChatManager:
         messages = await self.message_preprocessor.preprocess_messages(
             messages,
             on_progress=on_progress,
+            threshold_factor=threshold_factor,
         )
 
         after_count = len(messages)
@@ -402,6 +409,17 @@ class ChatManager:
             metadata["context_window_retries"] += 1
 
             messages = self._aggressive_message_reduction(messages)
+
+            # Re-preprocess the reduced set with tightened thresholds.
+            # Normal preprocessing already ran but the remaining messages
+            # (especially multi-round tool results) may still exceed the
+            # context window.  JSON-heavy tool results tokenize at
+            # ~3.0 chars/token, worse than the ~3.3 assumed by the
+            # default character thresholds.
+            messages = await self._preprocess_messages(
+                messages, metadata, on_progress=on_progress, threshold_factor=0.8
+            )
+
             formatted = self.llm_client.format_messages(messages, model_id=effective_model_id)
 
             logger.info(

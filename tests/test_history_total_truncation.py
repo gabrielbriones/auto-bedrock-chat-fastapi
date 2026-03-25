@@ -13,6 +13,8 @@ Covers:
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from auto_bedrock_chat_fastapi.config import ChatConfig
 from auto_bedrock_chat_fastapi.message_preprocessor import MessagePreprocessor
 
@@ -513,6 +515,13 @@ class TestPreprocessMessagesHistoryIntegration:
         result = await pp.preprocess_messages(msgs)
         # Nothing truncated (no config)
         assert pp._total_messages_size(result) == pp._total_messages_size(msgs)
+
+    @pytest.mark.parametrize("bad_factor", [0, -1, -0.5])
+    async def test_threshold_factor_rejects_non_positive(self, bad_factor):
+        pp = _pp()
+        msgs = [{"role": "user", "content": "hello"}]
+        with pytest.raises(ValueError, match="threshold_factor must be positive"):
+            await pp.preprocess_messages(msgs, threshold_factor=bad_factor)
 
 
 # ── Integration with ChatManager ─────────────────────────────────────────

@@ -53,6 +53,7 @@ class TestPlugin:
     def setup_method(self):
         """Setup test environment"""
         import os
+
         # Clear proxy env vars that cause httpx to fail with unsupported socks:// scheme
         for var in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
             os.environ.pop(var, None)
@@ -184,8 +185,6 @@ class TestPlugin:
         mock_bedrock_boto3.return_value = mock_session_instance
         mock_boto3.return_value = mock_session_instance
 
-        from auto_bedrock_chat_fastapi.config import ChatConfig
-
         prompts = [{"label": "From config", "template": "Hello"}]
         config = load_config(enable_ui=False)
         config.preset_prompts = prompts
@@ -216,21 +215,25 @@ class TestPlugin:
     def test_preset_prompts_file_loaded_when_no_direct_prompts(self, mock_bedrock_boto3, mock_boto3, tmp_path):
         """preset_prompts_file is loaded when neither kwarg nor config.preset_prompts is set."""
         import textwrap
+
         mock_session_instance = Mock()
         mock_session_instance.client.return_value = Mock()
         mock_bedrock_boto3.return_value = mock_session_instance
         mock_boto3.return_value = mock_session_instance
 
         yaml_file = tmp_path / "prompts.yaml"
-        yaml_file.write_text(textwrap.dedent("""\
+        yaml_file.write_text(
+            textwrap.dedent(
+                """\
             prompts:
               - label: "From YAML"
                 template: "Hello {{JOB_ID}}"
-        """), encoding="utf-8")
-
-        plugin = add_bedrock_chat(
-            self.app, enable_ui=False, preset_prompts_file=str(yaml_file)
+        """
+            ),
+            encoding="utf-8",
         )
+
+        plugin = add_bedrock_chat(self.app, enable_ui=False, preset_prompts_file=str(yaml_file))
 
         assert len(plugin._preset_prompts) == 1
         assert plugin._preset_prompts[0]["label"] == "From YAML"
@@ -245,10 +248,6 @@ class TestPlugin:
         mock_boto3.return_value = mock_session_instance
 
         prompts = [{"label": "UI Test", "template": "Run analysis for {{JOB_ID}}"}]
-
-        captured_context = {}
-
-        original_response = None
 
         plugin = add_bedrock_chat(self.app, enable_ui=True, preset_prompts=prompts)
 

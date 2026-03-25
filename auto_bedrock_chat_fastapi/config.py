@@ -810,8 +810,7 @@ def load_preset_prompts_from_yaml(path: str) -> List[Dict[str, Any]]:
         import yaml  # pyyaml — listed as an optional dependency
     except ImportError:  # pragma: no cover
         logger.warning(
-            "pyyaml is not installed; cannot load preset prompts from '%s'. "
-            "Install it with: pip install pyyaml",
+            "pyyaml is not installed; cannot load preset prompts from '%s'. " "Install it with: pip install pyyaml",
             path,
         )
         return []

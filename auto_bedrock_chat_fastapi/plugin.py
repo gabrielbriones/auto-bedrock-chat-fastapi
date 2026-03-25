@@ -130,6 +130,7 @@ class BedrockChatPlugin:
             file_path = preset_prompts_file or self.config.preset_prompts_file
             if file_path:
                 from .config import load_preset_prompts_from_yaml
+
                 self._preset_prompts = load_preset_prompts_from_yaml(file_path)
 
         # Setup logging configuration
