@@ -387,11 +387,11 @@ class TestContextWindowRecovery:
 
     @pytest.mark.asyncio
     async def test_context_window_repreprocesses_after_reduction(self, mock_llm_client):
-        """After aggressive reduction, messages are re-preprocessed with halved thresholds.
+        """After aggressive reduction, messages are re-preprocessed with tighter (0.8x) thresholds.
 
         This covers the scenario where multi-round tool results collectively
         exceed the context window even after message reduction.  The
-        re-preprocessing with halved thresholds truncates individual
+        re-preprocessing with tighter (0.8x) thresholds truncates individual
         oversized tool results that slipped under the normal Stage 1
         threshold.
         """
