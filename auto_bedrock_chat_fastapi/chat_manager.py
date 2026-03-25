@@ -182,8 +182,9 @@ class ChatManager:
             metadata: Mutable metadata dict — updated with preprocessing stats.
             on_progress: Optional async callback for progress updates.
             threshold_factor: Multiplier for all truncation thresholds
-                (default ``1.0``).  Pass ``0.5`` after a context-window
-                error to halve thresholds and force further truncation.
+                (default ``1.0``).  Pass a value < ``1.0`` after a context-window
+                error to tighten thresholds and force further truncation (the
+                built-in recovery path currently uses ``0.8``).
 
         Returns:
             Preprocessed messages ready for LLM formatting.
