@@ -429,6 +429,15 @@ class TestContextWindowRecovery:
         # truncated the 450K tool result (over 400K effective threshold)
         assert result.metadata["preprocessing_applied"] is True
 
+        # Verify the tool result was actually shortened by inspecting
+        # the preprocessed messages.
+        tool_messages = [m for m in result.messages if m.get("role") == "tool"]
+        assert tool_messages, "Expected at least one tool message in preprocessed messages"
+        truncated_result = tool_messages[0]["tool_results"][0]["result"]
+        # Original was 450K chars; with 0.8x threshold (400K), it must
+        # have been truncated below that limit.
+        assert len(truncated_result) <= 400_000
+
 
 # ===========================================================================
 # TestAggressiveMessageReduction

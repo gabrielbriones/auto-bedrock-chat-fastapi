@@ -410,7 +410,7 @@ class ChatManager:
 
             messages = self._aggressive_message_reduction(messages)
 
-            # Re-preprocess the reduced set with halved thresholds.
+            # Re-preprocess the reduced set with tightened thresholds.
             # Normal preprocessing already ran but the remaining messages
             # (especially multi-round tool results) may still exceed the
             # context window.  JSON-heavy tool results tokenize at

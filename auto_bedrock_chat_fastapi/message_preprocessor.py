@@ -403,6 +403,9 @@ class MessagePreprocessor:
         Returns:
             Preprocessed message list, ready for LLM formatting.
         """
+        if threshold_factor <= 0:
+            raise ValueError(f"threshold_factor must be positive, got {threshold_factor}")
+
         self._on_progress = on_progress
         try:
             f = threshold_factor
