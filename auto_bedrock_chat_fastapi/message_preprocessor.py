@@ -359,6 +359,8 @@ class MessagePreprocessor:
         self,
         messages: List[Dict[str, Any]],
         on_progress: Optional[Callable] = None,
+        *,
+        threshold_factor: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """Run the full message preprocessing pipeline.
 
@@ -392,19 +394,35 @@ class MessagePreprocessor:
                 When provided, the preprocessor emits progress
                 notifications (e.g. ``"Summarizing result 1/5..."``) so
                 the UI can display live feedback during AI summarization.
+            threshold_factor: Multiplier applied to all truncation
+                thresholds/targets (default ``1.0``).  After a
+                context-window error and aggressive message reduction,
+                the caller can pass e.g. ``0.5`` to halve every limit
+                so that remaining oversized content is truncated further.
 
         Returns:
             Preprocessed message list, ready for LLM formatting.
         """
         self._on_progress = on_progress
         try:
+            f = threshold_factor
+
             # Stage 1: Single-message truncation -- any message exceeding
             # single_msg_length_threshold is truncated/summarized.
-            messages = await self._truncate_oversized_messages(messages)
+            messages = await self._truncate_oversized_messages(
+                messages,
+                threshold=int(self.single_msg_threshold * f),
+                target=int(self.single_msg_target * f),
+            )
 
             # Stage 2: History-total truncation -- if combined size exceeds
             # history_total_length_threshold, progressively reduce.
-            messages = await self._truncate_history_total(messages)
+            messages = await self._truncate_history_total(
+                messages,
+                total_threshold=int(self.history_total_threshold * f),
+                msg_threshold=int(self.history_msg_threshold * f),
+                msg_target=int(self.history_msg_target * f),
+            )
 
             return messages
         finally:
@@ -923,12 +941,14 @@ class MessagePreprocessor:
     async def _truncate_oversized_messages(
         self,
         messages: List[Dict[str, Any]],
+        *,
+        threshold: Optional[int] = None,
+        target: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Stage 1: Truncate any individual message whose content exceeds the threshold.
 
         Iterates every message and applies plain-text truncation (or, when
-        enabled, AI summarization) to any that exceed
-        ``single_msg_threshold``.
+        enabled, AI summarization) to any that exceed *threshold*.
 
         This is a *general* pass that catches oversized messages of **any**
         role/format.
@@ -938,22 +958,25 @@ class MessagePreprocessor:
 
         Args:
             messages: Raw conversation messages.
+            threshold: Override for ``self.single_msg_threshold``.
+            target: Override for ``self.single_msg_target``.
 
         Returns:
             Message list with oversized messages truncated.
         """
+        effective_threshold = threshold if threshold is not None else self.single_msg_threshold
+        effective_target = target if target is not None else self.single_msg_target
+
         logger.debug(
             "Looking for oversized messages exceeding %s chars for Stage 1 truncation",
-            f"{self.single_msg_threshold:,}",
+            f"{effective_threshold:,}",
         )
         result: List[Dict[str, Any]] = []
 
         # Pre-scan to count how many messages need truncation so
         # progress messages can show "1/N" style counters.
         oversized_indices = [
-            i
-            for i, msg in enumerate(messages)
-            if isinstance(msg, dict) and get_content_size(msg) > self.single_msg_threshold
+            i for i, msg in enumerate(messages) if isinstance(msg, dict) and get_content_size(msg) > effective_threshold
         ]
         total_to_truncate = len(oversized_indices)
         truncated_count = 0
@@ -967,7 +990,7 @@ class MessagePreprocessor:
                 continue
 
             size = get_content_size(msg)
-            if size <= self.single_msg_threshold:
+            if size <= effective_threshold:
                 result.append(msg)
                 continue
 
@@ -982,9 +1005,9 @@ class MessagePreprocessor:
                 "Truncating message with role=%s size=%s to target %s chars",
                 msg.get("role"),
                 f"{original_size:,}",
-                f"{self.single_msg_target:,}",
+                f"{effective_target:,}",
             )
-            truncated_msg = await self._truncate_single_message(msg, self.single_msg_target)
+            truncated_msg = await self._truncate_single_message(msg, effective_target)
 
             new_size = get_content_size(truncated_msg)
             logger.info(

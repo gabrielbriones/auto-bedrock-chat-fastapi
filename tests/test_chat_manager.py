@@ -385,6 +385,50 @@ class TestContextWindowRecovery:
         # Should only have been called once (no reduction-based retry)
         assert mock_llm_client.chat_completion.await_count == 1
 
+    @pytest.mark.asyncio
+    async def test_context_window_repreprocesses_after_reduction(self, mock_llm_client):
+        """After aggressive reduction, messages are re-preprocessed with halved thresholds.
+
+        This covers the scenario where multi-round tool results collectively
+        exceed the context window even after message reduction.  The
+        re-preprocessing with halved thresholds truncates individual
+        oversized tool results that slipped under the normal Stage 1
+        threshold.
+        """
+        config = ChatConfig()
+        mgr = ChatManager(llm_client=mock_llm_client, config=config)
+
+        # Build messages with a very large tool result that's under the default
+        # single_msg_threshold (500K) but over the 0.8x threshold (400K).
+        large_tool_result = "x" * 450_000
+        messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "Do something"},
+            {"role": "assistant", "content": "Working...", "tool_calls": [{"id": "tc1", "name": "big_tool"}]},
+            {
+                "role": "tool",
+                "content": "Tool results (round 1)",
+                "tool_calls": [{"id": "tc1", "name": "big_tool"}],
+                "tool_results": [{"tool_call_id": "tc1", "name": "big_tool", "result": large_tool_result}],
+            },
+        ]
+
+        # First call fails (Layer 1), second succeeds (Layer 2 after re-preprocessing)
+        mock_llm_client.chat_completion = AsyncMock(
+            side_effect=[
+                ContextWindowExceededError("Too large"),
+                {"content": "Recovery!", "role": "assistant", "tool_calls": [], "metadata": {}},
+            ]
+        )
+
+        result = await mgr.chat_completion(messages=messages)
+
+        assert result.response["content"] == "Recovery!"
+        assert result.metadata["context_window_retries"] == 1
+        # The re-preprocessing with 0.8x thresholds should have
+        # truncated the 450K tool result (over 400K effective threshold)
+        assert result.metadata["preprocessing_applied"] is True
+
 
 # ===========================================================================
 # TestAggressiveMessageReduction

@@ -136,6 +136,45 @@ This removes the oldest messages (preserving the system message) when the histor
 
 ---
 
+## Context Window Recovery Re-Preprocessing
+
+Even after the two-stage preprocessing pipeline runs, multi-round tool calls can accumulate enough content to exceed the model's token limit. JSON-heavy tool results tokenize at roughly 3.0 characters per token — worse than the ~3.3 chars/token the default character thresholds assume. This means a conversation that fits under the character thresholds can still exceed the 200K token limit.
+
+When this happens, `ChatManager` applies a two-step recovery:
+
+1. **Aggressive message reduction** — drops all but the system message and last 4 messages
+2. **Re-preprocessing with tightened thresholds** — re-runs the full two-stage pipeline with a `threshold_factor` of `0.8`, multiplying every threshold and target by that factor
+
+```
+Normal thresholds                  After threshold_factor=0.8
+─────────────────                  ──────────────────────────
+Single msg threshold:  500K chars  →  400K chars
+Single msg target:     425K chars  →  340K chars
+History total:         650K chars  →  520K chars
+History msg threshold: 100K chars  →   80K chars
+History msg target:     85K chars  →   68K chars
+```
+
+This catches oversized tool results that slipped under the normal Stage 1 threshold. For example, a 450K tool response passes the default 500K threshold, but after recovery it exceeds the tightened 400K threshold and gets truncated to 340K.
+
+```
+ContextWindowExceededError (Layer 1)
+│
+├── 1. Aggressive message reduction
+│      Keep: system msg + last 4 messages
+│      Drop: everything else
+│
+├── 2. Re-preprocess with threshold_factor=0.8
+│      Stage 1: catches tool results between 400K–500K
+│      Stage 2: catches total history between 520K–650K
+│
+└── 3. Retry LLM call (Layer 2)
+```
+
+The `threshold_factor` is internal and not user-configurable — it is hardcoded in `ChatManager._call_llm_with_recovery()`. Users can influence the effective thresholds indirectly by adjusting the base thresholds documented above.
+
+---
+
 ## Monitoring Truncation
 
 Set `log_level="DEBUG"` to see truncation decisions in logs:
