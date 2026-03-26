@@ -272,6 +272,7 @@ class ChatClient {
         const doSubmit = () => {
             const inputs = panel.querySelectorAll('input[data-var-name]');
             let allValid = true;
+            const submittedValues = {};
 
             inputs.forEach(input => {
                 const varName = input.dataset.varName;
@@ -281,7 +282,7 @@ class ChatClient {
                     allValid = false;
                 } else {
                     input.classList.remove('input-error');
-                    this.currentPromptCache[varName] = value;
+                    submittedValues[varName] = value;
                 }
             });
 
@@ -290,11 +291,23 @@ class ChatClient {
                 return;
             }
 
+            // Persist only JOB_ID to the long-lived cache so subsequent preset
+            // prompts can reuse the current-job context without re-asking.
+            // Template-specific vars (e.g. NEW_JOB_ID) are intentionally not
+            // cached so the panel always prompts for fresh values on each use.
+            if ('JOB_ID' in submittedValues) {
+                this.currentPromptCache['JOB_ID'] = submittedValues['JOB_ID'];
+            }
+
             panel.classList.add('hidden');
             if (this.pendingPromptTemplate) {
                 const allVars = this._getPlaceholders(this.pendingPromptTemplate);
+                // Merge long-lived cache (JOB_ID from history) with freshly
+                // submitted values; submittedValues takes precedence so the
+                // user can override a cached value when it appears in the panel.
+                const values = { ...this.currentPromptCache, ...submittedValues };
                 const resolved = allVars.reduce(
-                    (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
+                    (t, v) => t.replaceAll(`{{${v}}}`, values[v]),
                     this.pendingPromptTemplate
                 );
                 this.pendingPromptTemplate = null;
