@@ -343,18 +343,17 @@ class ChatClient {
     }
 
     handleAuthButtonClick() {
+        // When SSO is active, the auth button is replaced with stable Login / Sign-out
+        // anchors by auth.js (_setSSOLoginButton / _setSSOLogoutButton).  The click
+        // listener on *this* button is therefore only reached in non-SSO mode.
         if (this.authenticated) {
-            // Logout: send logout message and clear auth
+            // Form-based logout: send WebSocket logout message then show modal.
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({
-                    type: 'logout'
-                }));
+                this.ws.send(JSON.stringify({ type: 'logout' }));
             }
             this.authPayload = null;
             this.authenticated = false;
             this.authSent = false;
-            // Send logout message to server - it will respond with logout_success
-            // which triggers connection close in handleMessage()
 
             // Show auth modal for re-authentication
             const authModal = document.getElementById('authModal');
@@ -362,15 +361,25 @@ class ChatClient {
                 authModal.classList.remove('hidden');
                 initializeAuthModal();
             }
-            // Don't add message here - backend will send logout_success
         } else {
             // Login: show auth modal
             document.getElementById('authModal').classList.remove('hidden');
-            initializeAuthModal();  // Auto-select single auth type if needed
+            initializeAuthModal();
         }
     }
 
     updateAuthButtonUI() {
+        // When SSO is enabled, _setSSOLoginButton / _setSSOLogoutButton in auth.js
+        // handle the button state; avoid overwriting their work here.
+        if (window.CONFIG && window.CONFIG.ssoEnabled) {
+            if (this.authenticated) {
+                _setSSOLogoutButton();
+            } else {
+                _setSSOLoginButton();
+            }
+            return;
+        }
+
         if (this.authenticated) {
             this.authButton.textContent = 'Log out';
             this.authButton.classList.add('logout');

@@ -33,7 +33,11 @@
                 <p>Powered by {{ model_id }}</p>
             </div>
             <div class="chat-header-right">
+                {% if sso_enabled %}
+                <button id="authButton" class="auth-button">Login with Intel SSO</button>
+                {% else %}
                 <button id="authButton" class="auth-button">Log in</button>
+                {% endif %}
             </div>
         </div>
 
@@ -76,7 +80,11 @@
             requireAuth: {{ 'true' if require_tool_auth else 'false' }},
             supportedAuthTypes: {{ supported_auth_types | tojson }},
             modelId: "{{ model_id }}",
-            presetPrompts: {{ preset_prompts | tojson }}
+            presetPrompts: {{ preset_prompts | tojson }},
+            // SSO / session-based login
+            ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
+            ssoLoginUrl: "{{ sso_login_url }}",
+            ssoLogoutUrl: "{{ sso_logout_url }}"
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>
