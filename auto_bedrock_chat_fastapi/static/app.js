@@ -7,6 +7,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const authEnabled = window.CONFIG.authEnabled;
     const requireAuth = window.CONFIG.requireAuth;
 
+    // Detect SSO session token from URL query params (set by SSO callback redirect)
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionTokenFromUrl = urlParams.get('session_token');
+    if (sessionTokenFromUrl) {
+        window._ssoSessionToken = sessionTokenFromUrl;
+        // Strip the token from the URL bar without triggering a page reload
+        urlParams.delete('session_token');
+        const cleanSearch = urlParams.toString() ? '?' + urlParams.toString() : '';
+        history.replaceState(null, '', window.location.pathname + cleanSearch + window.location.hash);
+    }
+
     // Handle skip auth button
     if (skipAuthButton) {
         skipAuthButton.addEventListener('click', function() {
@@ -21,6 +32,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.chatClient = new ChatClient();
             }
         });
+    }
+
+    // If a session token was found in the URL, skip the auth modal entirely and
+    // create a ChatClient — the token will be appended to the WebSocket URL.
+    if (window._ssoSessionToken) {
+        authModal.classList.add('hidden');
+        window.chatClient = new ChatClient();
+        return;
     }
 
     // Initialize chat client

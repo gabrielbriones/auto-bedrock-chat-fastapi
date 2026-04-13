@@ -65,8 +65,15 @@ function initializeAuthModal() {
         supportedTypes.forEach(authType => {
             const option = document.createElement('option');
             option.value = authType;
-            const displayText = authType.replace(/_/g, ' ');
-            option.textContent = displayText.charAt(0).toUpperCase() + displayText.slice(1);
+            let displayText;
+            if (authType === 'sso') {
+                const providerName = window.CONFIG.ssoProvider || 'SSO';
+                displayText = 'Login with ' + providerName.charAt(0).toUpperCase() + providerName.slice(1);
+            } else {
+                const raw = authType.replace(/_/g, ' ');
+                displayText = raw.charAt(0).toUpperCase() + raw.slice(1);
+            }
+            option.textContent = displayText;
             authTypeSelect.appendChild(option);
         });
     }
@@ -80,6 +87,9 @@ function initializeAuthModal() {
     if (supportedTypes.length === 1) {
         authTypeSelector.classList.add('hidden');
         authTypeSelect.value = supportedTypes[0];
+        updateAuthFields();
+    } else if (window.CONFIG.defaultAuthType && supportedTypes.includes(window.CONFIG.defaultAuthType)) {
+        authTypeSelect.value = window.CONFIG.defaultAuthType;
         updateAuthFields();
     }
 
@@ -102,7 +112,31 @@ function initializeAuthModal() {
         skipButton.dataset.listenerAttached = 'true';
     }
 
+    // Attach SSO login button handler
+    const ssoLoginButton = document.getElementById('ssoLoginButton');
+    if (ssoLoginButton && !ssoLoginButton.dataset.listenerAttached) {
+        ssoLoginButton.addEventListener('click', ssoLogin);
+        ssoLoginButton.dataset.listenerAttached = 'true';
+    }
+
+    // Customise SSO button label with provider name
+    const ssoLoginBtnText = document.getElementById('ssoLoginBtnText');
+    if (ssoLoginBtnText && window.CONFIG.ssoProvider) {
+        const provider = window.CONFIG.ssoProvider;
+        ssoLoginBtnText.textContent = 'Login with ' + provider.charAt(0).toUpperCase() + provider.slice(1);
+    }
+
     attachValidationListeners();
+}
+
+function ssoLogin() {
+    const btn = document.getElementById('ssoLoginButton');
+    const btnText = document.getElementById('ssoLoginBtnText');
+    const spinner = document.getElementById('ssoLoginSpinner');
+    if (btn) btn.disabled = true;
+    if (btnText) btnText.textContent = 'Redirecting…';
+    if (spinner) spinner.style.display = 'inline-block';
+    window.location.href = '/chat/auth/sso/login';
 }
 
 function updateAuthFields() {
@@ -141,6 +175,12 @@ function updateAuthFields() {
         if (fieldEl) {
             fieldEl.classList.remove('auth-field-hidden');
         }
+    }
+
+    // For SSO type, hide the form submit button (SSO has its own redirect button)
+    const authSubmitBtn = document.querySelector('.auth-submit');
+    if (authSubmitBtn) {
+        authSubmitBtn.style.display = authType === 'sso' ? 'none' : '';
     }
 }
 

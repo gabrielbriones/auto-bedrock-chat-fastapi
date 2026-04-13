@@ -69,6 +69,17 @@
                     <textarea id="customHeaders" class="custom-headers-textarea" placeholder="{'X-Custom-Header': 'value', 'X-API-Version': 'v2'}"></textarea>
                 </div>
             </div>
+
+            <!-- SSO -->
+            <div id="sso-fields" class="auth-field-hidden">
+                <div class="sso-login-section">
+                    <p class="sso-description">Click below to log in with your organization's identity provider.</p>
+                    <button type="button" id="ssoLoginButton" class="sso-login-btn">
+                        <span id="ssoLoginBtnText">Login with SSO</span>
+                        <span id="ssoLoginSpinner" class="sso-btn-spinner" style="display:none;"></span>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <div class="auth-info">

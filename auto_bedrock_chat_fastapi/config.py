@@ -3,7 +3,7 @@
 import os
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
@@ -369,6 +369,12 @@ class ChatConfig(BaseSettings):
         description="List of supported authentication types for tool calls",
     )
 
+    default_auth_type: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_DEFAULT_AUTH_TYPE",
+        description="Default auth type to pre-select in the UI modal. Must be one of supported_auth_types.",
+    )
+
     require_tool_auth: bool = Field(
         default=False,
         alias="BEDROCK_REQUIRE_TOOL_AUTH",
@@ -391,6 +397,105 @@ class ChatConfig(BaseSettings):
             "The endpoint must return a 2XX status code to confirm the credentials are valid. "
             "This prevents users from seeing an 'authenticated' status with invalid credentials."
         ),
+    )
+
+    # SSO Configuration
+    sso_enabled: bool = Field(
+        default=False,
+        alias="BEDROCK_SSO_ENABLED",
+        description="Master switch for SSO authentication via OAuth2 Authorization Code flow with PKCE",
+    )
+
+    sso_provider: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_PROVIDER",
+        description=(
+            "SSO provider hint for preset defaults. "
+            "Supported values: 'okta', 'azure_ad', 'auth0', 'keycloak', 'generic'"
+        ),
+    )
+
+    sso_client_id: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_CLIENT_ID",
+        description="OAuth2 application client ID registered with the Identity Provider",
+    )
+
+    sso_client_secret: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_CLIENT_SECRET",
+        description="OAuth2 client secret for confidential client flow",
+    )
+
+    sso_discovery_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_DISCOVERY_URL",
+        description=(
+            "OIDC discovery endpoint (e.g., https://idp.example.com/.well-known/openid-configuration). "
+            "When set, auto-configures authorization, token, userinfo, and JWKS endpoints."
+        ),
+    )
+
+    sso_authorization_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_AUTHORIZATION_URL",
+        description="Manual override for the OAuth2 authorization endpoint (used if discovery URL is not set)",
+    )
+
+    sso_token_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_TOKEN_URL",
+        description="Manual override for the OAuth2 token endpoint (used if discovery URL is not set)",
+    )
+
+    sso_userinfo_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_USERINFO_URL",
+        description="Manual override for the OIDC userinfo endpoint",
+    )
+
+    sso_jwks_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_JWKS_URL",
+        description="JWKS endpoint URL for ID token signature validation",
+    )
+
+    sso_scopes: str = Field(
+        default="openid profile email",
+        alias="BEDROCK_SSO_SCOPES",
+        description="Space-separated OAuth2 scopes to request from the Identity Provider",
+    )
+
+    sso_callback_path: str = Field(
+        default="/chat/auth/callback",
+        alias="BEDROCK_SSO_CALLBACK_PATH",
+        description="Redirect URI path on this server for the IdP callback",
+    )
+
+    sso_public_base_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_PUBLIC_BASE_URL",
+        description=(
+            "Public-facing base URL sent to the IdP as the redirect_uri base "
+            "(e.g., https://myapp.example.com). Must match a registered callback URL in your IdP. "
+            "Defaults to api_base_url when not set. "
+            "Use this when the tool-call base URL (api_base_url) differs from the "
+            "browser-visible URL — e.g., same-process plugins where tool calls use "
+            "localhost but users access the app via a hostname or IP."
+        ),
+    )
+
+    sso_session_secret: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_SESSION_SECRET",
+        description="Secret key for signing session cookies/tokens issued after SSO login",
+    )
+
+    sso_session_ttl: int = Field(
+        default=3600,
+        alias="BEDROCK_SSO_SESSION_TTL",
+        gt=0,
+        description="SSO session duration in seconds before requiring re-authentication",
     )
 
     # Logging Configuration
@@ -633,6 +738,90 @@ class ChatConfig(BaseSettings):
                 f"history_msg_length_threshold ({threshold:,})"
             )
         return v
+
+    @field_validator("sso_provider")
+    @classmethod
+    def validate_sso_provider(cls, v):
+        """Validate SSO provider is a known value"""
+        if v is not None:
+            valid_providers = {"okta", "azure_ad", "auth0", "keycloak", "cognito", "generic"}
+            if v.lower() not in valid_providers:
+                raise ValueError(f"sso_provider must be one of: {', '.join(sorted(valid_providers))}. Got: {v}")
+            return v.lower()
+        return v
+
+    @model_validator(mode="after")
+    def validate_sso_config(self):
+        """Validate SSO configuration when SSO is enabled"""
+        if not self.sso_enabled:
+            return self
+
+        # Require client_id when SSO is enabled
+        if not self.sso_client_id:
+            raise ValueError(
+                "sso_client_id is required when sso_enabled=True. "
+                "Set BEDROCK_SSO_CLIENT_ID to your OAuth2 application's client ID."
+            )
+
+        # Require session secret when SSO is enabled
+        if not self.sso_session_secret:
+            raise ValueError(
+                "sso_session_secret is required when sso_enabled=True. "
+                "Set BEDROCK_SSO_SESSION_SECRET to a strong random secret for signing session tokens."
+            )
+
+        # Require either discovery URL or manual authorization + token URLs
+        has_discovery = self.sso_discovery_url is not None
+        has_manual_auth = self.sso_authorization_url is not None
+        has_manual_token = self.sso_token_url is not None
+
+        if not has_discovery and not (has_manual_auth and has_manual_token):
+            raise ValueError(
+                "SSO requires either sso_discovery_url (BEDROCK_SSO_DISCOVERY_URL) "
+                "or both sso_authorization_url (BEDROCK_SSO_AUTHORIZATION_URL) and "
+                "sso_token_url (BEDROCK_SSO_TOKEN_URL) when sso_enabled=True."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_default_auth_type(self):
+        """Validate default_auth_type is one of the supported auth types."""
+        if self.default_auth_type is not None and self.default_auth_type not in self.supported_auth_types:
+            raise ValueError(
+                f"default_auth_type '{self.default_auth_type}' is not in supported_auth_types: "
+                f"{self.supported_auth_types}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def resolve_api_base_url(self) -> "ChatConfig":
+        """Auto-detect api_base_url when not explicitly configured."""
+        if not self.api_base_url:
+            self.api_base_url = self._detect_base_url()
+        return self
+
+    @staticmethod
+    def _detect_base_url() -> str:
+        """Detect the API base URL from environment variables, falling back to localhost:8000."""
+        _https = os.getenv("HTTPS", "").lower() in ("1", "true")
+
+        host = os.getenv("HOST")
+        port = os.getenv("PORT")
+        if host is not None and port is not None:
+            return f"{'https' if _https else 'http'}://{host}:{port}"
+
+        for host_var, port_var in [
+            ("SERVER_HOST", "SERVER_PORT"),
+            ("APP_HOST", "APP_PORT"),
+            ("WEB_HOST", "WEB_PORT"),
+        ]:
+            h = os.getenv(host_var)
+            p = os.getenv(port_var)
+            if h and p:
+                return f"{'https' if _https else 'http'}://{h}:{p}"
+
+        return "http://localhost:8000"
 
     def get_system_prompt(self) -> str:
         """Get effective system prompt"""

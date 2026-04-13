@@ -33,6 +33,7 @@
                 <p>Powered by {{ model_id }}</p>
             </div>
             <div class="chat-header-right">
+                <span id="ssoUserDisplay" class="sso-user-display"></span>
                 <button id="authButton" class="auth-button">Log in</button>
             </div>
         </div>
@@ -75,8 +76,11 @@
             authEnabled: {{ 'true' if auth_enabled else 'false' }},
             requireAuth: {{ 'true' if require_tool_auth else 'false' }},
             supportedAuthTypes: {{ supported_auth_types | tojson }},
+            defaultAuthType: "{{ default_auth_type }}",
             modelId: "{{ model_id }}",
-            presetPrompts: {{ preset_prompts | tojson }}
+            presetPrompts: {{ preset_prompts | tojson }},
+            ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
+            ssoProvider: "{{ sso_provider }}"
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

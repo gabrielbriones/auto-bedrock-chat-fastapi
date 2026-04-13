@@ -18,6 +18,7 @@ DEFAULT_SUPPORTED_AUTH_TYPES: List[str] = [
     "api_key",
     "oauth2",
     "custom",
+    "sso",
 ]
 
 
@@ -30,6 +31,7 @@ class AuthType(str, Enum):
     OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
     API_KEY = "api_key"
     CUSTOM = "custom"
+    SSO = "sso"
 
 
 @dataclass
@@ -49,6 +51,10 @@ class Credentials:
     custom_headers: Dict[str, str] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # SSO-specific fields
+    session_token: Optional[str] = None  # Signed JWT identifying the SSO session
+    sso_user_info: Optional[Dict[str, Any]] = None  # Decoded user profile from IdP
+
     # Cached token for OAuth2
     _cached_access_token: Optional[str] = field(default=None, init=False, repr=False)
     _token_expiry: Optional[float] = field(default=None, init=False, repr=False)
@@ -61,7 +67,7 @@ class Credentials:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert credentials to dictionary for serialization (excluding sensitive data)"""
-        return {
+        result: Dict[str, Any] = {
             "auth_type": self.auth_type.value,
             "has_bearer_token": self.bearer_token is not None,
             "has_credentials": self.username is not None or self.password is not None,
@@ -69,6 +75,9 @@ class Credentials:
             "has_api_key": self.api_key is not None,
             "metadata": self.metadata,
         }
+        if self.auth_type == AuthType.SSO:
+            result["sso_user_info"] = self.sso_user_info or {}
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Credentials":
@@ -90,6 +99,8 @@ class Credentials:
             scope=data.get("scope"),
             custom_headers=data.get("custom_headers", {}),
             metadata=data.get("metadata", {}),
+            session_token=data.get("session_token"),
+            sso_user_info=data.get("sso_user_info"),
         )
 
 
@@ -138,6 +149,11 @@ class AuthenticationHandler:
 
             elif self.credentials.auth_type == AuthType.OAUTH2_CLIENT_CREDENTIALS:
                 return await self._apply_oauth2(headers, tool_auth_config)
+
+            elif self.credentials.auth_type == AuthType.SSO:
+                # SSO credentials carry the IdP access token as a bearer token
+                # for downstream API calls.
+                return self._apply_bearer_token(headers)
 
             elif self.credentials.auth_type == AuthType.CUSTOM:
                 return self._apply_custom_auth(headers, tool_auth_config)

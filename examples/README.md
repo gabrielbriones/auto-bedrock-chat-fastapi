@@ -6,6 +6,8 @@ This directory contains comprehensive examples demonstrating how to integrate `a
 
 - **`expressjs/`** - Complete Express.js integration example with working server
 - **`fastAPI/`** - FastAPI integration examples
+- **`sso_okta_example.py`** - SSO authentication with Okta (OAuth2 Authorization Code + PKCE)
+- **`sso_azure_ad_example.py`** - SSO authentication with Microsoft Entra ID (Azure AD)
 
 ## Quick Start Guide
 
@@ -142,9 +144,30 @@ AWS_REGION=us-east-1
 
 1. **Explore the Code**: Start with `expressjs/server.js` to see OpenAPI generation
 2. **Test the Integration**: Run `express_integration_example.py` to see tool generation
-3. **Add Your Framework**: Use the same patterns with Django, Flask, Next.js, etc.
-4. **Integrate with Bedrock**: Set up AWS credentials for AI chat capabilities
-5. **Production Deployment**: Configure for your production environment
+3. **Try SSO**: Run `sso_okta_example.py` or `sso_azure_ad_example.py` with your IdP
+4. **Add Your Framework**: Use the same patterns with Django, Flask, Next.js, etc.
+5. **Integrate with Bedrock**: Set up AWS credentials for AI chat capabilities
+6. **Production Deployment**: Configure for your production environment
+
+## SSO Authentication Examples
+
+The `sso_okta_example.py` and `sso_azure_ad_example.py` files demonstrate SSO integration using OAuth2 Authorization Code flow with PKCE.
+
+```bash
+# 1. Configure your IdP (see file headers for setup instructions)
+# 2. Set environment variables
+export BEDROCK_SSO_ENABLED=true
+export BEDROCK_SSO_CLIENT_ID=<your-client-id>
+export BEDROCK_SSO_DISCOVERY_URL=<your-oidc-discovery-url>
+export BEDROCK_SSO_SESSION_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
+# 3. Run the example
+python examples/sso_okta_example.py
+
+# 4. Open http://localhost:8000/chat — click "Login with SSO"
+```
+
+For full SSO documentation, see the [SSO wiki page](../docs/wiki/sso.md).
 
 ## Support for Other Frameworks
 
