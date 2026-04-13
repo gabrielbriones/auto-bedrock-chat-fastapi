@@ -55,6 +55,12 @@ class SSOProvider:
         self._token_endpoint: Optional[str] = None
         self._userinfo_endpoint: Optional[str] = None
         self._jwks_uri: Optional[str] = None
+        self._issuer: Optional[str] = None
+
+    @property
+    def has_userinfo_endpoint(self) -> bool:
+        """Whether a userinfo endpoint is configured."""
+        return bool(self._userinfo_endpoint)
 
     # ------------------------------------------------------------------
     # OIDC Discovery
@@ -104,6 +110,7 @@ class SSOProvider:
         self._token_endpoint = self._config.sso_token_url or discovered.get("token_endpoint")
         self._userinfo_endpoint = self._config.sso_userinfo_url or discovered.get("userinfo_endpoint")
         self._jwks_uri = self._config.sso_jwks_url or discovered.get("jwks_uri")
+        self._issuer = discovered.get("issuer")
 
         logger.debug(
             "Resolved SSO endpoints — auth: %s, token: %s, userinfo: %s, jwks: %s",
@@ -277,6 +284,23 @@ class SSOProvider:
     # ID Token validation
     # ------------------------------------------------------------------
 
+    # Allowlist of accepted JWT signing algorithms.  Symmetric algorithms
+    # (HS*) are excluded to prevent the "HMAC with public key" attack where
+    # an attacker sets ``alg: HS256`` and signs with the public RSA key.
+    _ALLOWED_ALGORITHMS = frozenset(
+        {
+            "RS256",
+            "RS384",
+            "RS512",
+            "ES256",
+            "ES384",
+            "ES512",
+            "PS256",
+            "PS384",
+            "PS512",
+        }
+    )
+
     async def validate_id_token(self, id_token: str, access_token: Optional[str] = None) -> Dict[str, Any]:
         """Validate the ID token JWT signature and standard claims.
 
@@ -319,6 +343,16 @@ class SSOProvider:
                 f"Available kids: {[k.get('kid') for k in jwks_data.get('keys', [])]}"
             )
 
+        # Prefer the algorithm declared in the JWKS key entry over the
+        # unverified token header to prevent algorithm confusion attacks.
+        alg = matching_key.get("alg") or alg
+
+        # Validate algorithm against allowlist
+        if alg not in self._ALLOWED_ALGORITHMS:
+            raise SSOValidationError(
+                f"Unsupported JWT algorithm {alg!r}. " f"Allowed: {sorted(self._ALLOWED_ALGORITHMS)}"
+            )
+
         # Build the public key object
         try:
             public_key = jwk.construct(matching_key, algorithm=alg)
@@ -330,6 +364,8 @@ class SSOProvider:
             "algorithms": [alg],
             "audience": self._config.sso_client_id,
         }
+        if self._issuer:
+            decode_kwargs["issuer"] = self._issuer
         if access_token:
             decode_kwargs["access_token"] = access_token
         try:

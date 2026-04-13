@@ -136,7 +136,7 @@ function ssoLogin() {
     if (btn) btn.disabled = true;
     if (btnText) btnText.textContent = 'Redirecting…';
     if (spinner) spinner.style.display = 'inline-block';
-    window.location.href = '/chat/auth/sso/login';
+    window.location.href = window.CONFIG.ssoLoginUrl || '/chat/auth/sso/login';
 }
 
 function updateAuthFields() {

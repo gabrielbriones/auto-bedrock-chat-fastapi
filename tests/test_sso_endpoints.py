@@ -211,7 +211,7 @@ def _build_test_app():
     sso_provider = SSOProvider(config)
     sso_session_store = SSOSessionStore(session_ttl=config.sso_session_ttl)
 
-    @app.get("/chat/auth/sso/login")
+    @app.get(f"{config.chat_endpoint}/auth/sso/login")
     async def sso_login():
         try:
             await sso_provider.discover()
@@ -222,7 +222,7 @@ def _build_test_app():
         sso_session_store.store_pending(state, code_verifier)
         return RedirectResponse(url=auth_url, status_code=302)
 
-    @app.get("/chat/auth/callback")
+    @app.get(config.sso_callback_path)
     async def sso_callback(
         request: Request, code: str = None, state: str = None, error: str = None, error_description: str = None
     ):
@@ -259,6 +259,11 @@ def _build_test_app():
                     content="<html><body><h1>SSO Error</h1><p>ID token validation failed.</p></body></html>",
                     status_code=401,
                 )
+        if not tokens.get("access_token"):
+            return HTMLResponse(
+                content="<html><body><h1>SSO Error</h1><p>No access token returned.</p></body></html>",
+                status_code=502,
+            )
         user_info = {}
         session_id = sso_session_store.create_session(
             tokens=tokens, user_info=user_info, id_token_claims=id_token_claims
@@ -266,14 +271,14 @@ def _build_test_app():
         session_token = sso_session_store.generate_session_token(
             session_id=session_id, sso_session_secret=config.sso_session_secret
         )
-        redirect_url = f"{config.ui_endpoint}?session_token={session_token}"
+        redirect_url = config.ui_endpoint
         response = RedirectResponse(url=redirect_url, status_code=302)
         response.set_cookie(
             key="sso_session_token", value=session_token, httponly=True, samesite="lax", max_age=config.sso_session_ttl
         )
         return response
 
-    @app.post("/chat/auth/sso/refresh")
+    @app.post(f"{config.chat_endpoint}/auth/sso/refresh")
     async def sso_refresh(request: Request):
         session_token = None
         auth_header = request.headers.get("Authorization", "")
@@ -312,7 +317,7 @@ def _build_test_app():
             }
         )
 
-    @app.post("/chat/auth/sso/logout")
+    @app.post(f"{config.chat_endpoint}/auth/sso/logout")
     async def sso_logout(request: Request):
         session_token = None
         auth_header = request.headers.get("Authorization", "")
@@ -346,25 +351,25 @@ def test_app_bundle():
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /chat/auth/sso/login
+# Tests: GET {chat_endpoint}/auth/sso/login
 # ---------------------------------------------------------------------------
 
 
 class TestSSOLoginEndpoint:
-    """GET /chat/auth/sso/login — redirects to IdP and stores pending state."""
+    """GET {chat_endpoint}/auth/sso/login — redirects to IdP and stores pending state."""
 
     def test_login_redirects_302(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
         with patch.object(provider, "discover", new_callable=AsyncMock):
             provider._authorization_endpoint = "https://idp.example.com/authorize"
-            response = client.get("/chat/auth/sso/login")
+            response = client.get(f"{config.chat_endpoint}/auth/sso/login")
         assert response.status_code == 302
 
     def test_login_redirect_url_contains_idp_endpoint(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
         with patch.object(provider, "discover", new_callable=AsyncMock):
             provider._authorization_endpoint = "https://idp.example.com/authorize"
-            response = client.get("/chat/auth/sso/login")
+            response = client.get(f"{config.chat_endpoint}/auth/sso/login")
         location = response.headers["location"]
         assert "idp.example.com/authorize" in location
 
@@ -372,7 +377,7 @@ class TestSSOLoginEndpoint:
         client, provider, store, config = test_app_bundle
         with patch.object(provider, "discover", new_callable=AsyncMock):
             provider._authorization_endpoint = "https://idp.example.com/authorize"
-            client.get("/chat/auth/sso/login")
+            client.get(f"{config.chat_endpoint}/auth/sso/login")
         assert len(store._pending) == 1
 
     def test_login_returns_502_on_discovery_failure(self, test_app_bundle):
@@ -380,17 +385,17 @@ class TestSSOLoginEndpoint:
 
         client, provider, store, config = test_app_bundle
         with patch.object(provider, "discover", new_callable=AsyncMock, side_effect=SSODiscoveryError("network error")):
-            response = client.get("/chat/auth/sso/login")
+            response = client.get(f"{config.chat_endpoint}/auth/sso/login")
         assert response.status_code == 502
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /chat/auth/callback
+# Tests: GET {sso_callback_path}
 # ---------------------------------------------------------------------------
 
 
 class TestSSOCallbackEndpoint:
-    """GET /chat/auth/callback — full happy-path and error cases."""
+    """GET {sso_callback_path} — full happy-path and error cases."""
 
     def _seed_pending(self, store: SSOSessionStore) -> tuple[str, str]:
         """Seed a pending state and return (state, code_verifier)."""
@@ -407,10 +412,12 @@ class TestSSOCallbackEndpoint:
             patch.object(provider, "exchange_code", new_callable=AsyncMock, return_value=_DEFAULT_TOKENS),
             patch.object(provider, "validate_id_token", new_callable=AsyncMock, return_value=_DEFAULT_CLAIMS),
         ):
-            response = client.get(f"/chat/auth/callback?code=AUTH_CODE&state={state}")
+            response = client.get(f"{config.sso_callback_path}?code=AUTH_CODE&state={state}")
 
         assert response.status_code == 302
-        assert "session_token=" in response.headers["location"]
+        # Session token should NOT be in the redirect URL (cookie-only flow)
+        assert "session_token=" not in response.headers["location"]
+        assert response.headers["location"] == config.ui_endpoint
 
     def test_callback_sets_cookie(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
@@ -420,7 +427,7 @@ class TestSSOCallbackEndpoint:
             patch.object(provider, "exchange_code", new_callable=AsyncMock, return_value=_DEFAULT_TOKENS),
             patch.object(provider, "validate_id_token", new_callable=AsyncMock, return_value=_DEFAULT_CLAIMS),
         ):
-            response = client.get(f"/chat/auth/callback?code=AUTH_CODE&state={state}")
+            response = client.get(f"{config.sso_callback_path}?code=AUTH_CODE&state={state}")
 
         assert "sso_session_token" in response.cookies
 
@@ -432,14 +439,14 @@ class TestSSOCallbackEndpoint:
             patch.object(provider, "exchange_code", new_callable=AsyncMock, return_value=_DEFAULT_TOKENS),
             patch.object(provider, "validate_id_token", new_callable=AsyncMock, return_value=_DEFAULT_CLAIMS),
         ):
-            client.get(f"/chat/auth/callback?code=AUTH_CODE&state={state}")
+            client.get(f"{config.sso_callback_path}?code=AUTH_CODE&state={state}")
 
         # State must be consumed (one-time use)
         assert store.get_pending(state) is None
 
     def test_callback_rejects_invalid_state(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
-        response = client.get("/chat/auth/callback?code=CODE&state=INVALID_STATE")
+        response = client.get(f"{config.sso_callback_path}?code=CODE&state=INVALID_STATE")
         assert response.status_code == 400
 
     def test_callback_rejects_expired_state(self, test_app_bundle):
@@ -447,19 +454,19 @@ class TestSSOCallbackEndpoint:
         state, verifier = self._seed_pending(store)
         # Expire the state
         store._pending[state]["expires_at"] = time.time() - 1
-        response = client.get(f"/chat/auth/callback?code=CODE&state={state}")
+        response = client.get(f"{config.sso_callback_path}?code=CODE&state={state}")
         assert response.status_code == 400
 
     def test_callback_returns_400_on_idp_error_param(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
-        response = client.get("/chat/auth/callback?error=access_denied&error_description=User+denied")
+        response = client.get(f"{config.sso_callback_path}?error=access_denied&error_description=User+denied")
         assert response.status_code == 400
         assert "access_denied" in response.text
 
     def test_callback_returns_400_on_missing_code(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
         state, _ = self._seed_pending(store)
-        response = client.get(f"/chat/auth/callback?state={state}")
+        response = client.get(f"{config.sso_callback_path}?state={state}")
         assert response.status_code == 400
 
     def test_callback_handles_token_exchange_error(self, test_app_bundle):
@@ -471,25 +478,39 @@ class TestSSOCallbackEndpoint:
         with patch.object(
             provider, "exchange_code", new_callable=AsyncMock, side_effect=SSOTokenError("invalid_grant")
         ):
-            response = client.get(f"/chat/auth/callback?code=BAD_CODE&state={state}")
+            response = client.get(f"{config.sso_callback_path}?code=BAD_CODE&state={state}")
 
         assert response.status_code == 502
 
+    def test_callback_rejects_missing_access_token(self, test_app_bundle):
+        client, provider, store, config = test_app_bundle
+        state, verifier = self._seed_pending(store)
+
+        tokens_no_at = {"id_token": "eyJ...", "refresh_token": "rt", "expires_in": 3600}
+        with (
+            patch.object(provider, "exchange_code", new_callable=AsyncMock, return_value=tokens_no_at),
+            patch.object(provider, "validate_id_token", new_callable=AsyncMock, return_value={"sub": "u1"}),
+        ):
+            response = client.get(f"{config.sso_callback_path}?code=CODE&state={state}")
+
+        assert response.status_code == 502
+        assert "access token" in response.text.lower()
+
 
 # ---------------------------------------------------------------------------
-# Tests: POST /chat/auth/sso/logout
+# Tests: POST {chat_endpoint}/auth/sso/logout
 # ---------------------------------------------------------------------------
 
 
 class TestSSOLogoutEndpoint:
-    """POST /chat/auth/sso/logout — clears session and cookie."""
+    """POST {chat_endpoint}/auth/sso/logout — clears session and cookie."""
 
     def test_logout_clears_session(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
         sid = store.create_session(tokens=_DEFAULT_TOKENS)
         token = store.generate_session_token(sid, _SESSION_SECRET)
 
-        response = client.post("/chat/auth/sso/logout", json={"session_token": token})
+        response = client.post(f"{config.chat_endpoint}/auth/sso/logout", json={"session_token": token})
         assert response.status_code == 200
         assert response.json()["logged_out"] is True
         assert store.get_session(sid) is None
@@ -499,7 +520,7 @@ class TestSSOLogoutEndpoint:
         sid = store.create_session(tokens=_DEFAULT_TOKENS)
         token = store.generate_session_token(sid, _SESSION_SECRET)
 
-        response = client.post("/chat/auth/sso/logout", json={"session_token": token})
+        response = client.post(f"{config.chat_endpoint}/auth/sso/logout", json={"session_token": token})
         # Cookie should be cleared (Set-Cookie with empty value or max-age=0)
         set_cookie = response.headers.get("set-cookie", "")
         assert "sso_session_token" in set_cookie
@@ -510,7 +531,7 @@ class TestSSOLogoutEndpoint:
         token = store.generate_session_token(sid, _SESSION_SECRET)
 
         response = client.post(
-            "/chat/auth/sso/logout",
+            f"{config.chat_endpoint}/auth/sso/logout",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
@@ -518,7 +539,7 @@ class TestSSOLogoutEndpoint:
 
     def test_logout_with_no_token_still_succeeds(self, test_app_bundle):
         client, provider, store, config = test_app_bundle
-        response = client.post("/chat/auth/sso/logout", json={})
+        response = client.post(f"{config.chat_endpoint}/auth/sso/logout", json={})
         assert response.status_code == 200
 
 
@@ -530,30 +551,25 @@ class TestSSOLogoutEndpoint:
 class TestSSOEndpointsNotRegisteredWhenDisabled:
     """SSO routes must not exist when sso_enabled=False."""
 
-    def test_sso_login_not_registered(self):
-        """When sso_enabled=False the BedrockChatPlugin should not register SSO routes."""
+    def test_setup_sso_routes_not_called_when_disabled(self):
+        """_setup_sso_routes should not be called when sso_enabled=False."""
         from unittest.mock import MagicMock, patch
 
-        # We check the plugin initialisation path directly by confirming
-        # _setup_sso_routes is NOT called when sso_enabled=False.
-        with patch(
-            "auto_bedrock_chat_fastapi.plugin.BedrockChatPlugin.__init__",
-            return_value=None,
-        ):
-            from auto_bedrock_chat_fastapi.plugin import BedrockChatPlugin
+        from auto_bedrock_chat_fastapi.plugin import BedrockChatPlugin
 
+        with patch.object(BedrockChatPlugin, "__init__", return_value=None):
             plugin = BedrockChatPlugin.__new__(BedrockChatPlugin)
 
-        # Simulate a plugin with sso_enabled=False
         plugin.config = MagicMock()
         plugin.config.sso_enabled = False
+        plugin.config.enable_ui = False
+        plugin.config.enable_rag = False
+        plugin.config.chat_endpoint = "/bedrock-chat"
+        plugin.config.websocket_endpoint = "/bedrock-chat/ws"
         plugin.sso_provider = None
         plugin.sso_session_store = None
+        plugin.app = FastAPI()
 
-        # _setup_sso_routes should not be called → no SSO routes registered
-        app = FastAPI()
-        plugin.app = app
-
-        # Confirm no /chat/auth/sso/login route on app without calling _setup_sso_routes
-        route_paths = [r.path for r in app.routes]
-        assert "/chat/auth/sso/login" not in route_paths
+        with patch.object(plugin, "_setup_sso_routes") as mock_sso_setup:
+            plugin._setup_routes()
+            mock_sso_setup.assert_not_called()

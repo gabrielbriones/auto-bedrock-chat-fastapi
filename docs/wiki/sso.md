@@ -118,24 +118,26 @@ Provide **either** a discovery URL (recommended) **or** individual endpoint URLs
 ### Login Flow
 
 1. User visits `/bedrock-chat/ui` and clicks **"Login with SSO"**
-2. Plugin generates a PKCE `code_verifier` + `code_challenge`, stores them with a random `state` in cookies
+2. Plugin generates a PKCE `code_verifier` + `code_challenge`, stores them server-side keyed by a random `state` parameter
 3. User is redirected to the IdP's authorization endpoint
 4. User authenticates with the IdP (e.g., corporate credentials via Azure AD)
-5. IdP redirects back to `sso_callback_path` with an authorization `code`
-6. Plugin exchanges the code for tokens (`access_token`, `id_token`, `refresh_token`)
-7. The `id_token` is validated (signature, expiry, audience, `at_hash`)
-8. An SSO session is created; a signed session JWT is set as a cookie
+5. IdP redirects back to `sso_callback_path` with an authorization `code` and the `state` parameter
+6. Plugin validates the `state` (CSRF protection), then exchanges the code for tokens (`access_token`, `id_token`, `refresh_token`)
+7. The `id_token` is validated (signature, expiry, audience, issuer, `at_hash`)
+8. An SSO session is created; a signed session JWT is set as an `HttpOnly` cookie and the browser is redirected to the chat UI
 
 ### WebSocket Authentication
 
 When the WebSocket connects, the plugin automatically:
 
-1. Reads the session JWT from the cookie
+1. Reads the session JWT from the `HttpOnly` cookie (sent automatically by the browser on the WebSocket handshake)
 2. Looks up the SSO session and retrieves the stored `access_token`
 3. Sets the session's `Credentials` with `auth_type=SSO` and `bearer_token=<access_token>`
 4. All subsequent tool calls include `Authorization: Bearer <access_token>`
 
 No manual auth message is needed — the session is authenticated transparently.
+
+> **Note:** The session token is never exposed to JavaScript — it is stored exclusively in an `HttpOnly` cookie.
 
 ### Token Storage
 
@@ -283,10 +285,12 @@ When `require_tool_auth=True` and only `"sso"` is in `supported_auth_types`, use
 
 ## Endpoints Added by SSO
 
-| Route                          | Method | Description                                         |
-| ------------------------------ | ------ | --------------------------------------------------- |
-| `/bedrock-chat/auth/sso/login` | GET    | Redirects to the IdP authorization endpoint         |
-| `<sso_callback_path>`          | GET    | Handles the IdP callback, exchanges code for tokens |
+| Route                              | Method | Description                                         |
+| ---------------------------------- | ------ | --------------------------------------------------- |
+| `{chat_endpoint}/auth/sso/login`   | GET    | Redirects to the IdP authorization endpoint         |
+| `{chat_endpoint}/auth/sso/refresh` | POST   | Refreshes SSO tokens using the stored refresh token |
+| `{chat_endpoint}/auth/sso/logout`  | POST   | Invalidates the SSO session and clears the cookie   |
+| `<sso_callback_path>`              | GET    | Handles the IdP callback, exchanges code for tokens |
 
 The login URL is also exposed in the UI as a "Login with SSO" button.
 

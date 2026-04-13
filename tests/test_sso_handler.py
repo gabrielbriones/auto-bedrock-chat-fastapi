@@ -600,3 +600,189 @@ class TestRefreshToken:
         assert captured["grant_type"] == "refresh_token"
         assert captured["refresh_token"] == "MY_REFRESH_TOKEN"
         assert captured["client_id"] == "test-client-id"
+
+
+# ---------------------------------------------------------------------------
+# Tests: issuer validation (Comment 6)
+# ---------------------------------------------------------------------------
+
+
+class TestIssuerValidation:
+    """validate_id_token() must validate the `iss` claim when issuer is known."""
+
+    @pytest.mark.asyncio
+    async def test_discover_stores_issuer(self):
+        """After discovery, _issuer should be populated from the discovery doc."""
+        p = _make_resolved_provider()
+        assert p._issuer == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_wrong_issuer_raises(self, rsa_private_pem, rsa_public_pem):
+        """Token with a different issuer should be rejected."""
+        token = _make_id_token(rsa_private_pem, iss="https://evil.example.com")
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(SSOValidationError):
+                await p.validate_id_token(token)
+
+    @pytest.mark.asyncio
+    async def test_no_issuer_skips_validation(self, rsa_private_pem, rsa_public_pem):
+        """When no discovery was done (_issuer is None), issuer is not validated."""
+        token = _make_id_token(rsa_private_pem, iss="https://any-issuer.example.com")
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        # Manual config (no discovery) — _issuer stays None
+        cfg = _make_config(sso_discovery_url=None, sso_jwks_url="https://manual.example.com/jwks")
+        p = SSOProvider(cfg)
+        p._resolve_endpoints(discovered={})
+        assert p._issuer is None
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            claims = await p.validate_id_token(token)
+
+        assert claims["sub"] == "user123"
+
+
+# ---------------------------------------------------------------------------
+# Tests: JWT algorithm allowlist (Comment 12)
+# ---------------------------------------------------------------------------
+
+
+class TestAlgorithmAllowlist:
+    """validate_id_token() restricts accepted algorithms."""
+
+    @pytest.mark.asyncio
+    async def test_alg_none_rejected(self, rsa_public_pem):
+        """Tokens with alg: none must be rejected."""
+        # Craft a token with alg=none in the header
+        now = int(time.time())
+        claims = {
+            "sub": "attacker",
+            "aud": "test-client-id",
+            "iss": "https://idp.example.com",
+            "iat": now,
+            "exp": now + 300,
+        }
+        # python-jose won't encode with alg=none, so build a fake token
+        import base64
+        import json
+
+        header = (
+            base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT", "kid": "test-kid"}).encode())
+            .rstrip(b"=")
+            .decode()
+        )
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+        forged_token = f"{header}.{payload}."
+
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(SSOValidationError, match="(?i)alg"):
+                await p.validate_id_token(forged_token)
+
+    @pytest.mark.asyncio
+    async def test_hs256_rejected(self, rsa_public_pem):
+        """Tokens with alg: HS256 must be rejected (HMAC with public key attack)."""
+        now = int(time.time())
+        claims = {
+            "sub": "attacker",
+            "aud": "test-client-id",
+            "iss": "https://idp.example.com",
+            "iat": now,
+            "exp": now + 300,
+        }
+        import base64
+        import json
+
+        header = (
+            base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT", "kid": "test-kid"}).encode())
+            .rstrip(b"=")
+            .decode()
+        )
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+        forged_token = f"{header}.{payload}.fakesig"
+
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(SSOValidationError, match="(?i)alg"):
+                await p.validate_id_token(forged_token)
+
+    @pytest.mark.asyncio
+    async def test_jwks_key_alg_preferred_over_header(self, rsa_private_pem, rsa_public_pem):
+        """Algorithm from the JWKS key entry takes precedence over the token header."""
+        token = _make_id_token(rsa_private_pem)
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+        # The JWKS key has alg=RS256 and the token header also has RS256.
+        # Verify it works — algorithm from key is used.
+        assert jwks["keys"][0]["alg"] == "RS256"
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            claims = await p.validate_id_token(token)
+
+        assert claims["sub"] == "user123"

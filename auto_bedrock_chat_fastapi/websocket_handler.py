@@ -73,8 +73,8 @@ class WebSocketChatHandler:
 
             logger.info(f"WebSocket connected: session={session_id}, user={user_id}, ip={ip_address}")
 
-            # SSO auto-auth: check for session_token query parameter
-            session_token = websocket.query_params.get("session_token")
+            # SSO auto-auth: check for session token in HttpOnly cookie
+            session_token = websocket.cookies.get("sso_session_token")
             if session_token and self.sso_session_store and self.config.sso_session_secret:
                 auto_authed = await self._try_sso_auto_auth(websocket, session_token)
                 if auto_authed:
@@ -172,7 +172,7 @@ class WebSocketChatHandler:
                         {
                             "type": "auth_expired",
                             "message": "Your SSO session has expired. Please log in again.",
-                            "redirect_url": "/chat/auth/sso/login",
+                            "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
                             "timestamp": datetime.now().isoformat(),
                         },
                     )
@@ -483,7 +483,7 @@ class WebSocketChatHandler:
                 )
 
             elif auth_type == "sso":
-                session_token = data.get("session_token")
+                session_token = data.get("session_token") or websocket.cookies.get("sso_session_token")
                 if not session_token:
                     await self._send_error(websocket, "session_token required for SSO auth")
                     return
@@ -667,7 +667,7 @@ class WebSocketChatHandler:
                     "type": "auth_failed",
                     "message": "SSO session has expired. Please log in again.",
                     "auth_type": "sso",
-                    "redirect_url": "/chat/auth/sso/login",
+                    "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
                     "timestamp": datetime.now().isoformat(),
                 },
             )
@@ -678,6 +678,22 @@ class WebSocketChatHandler:
             return False
 
         # Build credentials — use the IdP access token for downstream tool calls
+        access_token = sso_session.get("access_token")
+        if not access_token:
+            await self._send_message(
+                websocket,
+                {
+                    "type": "auth_failed",
+                    "message": "SSO session is missing an access token. Please log in again.",
+                    "auth_type": "sso",
+                    "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+            # Clean up the broken session
+            self.sso_session_store.delete_session(sso_session_id)
+            return False
+
         user_info = sso_session.get("user_info", {})
         id_token_claims = sso_session.get("id_token_claims", {})
         display_name = (
@@ -690,7 +706,7 @@ class WebSocketChatHandler:
 
         credentials = Credentials(
             auth_type=AuthType.SSO,
-            bearer_token=sso_session.get("access_token"),
+            bearer_token=access_token,
             session_token=session_token,
             sso_user_info=user_info,
             metadata={"sso_session_id": sso_session_id, "display_name": display_name},

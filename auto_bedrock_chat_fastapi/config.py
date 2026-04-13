@@ -411,7 +411,7 @@ class ChatConfig(BaseSettings):
         alias="BEDROCK_SSO_PROVIDER",
         description=(
             "SSO provider hint for preset defaults. "
-            "Supported values: 'okta', 'azure_ad', 'auth0', 'keycloak', 'generic'"
+            "Supported values: 'okta', 'azure_ad', 'auth0', 'keycloak', 'cognito', 'generic'"
         ),
     )
 

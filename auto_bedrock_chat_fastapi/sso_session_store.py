@@ -52,6 +52,9 @@ class SSOSessionStore:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         # key: state (str) → value: {code_verifier, expires_at}
         self._pending: Dict[str, Dict[str, Any]] = {}
+        # Counter for opportunistic cleanup in create_session()
+        self._create_count: int = 0
+        self._CLEANUP_INTERVAL: int = 100
 
     # ------------------------------------------------------------------
     # Session CRUD
@@ -85,6 +88,13 @@ class SSOSessionStore:
             "created_at": now,
         }
         logger.debug("SSO session created: %s (expires in %ds)", session_id, self._session_ttl)
+
+        # Opportunistic cleanup to prevent unbounded memory growth
+        self._create_count += 1
+        if self._create_count >= self._CLEANUP_INTERVAL:
+            self._create_count = 0
+            self.cleanup_expired()
+
         return session_id
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:

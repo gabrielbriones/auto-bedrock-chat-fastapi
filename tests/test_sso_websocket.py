@@ -36,6 +36,7 @@ def _make_config(sso_enabled=True, **overrides):
     config.sso_enabled = sso_enabled
     config.sso_session_secret = _SESSION_SECRET
     config.sso_session_ttl = 3600
+    config.chat_endpoint = "/bedrock-chat"
     config.timeout = 30
     config.require_tool_auth = False
     config.auth_verification_endpoint = None
@@ -227,7 +228,7 @@ class TestSSOAuthMessage:
 
         sent_types = [call.args[0]["type"] for call in mock_ws.send_json.call_args_list]
         assert "auth_failed" in sent_types
-        assert mock_session.credentials is None or mock_session.credentials == mock_session.credentials
+        assert mock_session.credentials is None
 
     @pytest.mark.asyncio
     async def test_sso_auth_expired_session_rejected(self):
@@ -276,12 +277,12 @@ class TestSSOAuthMessage:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Auto-auth via ?session_token= query param
+# Tests: Auto-auth via HttpOnly cookie
 # ---------------------------------------------------------------------------
 
 
 class TestSSOAutoAuth:
-    """Auto-authentication via session_token query parameter on WS connect."""
+    """Auto-authentication via sso_session_token cookie on WS connect."""
 
     @pytest.mark.asyncio
     async def test_auto_auth_success_sends_auth_configured(self):
@@ -290,7 +291,7 @@ class TestSSOAutoAuth:
         handler, sm = _make_handler(sso_session_store=store)
 
         mock_ws = AsyncMock()
-        mock_ws.query_params = {"session_token": token}
+        mock_ws.cookies = {"sso_session_token": token}
         mock_session = _make_mock_session()
         sm.get_session = AsyncMock(return_value=mock_session)
 
@@ -490,3 +491,34 @@ class TestSSOLogoutWebSocket:
         assert mock_session.credentials is None
         sent_types = [call.args[0]["type"] for call in mock_ws.send_json.call_args_list]
         assert "logout_success" in sent_types
+
+
+# ---------------------------------------------------------------------------
+# Tests: Missing access_token guard (Comment 5)
+# ---------------------------------------------------------------------------
+
+
+class TestSSOAuthMissingAccessToken:
+    """SSO auth must fail if the session has no access_token."""
+
+    @pytest.mark.asyncio
+    async def test_sso_auth_rejects_session_without_access_token(self):
+        store = _make_store()
+        tokens_no_at = {"refresh_token": "rt", "id_token": "eyJ...", "expires_in": 3600}
+        session_id = store.create_session(tokens=tokens_no_at, user_info=_DEFAULT_USER_INFO)
+        token = store.generate_session_token(session_id, _SESSION_SECRET)
+
+        handler, sm = _make_handler(sso_session_store=store)
+        mock_ws = AsyncMock()
+        mock_session = _make_mock_session()
+        sm.get_session = AsyncMock(return_value=mock_session)
+
+        await handler._handle_auth_message(mock_ws, {"type": "auth", "auth_type": "sso", "session_token": token})
+
+        # Should send auth_failed
+        sent_types = [call.args[0]["type"] for call in mock_ws.send_json.call_args_list]
+        assert "auth_failed" in sent_types
+        # Credentials should NOT be set
+        assert mock_session.credentials is None
+        # Broken session should be cleaned up
+        assert store.get_session(session_id) is None

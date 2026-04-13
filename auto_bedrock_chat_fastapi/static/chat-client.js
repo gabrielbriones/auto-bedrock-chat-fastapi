@@ -67,12 +67,10 @@ class ChatClient {
         }
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        let wsUrl = `${protocol}//${window.location.host}${window.CONFIG.websocketUrl}`;
-
-        // Append SSO session token as query param if available (auto-authenticates the WS session)
-        if (window._ssoSessionToken) {
-            wsUrl += (wsUrl.includes('?') ? '&' : '?') + 'session_token=' + encodeURIComponent(window._ssoSessionToken);
-        }
+        const wsUrl = `${protocol}//${window.location.host}${window.CONFIG.websocketUrl}`;
+        // SSO session token is delivered via an HttpOnly cookie that the
+        // browser sends automatically on the WebSocket handshake — no need
+        // to include it in the URL.
 
         console.log('Creating new WebSocket connection...');
         this.ws = new WebSocket(wsUrl);

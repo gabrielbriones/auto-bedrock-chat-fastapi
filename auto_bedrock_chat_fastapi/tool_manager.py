@@ -181,16 +181,20 @@ class ToolsGenerator:
         Determine API base URL for internal API calls.
 
         Priority order:
-        1. config.api_base_url — resolved by ChatConfig (explicit config, env vars, or
-           http://localhost:8000 default).  This is the authoritative source.
-        2. OpenAPI spec servers[0].url — used as an override only when the spec explicitly
-           declares a server URL that differs from the config-resolved value (tools context).
+        1. config.api_base_url — when explicitly set (not the default), this always wins.
+        2. OpenAPI spec servers[0].url — used when the config has only the default value.
+        3. config.api_base_url default (http://localhost:8000) — final fallback.
         """
+        _DEFAULT_API_BASE_URL = "http://localhost:8000"
 
-        # Priority 1: config-resolved URL (always non-None after ChatConfig validation)
         resolved = self.config.api_base_url
 
-        # Priority 2: OpenAPI spec servers — override for tools-specific deployment info
+        # If config was explicitly set to something other than the default, use it
+        if resolved and resolved != _DEFAULT_API_BASE_URL:
+            logger.debug(f"Using config-resolved API base URL: {resolved}")
+            return resolved
+
+        # Try OpenAPI spec servers as a better default
         try:
             schema = self._get_openapi_schema()
             servers = schema.get("servers", [])
@@ -198,7 +202,7 @@ class ToolsGenerator:
                 first_server = servers[0]
                 if isinstance(first_server, dict) and "url" in first_server:
                     spec_url = first_server["url"]
-                    if spec_url and spec_url != resolved:
+                    if spec_url:
                         logger.debug(f"Using API base URL from OpenAPI spec: {spec_url}")
                         return spec_url
         except Exception as e:

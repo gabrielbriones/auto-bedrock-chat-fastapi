@@ -80,7 +80,10 @@
             modelId: "{{ model_id }}",
             presetPrompts: {{ preset_prompts | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
-            ssoProvider: "{{ sso_provider }}"
+            ssoProvider: "{{ sso_provider }}",
+            ssoLoginUrl: "{{ sso_login_url }}",
+            ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
+            ssoUserDisplay: "{{ sso_user_display }}"
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

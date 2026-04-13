@@ -273,6 +273,29 @@ class BedrockChatPlugin:
                     if self.config.enable_tool_auth:
                         supported_auth_types = self.config.supported_auth_types
 
+                    # Check for active SSO session from HttpOnly cookie
+                    sso_user_display = ""
+                    sso_authenticated = False
+                    if self.config.sso_enabled and self.sso_session_store:
+                        session_token = request.cookies.get("sso_session_token")
+                        if session_token:
+                            session_id = SSOSessionStore.validate_session_token(
+                                session_token,
+                                self.config.sso_session_secret,
+                            )
+                            if session_id:
+                                session = self.sso_session_store.get_session(session_id)
+                                if session:
+                                    sso_authenticated = True
+                                    user_info = session.get("user_info", {})
+                                    claims = session.get("id_token_claims", {})
+                                    sso_user_display = (
+                                        user_info.get("email")
+                                        or claims.get("email")
+                                        or user_info.get("username")
+                                        or claims.get("cognito:username", "")
+                                    )
+
                     return self.templates.TemplateResponse(
                         "chat.html",
                         {
@@ -289,6 +312,9 @@ class BedrockChatPlugin:
                             "preset_prompts": self._preset_prompts,
                             "sso_enabled": self.config.sso_enabled,
                             "sso_provider": self.config.sso_provider or "",
+                            "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
+                            "sso_authenticated": sso_authenticated,
+                            "sso_user_display": sso_user_display,
                         },
                     )
                 except Exception as e:
@@ -433,8 +459,9 @@ class BedrockChatPlugin:
         All four endpoints are registered; an error page is shown for
         callback failures so the browser is never left on a raw 4xx.
         """
+        sso_login_url = f"{self.config.chat_endpoint}/auth/sso/login"
 
-        @self.app.get("/chat/auth/sso/login")
+        @self.app.get(sso_login_url)
         async def sso_login():
             """Initiate the OAuth2 Authorization Code + PKCE flow.
 
@@ -458,7 +485,7 @@ class BedrockChatPlugin:
             logger.debug("SSO login initiated, redirecting to IdP (state=%s)", state[:8])
             return RedirectResponse(url=auth_url, status_code=302)
 
-        @self.app.get("/chat/auth/callback")
+        @self.app.get(self.config.sso_callback_path)
         async def sso_callback(
             request: Request,
             code: Optional[str] = None,
@@ -469,8 +496,8 @@ class BedrockChatPlugin:
             """Handle the OAuth2 authorization code callback from the IdP.
 
             Validates the state (CSRF), exchanges the code for tokens, validates
-            the ID token, creates an SSO session, and redirects back to the chat
-            UI with the session token appended as a query parameter.
+            the ID token, creates an SSO session, sets an HttpOnly cookie with
+            the session token, and redirects back to the chat UI.
             """
             # Handle IdP-returned errors
             if error:
@@ -501,7 +528,7 @@ class BedrockChatPlugin:
                     content=(
                         "<html><body><h1>SSO Error</h1>"
                         "<p>Invalid or expired state parameter. Please try logging in again.</p>"
-                        "<p><a href='/chat/auth/sso/login'>Try again</a></p>"
+                        f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
                         "</body></html>"
                     ),
                     status_code=400,
@@ -518,7 +545,7 @@ class BedrockChatPlugin:
                     content=(
                         f"<html><body><h1>SSO Error</h1>"
                         f"<p>Token exchange failed: {html.escape(str(exc))}</p>"
-                        f"<p><a href='/chat/auth/sso/login'>Try again</a></p>"
+                        f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
                         "</body></html>"
                     ),
                     status_code=502,
@@ -538,15 +565,29 @@ class BedrockChatPlugin:
                         content=(
                             f"<html><body><h1>SSO Error</h1>"
                             f"<p>ID token validation failed: {html.escape(str(exc))}</p>"
-                            f"<p><a href='/chat/auth/sso/login'>Try again</a></p>"
+                            f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
                             "</body></html>"
                         ),
                         status_code=401,
                     )
 
+            # Guard: reject tokens without an access_token (IdP misconfiguration)
+            if not tokens.get("access_token"):
+                logger.error("SSO token exchange returned no access_token")
+                return HTMLResponse(
+                    content=(
+                        "<html><body><h1>SSO Error</h1>"
+                        "<p>The identity provider did not return an access token. "
+                        "Please check the SSO client configuration.</p>"
+                        f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
+                        "</body></html>"
+                    ),
+                    status_code=502,
+                )
+
             # Fetch user info (best-effort — some IdPs may not have userinfo endpoint)
             user_info: dict = {}
-            if self.sso_provider._userinfo_endpoint and tokens.get("access_token"):
+            if self.sso_provider.has_userinfo_endpoint and tokens.get("access_token"):
                 try:
                     user_info = await self.sso_provider.get_user_info(tokens["access_token"])
                 except (SSOTokenError, SSODiscoveryError) as exc:
@@ -563,20 +604,22 @@ class BedrockChatPlugin:
                 sso_session_secret=self.config.sso_session_secret,
             )
 
-            # Redirect to chat UI; attach token as query param and cookie
-            redirect_url = f"{self.config.ui_endpoint}?session_token={session_token}"
-            response = RedirectResponse(url=redirect_url, status_code=302)
+            # Redirect to chat UI; rely on HttpOnly cookie for auth.
+            # Avoid placing the session token in the URL, which can leak via
+            # browser history, logs, proxies, and referrers.
+            response = RedirectResponse(url=self.config.ui_endpoint, status_code=302)
             response.set_cookie(
                 key="sso_session_token",
                 value=session_token,
                 httponly=True,
                 samesite="lax",
+                secure=request.url.scheme == "https",
                 max_age=self.config.sso_session_ttl,
             )
             logger.debug("SSO callback complete; session created: %s", session_id)
             return response
 
-        @self.app.post("/chat/auth/sso/refresh")
+        @self.app.post(f"{self.config.chat_endpoint}/auth/sso/refresh")
         async def sso_refresh(request: Request):
             """Refresh SSO tokens using the stored refresh token.
 
@@ -632,7 +675,7 @@ class BedrockChatPlugin:
                 }
             )
 
-        @self.app.post("/chat/auth/sso/logout")
+        @self.app.post(f"{self.config.chat_endpoint}/auth/sso/logout")
         async def sso_logout(request: Request):
             """Invalidate the SSO session and clear the session cookie."""
             # Extract session token

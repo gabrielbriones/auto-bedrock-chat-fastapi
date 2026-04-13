@@ -7,15 +7,34 @@ document.addEventListener('DOMContentLoaded', function() {
     const authEnabled = window.CONFIG.authEnabled;
     const requireAuth = window.CONFIG.requireAuth;
 
-    // Detect SSO session token from URL query params (set by SSO callback redirect)
-    const urlParams = new URLSearchParams(window.location.search);
-    const sessionTokenFromUrl = urlParams.get('session_token');
-    if (sessionTokenFromUrl) {
-        window._ssoSessionToken = sessionTokenFromUrl;
-        // Strip the token from the URL bar without triggering a page reload
-        urlParams.delete('session_token');
-        const cleanSearch = urlParams.toString() ? '?' + urlParams.toString() : '';
-        history.replaceState(null, '', window.location.pathname + cleanSearch + window.location.hash);
+    // SSO session detection: the server validates the HttpOnly cookie and
+    // passes ssoAuthenticated=true in the template context when the user has
+    // a valid SSO session.  This avoids unreliable client-side heuristics
+    // (document.referrer is stripped after cross-origin redirects).
+    const ssoAuthenticated = window.CONFIG.ssoAuthenticated || false;
+
+    // Update SSO user display when authenticated
+    if (ssoAuthenticated) {
+        const ssoUserDisplay = document.getElementById('ssoUserDisplay');
+        const authButton = document.getElementById('authButton');
+        if (ssoUserDisplay && window.CONFIG.ssoUserDisplay) {
+            ssoUserDisplay.textContent = window.CONFIG.ssoUserDisplay;
+        }
+        if (authButton) {
+            authButton.textContent = 'Log out';
+            authButton.onclick = function() {
+                fetch(window.CONFIG.ssoLoginUrl.replace('/login', '/logout'), {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                }).then(function(resp) {
+                    if (resp.redirected) {
+                        window.location.href = resp.url;
+                    } else {
+                        window.location.reload();
+                    }
+                });
+            };
+        }
     }
 
     // Handle skip auth button
@@ -34,9 +53,9 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // If a session token was found in the URL, skip the auth modal entirely and
-    // create a ChatClient — the token will be appended to the WebSocket URL.
-    if (window._ssoSessionToken) {
+    // If the user has an active SSO session, skip the auth modal —
+    // the HttpOnly cookie will auto-authenticate the WebSocket connection.
+    if (ssoAuthenticated) {
         authModal.classList.add('hidden');
         window.chatClient = new ChatClient();
         return;
