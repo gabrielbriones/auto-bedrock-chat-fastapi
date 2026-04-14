@@ -405,7 +405,8 @@ class SSOProvider:
     def _find_jwks_key(jwks: Dict[str, Any], kid: Optional[str]) -> Optional[Dict[str, Any]]:
         """Find a key in the JWKS document.
 
-        If *kid* is provided, match by key ID.  If not, return the first key.
+        If *kid* is provided, match by key ID; return ``None`` if not found.
+        If *kid* is absent, return the first key.
         """
         keys = jwks.get("keys", [])
         if not keys:
@@ -414,8 +415,7 @@ class SSOProvider:
             for key in keys:
                 if key.get("kid") == kid:
                     return key
-            # Fall back to first key if kid not found (some IdPs omit kid)
-            return keys[0]
+            return None
         return keys[0]
 
     # ------------------------------------------------------------------

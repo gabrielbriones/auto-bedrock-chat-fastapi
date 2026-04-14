@@ -962,9 +962,10 @@ def load_config(
             # Create base config from .env
             config = ChatConfig()
 
-            # Apply overrides
-            for key, value in overrides.items():
-                setattr(config, key, value)
+            # Re-create with overrides to ensure validators run.
+            # model_copy accepts field names; model_validate re-runs validators.
+            if overrides:
+                config = ChatConfig.model_validate(config.model_copy(update=overrides).model_dump(by_alias=True))
         else:
             # No overrides, use standard .env loading
             config = ChatConfig()

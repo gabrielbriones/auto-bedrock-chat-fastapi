@@ -60,12 +60,12 @@ function initializeAuthModal() {
     const authForm = document.getElementById('authForm');
     const skipButton = document.getElementById('skipAuthButton');
 
-    // Populate auth type dropdown if empty
-    if (authTypeSelect.options.length === 1 && supportedTypes.length > 0) {
-        supportedTypes.forEach(authType => {
-            // Skip SSO option when SSO is not enabled
-            if (authType === 'sso' && !window.CONFIG.ssoEnabled) return;
+    // Filter auth types — skip SSO when not enabled
+    const enabledTypes = supportedTypes.filter(t => !(t === 'sso' && !window.CONFIG.ssoEnabled));
 
+    // Populate auth type dropdown if empty
+    if (authTypeSelect.options.length === 1 && enabledTypes.length > 0) {
+        enabledTypes.forEach(authType => {
             const option = document.createElement('option');
             option.value = authType;
             let displayText;
@@ -87,11 +87,11 @@ function initializeAuthModal() {
     }
 
     // If only one auth type, hide selector and auto-select it
-    if (supportedTypes.length === 1) {
+    if (enabledTypes.length === 1) {
         authTypeSelector.classList.add('hidden');
-        authTypeSelect.value = supportedTypes[0];
+        authTypeSelect.value = enabledTypes[0];
         updateAuthFields();
-    } else if (window.CONFIG.defaultAuthType && supportedTypes.includes(window.CONFIG.defaultAuthType)) {
+    } else if (window.CONFIG.defaultAuthType && enabledTypes.includes(window.CONFIG.defaultAuthType)) {
         authTypeSelect.value = window.CONFIG.defaultAuthType;
         updateAuthFields();
     }
