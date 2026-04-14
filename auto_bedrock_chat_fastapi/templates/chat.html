@@ -72,18 +72,18 @@
     <script>
         // Configuration passed from server
         window.CONFIG = {
-            websocketUrl: "{{ websocket_url }}",
+            websocketUrl: {{ websocket_url | tojson }},
             authEnabled: {{ 'true' if auth_enabled else 'false' }},
             requireAuth: {{ 'true' if require_tool_auth else 'false' }},
             supportedAuthTypes: {{ supported_auth_types | tojson }},
-            defaultAuthType: "{{ default_auth_type }}",
-            modelId: "{{ model_id }}",
+            defaultAuthType: {{ default_auth_type | tojson }},
+            modelId: {{ model_id | tojson }},
             presetPrompts: {{ preset_prompts | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
-            ssoProvider: "{{ sso_provider }}",
-            ssoLoginUrl: "{{ sso_login_url }}",
+            ssoProvider: {{ sso_provider | tojson }},
+            ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
-            ssoUserDisplay: "{{ sso_user_display }}"
+            ssoUserDisplay: {{ sso_user_display | tojson }}
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

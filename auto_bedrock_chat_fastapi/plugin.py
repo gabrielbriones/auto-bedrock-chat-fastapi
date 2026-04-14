@@ -607,13 +607,20 @@ class BedrockChatPlugin:
             # Redirect to chat UI; rely on HttpOnly cookie for auth.
             # Avoid placing the session token in the URL, which can leak via
             # browser history, logs, proxies, and referrers.
+            # Determine if the original client request was over HTTPS.
+            # Behind a TLS-terminating reverse proxy (ALB, nginx, etc.),
+            # request.url.scheme is typically "http"; the real scheme
+            # is conveyed via the X-Forwarded-Proto header.
+            forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+            is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+
             response = RedirectResponse(url=self.config.ui_endpoint, status_code=302)
             response.set_cookie(
                 key="sso_session_token",
                 value=session_token,
                 httponly=True,
                 samesite="lax",
-                secure=request.url.scheme == "https",
+                secure=is_secure,
                 max_age=self.config.sso_session_ttl,
             )
             logger.debug("SSO callback complete; session created: %s", session_id)

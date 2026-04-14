@@ -620,7 +620,7 @@ class WebSocketChatHandler:
     # ------------------------------------------------------------------
 
     async def _try_sso_auto_auth(self, websocket: WebSocket, session_token: str) -> bool:
-        """Attempt to auto-authenticate via a session_token query parameter.
+        """Attempt to auto-authenticate via the ``sso_session_token`` HttpOnly cookie.
 
         Sends ``auth_configured`` on success, ``auth_failed`` on failure.
         Returns ``True`` if the session was successfully authenticated.

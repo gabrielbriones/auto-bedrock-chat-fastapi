@@ -347,7 +347,20 @@ class ChatClient {
 
     handleAuthButtonClick() {
         if (this.authenticated) {
-            // Logout: send logout message and clear auth
+            // SSO logout: POST to the HTTP logout endpoint to clear the
+            // HttpOnly cookie and server-side session, then reload.
+            if (window.CONFIG.ssoAuthenticated) {
+                const logoutUrl = (window.CONFIG.ssoLoginUrl || '').replace('/login', '/logout');
+                fetch(logoutUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                }).then(function() {
+                    window.location.reload();
+                });
+                return;
+            }
+
+            // Non-SSO logout: send logout message over WebSocket and clear auth
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     type: 'logout'

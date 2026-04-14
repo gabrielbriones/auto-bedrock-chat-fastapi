@@ -74,7 +74,7 @@ class TestDefaultAuthTypeConfig:
         with patch.dict(os.environ, _BASE_ENV, clear=False):
             config = ChatConfig(
                 _env_file=None,
-                bedrock_model_id="test-model",
+                BEDROCK_MODEL_ID="test-model",
                 BEDROCK_DEFAULT_AUTH_TYPE="api_key",
             )
         assert config.default_auth_type == "api_key"

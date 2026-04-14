@@ -142,10 +142,10 @@ class SSOSessionStore:
         return True
 
     def cleanup_expired(self) -> int:
-        """Remove all expired sessions from the store.
+        """Remove all expired sessions and pending auth states from the store.
 
         Returns:
-            Number of sessions removed.
+            Total number of entries removed (sessions + pending).
         """
         now = time.time()
         expired = [sid for sid, s in self._sessions.items() if now > s["expires_at"]]
@@ -153,7 +153,14 @@ class SSOSessionStore:
             del self._sessions[sid]
         if expired:
             logger.debug("Cleanup removed %d expired SSO sessions", len(expired))
-        return len(expired)
+
+        expired_pending = [st for st, p in self._pending.items() if now > p["expires_at"]]
+        for st in expired_pending:
+            del self._pending[st]
+        if expired_pending:
+            logger.debug("Cleanup removed %d expired pending auth states", len(expired_pending))
+
+        return len(expired) + len(expired_pending)
 
     # ------------------------------------------------------------------
     # Pending auth store (state → code_verifier)
@@ -176,6 +183,15 @@ class SSOSessionStore:
             "code_verifier": code_verifier,
             "expires_at": time.time() + ttl,
         }
+
+        # Opportunistic cleanup of abandoned pending entries
+        if len(self._pending) >= 20:
+            now = time.time()
+            expired = [s for s, p in self._pending.items() if now > p["expires_at"]]
+            for s in expired:
+                del self._pending[s]
+            if expired:
+                logger.debug("Cleanup removed %d expired pending auth states", len(expired))
 
     def get_pending(self, state: str) -> Optional[str]:
         """Retrieve the code verifier for a pending auth state.

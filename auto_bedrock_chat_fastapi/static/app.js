@@ -13,7 +13,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // (document.referrer is stripped after cross-origin redirects).
     const ssoAuthenticated = window.CONFIG.ssoAuthenticated || false;
 
-    // Update SSO user display when authenticated
+    // Update SSO user display when authenticated.
+    // Logout is handled by ChatClient.handleAuthButtonClick() which checks
+    // window.CONFIG.ssoAuthenticated to decide between HTTP and WS logout.
     if (ssoAuthenticated) {
         const ssoUserDisplay = document.getElementById('ssoUserDisplay');
         const authButton = document.getElementById('authButton');
@@ -22,18 +24,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (authButton) {
             authButton.textContent = 'Log out';
-            authButton.onclick = function() {
-                fetch(window.CONFIG.ssoLoginUrl.replace('/login', '/logout'), {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                }).then(function(resp) {
-                    if (resp.redirected) {
-                        window.location.href = resp.url;
-                    } else {
-                        window.location.reload();
-                    }
-                });
-            };
         }
     }
 
