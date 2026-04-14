@@ -770,10 +770,13 @@ class ChatConfig(BaseSettings):
                 "Set BEDROCK_SSO_SESSION_SECRET to a strong random secret for signing session tokens."
             )
 
+        def _has_value(v: Optional[str]) -> bool:
+            return bool(v and v.strip())
+
         # Require either discovery URL or manual authorization + token URLs
-        has_discovery = self.sso_discovery_url is not None
-        has_manual_auth = self.sso_authorization_url is not None
-        has_manual_token = self.sso_token_url is not None
+        has_discovery = _has_value(self.sso_discovery_url)
+        has_manual_auth = _has_value(self.sso_authorization_url)
+        has_manual_token = _has_value(self.sso_token_url)
 
         if not has_discovery and not (has_manual_auth and has_manual_token):
             raise ValueError(

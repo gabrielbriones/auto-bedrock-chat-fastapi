@@ -67,8 +67,8 @@ function initializeAuthModal() {
             option.value = authType;
             let displayText;
             if (authType === 'sso') {
-                const providerName = window.CONFIG.ssoProvider || 'SSO';
-                displayText = 'Login with ' + providerName.charAt(0).toUpperCase() + providerName.slice(1);
+                const providerName = (window.CONFIG.ssoProvider || 'SSO').replace(/_/g, ' ');
+                displayText = 'Login with ' + providerName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             } else {
                 const raw = authType.replace(/_/g, ' ');
                 displayText = raw.charAt(0).toUpperCase() + raw.slice(1);
@@ -281,6 +281,13 @@ function getAuthPayload() {
 }
 
 function submitAuth() {
+    // SSO uses its own redirect flow — don't submit the form
+    const authType = document.getElementById('authType').value;
+    if (authType === 'sso') {
+        ssoLogin();
+        return;
+    }
+
     const payload = getAuthPayload();
     if (!payload) return;
 

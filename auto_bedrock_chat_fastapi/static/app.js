@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const authButton = document.getElementById('authButton');
         if (ssoUserDisplay && window.CONFIG.ssoUserDisplay) {
             ssoUserDisplay.textContent = window.CONFIG.ssoUserDisplay;
+            ssoUserDisplay.style.display = 'inline-block';
         }
         if (authButton) {
             authButton.textContent = 'Log out';
