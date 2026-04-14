@@ -16,7 +16,6 @@ tool-call loop.  ``websocket_handler.py`` no longer owns tool execution.
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -182,71 +181,35 @@ class ToolsGenerator:
         Determine API base URL for internal API calls.
 
         Priority order:
-        1. Explicit api_base_url configuration (recommended for production)
-        2. OpenAPI spec servers[0].url (auto-detected from framework specs)
-        3. Environment variables (HOST/PORT, SERVER_HOST/SERVER_PORT, etc.)
-        4. Default fallback (http://localhost:8000)
-
-        For production deployments, it's strongly recommended to explicitly
-        configure the api_base_url parameter rather than relying on auto-detection.
+        1. config.api_base_url — when explicitly set (not the default), this always wins.
+        2. OpenAPI spec servers[0].url — used when the config has only the default value.
+        3. config.api_base_url default (http://localhost:8000) — final fallback.
         """
+        _DEFAULT_API_BASE_URL = "http://localhost:8000"
 
-        # Priority 1: Explicit configuration
-        if self.config.api_base_url:
-            logger.debug(f"Using configured API base URL: {self.config.api_base_url}")
-            return self.config.api_base_url
+        resolved = self.config.api_base_url
 
-        # Priority 2: Extract from OpenAPI spec
+        # If config was explicitly set to something other than the default, use it
+        if resolved and resolved != _DEFAULT_API_BASE_URL:
+            logger.debug(f"Using config-resolved API base URL: {resolved}")
+            return resolved
+
+        # Try OpenAPI spec servers as a better default
         try:
             schema = self._get_openapi_schema()
             servers = schema.get("servers", [])
             if servers:
                 first_server = servers[0]
                 if isinstance(first_server, dict) and "url" in first_server:
-                    logger.debug(f"Using API base URL from OpenAPI spec: {first_server['url']}")
-                    return first_server["url"]
+                    spec_url = first_server["url"]
+                    if spec_url:
+                        logger.debug(f"Using API base URL from OpenAPI spec: {spec_url}")
+                        return spec_url
         except Exception as e:
             logger.debug(f"Could not extract base URL from OpenAPI spec: {e}")
 
-        # Priority 3: Detect from environment variables
-        detected_url = self._detect_runtime_base_url()
-        if detected_url:
-            logger.debug(f"Detected runtime API base URL: {detected_url}")
-            return detected_url
-
-        # Priority 4: Default fallback
-        logger.debug("Using default API base URL: http://localhost:8000")
-        return "http://localhost:8000"
-
-    def _detect_runtime_base_url(self) -> Optional[str]:
-        """
-        Try to detect the base URL from runtime environment.
-
-        Checks standard environment variables used by common deployment
-        platforms and tools. For production deployments, it's recommended
-        to explicitly set the api_base_url configuration parameter.
-        """
-
-        # Priority 1: Check standard environment variables
-        host_env = os.getenv("HOST")
-        port_env = os.getenv("PORT")
-        if host_env is not None and port_env is not None:
-            scheme = "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
-            return f"{scheme}://{host_env}:{port_env}"
-
-        # Priority 2: Check common deployment environment variables
-        for host_var, port_var in [
-            ("SERVER_HOST", "SERVER_PORT"),
-            ("APP_HOST", "APP_PORT"),
-            ("WEB_HOST", "WEB_PORT"),
-        ]:
-            host = os.getenv(host_var)
-            port = os.getenv(port_var)
-            if host and port:
-                scheme = "https" if os.getenv("HTTPS", "").lower() in ("1", "true") else "http"
-                return f"{scheme}://{host}:{port}"
-
-        return None
+        logger.debug(f"Using config-resolved API base URL: {resolved}")
+        return resolved
 
     def _create_function_description(self, path: str, method: str, operation: Dict) -> Optional[Dict]:
         """Create function description for Bedrock tool calling"""

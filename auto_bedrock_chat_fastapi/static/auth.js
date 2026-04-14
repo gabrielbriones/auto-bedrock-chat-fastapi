@@ -60,13 +60,23 @@ function initializeAuthModal() {
     const authForm = document.getElementById('authForm');
     const skipButton = document.getElementById('skipAuthButton');
 
+    // Filter auth types — skip SSO when not enabled
+    const enabledTypes = supportedTypes.filter(t => !(t === 'sso' && !window.CONFIG.ssoEnabled));
+
     // Populate auth type dropdown if empty
-    if (authTypeSelect.options.length === 1 && supportedTypes.length > 0) {
-        supportedTypes.forEach(authType => {
+    if (authTypeSelect.options.length === 1 && enabledTypes.length > 0) {
+        enabledTypes.forEach(authType => {
             const option = document.createElement('option');
             option.value = authType;
-            const displayText = authType.replace(/_/g, ' ');
-            option.textContent = displayText.charAt(0).toUpperCase() + displayText.slice(1);
+            let displayText;
+            if (authType === 'sso') {
+                const providerName = (window.CONFIG.ssoProvider || 'SSO').replace(/_/g, ' ');
+                displayText = 'Login with ' + providerName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            } else {
+                const raw = authType.replace(/_/g, ' ');
+                displayText = raw.charAt(0).toUpperCase() + raw.slice(1);
+            }
+            option.textContent = displayText;
             authTypeSelect.appendChild(option);
         });
     }
@@ -77,9 +87,12 @@ function initializeAuthModal() {
     }
 
     // If only one auth type, hide selector and auto-select it
-    if (supportedTypes.length === 1) {
+    if (enabledTypes.length === 1) {
         authTypeSelector.classList.add('hidden');
-        authTypeSelect.value = supportedTypes[0];
+        authTypeSelect.value = enabledTypes[0];
+        updateAuthFields();
+    } else if (window.CONFIG.defaultAuthType && enabledTypes.includes(window.CONFIG.defaultAuthType)) {
+        authTypeSelect.value = window.CONFIG.defaultAuthType;
         updateAuthFields();
     }
 
@@ -102,7 +115,31 @@ function initializeAuthModal() {
         skipButton.dataset.listenerAttached = 'true';
     }
 
+    // Attach SSO login button handler
+    const ssoLoginButton = document.getElementById('ssoLoginButton');
+    if (ssoLoginButton && !ssoLoginButton.dataset.listenerAttached) {
+        ssoLoginButton.addEventListener('click', ssoLogin);
+        ssoLoginButton.dataset.listenerAttached = 'true';
+    }
+
+    // Customise SSO button label with provider name
+    const ssoLoginBtnText = document.getElementById('ssoLoginBtnText');
+    if (ssoLoginBtnText && window.CONFIG.ssoProvider) {
+        const provider = window.CONFIG.ssoProvider;
+        ssoLoginBtnText.textContent = 'Login with ' + provider.charAt(0).toUpperCase() + provider.slice(1);
+    }
+
     attachValidationListeners();
+}
+
+function ssoLogin() {
+    const btn = document.getElementById('ssoLoginButton');
+    const btnText = document.getElementById('ssoLoginBtnText');
+    const spinner = document.getElementById('ssoLoginSpinner');
+    if (btn) btn.disabled = true;
+    if (btnText) btnText.textContent = 'Redirecting…';
+    if (spinner) spinner.style.display = 'inline-block';
+    window.location.href = window.CONFIG.ssoLoginUrl || '/chat/auth/sso/login';
 }
 
 function updateAuthFields() {
@@ -141,6 +178,12 @@ function updateAuthFields() {
         if (fieldEl) {
             fieldEl.classList.remove('auth-field-hidden');
         }
+    }
+
+    // For SSO type, hide the form submit button (SSO has its own redirect button)
+    const authSubmitBtn = document.querySelector('.auth-submit');
+    if (authSubmitBtn) {
+        authSubmitBtn.style.display = authType === 'sso' ? 'none' : '';
     }
 }
 
@@ -241,6 +284,13 @@ function getAuthPayload() {
 }
 
 function submitAuth() {
+    // SSO uses its own redirect flow — don't submit the form
+    const authType = document.getElementById('authType').value;
+    if (authType === 'sso') {
+        ssoLogin();
+        return;
+    }
+
     const payload = getAuthPayload();
     if (!payload) return;
 

@@ -104,6 +104,7 @@ bedrock_chat = add_bedrock_chat(
 | ------------------------------ | --------- | -------------------------------------------- |
 | `BEDROCK_ENABLE_TOOL_AUTH`     | `false`   | Enable authentication for tool call requests |
 | `BEDROCK_SUPPORTED_AUTH_TYPES` | all types | Auth types accepted (list, set in code)      |
+| `BEDROCK_DEFAULT_AUTH_TYPE`    | _(none)_  | Pre-select this auth type in the UI modal    |
 
 ### Logging
 

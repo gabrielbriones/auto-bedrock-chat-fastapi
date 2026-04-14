@@ -68,6 +68,9 @@ class ChatClient {
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}${window.CONFIG.websocketUrl}`;
+        // SSO session token is delivered via an HttpOnly cookie that the
+        // browser sends automatically on the WebSocket handshake — no need
+        // to include it in the URL.
 
         console.log('Creating new WebSocket connection...');
         this.ws = new WebSocket(wsUrl);
@@ -344,7 +347,20 @@ class ChatClient {
 
     handleAuthButtonClick() {
         if (this.authenticated) {
-            // Logout: send logout message and clear auth
+            // SSO logout: POST to the HTTP logout endpoint to clear the
+            // HttpOnly cookie and server-side session, then reload.
+            if (window.CONFIG.ssoAuthenticated) {
+                const logoutUrl = (window.CONFIG.ssoLoginUrl || '').replace('/login', '/logout');
+                fetch(logoutUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                }).then(function() {
+                    window.location.reload();
+                });
+                return;
+            }
+
+            // Non-SSO logout: send logout message over WebSocket and clear auth
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     type: 'logout'
@@ -377,6 +393,12 @@ class ChatClient {
         } else {
             this.authButton.textContent = 'Log in';
             this.authButton.classList.remove('logout');
+            // Clear SSO user display on logout
+            const userDisplay = document.getElementById('ssoUserDisplay');
+            if (userDisplay) {
+                userDisplay.textContent = '';
+                userDisplay.style.display = 'none';
+            }
         }
     }
 
@@ -415,6 +437,14 @@ class ChatClient {
             case 'auth_configured':
                 this.authenticated = true;
                 this.addMessage('system', `🔐 Authenticated with ${data.auth_type}`);
+                // Show display name for SSO in header
+                if (data.auth_type === 'sso' && data.display_name) {
+                    const userDisplay = document.getElementById('ssoUserDisplay');
+                    if (userDisplay) {
+                        userDisplay.textContent = data.display_name;
+                        userDisplay.style.display = 'inline';
+                    }
+                }
                 this.updateAuthButtonUI();  // Update button after auth
                 this.enableInput();
                 // Re-enable auth submit button for future use (e.g. after logout)
@@ -495,6 +525,32 @@ class ChatClient {
             case 'error':
                 this.hideTypingIndicator();
                 this.addMessage('system', `Error: ${data.message}`);
+                break;
+
+            case 'auth_expired':
+                // SSO session expired — prompt re-login
+                this.authenticated = false;
+                this.authPayload = null;
+                this.authSent = false;
+                this.intentionalClose = true;
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.close();
+                }
+                this.addMessage('system', `⏰ ${data.message || 'Session expired. Please log in again.'}`);
+                this.updateAuthButtonUI();
+                // Show auth modal with SSO type pre-selected if SSO is configured
+                if (window.CONFIG.ssoEnabled) {
+                    const authModal = document.getElementById('authModal');
+                    if (authModal) {
+                        authModal.classList.remove('hidden');
+                        initializeAuthModal();
+                        const authTypeSelect = document.getElementById('authType');
+                        if (authTypeSelect) {
+                            authTypeSelect.value = 'sso';
+                            updateAuthFields();
+                        }
+                    }
+                }
                 break;
 
             case 'pong':

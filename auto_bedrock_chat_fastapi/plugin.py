@@ -5,11 +5,12 @@ import atexit
 import html
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import Callable, Optional
 
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -19,6 +20,8 @@ from .chat_manager import ChatManager
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import BedrockChatError
 from .session_manager import ChatSessionManager
+from .sso_handler import SSODiscoveryError, SSOProvider, SSOTokenError, SSOValidationError
+from .sso_session_store import SSOSessionStore
 from .tool_manager import ToolManager
 from .websocket_handler import WebSocketChatHandler
 
@@ -157,11 +160,19 @@ class BedrockChatPlugin:
             tool_manager=self.tool_manager,
         )
 
+        # SSO components (only when SSO is enabled)
+        self.sso_provider: Optional[SSOProvider] = None
+        self.sso_session_store: Optional[SSOSessionStore] = None
+        if self.config.sso_enabled:
+            self.sso_provider = SSOProvider(self.config)
+            self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
+
         self.websocket_handler = WebSocketChatHandler(
             session_manager=self.session_manager,
             config=self.config,
             app_base_url=self.app_base_url,
             chat_manager=self.chat_manager,
+            sso_session_store=self.sso_session_store,
         )
 
         # Setup templates for UI
@@ -262,6 +273,29 @@ class BedrockChatPlugin:
                     if self.config.enable_tool_auth:
                         supported_auth_types = self.config.supported_auth_types
 
+                    # Check for active SSO session from HttpOnly cookie
+                    sso_user_display = ""
+                    sso_authenticated = False
+                    if self.config.sso_enabled and self.sso_session_store:
+                        session_token = request.cookies.get("sso_session_token")
+                        if session_token:
+                            session_id = SSOSessionStore.validate_session_token(
+                                session_token,
+                                self.config.sso_session_secret,
+                            )
+                            if session_id:
+                                session = self.sso_session_store.get_session(session_id)
+                                if session:
+                                    sso_authenticated = True
+                                    user_info = session.get("user_info", {})
+                                    claims = session.get("id_token_claims", {})
+                                    sso_user_display = (
+                                        user_info.get("email")
+                                        or claims.get("email")
+                                        or user_info.get("username")
+                                        or claims.get("cognito:username", "")
+                                    )
+
                     return self.templates.TemplateResponse(
                         "chat.html",
                         {
@@ -270,11 +304,17 @@ class BedrockChatPlugin:
                             "auth_enabled": self.config.enable_tool_auth,
                             "require_tool_auth": self.config.require_tool_auth,
                             "supported_auth_types": supported_auth_types,
+                            "default_auth_type": self.config.default_auth_type or "",
                             "ui_title": self.config.ui_title,
                             "model_id": self.config.model_id,
                             "ui_welcome_message": self.config.ui_welcome_message,
                             "app_title": self.app.title or "API",
                             "preset_prompts": self._preset_prompts,
+                            "sso_enabled": self.config.sso_enabled,
+                            "sso_provider": self.config.sso_provider or "",
+                            "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
+                            "sso_authenticated": sso_authenticated,
+                            "sso_user_display": sso_user_display,
                         },
                     )
                 except Exception as e:
@@ -394,6 +434,10 @@ class BedrockChatPlugin:
                     logger.error(f"Semantic search failed: {str(e)}")
                     return JSONResponse({"error": f"Search failed: {str(e)}"}, status_code=500)
 
+        # SSO endpoints (only when SSO is enabled)
+        if self.config.sso_enabled:
+            self._setup_sso_routes()
+
         logger.info("Chat routes setup complete:")
         logger.info(f"  WebSocket: {self.config.websocket_endpoint}")
         logger.info(f"  Health: {self.config.chat_endpoint}/health")
@@ -404,6 +448,266 @@ class BedrockChatPlugin:
             logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
+        if self.config.sso_enabled:
+            logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
+            logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
+
+    def _setup_sso_routes(self):
+        """Register SSO HTTP endpoints on the FastAPI app.
+
+        Called by ``_setup_routes`` when ``config.sso_enabled`` is True.
+        All four endpoints are registered; an error page is shown for
+        callback failures so the browser is never left on a raw 4xx.
+        """
+        sso_login_url = f"{self.config.chat_endpoint}/auth/sso/login"
+
+        @self.app.get(sso_login_url)
+        async def sso_login():
+            """Initiate the OAuth2 Authorization Code + PKCE flow.
+
+            Generates a cryptographically random ``state`` and ``code_verifier``,
+            stores them in the pending auth store, then redirects the browser
+            to the IdP authorization URL.
+            """
+            try:
+                await self.sso_provider.discover()
+            except SSODiscoveryError as exc:
+                logger.error("SSO discovery failed: %s", exc)
+                return JSONResponse(
+                    {"error": "sso_discovery_failed", "detail": str(exc)},
+                    status_code=502,
+                )
+
+            state = secrets.token_urlsafe(32)
+            auth_url, code_verifier = self.sso_provider.build_authorization_url(state=state)
+            self.sso_session_store.store_pending(state, code_verifier)
+
+            logger.debug("SSO login initiated, redirecting to IdP (state=%s)", state[:8])
+            return RedirectResponse(url=auth_url, status_code=302)
+
+        @self.app.get(self.config.sso_callback_path)
+        async def sso_callback(
+            request: Request,
+            code: Optional[str] = None,
+            state: Optional[str] = None,
+            error: Optional[str] = None,
+            error_description: Optional[str] = None,
+        ):
+            """Handle the OAuth2 authorization code callback from the IdP.
+
+            Validates the state (CSRF), exchanges the code for tokens, validates
+            the ID token, creates an SSO session, sets an HttpOnly cookie with
+            the session token, and redirects back to the chat UI.
+            """
+            # Handle IdP-returned errors
+            if error:
+                logger.warning("IdP returned error in callback: %s — %s", error, error_description)
+                return HTMLResponse(
+                    content=(
+                        f"<html><body><h1>SSO Login Failed</h1>"
+                        f"<p><strong>{html.escape(error)}</strong>: "
+                        f"{html.escape(error_description or '')}</p>"
+                        f"<p><a href='{html.escape(self.config.ui_endpoint)}'>Back to chat</a></p>"
+                        "</body></html>"
+                    ),
+                    status_code=400,
+                )
+
+            # Validate required parameters
+            if not code or not state:
+                return HTMLResponse(
+                    content="<html><body><h1>SSO Error</h1><p>Missing code or state parameter.</p></body></html>",
+                    status_code=400,
+                )
+
+            # Validate state (CSRF protection) — one-time use
+            code_verifier = self.sso_session_store.get_pending(state)
+            if code_verifier is None:
+                logger.warning("SSO callback received unknown or expired state: %s", state[:8])
+                return HTMLResponse(
+                    content=(
+                        "<html><body><h1>SSO Error</h1>"
+                        "<p>Invalid or expired state parameter. Please try logging in again.</p>"
+                        f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
+                        "</body></html>"
+                    ),
+                    status_code=400,
+                )
+            # Consume pending entry (one-time use)
+            self.sso_session_store.delete_pending(state)
+
+            # Exchange authorization code for tokens
+            try:
+                tokens = await self.sso_provider.exchange_code(code=code, code_verifier=code_verifier)
+            except (SSOTokenError, SSODiscoveryError) as exc:
+                logger.error("SSO token exchange failed: %s", exc)
+                return HTMLResponse(
+                    content=(
+                        f"<html><body><h1>SSO Error</h1>"
+                        f"<p>Token exchange failed: {html.escape(str(exc))}</p>"
+                        f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
+                        "</body></html>"
+                    ),
+                    status_code=502,
+                )
+
+            # Validate ID token
+            id_token_claims: dict = {}
+            if tokens.get("id_token"):
+                try:
+                    id_token_claims = await self.sso_provider.validate_id_token(
+                        tokens["id_token"],
+                        access_token=tokens.get("access_token"),
+                    )
+                except SSOValidationError as exc:
+                    logger.error("SSO ID token validation failed: %s", exc)
+                    return HTMLResponse(
+                        content=(
+                            f"<html><body><h1>SSO Error</h1>"
+                            f"<p>ID token validation failed: {html.escape(str(exc))}</p>"
+                            f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
+                            "</body></html>"
+                        ),
+                        status_code=401,
+                    )
+
+            # Guard: reject tokens without an access_token (IdP misconfiguration)
+            if not tokens.get("access_token"):
+                logger.error("SSO token exchange returned no access_token")
+                return HTMLResponse(
+                    content=(
+                        "<html><body><h1>SSO Error</h1>"
+                        "<p>The identity provider did not return an access token. "
+                        "Please check the SSO client configuration.</p>"
+                        f"<p><a href='{html.escape(sso_login_url)}'>Try again</a></p>"
+                        "</body></html>"
+                    ),
+                    status_code=502,
+                )
+
+            # Fetch user info (best-effort — some IdPs may not have userinfo endpoint)
+            user_info: dict = {}
+            if self.sso_provider.has_userinfo_endpoint and tokens.get("access_token"):
+                try:
+                    user_info = await self.sso_provider.get_user_info(tokens["access_token"])
+                except (SSOTokenError, SSODiscoveryError) as exc:
+                    logger.warning("Could not fetch user info (non-fatal): %s", exc)
+
+            # Create SSO session
+            session_id = self.sso_session_store.create_session(
+                tokens=tokens,
+                user_info=user_info,
+                id_token_claims=id_token_claims,
+            )
+            session_token = self.sso_session_store.generate_session_token(
+                session_id=session_id,
+                sso_session_secret=self.config.sso_session_secret,
+            )
+
+            # Redirect to chat UI; rely on HttpOnly cookie for auth.
+            # Avoid placing the session token in the URL, which can leak via
+            # browser history, logs, proxies, and referrers.
+            # Determine if the original client request was over HTTPS.
+            # Behind a TLS-terminating reverse proxy (ALB, nginx, etc.),
+            # request.url.scheme is typically "http"; the real scheme
+            # is conveyed via the X-Forwarded-Proto header.
+            forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+            is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+
+            response = RedirectResponse(url=self.config.ui_endpoint, status_code=302)
+            response.set_cookie(
+                key="sso_session_token",
+                value=session_token,
+                httponly=True,
+                samesite="lax",
+                secure=is_secure,
+                max_age=self.config.sso_session_ttl,
+            )
+            logger.debug("SSO callback complete; session created: %s", session_id)
+            return response
+
+        @self.app.post(f"{self.config.chat_endpoint}/auth/sso/refresh")
+        async def sso_refresh(request: Request):
+            """Refresh SSO tokens using the stored refresh token.
+
+            Expects the session token either as a Bearer Authorization header
+            or in the request JSON body as ``{"session_token": "..."}``.  Returns
+            the new session expiry on success.
+            """
+            # Extract session token
+            session_token = None
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                session_token = auth_header[7:]
+            else:
+                try:
+                    body = await request.json()
+                    session_token = body.get("session_token")
+                except Exception:
+                    pass
+
+            if not session_token:
+                return JSONResponse({"error": "missing_session_token"}, status_code=401)
+
+            session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+            if not session_id:
+                return JSONResponse({"error": "invalid_session_token"}, status_code=401)
+
+            session = self.sso_session_store.get_session(session_id)
+            if not session:
+                return JSONResponse({"error": "session_not_found"}, status_code=401)
+
+            refresh_tok = session.get("refresh_token")
+            if not refresh_tok:
+                return JSONResponse({"error": "no_refresh_token"}, status_code=400)
+
+            try:
+                new_tokens = await self.sso_provider.refresh_token(refresh_tok)
+            except (SSOTokenError, SSODiscoveryError) as exc:
+                logger.error("SSO token refresh failed: %s", exc)
+                return JSONResponse({"error": "refresh_failed", "detail": str(exc)}, status_code=502)
+
+            self.sso_session_store.update_tokens(session_id, new_tokens)
+
+            # Issue a new session token reflecting the updated expiry
+            new_session_token = self.sso_session_store.generate_session_token(
+                session_id=session_id,
+                sso_session_secret=self.config.sso_session_secret,
+            )
+            updated_session = self.sso_session_store.get_session(session_id)
+            return JSONResponse(
+                {
+                    "session_token": new_session_token,
+                    "expires_at": updated_session["expires_at"] if updated_session else None,
+                }
+            )
+
+        @self.app.post(f"{self.config.chat_endpoint}/auth/sso/logout")
+        async def sso_logout(request: Request):
+            """Invalidate the SSO session and clear the session cookie."""
+            # Extract session token
+            session_token = None
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                session_token = auth_header[7:]
+            else:
+                try:
+                    body = await request.json()
+                    session_token = body.get("session_token")
+                except Exception:
+                    pass
+            if not session_token:
+                session_token = request.cookies.get("sso_session_token")
+
+            if session_token:
+                session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+                if session_id:
+                    self.sso_session_store.delete_session(session_id)
+                    logger.debug("SSO session deleted on logout: %s", session_id)
+
+            response = JSONResponse({"logged_out": True})
+            response.delete_cookie(key="sso_session_token")
+            return response
 
     def _check_kb_status(self):
         """

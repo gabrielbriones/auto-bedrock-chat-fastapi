@@ -27,7 +27,9 @@ bedrock_chat = add_bedrock_chat(
     app,
     enable_tool_auth=True,
     # Optionally restrict which auth types are accepted:
-    supported_auth_types=["bearer_token", "api_key"]
+    supported_auth_types=["bearer_token", "api_key"],
+    # Optionally pre-select an auth type in the UI modal:
+    default_auth_type="bearer_token",
 )
 ```
 
@@ -216,12 +218,14 @@ ws.onmessage = (event) => {
 | `basic_auth`   | `Authorization: Basic <encoded>`       | Legacy systems             |
 | `api_key`      | `<custom-header>: <key>`               | Simple API keys            |
 | `oauth2`       | `Authorization: Bearer <access-token>` | Enterprise, token endpoint |
+| `sso`          | `Authorization: Bearer <access-token>` | SSO via Identity Provider  |
 | `custom`       | Any custom headers                     | Proprietary schemes        |
 
 ---
 
 ## See Also
 
+- [SSO (Single Sign-On)](sso.md) — OAuth2/OIDC SSO for automatic authentication via Identity Providers
 - [FastAPI Plugin Integration](fastapi-plugin.md)
 - [WebSocket Client](websocket-client.md) — client script with all auth examples
 - [Configuration](configuration.md) — `enable_tool_auth`, `supported_auth_types`

@@ -7,6 +7,27 @@ document.addEventListener('DOMContentLoaded', function() {
     const authEnabled = window.CONFIG.authEnabled;
     const requireAuth = window.CONFIG.requireAuth;
 
+    // SSO session detection: the server validates the HttpOnly cookie and
+    // passes ssoAuthenticated=true in the template context when the user has
+    // a valid SSO session.  This avoids unreliable client-side heuristics
+    // (document.referrer is stripped after cross-origin redirects).
+    const ssoAuthenticated = window.CONFIG.ssoAuthenticated || false;
+
+    // Update SSO user display when authenticated.
+    // Logout is handled by ChatClient.handleAuthButtonClick() which checks
+    // window.CONFIG.ssoAuthenticated to decide between HTTP and WS logout.
+    if (ssoAuthenticated) {
+        const ssoUserDisplay = document.getElementById('ssoUserDisplay');
+        const authButton = document.getElementById('authButton');
+        if (ssoUserDisplay && window.CONFIG.ssoUserDisplay) {
+            ssoUserDisplay.textContent = window.CONFIG.ssoUserDisplay;
+            ssoUserDisplay.style.display = 'inline-block';
+        }
+        if (authButton) {
+            authButton.textContent = 'Log out';
+        }
+    }
+
     // Handle skip auth button
     if (skipAuthButton) {
         skipAuthButton.addEventListener('click', function() {
@@ -21,6 +42,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.chatClient = new ChatClient();
             }
         });
+    }
+
+    // If the user has an active SSO session, skip the auth modal —
+    // the HttpOnly cookie will auto-authenticate the WebSocket connection.
+    if (ssoAuthenticated) {
+        authModal.classList.add('hidden');
+        window.chatClient = new ChatClient();
+        return;
     }
 
     // Initialize chat client
