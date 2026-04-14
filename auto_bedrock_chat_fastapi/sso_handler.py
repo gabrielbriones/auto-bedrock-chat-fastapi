@@ -71,11 +71,16 @@ class SSOProvider:
 
         Populates ``_oidc_config`` with the raw document and then resolves
         effective endpoints (discovery values merged with manual overrides).
+        Short-circuits if endpoints have already been resolved.
 
         Raises:
             SSODiscoveryError: If the HTTP request fails or the response is
                 not valid JSON containing the expected keys.
         """
+        # Short-circuit if already resolved
+        if self._authorization_endpoint:
+            return
+
         if not self._config.sso_discovery_url:
             # No discovery URL; endpoints must come exclusively from manual config.
             self._resolve_endpoints(discovered={})

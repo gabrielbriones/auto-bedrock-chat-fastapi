@@ -63,6 +63,9 @@ function initializeAuthModal() {
     // Populate auth type dropdown if empty
     if (authTypeSelect.options.length === 1 && supportedTypes.length > 0) {
         supportedTypes.forEach(authType => {
+            // Skip SSO option when SSO is not enabled
+            if (authType === 'sso' && !window.CONFIG.ssoEnabled) return;
+
             const option = document.createElement('option');
             option.value = authType;
             let displayText;

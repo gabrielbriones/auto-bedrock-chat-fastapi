@@ -485,8 +485,6 @@ class ChatClient {
 
             case 'logout_success':
                 this.authenticated = false;
-                // Clear SSO session token on logout
-                window._ssoSessionToken = null;
                 this.addMessage('system', '🔓 Logged out successfully.');
                 this.updateAuthButtonUI();  // Update button after logout
                 // Disable input if auth is required
@@ -530,8 +528,7 @@ class ChatClient {
                 break;
 
             case 'auth_expired':
-                // SSO session expired — clear token and prompt re-login
-                window._ssoSessionToken = null;
+                // SSO session expired — prompt re-login
                 this.authenticated = false;
                 this.authPayload = null;
                 this.authSent = false;
