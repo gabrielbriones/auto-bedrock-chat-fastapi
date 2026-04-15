@@ -70,8 +70,7 @@ function initializeAuthModal() {
             option.value = authType;
             let displayText;
             if (authType === 'sso') {
-                const providerName = (window.CONFIG.ssoProvider || 'SSO').replace(/_/g, ' ');
-                displayText = 'Login with ' + providerName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                displayText = 'Login with SSO';
             } else {
                 const raw = authType.replace(/_/g, ' ');
                 displayText = raw.charAt(0).toUpperCase() + raw.slice(1);
@@ -120,13 +119,6 @@ function initializeAuthModal() {
     if (ssoLoginButton && !ssoLoginButton.dataset.listenerAttached) {
         ssoLoginButton.addEventListener('click', ssoLogin);
         ssoLoginButton.dataset.listenerAttached = 'true';
-    }
-
-    // Customise SSO button label with provider name
-    const ssoLoginBtnText = document.getElementById('ssoLoginBtnText');
-    if (ssoLoginBtnText && window.CONFIG.ssoProvider) {
-        const provider = window.CONFIG.ssoProvider;
-        ssoLoginBtnText.textContent = 'Login with ' + provider.charAt(0).toUpperCase() + provider.slice(1);
     }
 
     attachValidationListeners();
