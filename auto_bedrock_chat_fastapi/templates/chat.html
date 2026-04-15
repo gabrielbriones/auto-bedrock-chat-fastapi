@@ -80,7 +80,6 @@
             modelId: {{ model_id | tojson }},
             presetPrompts: {{ preset_prompts | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
-            ssoProvider: {{ sso_provider | tojson }},
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
             ssoUserDisplay: {{ sso_user_display | tojson }}

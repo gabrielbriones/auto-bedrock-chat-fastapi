@@ -311,7 +311,6 @@ class BedrockChatPlugin:
                             "app_title": self.app.title or "API",
                             "preset_prompts": self._preset_prompts,
                             "sso_enabled": self.config.sso_enabled,
-                            "sso_provider": self.config.sso_provider or "",
                             "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
