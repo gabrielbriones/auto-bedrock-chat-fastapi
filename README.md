@@ -151,7 +151,23 @@ Full documentation is in [`docs/wiki/`](docs/wiki/):
 
 ---
 
-## 🔧 Requirements
+## � Dependency Management
+
+The canonical source of truth for dependencies is [`pyproject.toml`](pyproject.toml), managed via [Poetry](https://python-poetry.org/).
+
+[`requirements.txt`](requirements.txt) is a pip-compatible export derived from `poetry.lock`. It is used by CI pipelines and consumers (e.g. other repositories that install this package via pip). **Do not edit `requirements.txt` manually.**
+
+After adding, removing, or updating any dependency in `pyproject.toml`, regenerate `requirements.txt`:
+
+```bash
+poetry export -f requirements.txt --without-hashes --output requirements.txt
+```
+
+A CI check in the `Code Quality` workflow will fail if `requirements.txt` is out of sync with `poetry.lock`.
+
+---
+
+## �🔧 Requirements
 
 - Python 3.9+
 - FastAPI 0.100+
