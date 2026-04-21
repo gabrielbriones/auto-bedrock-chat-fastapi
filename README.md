@@ -169,6 +169,6 @@ A CI check in the `Code Quality` workflow will fail if `requirements.txt` is out
 
 ## �🔧 Requirements
 
-- Python 3.9+
+- Python >=3.10, <4.0
 - FastAPI 0.100+
 - AWS account with Bedrock access enabled
