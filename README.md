@@ -5,7 +5,7 @@
 Transform any FastAPI app into an intelligent AI assistant. The plugin reads your OpenAPI spec, generates AI-callable tools from your endpoints, and provides a real-time WebSocket chat interface powered by Amazon Bedrock — all with a single decorator.
 
 [![PyPI version](https://badge.fury.io/py/auto-bedrock-chat-fastapi.svg)](https://badge.fury.io/py/auto-bedrock-chat-fastapi)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 ---
 
