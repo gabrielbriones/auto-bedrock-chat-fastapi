@@ -151,7 +151,7 @@ Full documentation is in [`docs/wiki/`](docs/wiki/):
 
 ---
 
-## � Dependency Management
+## Dependency Management
 
 The canonical source of truth for dependencies is [`pyproject.toml`](pyproject.toml), managed via [Poetry](https://python-poetry.org/).
 
@@ -167,7 +167,7 @@ A CI check in the `Code Quality` workflow will fail if `requirements.txt` is out
 
 ---
 
-## �🔧 Requirements
+## 🔧 Requirements
 
 - Python >=3.10, <4.0
 - FastAPI 0.100+
