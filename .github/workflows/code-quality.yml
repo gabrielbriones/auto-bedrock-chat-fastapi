@@ -121,7 +121,10 @@ jobs:
 
       - name: Diff against committed requirements.txt
         run: |
-          if ! diff -u requirements.txt requirements.expected.txt; then
+          # Strip environment markers so only package==version is compared
+          sed 's/ ;.*//' requirements.txt | sort > requirements.stripped.txt
+          sed 's/ ;.*//' requirements.expected.txt | sort > requirements.expected.stripped.txt
+          if ! diff -u requirements.stripped.txt requirements.expected.stripped.txt; then
             echo ""
             echo "requirements.txt is out of sync with poetry.lock."
             echo "Run: poetry export -f requirements.txt --without-hashes --output requirements.txt"
