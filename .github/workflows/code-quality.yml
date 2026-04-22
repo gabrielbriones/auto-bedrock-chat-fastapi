@@ -116,12 +116,10 @@ jobs:
       - name: Install Poetry
         run: pip install poetry==1.8.2 poetry-plugin-export
 
-      - name: Export dependencies from poetry.lock
-        run: poetry export -f requirements.txt --without-hashes --output requirements.expected.txt
-
       - name: Diff against committed requirements.txt
         run: |
-          # Strip environment markers so only package==version is compared
+          # Export fresh from poetry.lock and strip environment markers for comparison
+          poetry export -f requirements.txt --without-hashes --output requirements.expected.txt
           sed 's/ ;.*//' requirements.txt | sort > requirements.stripped.txt
           sed 's/ ;.*//' requirements.expected.txt | sort > requirements.expected.stripped.txt
           if ! diff -u requirements.stripped.txt requirements.expected.stripped.txt; then
