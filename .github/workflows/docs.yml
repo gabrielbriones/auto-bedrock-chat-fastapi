@@ -50,6 +50,7 @@ concurrency:
 jobs:
   sync:
     name: Sync docs/wiki to GitHub Wiki
+    needs: markdown-validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
