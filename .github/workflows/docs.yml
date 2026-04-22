@@ -82,7 +82,7 @@ jobs:
           fi
           git add -A
           git commit -m "chore(docs): sync wiki from ${GITHUB_SHA::7}"
-          git push
+          git push origin HEAD:main
       
   markdown-validation:
     name: Validate Markdown (README + docs/wiki)
