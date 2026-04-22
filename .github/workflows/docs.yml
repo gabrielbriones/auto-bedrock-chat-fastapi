@@ -80,9 +80,10 @@ jobs:
             echo "No wiki changes to commit."
             exit 0
           fi
+          branch="$(git rev-parse --abbrev-ref HEAD)"
           git add -A
           git commit -m "chore(docs): sync wiki from ${GITHUB_SHA::7}"
-          git push origin HEAD:main
+          git push origin "HEAD:${branch}"
       
   markdown-validation:
     name: Validate Markdown (README + docs/wiki)
