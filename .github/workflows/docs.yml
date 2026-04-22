@@ -1,80 +1,85 @@
 ---
-name: Documentation
+# Sync Wiki
+#
+# Publishes the markdown files under `docs/wiki/` to this repository's GitHub
+# Wiki (the `<repo>.wiki.git` sibling repo) on every push to `main` that
+# touches those files. Also runnable on demand via `workflow_dispatch`.
+#
+# Authentication
+# --------------
+# The default `GITHUB_TOKEN` cannot push to the wiki repo. This workflow
+# requires a repository secret named `WIKI_TOKEN` — a Personal Access Token
+# (classic PAT with `repo` scope, or a fine-grained PAT with read/write
+# access to "Contents" on this repository) belonging to a user that has
+# wiki write permission. A GitHub App installation token with equivalent
+# permissions also works.
+#
+# Prerequisite
+# ------------
+# The wiki must be initialized once manually (create any page via the Wiki
+# tab in the GitHub UI) so that `<repo>.wiki.git` exists. After that, this
+# workflow owns the content.
+#
+# Conventions respected
+# ---------------------
+# * `Home.md` becomes the wiki landing page.
+# * Filenames with hyphens (e.g. `fastapi-plugin.md`) render as page titles
+#   ("fastapi plugin"). Intra-wiki links in the form `[text](page-name.md)`
+#   are rendered natively by GitHub Wiki — no link rewriting required.
+# * `rsync --delete` keeps the wiki in lockstep with `docs/wiki/`; pages
+#   removed from the repo are removed from the wiki.
+
+name: Sync Wiki
 
 on:
   push:
     branches:
       - main
-      - dev
-  pull_request:
-    branches:
-      - main
-      - dev
+    paths:
+      - 'docs/wiki/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: false
 
 jobs:
-  docs:
-    name: Build Documentation
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install sphinx sphinx-rtd-theme sphinx-autodoc-typehints
-
-      - name: Build documentation
-        run: |
-          mkdir -p docs/_build
-          python -m sphinx -b html docs docs/_build/html
-        continue-on-error: true
-
-      - name: Upload documentation artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: docs/_build/html/
-          retention-days: 30
-
-      - name: Deploy to GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/_build/html
-
-  readme-validation:
-    name: Validate README
+  sync:
+    name: Sync docs/wiki to GitHub Wiki
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check README exists
-        run: test -f README.md || (echo "README.md not found" && exit 1)
-
-      - name: Validate Markdown
-        uses: nosborn/github-action-markdown-cli@v3.3.0
+      - name: Checkout main repo
+        uses: actions/checkout@v6
         with:
-          files: README.md GITHUB_ACTIONS.md PRE_COMMIT_SETUP.md
-          config_file: .markdownlint.json
-        continue-on-error: true
+          ref: main
+
+      - name: Checkout wiki repo
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}.wiki
+          token: ${{ secrets.WIKI_TOKEN }}
+          path: wiki
+
+      - name: Sync docs/wiki into wiki checkout
+        shell: bash
+        run: |
+          rsync -av --delete --exclude='.git' docs/wiki/ wiki/
+
+      - name: Commit and push wiki changes
+        shell: bash
+        working-directory: wiki
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No wiki changes to commit."
+            exit 0
+          fi
+          git add -A
+          git commit -m "chore(docs): sync wiki from ${GITHUB_SHA::7}"
+          git push
