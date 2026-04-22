@@ -60,7 +60,7 @@ jobs:
         run: poetry run pytest tests/ -v --cov=auto_bedrock_chat_fastapi --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v6
         if: always()
         with:
           file: ./coverage.xml
