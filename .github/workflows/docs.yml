@@ -83,3 +83,24 @@ jobs:
           git add -A
           git commit -m "chore(docs): sync wiki from ${GITHUB_SHA::7}"
           git push
+      
+  markdown-validation:
+    name: Validate Markdown (README + docs/wiki)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check README exists
+        run: test -f README.md || (echo "README.md not found" && exit 1)
+
+      - name: Check wiki landing page exists
+        run: test -f docs/wiki/Home.md || (echo "docs/wiki/Home.md not found" && exit 1)
+
+      - name: Lint Markdown
+        uses: nosborn/github-action-markdown-cli@v3.3.0
+        with:
+          files: README.md docs/wiki/
+          config_file: .markdownlint.json
