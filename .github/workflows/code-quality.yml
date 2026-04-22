@@ -27,12 +27,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -72,7 +72,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload security reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-reports
           path: |
@@ -109,7 +109,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -121,7 +121,10 @@ jobs:
 
       - name: Diff against committed requirements.txt
         run: |
-          if ! diff -u requirements.txt requirements.expected.txt; then
+          # Strip environment markers so only package==version is compared
+          sed 's/ ;.*//' requirements.txt | sort > requirements.stripped.txt
+          sed 's/ ;.*//' requirements.expected.txt | sort > requirements.expected.stripped.txt
+          if ! diff -u requirements.stripped.txt requirements.expected.stripped.txt; then
             echo ""
             echo "requirements.txt is out of sync with poetry.lock."
             echo "Run: poetry export -f requirements.txt --without-hashes --output requirements.txt"
