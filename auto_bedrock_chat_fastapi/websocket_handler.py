@@ -851,18 +851,19 @@ class WebSocketChatHandler:
             # (set kb_keyword_weight=0 for pure semantic, kb_semantic_weight=0 for pure keyword)
             search_mode = f"semantic={self.config.kb_semantic_weight}, keyword={self.config.kb_keyword_weight}"
             logger.debug(f"RAG search mode: {search_mode}")
-            results = vector_db.hybrid_search(
-                query=query,
-                query_embedding=query_embedding,
-                limit=self.config.kb_top_k_results,
-                min_score=self.config.kb_similarity_threshold,
-                filters=None,
-                semantic_weight=self.config.kb_semantic_weight,
-                keyword_weight=self.config.kb_keyword_weight,
-            )
-
-            if _close_after:
-                vector_db.close()
+            try:
+                results = vector_db.hybrid_search(
+                    query=query,
+                    query_embedding=query_embedding,
+                    limit=self.config.kb_top_k_results,
+                    min_score=self.config.kb_similarity_threshold,
+                    filters=None,
+                    semantic_weight=self.config.kb_semantic_weight,
+                    keyword_weight=self.config.kb_keyword_weight,
+                )
+            finally:
+                if _close_after:
+                    vector_db.close()
 
             # Log with the actual threshold used
             logger.info(

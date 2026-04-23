@@ -153,8 +153,7 @@ class PgVectorKBStore(BaseKBStore):
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_date ON documents(date_published)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)")
 
-                # pgvector IVFFlat index (cosine) — created only once
-                # Use a simple hnsw index for cosine distance
+                # HNSW index for cosine distance
                 cur.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_chunks_embedding

@@ -813,7 +813,6 @@ class BedrockChatPlugin:
             logger.error(f"Unexpected error checking KB status: {e}")
             if not self.config.kb_allow_empty:
                 raise BedrockChatError(f"Failed to validate knowledge base: {e}")
-                raise BedrockChatError(f"Failed to validate knowledge base: {e}")
 
     def _setup_shutdown(self):
         """Setup shutdown handler and startup event for KB auto-population"""

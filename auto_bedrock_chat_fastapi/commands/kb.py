@@ -210,6 +210,8 @@ async def kb_populate(
         # Initialize components
         logger.info("🔧 Initializing components...")
         bedrock_client = BedrockClient(config)
+        if db_path != config.kb_database_path and config.kb_storage_type == "sqlite":
+            config.kb_database_path = db_path
         vector_db = create_kb_store(config)
 
         # Create text chunker for document processing
@@ -459,6 +461,7 @@ async def kb_populate(
         logger.info(f"   Unique URLs processed: {len(processed_urls)}")
         logger.info(f"{'='*60}")
 
+        vector_db.close()
         return True
 
     except Exception as e:
@@ -466,6 +469,8 @@ async def kb_populate(
         import traceback
 
         logger.error(traceback.format_exc())
+        if "vector_db" in locals():
+            vector_db.close()
         return False
 
 
