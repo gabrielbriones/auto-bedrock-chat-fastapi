@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 4am on monday"],
+  "prConcurrentLimit": 10,
+  "labels": ["dependencies", "security"],
+  "assignees": ["gabrielbriones"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["dependencies", "security"]
+  },
+  "packageRules": [
+    {
+      "description": "Disable major updates for Python dependencies",
+      "matchManagers": ["pip_requirements", "poetry"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Group all Python minor and patch updates into a single PR across pip and Poetry",
+      "matchManagers": ["pip_requirements", "poetry"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "python-minor-patch"
+    },
+    {
+      "description": "Group Docker base image updates",
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker-updates"
+    },
+    {
+      "description": "Group GitHub Actions workflow updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions-updates"
+    }
+  ]
+}
