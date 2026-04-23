@@ -34,7 +34,7 @@ _MISSING_DEPS_MSG = (
 
 
 def _import_psycopg():
-    """Return (psycopg, psycopg_pool, pgvector.psycopg) or raise ImportError."""
+    """Return (psycopg, ConnectionPool, register_vector) or raise ImportError."""
     try:
         import psycopg
         from pgvector.psycopg import register_vector

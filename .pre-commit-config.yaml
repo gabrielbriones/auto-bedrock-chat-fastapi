@@ -71,6 +71,8 @@ repos:
     hooks:
       - id: check-json
       - id: check-yaml
+        args: ["--unsafe"]
+        exclude: 'docker-compose\.sqlite\.yml'
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: check-merge-conflict

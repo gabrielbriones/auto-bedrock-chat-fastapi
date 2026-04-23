@@ -752,19 +752,36 @@ class BedrockChatPlugin:
             # Try to query the store for content
             kb_has_content = False
             chunk_count = 0
+            kb_stats_error = None
             if self._kb_store:
                 try:
                     stats = self._kb_store.get_stats()
                     chunk_count = stats.get("chunks", 0)
                     kb_has_content = chunk_count > 0
                 except Exception as e:
-                    logger.debug(f"Could not query KB stats: {e}")
+                    kb_stats_error = e
+                    logger.warning(f"Could not query KB stats for {storage_type} backend: {e}")
 
             if kb_has_content:
                 logger.info(f"✅ Knowledge base is ready: {chunk_count} chunks indexed")
                 return
 
-            # KB is empty or unreachable — decide what to do
+            # If the backend is unreachable, report that — not "empty"
+            if kb_stats_error is not None:
+                error_msg = (
+                    f"RAG is enabled (ENABLE_RAG=true) but the {storage_type} backend is unreachable\n"
+                    f"Error: {kb_stats_error}\n"
+                    "\n"
+                    "Check KB backend configuration and connectivity."
+                )
+                if self.config.kb_allow_empty:
+                    logger.warning(error_msg + "\nKB_ALLOW_EMPTY=true — continuing without a verified knowledge base.")
+                else:
+                    logger.error(error_msg)
+                    raise BedrockChatError(error_msg)
+                return
+
+            # KB is empty — decide what to do
             if self.config.kb_populate_on_startup:
                 config_path = self.config.kb_sources_config
                 config_exists = os.path.exists(config_path)

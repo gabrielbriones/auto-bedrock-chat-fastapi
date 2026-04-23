@@ -98,8 +98,13 @@ def kb_status(config_path: Optional[str] = None, db_path: Optional[str] = None) 
 
         # Get database statistics
         try:
+            if db_path != config.kb_database_path and config.kb_storage_type == "sqlite":
+                config.kb_database_path = db_path
             db = create_kb_store(config)
-            stats = db.get_stats()
+            try:
+                stats = db.get_stats()
+            finally:
+                db.close()
 
             status["total_chunks"] = stats["chunks"]
             status["total_documents"] = stats["documents"]
