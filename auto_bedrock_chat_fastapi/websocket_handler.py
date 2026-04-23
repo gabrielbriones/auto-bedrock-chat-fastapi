@@ -12,6 +12,7 @@ from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .chat_manager import ChatManager
 from .config import ChatConfig
 from .exceptions import WebSocketError
+from .kb_store_base import BaseKBStore
 from .session_manager import ChatMessage, ChatSessionManager
 from .sso_session_store import SSOSessionStore
 from .tool_manager import AuthInfo
@@ -38,12 +39,14 @@ class WebSocketChatHandler:
         chat_manager: ChatManager,
         app_base_url: str = "http://localhost:8000",
         sso_session_store: Optional[SSOSessionStore] = None,
+        kb_store: Optional[BaseKBStore] = None,
     ):
         self.session_manager = session_manager
         self.config = config
         self.app_base_url = app_base_url.rstrip("/")
         self.chat_manager = chat_manager
         self.sso_session_store = sso_session_store
+        self.kb_store = kb_store
 
         # HTTP client for making internal API calls
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
@@ -829,10 +832,15 @@ class WebSocketChatHandler:
             return None
 
         try:
-            from .vector_db import VectorDB
+            # Use the shared KB store if available; fall back to factory
+            if self.kb_store is not None:
+                vector_db = self.kb_store
+                _close_after = False
+            else:
+                from .kb_store_base import create_kb_store
 
-            # Initialize vector DB
-            vector_db = VectorDB(self.config.kb_database_path)
+                vector_db = create_kb_store(self.config)
+                _close_after = True
 
             # Generate embedding for the query
             query_embedding = await self.chat_manager.llm_client.generate_embedding(
@@ -853,7 +861,8 @@ class WebSocketChatHandler:
                 keyword_weight=self.config.kb_keyword_weight,
             )
 
-            vector_db.close()
+            if _close_after:
+                vector_db.close()
 
             # Log with the actual threshold used
             logger.info(

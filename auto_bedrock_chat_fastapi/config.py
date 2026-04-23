@@ -571,6 +571,41 @@ class ChatConfig(BaseSettings):
         description="Path to SQLite vector database file",
     )
 
+    kb_storage_type: str = Field(
+        default="sqlite",
+        alias="BEDROCK_KB_STORAGE_TYPE",
+        description=("Knowledge-base storage backend. " "Valid values: 'sqlite' (default), 'pgvector'."),
+    )
+
+    kb_postgres_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_KB_POSTGRES_URL",
+        description=(
+            "PostgreSQL connection URL for pgvector backend "
+            "(e.g., postgresql://user:pass@host:5432/dbname). "
+            "Required when kb_storage_type='pgvector'."
+        ),
+    )
+
+    kb_postgres_pool_size: int = Field(
+        default=5,
+        alias="BEDROCK_KB_POSTGRES_POOL_SIZE",
+        gt=0,
+        le=100,
+        description="Connection pool size for PostgreSQL backend (default: 5).",
+    )
+
+    kb_embedding_dimensions: int = Field(
+        default=1536,
+        alias="BEDROCK_KB_EMBEDDING_DIMENSIONS",
+        gt=0,
+        description=(
+            "Embedding vector dimensions. Must match the output of the embedding model. "
+            "Default: 1536 (Amazon Titan Embed Text v1). "
+            "Common values: 1536 (Titan/OpenAI), 1024, 384."
+        ),
+    )
+
     kb_populate_on_startup: bool = Field(
         default=False,
         alias="KB_POPULATE_ON_STARTUP",

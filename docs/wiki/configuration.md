@@ -112,6 +112,34 @@ bedrock_chat = add_bedrock_chat(
 | ------------------- | ------- | --------------------------------------- |
 | `BEDROCK_LOG_LEVEL` | `INFO`  | Log level (DEBUG, INFO, WARNING, ERROR) |
 
+### Knowledge Base / RAG
+
+| Env Variable              | Default                      | Description                                               |
+| ------------------------- | ---------------------------- | --------------------------------------------------------- |
+| `ENABLE_RAG`              | `false`                      | Enable Retrieval-Augmented Generation with knowledge base |
+| `KB_SOURCES_CONFIG`       | `kb_sources.yaml`            | Path to YAML file defining KB content sources             |
+| `KB_POPULATE_ON_STARTUP`  | `false`                      | Auto-populate KB on startup (dev only)                    |
+| `KB_ALLOW_EMPTY`          | `false`                      | Allow app to start with empty KB                          |
+| `KB_EMBEDDING_MODEL`      | `amazon.titan-embed-text-v1` | Bedrock model for generating embeddings                   |
+| `KB_CHUNK_SIZE`           | `512`                        | Token size for text chunks                                |
+| `KB_CHUNK_OVERLAP`        | `100`                        | Token overlap between chunks                              |
+| `KB_TOP_K_RESULTS`        | `5`                          | Number of top chunks to retrieve per query                |
+| `KB_SIMILARITY_THRESHOLD` | `0.0`                        | Minimum similarity score for results                      |
+| `KB_SEMANTIC_WEIGHT`      | `0.7`                        | Weight for semantic (embedding) score in hybrid search    |
+| `KB_KEYWORD_WEIGHT`       | `0.3`                        | Weight for keyword (FTS) score in hybrid search           |
+
+### KB Storage Backend
+
+| Env Variable                      | Default                  | Description                                       |
+| --------------------------------- | ------------------------ | ------------------------------------------------- |
+| `BEDROCK_KB_STORAGE_TYPE`         | `sqlite`                 | Storage backend: `sqlite` or `pgvector`           |
+| `KB_DATABASE_PATH`                | `data/knowledge_base.db` | SQLite database file path (sqlite backend only)   |
+| `BEDROCK_KB_POSTGRES_URL`         | _(none)_                 | PostgreSQL connection URL (pgvector backend only) |
+| `BEDROCK_KB_POSTGRES_POOL_SIZE`   | `5`                      | Connection pool size for PostgreSQL               |
+| `BEDROCK_KB_EMBEDDING_DIMENSIONS` | `1536`                   | Embedding vector dimensions (must match model)    |
+
+> See [RAG Feature](rag-feature) for storage backend details, Docker Compose setup, and production recommendations.
+
 ---
 
 ## Code-Only Settings

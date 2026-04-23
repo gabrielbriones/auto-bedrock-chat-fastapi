@@ -28,7 +28,7 @@ def kb_status(config_path: Optional[str] = None, db_path: Optional[str] = None) 
     try:
         # Import here to avoid loading heavy dependencies if RAG not enabled
         from ..config import load_config
-        from ..vector_db import VectorDB
+        from ..kb_store_base import create_kb_store
 
         # Load configuration
         config = load_config()
@@ -98,7 +98,7 @@ def kb_status(config_path: Optional[str] = None, db_path: Optional[str] = None) 
 
         # Get database statistics
         try:
-            db = VectorDB(db_path)
+            db = create_kb_store(config)
             stats = db.get_stats()
 
             status["total_chunks"] = stats["chunks"]
@@ -146,7 +146,7 @@ async def kb_populate(
         from ..bedrock_client import BedrockClient
         from ..config import load_config
         from ..content_crawler import ContentCrawler
-        from ..vector_db import VectorDB
+        from ..kb_store_base import create_kb_store
 
         # Load configuration (use provided config or load from environment)
         if config is None:
@@ -210,7 +210,7 @@ async def kb_populate(
         # Initialize components
         logger.info("🔧 Initializing components...")
         bedrock_client = BedrockClient(config)
-        vector_db = VectorDB(db_path)
+        vector_db = create_kb_store(config)
 
         # Create text chunker for document processing
         from ..embedding_pipeline import TextChunker
