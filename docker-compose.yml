@@ -1,0 +1,56 @@
+---
+services:
+  bedrock-chat-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      BEDROCK_KB_STORAGE_TYPE: ${BEDROCK_KB_STORAGE_TYPE:-pgvector}
+      BEDROCK_KB_POSTGRES_URL: >-
+        postgresql://kb_user:kb_password@postgres:5432/knowledge_base
+      ENABLE_RAG: ${ENABLE_RAG:-true}
+      KB_SOURCES_CONFIG: /app/kb_sources.yaml
+      KB_ALLOW_EMPTY: ${KB_ALLOW_EMPTY:-true}
+      BEDROCK_SYSTEM_PROMPT: >-
+        You are a technical documentation assistant specialized in FastAPI
+        and Python HTTP libraries. Answer questions using ONLY the knowledge
+        base content retrieved via RAG. When answering, cite which documentation
+        source the information comes from (e.g. FastAPI Tutorial, httpx docs).
+        If the knowledge base does not contain relevant information, say so
+        explicitly rather than guessing. Provide code examples from the
+        documentation when available.
+    volumes:
+      - ~/.aws:/home/appuser/.aws:ro
+      - ./examples/fastAPI/kb_sources_fastapi.yaml:/app/kb_sources.yaml:ro
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: knowledge_base
+      POSTGRES_USER: kb_user
+      POSTGRES_PASSWORD: kb_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - kb_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb_user -d knowledge_base"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  kb_data:

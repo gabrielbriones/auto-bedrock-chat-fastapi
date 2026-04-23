@@ -1,0 +1,24 @@
+---
+# docker-compose.sqlite.yml
+#
+# Override file that switches the KB backend to SQLite (no PostgreSQL needed).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.sqlite.yml up
+#
+# This removes the postgres dependency and overrides the KB environment
+# variables so the app uses the local SQLite file instead.
+
+services:
+  bedrock-chat-api:
+    environment:
+      - BEDROCK_KB_STORAGE_TYPE=sqlite
+      - KB_DATABASE_PATH=data/knowledge_base.db
+    # Remove the postgres dependency
+    depends_on: !override {}
+    volumes:
+      - ~/.aws:/home/appuser/.aws:ro
+      - kb_sqlite_data:/app/data
+
+volumes:
+  kb_sqlite_data:

@@ -21,10 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy source code and install in development mode
+# Copy source code and install with all optional dependencies
 COPY . /tmp/src/
 WORKDIR /tmp/src
-RUN pip install .
+# hadolint ignore=DL3013
+RUN pip install ".[postgres]"
 
 # Production stage
 FROM python:3.11-slim
