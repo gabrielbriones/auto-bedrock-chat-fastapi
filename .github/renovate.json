@@ -3,7 +3,7 @@
   "extends": ["config:recommended"],
   "schedule": ["before 4am on monday"],
   "prConcurrentLimit": 10,
-  "labels": ["dependencies", "security"],
+  "labels": ["dependencies"],
   "assignees": ["gabrielbriones"],
   "semanticCommits": "enabled",
   "semanticCommitType": "chore",
