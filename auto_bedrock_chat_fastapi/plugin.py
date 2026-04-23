@@ -167,12 +167,26 @@ class BedrockChatPlugin:
             self.sso_provider = SSOProvider(self.config)
             self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
 
+        # Shared KB store (created once, reused across requests)
+        self._kb_store = None
+        if self.config.enable_rag:
+            from .kb_store_base import create_kb_store
+
+            try:
+                self._kb_store = create_kb_store(self.config)
+            except Exception:
+                logger.warning(
+                    "Failed to initialize KB store at startup; " "deferring to _check_kb_status",
+                    exc_info=True,
+                )
+
         self.websocket_handler = WebSocketChatHandler(
             session_manager=self.session_manager,
             config=self.config,
             app_base_url=self.app_base_url,
             chat_manager=self.chat_manager,
             sso_session_store=self.sso_session_store,
+            kb_store=self._kb_store,
         )
 
         # Setup templates for UI
@@ -297,9 +311,9 @@ class BedrockChatPlugin:
                                     )
 
                     return self.templates.TemplateResponse(
+                        request,
                         "chat.html",
-                        {
-                            "request": request,
+                        context={
                             "websocket_url": self.config.websocket_endpoint,
                             "auth_enabled": self.config.enable_tool_auth,
                             "require_tool_auth": self.config.require_tool_auth,
@@ -369,11 +383,16 @@ class BedrockChatPlugin:
                 Requires ENABLE_RAG=true in configuration.
                 Returns top-K most relevant chunks based on the query.
                 """
+                local_store = None
                 try:
-                    from .vector_db import VectorDB
+                    # Use the shared KB store; create one on-demand if
+                    # startup init was deferred (e.g. pg was unreachable).
+                    vector_db = self._kb_store
+                    if vector_db is None:
+                        from .kb_store_base import create_kb_store
 
-                    # Initialize vector DB
-                    vector_db = VectorDB(self.config.kb_database_path)
+                        vector_db = create_kb_store(self.config)
+                        local_store = vector_db
 
                     # Generate embedding for the query
                     query_embedding = await self.bedrock_client.generate_embedding(
@@ -420,8 +439,6 @@ class BedrockChatPlugin:
                         for r in results
                     ]
 
-                    vector_db.close()
-
                     return SemanticSearchResponse(
                         results=formatted_results,
                         query=request.query,
@@ -432,6 +449,9 @@ class BedrockChatPlugin:
                 except Exception as e:
                     logger.error(f"Semantic search failed: {str(e)}")
                     return JSONResponse({"error": f"Search failed: {str(e)}"}, status_code=500)
+                finally:
+                    if local_store is not None:
+                        local_store.close()
 
         # SSO endpoints (only when SSO is enabled)
         if self.config.sso_enabled:
@@ -715,7 +735,7 @@ class BedrockChatPlugin:
         This method:
         1. Does nothing if ENABLE_RAG=false (default - backward compatible)
         2. Validates config exists if RAG is enabled
-        3. Checks if KB database exists
+        3. Checks if KB has content (via get_stats for any backend)
         4. Defers actual population to async startup event if kb_populate_on_startup=True
         """
         # Skip all KB checks if RAG is disabled (backward compatible)
@@ -728,22 +748,56 @@ class BedrockChatPlugin:
         try:
             import os
 
-            # Check if KB database exists
-            db_path = self.config.kb_database_path
-            config_path = self.config.kb_sources_config
+            storage_type = self.config.kb_storage_type
 
-            db_exists = os.path.exists(db_path)
-            config_exists = os.path.exists(config_path)
+            logger.info(f"  KB Storage: {storage_type}")
 
-            # Log status
-            logger.info(f"  KB Database: {db_path} {'✅ exists' if db_exists else '❌ missing'}")
-            logger.info(f"  KB Config: {config_path} {'✅ exists' if config_exists else '❌ missing'}")
+            # For SQLite, also log the file path
+            if storage_type == "sqlite":
+                db_path = self.config.kb_database_path
+                db_file_exists = os.path.exists(db_path)
+                logger.info(f"  KB Database: {db_path} {'✅ exists' if db_file_exists else '❌ missing'}")
 
             # Store state for startup event
             self._kb_needs_population = False
 
-            # Check if we should auto-populate
-            if self.config.kb_populate_on_startup and not db_exists:
+            # Try to query the store for content
+            kb_has_content = False
+            chunk_count = 0
+            kb_stats_error = None
+            if self._kb_store:
+                try:
+                    stats = self._kb_store.get_stats()
+                    chunk_count = stats.get("chunks", 0)
+                    kb_has_content = chunk_count > 0
+                except Exception as e:
+                    kb_stats_error = e
+                    logger.warning(f"Could not query KB stats for {storage_type} backend: {e}")
+
+            if kb_has_content:
+                logger.info(f"✅ Knowledge base is ready: {chunk_count} chunks indexed")
+                return
+
+            # If the backend is unreachable, report that — not "empty"
+            if kb_stats_error is not None:
+                error_msg = (
+                    f"RAG is enabled (ENABLE_RAG=true) but the {storage_type} backend is unreachable\n"
+                    f"Error: {kb_stats_error}\n"
+                    "\n"
+                    "Check KB backend configuration and connectivity."
+                )
+                if self.config.kb_allow_empty:
+                    logger.warning(error_msg + "\nKB_ALLOW_EMPTY=true — continuing without a verified knowledge base.")
+                else:
+                    logger.error(error_msg)
+                    raise BedrockChatError(error_msg)
+                return
+
+            # KB is empty — decide what to do
+            if self.config.kb_populate_on_startup:
+                config_path = self.config.kb_sources_config
+                config_exists = os.path.exists(config_path)
+                logger.info(f"  KB Config: {config_path} {'✅ exists' if config_exists else '❌ missing'}")
                 if not config_exists:
                     logger.error(
                         f"Cannot auto-populate: configuration file not found: {config_path}\n"
@@ -756,66 +810,33 @@ class BedrockChatPlugin:
                     self._kb_needs_population = True
                     logger.info("KB_POPULATE_ON_STARTUP=true - will populate during startup event")
 
-            # Final validation (if not auto-populating)
-            if not db_exists and not self._kb_needs_population:
-                if self.config.kb_allow_empty:
-                    logger.warning(
-                        "⚠️  Knowledge base is missing but KB_ALLOW_EMPTY=true\n"
-                        "   RAG queries will fail until KB is populated.\n"
-                        "   Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
-                    )
-                else:
-                    error_msg = (
-                        f"RAG is enabled (ENABLE_RAG=true) but knowledge base is missing: {db_path}\n"
-                        "\n"
-                        "Solutions:\n"
-                        "1. Production: Populate KB before starting app\n"
-                        "   python -m auto_bedrock_chat_fastapi.commands.kb populate\n"
-                        "\n"
-                        "2. Development: Enable auto-population\n"
-                        "   Set KB_POPULATE_ON_STARTUP=true in .env\n"
-                        "\n"
-                        "3. Allow empty KB (not recommended)\n"
-                        "   Set KB_ALLOW_EMPTY=true in .env\n"
-                        "\n"
-                        "4. Disable RAG (backward compatible)\n"
-                        "   Set ENABLE_RAG=false in .env (default)"
-                    )
-                    logger.error(error_msg)
-                    raise BedrockChatError(error_msg)
-            elif db_exists:
-                # Check if DB has content
-                try:
-                    from .vector_db import VectorDB
-
-                    db = VectorDB(db_path)
-                    stats = db.get_stats()
-                    chunk_count = stats.get("chunks", 0)
-
-                    if chunk_count == 0:
-                        if self.config.kb_allow_empty:
-                            logger.warning(
-                                "⚠️  Knowledge base is empty but KB_ALLOW_EMPTY=true\n"
-                                "   RAG queries will return no results until KB is populated.\n"
-                                "   Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
-                            )
-                        else:
-                            error_msg = (
-                                f"Knowledge base exists but is empty: {db_path}\n"
-                                "Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
-                            )
-                            logger.error(error_msg)
-                            raise BedrockChatError(error_msg)
-                    else:
-                        logger.info(f"✅ Knowledge base is ready: {chunk_count} chunks indexed")
-
-                except Exception as e:
-                    logger.error(f"Failed to check KB content: {e}")
-                    if not self.config.kb_allow_empty:
-                        raise
+            elif self.config.kb_allow_empty:
+                logger.warning(
+                    "⚠️  Knowledge base is empty but KB_ALLOW_EMPTY=true\n"
+                    "   RAG queries will return no results until KB is populated.\n"
+                    "   Run: python -m auto_bedrock_chat_fastapi.commands.kb populate"
+                )
+            else:
+                error_msg = (
+                    f"RAG is enabled (ENABLE_RAG=true) but knowledge base is empty ({storage_type} backend)\n"
+                    "\n"
+                    "Solutions:\n"
+                    "1. Production: Populate KB before starting app\n"
+                    "   python -m auto_bedrock_chat_fastapi.commands.kb populate\n"
+                    "\n"
+                    "2. Development: Enable auto-population\n"
+                    "   Set KB_POPULATE_ON_STARTUP=true in .env\n"
+                    "\n"
+                    "3. Allow empty KB (not recommended)\n"
+                    "   Set KB_ALLOW_EMPTY=true in .env\n"
+                    "\n"
+                    "4. Disable RAG (backward compatible)\n"
+                    "   Set ENABLE_RAG=false in .env (default)"
+                )
+                logger.error(error_msg)
+                raise BedrockChatError(error_msg)
 
         except BedrockChatError:
-            # Re-raise configuration errors
             raise
         except Exception as e:
             logger.error(f"Unexpected error checking KB status: {e}")
@@ -875,6 +896,9 @@ class BedrockChatPlugin:
         try:
             await self.websocket_handler.shutdown()
             await self.tool_manager.shutdown()
+            if self._kb_store is not None:
+                self._kb_store.close()
+                self._kb_store = None
             logger.info("Bedrock chat plugin shutdown complete")
         except Exception as e:
             logger.error(f"Error during shutdown: {str(e)}")
