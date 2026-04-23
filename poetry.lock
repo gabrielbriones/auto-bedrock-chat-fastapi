@@ -3543,4 +3543,4 @@ postgres = ["pgvector", "psycopg", "psycopg-binary"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "98e0109d63ff49636e468e9e96131f0479aac7573e03ead930bea182af2882ea"
+content-hash = "d9f5ee18042c7b951e3c41a15827b0ae3423d1ca325f996c705953781bd6fa2f"
