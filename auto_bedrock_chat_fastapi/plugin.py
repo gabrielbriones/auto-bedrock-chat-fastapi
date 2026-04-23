@@ -172,7 +172,13 @@ class BedrockChatPlugin:
         if self.config.enable_rag:
             from .kb_store_base import create_kb_store
 
-            self._kb_store = create_kb_store(self.config)
+            try:
+                self._kb_store = create_kb_store(self.config)
+            except Exception:
+                logger.warning(
+                    "Failed to initialize KB store at startup; " "deferring to _check_kb_status",
+                    exc_info=True,
+                )
 
         self.websocket_handler = WebSocketChatHandler(
             session_manager=self.session_manager,
@@ -377,13 +383,16 @@ class BedrockChatPlugin:
                 Requires ENABLE_RAG=true in configuration.
                 Returns top-K most relevant chunks based on the query.
                 """
+                local_store = None
                 try:
-                    # Use the shared KB store
+                    # Use the shared KB store; create one on-demand if
+                    # startup init was deferred (e.g. pg was unreachable).
                     vector_db = self._kb_store
                     if vector_db is None:
                         from .kb_store_base import create_kb_store
 
                         vector_db = create_kb_store(self.config)
+                        local_store = vector_db
 
                     # Generate embedding for the query
                     query_embedding = await self.bedrock_client.generate_embedding(
@@ -440,6 +449,9 @@ class BedrockChatPlugin:
                 except Exception as e:
                     logger.error(f"Semantic search failed: {str(e)}")
                     return JSONResponse({"error": f"Search failed: {str(e)}"}, status_code=500)
+                finally:
+                    if local_store is not None:
+                        local_store.close()
 
         # SSO endpoints (only when SSO is enabled)
         if self.config.sso_enabled:
