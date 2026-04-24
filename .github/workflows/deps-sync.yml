@@ -1,5 +1,5 @@
 ---
-name: Deps Sync
+name: Sync dependencies
 
 on:
   pull_request:
