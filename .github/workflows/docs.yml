@@ -102,7 +102,7 @@ jobs:
         run: test -f docs/wiki/Home.md || (echo "docs/wiki/Home.md not found" && exit 1)
 
       - name: Lint Markdown
-        uses: nosborn/github-action-markdown-cli@v3.3.0
+        uses: nosborn/github-action-markdown-cli@v3.5.0
         with:
           files: README.md docs/wiki/
           config_file: .markdownlint.json
