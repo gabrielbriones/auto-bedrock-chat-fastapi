@@ -8,6 +8,7 @@
   "semanticCommits": "enabled",
   "semanticCommitType": "chore",
   "semanticCommitScope": "deps",
+  "ignorePaths": ["requirements.txt"],
   "vulnerabilityAlerts": {
     "enabled": true,
     "labels": ["dependencies", "security"]
@@ -15,13 +16,13 @@
   "packageRules": [
     {
       "description": "Disable major updates for Python dependencies",
-      "matchManagers": ["pip_requirements", "poetry"],
+      "matchManagers": ["poetry"],
       "matchUpdateTypes": ["major"],
       "enabled": false
     },
     {
-      "description": "Group all Python minor and patch updates into a single PR across pip and Poetry",
-      "matchManagers": ["pip_requirements", "poetry"],
+      "description": "Group all Python minor and patch updates into a single PR",
+      "matchManagers": ["poetry"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "python-minor-patch"
     },

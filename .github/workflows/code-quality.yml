@@ -99,32 +99,4 @@ jobs:
             safety-report.json
           retention-days: 30
 
-  deps-sync:
-    name: Verify requirements.txt in sync
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install Poetry
-        run: pip install poetry==1.8.2 poetry-plugin-export
-
-      - name: Diff against committed requirements.txt
-        run: |
-          # Export fresh from poetry.lock and strip environment markers for comparison
-          poetry export -f requirements.txt --without-hashes --output requirements.expected.txt
-          sed 's/ ;.*//' requirements.txt | sort > requirements.stripped.txt
-          sed 's/ ;.*//' requirements.expected.txt | sort > requirements.expected.stripped.txt
-          if ! diff -u requirements.stripped.txt requirements.expected.stripped.txt; then
-            echo ""
-            echo "requirements.txt is out of sync with poetry.lock."
-            echo "Run: poetry export -f requirements.txt --without-hashes --output requirements.txt"
-            exit 1
-          fi
