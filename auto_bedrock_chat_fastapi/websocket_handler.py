@@ -66,24 +66,61 @@ class WebSocketChatHandler:
             user_agent = websocket.headers.get("user-agent")
             ip_address = self._get_client_ip(websocket)
 
-            # Create chat session
+            # SSO pre-auth: check for session token BEFORE creating session
+            extracted_user_id = user_id  # Start with passed-in user_id (if any)
+            sso_credentials = None
+            sso_auth_handler = None
+            sso_metadata = {}
+            sso_display_name = None
+
+            session_token = websocket.cookies.get("sso_session_token")
+            if session_token and self.sso_session_store and self.config.sso_session_secret:
+                # Validate and extract user info before session creation
+                user_info = await self._validate_sso_token_and_extract_user(session_token)
+                if user_info:
+                    extracted_user_id = user_info["user_id"]
+                    sso_credentials = user_info["credentials"]
+                    sso_auth_handler = user_info["auth_handler"]
+                    sso_metadata = user_info["metadata"]
+                    sso_display_name = user_info["display_name"]
+                    logger.debug(
+                        "SSO pre-auth successful: user_id=%s, display_name=%s", extracted_user_id, sso_display_name
+                    )
+
+            # Create chat session with actual user_id (from SSO, passed parameter, or None)
             session_id = await self.session_manager.create_session(
                 websocket=websocket,
-                user_id=user_id,
+                user_id=extracted_user_id,
                 user_agent=user_agent,
                 ip_address=ip_address,
             )
 
-            logger.info(f"WebSocket connected: session={session_id}, user={user_id}, ip={ip_address}")
+            logger.info(f"WebSocket connected: session={session_id}, user={extracted_user_id}, ip={ip_address}")
 
-            # SSO auto-auth: check for session token in HttpOnly cookie
-            session_token = websocket.cookies.get("sso_session_token")
-            if session_token and self.sso_session_store and self.config.sso_session_secret:
-                auto_authed = await self._try_sso_auto_auth(websocket, session_token)
-                if auto_authed:
-                    # Skip the normal welcome message — auth_configured was already sent
-                    await self._message_loop(websocket)
-                    return
+            # If SSO pre-auth succeeded, set credentials in the session
+            if sso_credentials:
+                session = await self.session_manager.get_session(websocket)
+                if session:
+                    session.credentials = sso_credentials
+                    session.auth_handler = sso_auth_handler
+                    session.metadata.update(sso_metadata)
+
+                    # Send auth_configured message
+                    await self._send_message(
+                        websocket,
+                        {
+                            "type": "auth_configured",
+                            "message": f"Authenticated as {sso_display_name}",
+                            "auth_type": "sso",
+                            "display_name": sso_display_name,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                    )
+                    logger.info(
+                        "SSO auto-authentication configured for session %s (user: %s)",
+                        session_id,
+                        sso_display_name,
+                    )
 
             # Send welcome message
             await self._send_message(
@@ -521,7 +558,7 @@ class WebSocketChatHandler:
                 if verification_url.startswith("/"):
                     verification_url = f"{self.app_base_url}{verification_url}"
                 logger.info(f"Verifying credentials for session {session.session_id} against {verification_url}")
-                is_valid, message = await auth_handler.verify_credentials_remote(
+                is_valid, message, user_info = await auth_handler.verify_credentials_remote(
                     verification_url, http_client=self.http_client
                 )
                 if not is_valid:
@@ -535,6 +572,24 @@ class WebSocketChatHandler:
                         },
                     )
                     return
+
+                # Extract user_id from verification response if available
+                if user_info and not session.user_id:
+                    # Try common user_id fields: user_id, sub, email, username
+                    extracted_user_id = (
+                        user_info.get("user_id")
+                        or user_info.get("sub")
+                        or user_info.get("email")
+                        or user_info.get("username")
+                        or user_info.get("user")
+                    )
+                    if extracted_user_id:
+                        await self.session_manager.update_session_user_id(session.session_id, extracted_user_id)
+                        logger.info(
+                            f"Updated session {session.session_id} user_id from verification endpoint: {extracted_user_id}"
+                        )
+                        # Store full user_info in session metadata
+                        session.metadata["verified_user_info"] = user_info
 
             # Store credentials in session
             session.credentials = credentials
@@ -622,13 +677,74 @@ class WebSocketChatHandler:
     # SSO helpers
     # ------------------------------------------------------------------
 
-    async def _try_sso_auto_auth(self, websocket: WebSocket, session_token: str) -> bool:
-        """Attempt to auto-authenticate via the ``sso_session_token`` HttpOnly cookie.
+    async def _validate_sso_token_and_extract_user(self, session_token: str) -> Optional[Dict[str, Any]]:
+        """Validate SSO token and extract user information.
 
-        Sends ``auth_configured`` on success, ``auth_failed`` on failure.
-        Returns ``True`` if the session was successfully authenticated.
+        Returns dict with user_id, credentials, auth_handler, metadata, and display_name if valid.
+        Returns None if token is invalid or session not found.
         """
-        return await self._authenticate_with_sso_token(websocket, session_token, send_connection_established=True)
+        # Validate token signature + expiry
+        sso_session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+        if not sso_session_id:
+            logger.debug("Invalid or expired SSO session token")
+            return None
+
+        # Lookup SSO session
+        sso_session = self.sso_session_store.get_session(sso_session_id)
+        if not sso_session:
+            logger.debug("SSO session not found: %s", sso_session_id)
+            return None
+
+        # Extract access token
+        access_token = sso_session.get("access_token")
+        if not access_token:
+            logger.warning("SSO session missing access token: %s", sso_session_id)
+            self.sso_session_store.delete_session(sso_session_id)
+            return None
+
+        # Extract user info
+        user_info = sso_session.get("user_info", {})
+        id_token_claims = sso_session.get("id_token_claims", {})
+
+        # Determine user_id (prefer email, fall back to other identifiers)
+        user_id = (
+            user_info.get("email")
+            or id_token_claims.get("email")
+            or user_info.get("sub")
+            or id_token_claims.get("sub")
+            or user_info.get("username")
+            or id_token_claims.get("cognito:username")
+            or id_token_claims.get("preferred_username")
+        )
+
+        display_name = (
+            user_info.get("name")
+            or id_token_claims.get("name")
+            or user_info.get("email")
+            or id_token_claims.get("email")
+            or "SSO User"
+        )
+
+        # Build credentials
+        credentials = Credentials(
+            auth_type=AuthType.SSO,
+            bearer_token=access_token,
+            session_token=session_token,
+            sso_user_info=user_info,
+            metadata={"sso_session_id": sso_session_id, "display_name": display_name},
+        )
+        auth_handler = AuthenticationHandler(credentials)
+
+        return {
+            "user_id": user_id,
+            "credentials": credentials,
+            "auth_handler": auth_handler,
+            "display_name": display_name,
+            "metadata": {
+                "sso_user_info": user_info,
+                "display_name": display_name,
+            },
+        }
 
     async def _try_sso_auth_from_message(self, websocket: WebSocket, session_token: str) -> bool:
         """Authenticate via an SSO auth message (sent after connection).
@@ -636,39 +752,14 @@ class WebSocketChatHandler:
         Sends ``auth_configured`` on success, ``auth_failed`` on failure.
         Returns ``True`` if authenticated.
         """
-        return await self._authenticate_with_sso_token(websocket, session_token, send_connection_established=False)
-
-    async def _authenticate_with_sso_token(
-        self, websocket: WebSocket, session_token: str, *, send_connection_established: bool
-    ) -> bool:
-        """Core SSO authentication logic shared by auto-auth and message-based auth.
-
-        Validates the session token, retrieves the SSO session from the store,
-        builds a :class:`Credentials` object using the stored access token, and
-        stores SSO user info in ``session.metadata``.
-        """
-        # Validate token signature + expiry
-        sso_session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
-        if not sso_session_id:
+        # Validate and extract user info
+        user_info_dict = await self._validate_sso_token_and_extract_user(session_token)
+        if not user_info_dict:
             await self._send_message(
                 websocket,
                 {
                     "type": "auth_failed",
-                    "message": "Invalid or expired SSO session token.",
-                    "auth_type": "sso",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-            return False
-
-        # Lookup SSO session
-        sso_session = self.sso_session_store.get_session(sso_session_id)
-        if not sso_session:
-            await self._send_message(
-                websocket,
-                {
-                    "type": "auth_failed",
-                    "message": "SSO session has expired. Please log in again.",
+                    "message": "Invalid or expired SSO session token. Please log in again.",
                     "auth_type": "sso",
                     "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
                     "timestamp": datetime.now().isoformat(),
@@ -680,64 +771,22 @@ class WebSocketChatHandler:
         if not chat_session:
             return False
 
-        # Build credentials — use the IdP access token for downstream tool calls
-        access_token = sso_session.get("access_token")
-        if not access_token:
-            await self._send_message(
-                websocket,
-                {
-                    "type": "auth_failed",
-                    "message": "SSO session is missing an access token. Please log in again.",
-                    "auth_type": "sso",
-                    "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-            # Clean up the broken session
-            self.sso_session_store.delete_session(sso_session_id)
-            return False
+        # Update session with SSO credentials and user info
+        chat_session.credentials = user_info_dict["credentials"]
+        chat_session.auth_handler = user_info_dict["auth_handler"]
+        chat_session.metadata.update(user_info_dict["metadata"])
 
-        user_info = sso_session.get("user_info", {})
-        id_token_claims = sso_session.get("id_token_claims", {})
-        display_name = (
-            user_info.get("name")
-            or id_token_claims.get("name")
-            or user_info.get("email")
-            or id_token_claims.get("email")
-            or "SSO User"
-        )
+        # Update session user_id if not already set
+        if not chat_session.user_id and user_info_dict["user_id"]:
+            chat_session.user_id = user_info_dict["user_id"]
+            logger.debug("Updated session user_id: %s", user_info_dict["user_id"])
 
-        credentials = Credentials(
-            auth_type=AuthType.SSO,
-            bearer_token=access_token,
-            session_token=session_token,
-            sso_user_info=user_info,
-            metadata={"sso_session_id": sso_session_id, "display_name": display_name},
-        )
-        auth_handler = AuthenticationHandler(credentials)
-
-        chat_session.credentials = credentials
-        chat_session.auth_handler = auth_handler
-        # Store user info in the session-level metadata for use elsewhere
-        chat_session.metadata["sso_user_info"] = user_info
-        chat_session.metadata["display_name"] = display_name
-
+        display_name = user_info_dict["display_name"]
         logger.info(
-            "SSO auto-authentication successful for session %s (user: %s)",
+            "SSO authentication successful for session %s (user: %s)",
             chat_session.session_id,
             display_name,
         )
-
-        if send_connection_established:
-            await self._send_message(
-                websocket,
-                {
-                    "type": "connection_established",
-                    "session_id": chat_session.session_id,
-                    "message": "Connected to AI assistant",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
 
         await self._send_message(
             websocket,
