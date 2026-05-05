@@ -1,5 +1,6 @@
 """WebSocket handler for real-time chat communication"""
 
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -525,7 +526,10 @@ class WebSocketChatHandler:
 
             elif auth_type == "sso":
                 session_token = data.get("session_token") or websocket.cookies.get("sso_session_token")
-                logger.debug("SSO auth attempt with session_token: %s", session_token)
+                # Log token presence and hash instead of raw token for security
+                token_present = bool(session_token)
+                token_hash = hashlib.sha256(session_token.encode()).hexdigest()[:8] if session_token else None
+                logger.debug("SSO auth attempt: token_present=%s, token_hash=%s", token_present, token_hash)
                 if not session_token:
                     await self._send_error(websocket, "session_token required for SSO auth")
                     return
@@ -566,13 +570,17 @@ class WebSocketChatHandler:
                 is_valid, message, user_info = await auth_handler.verify_credentials_remote(
                     verification_url, http_client=self.http_client
                 )
+                # Log only user_id and keys to avoid PII in logs
+                user_id_from_info = user_info.get("user_id") if user_info else None
+                user_info_keys = list(user_info.keys()) if user_info else []
                 logger.info(
-                    "Verification result for session %s: is_valid=%s, message=%s, user_info=%s",
+                    "Verification result for session %s: is_valid=%s, user_id=%s, fields=%s",
                     session.session_id,
                     is_valid,
-                    message,
-                    user_info,
+                    user_id_from_info,
+                    user_info_keys,
                 )
+                logger.debug("Full user_info for session %s: %s", session.session_id, user_info)
                 if not is_valid:
                     await self._send_message(
                         websocket,
@@ -599,9 +607,11 @@ class WebSocketChatHandler:
                         await self.session_manager.update_session_user_id(session.session_id, extracted_user_id)
                         # Refresh session reference after update
                         session = await self.session_manager.get_session(websocket)
-                    # Store full user_info in session metadata
+
+                # Store full user_info in session metadata (always, not just when user_id missing)
+                if user_info:
                     session.metadata["verified_user_info"] = user_info
-                    logger.debug(f"Session metadata updated {session.metadata}")
+                    logger.debug("Session metadata updated with verified_user_info")
 
             # Store credentials in session
             session.credentials = credentials
@@ -788,12 +798,16 @@ class WebSocketChatHandler:
                 is_valid, message, verified_user_info = await auth_handler.verify_credentials_remote(
                     verification_url, http_client=self.http_client
                 )
+                # Log only user_id and keys to avoid PII in logs
+                verified_user_id = verified_user_info.get("user_id") if verified_user_info else None
+                verified_info_keys = list(verified_user_info.keys()) if verified_user_info else []
                 logger.info(
-                    "SSO verification result: is_valid=%s, message=%s, verified_user_info=%s",
+                    "SSO verification result: is_valid=%s, user_id=%s, fields=%s",
                     is_valid,
-                    message,
-                    verified_user_info,
+                    verified_user_id,
+                    verified_info_keys,
                 )
+                logger.debug("Full verified_user_info: %s", verified_user_info)
 
                 if not is_valid:
                     logger.warning("SSO token verification failed: %s", message)
@@ -853,7 +867,9 @@ class WebSocketChatHandler:
 
         # Update session user_id if not already set
         if not chat_session.user_id and user_info_dict["user_id"]:
-            chat_session.user_id = user_info_dict["user_id"]
+            await self.session_manager.update_session_user_id(chat_session.session_id, user_info_dict["user_id"])
+            # Refresh session reference after update
+            chat_session = await self.session_manager.get_session(websocket)
             logger.debug("Updated session user_id: %s", user_info_dict["user_id"])
 
         display_name = user_info_dict["display_name"]

@@ -279,7 +279,7 @@ class TestMetadataHeaders:
         auth_info = AuthInfo(metadata=metadata)
 
         # Execute tool call
-        tool_call = {"id": "call_1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}
+        tool_call = {"id": "call_1", "name": "test_tool", "arguments": {}}
 
         await tool_manager.execute_tool_calls([tool_call], auth_info=auth_info)
 
@@ -329,7 +329,7 @@ class TestMetadataHeaders:
         auth_info = AuthInfo()
 
         # Execute tool call - should not crash
-        tool_call = {"id": "call_1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}
+        tool_call = {"id": "call_1", "name": "test_tool", "arguments": {}}
 
         result = await tool_manager.execute_tool_calls([tool_call], auth_info=auth_info)
 
@@ -373,7 +373,7 @@ class TestMetadataHeaders:
         auth_info = AuthInfo(metadata=metadata)
 
         # Execute tool call
-        tool_call = {"id": "call_1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}
+        tool_call = {"id": "call_1", "name": "test_tool", "arguments": {}}
 
         await tool_manager.execute_tool_calls([tool_call], auth_info=auth_info)
 
@@ -462,7 +462,7 @@ class TestMetadataErrorHandling:
             mock_json_dumps.side_effect = Exception("Encoding error")
 
             # Execute tool call - should not crash
-            tool_call = {"id": "call_1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}
+            tool_call = {"id": "call_1", "name": "test_tool", "arguments": {}}
 
             result = await tool_manager.execute_tool_calls([tool_call], auth_info=auth_info)
 
