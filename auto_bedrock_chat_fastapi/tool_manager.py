@@ -628,7 +628,6 @@ class ToolsGenerator:
 
 
 @dataclass
-@dataclass
 class AuthInfo:
     """Authentication information for tool call execution.
 
@@ -951,7 +950,8 @@ class ToolManager:
                 request_kwargs["headers"]["X-User-Metadata"] = metadata_b64
 
                 logger.debug(
-                    f"Applied user metadata headers: user_id={verified_info.get('user_id')}, display_name={display_name}"
+                    f"Applied user metadata headers: user_id={verified_info.get('user_id')}, "
+                    f"display_name={display_name}"
                 )
             except Exception as e:
                 logger.warning(f"Error applying metadata headers: {str(e)}")
