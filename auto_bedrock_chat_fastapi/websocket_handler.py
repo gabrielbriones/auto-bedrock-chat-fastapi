@@ -303,6 +303,7 @@ class WebSocketChatHandler:
             auth_info = AuthInfo(
                 credentials=session.credentials,
                 auth_handler=session.auth_handler,
+                metadata=session.metadata,
             )
 
             # Closure: send progress updates to the WebSocket client
@@ -524,6 +525,7 @@ class WebSocketChatHandler:
 
             elif auth_type == "sso":
                 session_token = data.get("session_token") or websocket.cookies.get("sso_session_token")
+                logger.debug("SSO auth attempt with session_token: %s", session_token)
                 if not session_token:
                     await self._send_error(websocket, "session_token required for SSO auth")
                     return
@@ -551,6 +553,9 @@ class WebSocketChatHandler:
             if auth_type == "oauth2" or auth_type == "oauth2_client_credentials":
                 auth_handler.set_http_client(self.http_client)
 
+            # Initialize user_info (will be populated by verification endpoint if configured)
+            user_info = None
+
             # Verify credentials against remote endpoint if configured
             if self.config.auth_verification_endpoint:
                 verification_url = self.config.auth_verification_endpoint
@@ -560,6 +565,13 @@ class WebSocketChatHandler:
                 logger.info(f"Verifying credentials for session {session.session_id} against {verification_url}")
                 is_valid, message, user_info = await auth_handler.verify_credentials_remote(
                     verification_url, http_client=self.http_client
+                )
+                logger.info(
+                    "Verification result for session %s: is_valid=%s, message=%s, user_info=%s",
+                    session.session_id,
+                    is_valid,
+                    message,
+                    user_info,
                 )
                 if not is_valid:
                     await self._send_message(
@@ -585,17 +597,41 @@ class WebSocketChatHandler:
                     )
                     if extracted_user_id:
                         await self.session_manager.update_session_user_id(session.session_id, extracted_user_id)
-                        logger.info(
-                            f"Updated session {session.session_id} user_id from verification endpoint: {extracted_user_id}"
-                        )
-                        # Store full user_info in session metadata
-                        session.metadata["verified_user_info"] = user_info
+                        # Refresh session reference after update
+                        session = await self.session_manager.get_session(websocket)
+                    # Store full user_info in session metadata
+                    session.metadata["verified_user_info"] = user_info
+                    logger.debug(f"Session metadata updated {session.metadata}")
 
             # Store credentials in session
             session.credentials = credentials
             session.auth_handler = auth_handler
 
-            logger.info(f"Authentication configured for session {session.session_id}: {auth_type}")
+            # Extract display name for UI
+            display_name = None
+            if user_info:
+                # Try to get a user-friendly display name
+                display_name = (
+                    user_info.get("name")
+                    or user_info.get("display_name")
+                    or user_info.get("email")
+                    or user_info.get("username")
+                    or user_info.get("user_id")
+                    or user_info.get("sub")
+                )
+                logger.debug(f"Extracted display_name from user_info: {display_name}")
+            # If no user_info, use the session user_id (if set)
+            if not display_name and session.user_id:
+                display_name = session.user_id
+                logger.debug(f"Using session.user_id as display_name: {display_name}")
+
+            # Store display name in session metadata
+            if display_name:
+                session.metadata["display_name"] = display_name
+
+            logger.info(
+                f"Authentication configured for session {session.session_id}: {auth_type}, display_name={display_name}"
+            )
             logger.debug(
                 "Session credentials configured for session %s: auth_type=%s, has_credentials=%s",
                 session.session_id,
@@ -603,15 +639,19 @@ class WebSocketChatHandler:
                 bool(credentials),
             )
 
-            await self._send_message(
-                websocket,
-                {
-                    "type": "auth_configured",
-                    "message": f"Authentication configured: {auth_type}",
-                    "auth_type": auth_type,
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
+            auth_response = {
+                "type": "auth_configured",
+                "message": f"Authentication configured: {auth_type}",
+                "auth_type": auth_type,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Include display name if available
+            if display_name:
+                auth_response["display_name"] = display_name
+                auth_response["message"] = f"Authenticated as {display_name}"
+
+            await self._send_message(websocket, auth_response)
 
         except Exception as e:
             logger.error(f"Error handling authentication message: {str(e)}")
@@ -735,15 +775,50 @@ class WebSocketChatHandler:
         )
         auth_handler = AuthenticationHandler(credentials)
 
+        # Call verification endpoint to get application-specific user metadata
+        verified_user_info = None
+        if self.config.auth_verification_endpoint:
+            verification_url = self.config.auth_verification_endpoint
+            # Resolve relative paths (e.g. "/api/v1/auth/verify") against app base URL
+            if verification_url.startswith("/"):
+                verification_url = f"{self.app_base_url}{verification_url}"
+
+            logger.info(f"SSO: Verifying credentials against {verification_url}")
+            try:
+                is_valid, message, verified_user_info = await auth_handler.verify_credentials_remote(
+                    verification_url, http_client=self.http_client
+                )
+                logger.info(
+                    "SSO verification result: is_valid=%s, message=%s, verified_user_info=%s",
+                    is_valid,
+                    message,
+                    verified_user_info,
+                )
+
+                if not is_valid:
+                    logger.warning("SSO token verification failed: %s", message)
+                    # Don't fail SSO auth if verification fails - just log it
+                    # This preserves backward compatibility
+            except Exception as e:
+                logger.warning("SSO verification endpoint call failed: %s", str(e))
+                # Don't fail SSO auth if verification endpoint is unreachable
+
+        # Build metadata dict
+        metadata = {
+            "sso_user_info": user_info,
+            "display_name": display_name,
+        }
+
+        # Add verified_user_info if available
+        if verified_user_info:
+            metadata["verified_user_info"] = verified_user_info
+
         return {
             "user_id": user_id,
             "credentials": credentials,
             "auth_handler": auth_handler,
             "display_name": display_name,
-            "metadata": {
-                "sso_user_info": user_info,
-                "display_name": display_name,
-            },
+            "metadata": metadata,
         }
 
     async def _try_sso_auth_from_message(self, websocket: WebSocket, session_token: str) -> bool:

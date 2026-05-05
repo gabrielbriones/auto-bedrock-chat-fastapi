@@ -435,15 +435,22 @@ class ChatClient {
     handleMessage(data) {
         switch (data.type) {
             case 'auth_configured':
+                console.log('Received auth_configured:', data);
                 this.authenticated = true;
-                this.addMessage('system', `🔐 Authenticated with ${data.auth_type}`);
-                // Show display name for SSO in header
-                if (data.auth_type === 'sso' && data.display_name) {
+                this.addMessage('system', `🔐 ${data.message || `Authenticated with ${data.auth_type}`}`);
+                // Show display name in header if provided (works for SSO and other auth types)
+                if (data.display_name) {
+                    console.log('Setting display name:', data.display_name);
                     const userDisplay = document.getElementById('ssoUserDisplay');
                     if (userDisplay) {
                         userDisplay.textContent = data.display_name;
                         userDisplay.style.display = 'inline';
+                        console.log('Display name set successfully');
+                    } else {
+                        console.error('ssoUserDisplay element not found');
                     }
+                } else {
+                    console.log('No display_name in auth_configured message');
                 }
                 this.updateAuthButtonUI();  // Update button after auth
                 this.enableInput();
@@ -486,6 +493,12 @@ class ChatClient {
             case 'logout_success':
                 this.authenticated = false;
                 this.addMessage('system', '🔓 Logged out successfully.');
+                // Clear user display name from header
+                const userDisplay = document.getElementById('ssoUserDisplay');
+                if (userDisplay) {
+                    userDisplay.textContent = '';
+                    userDisplay.style.display = 'none';
+                }
                 this.updateAuthButtonUI();  // Update button after logout
                 // Disable input if auth is required
                 if (window.CONFIG.requireAuth) {
@@ -532,6 +545,12 @@ class ChatClient {
                 this.authenticated = false;
                 this.authPayload = null;
                 this.authSent = false;
+                // Clear user display name from header
+                const userDisplayExpired = document.getElementById('ssoUserDisplay');
+                if (userDisplayExpired) {
+                    userDisplayExpired.textContent = '';
+                    userDisplayExpired.style.display = 'none';
+                }
                 this.intentionalClose = true;
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                     this.ws.close();

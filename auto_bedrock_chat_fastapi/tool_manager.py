@@ -14,6 +14,7 @@ This module encapsulates all tool-related concerns:
 tool-call loop.  ``websocket_handler.py`` no longer owns tool execution.
 """
 
+import base64
 import json
 import logging
 from dataclasses import dataclass
@@ -627,6 +628,7 @@ class ToolsGenerator:
 
 
 @dataclass
+@dataclass
 class AuthInfo:
     """Authentication information for tool call execution.
 
@@ -639,10 +641,12 @@ class AuthInfo:
         credentials: The ``Credentials`` dataclass (bearer token, API key, etc.).
         auth_handler: The ``AuthenticationHandler`` that knows how to apply
             ``credentials`` to HTTP request headers.
+        metadata: Session metadata dict containing user info, display name, etc.
     """
 
     credentials: Optional[Credentials] = None
     auth_handler: Optional[AuthenticationHandler] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -924,6 +928,34 @@ class ToolManager:
             except Exception as e:
                 logger.error(f"Error applying authentication: {str(e)}")
                 return {"error": f"Authentication failed: {str(e)}"}
+
+        # Apply user metadata as headers (if available)
+        if auth_info and auth_info.metadata:
+            try:
+                # Add display name if present
+                display_name = auth_info.metadata.get("display_name")
+                if display_name:
+                    request_kwargs["headers"]["X-User-Display-Name"] = display_name
+
+                # Add verified user info fields as individual headers for easy access
+                verified_info = auth_info.metadata.get("verified_user_info", {})
+                if verified_info:
+                    # Add user_id as a dedicated header
+                    user_id = verified_info.get("user_id")
+                    if user_id:
+                        request_kwargs["headers"]["X-User-ID"] = user_id
+
+                # Encode full metadata as JSON for downstream APIs that need complete context
+                metadata_json = json.dumps(auth_info.metadata)
+                metadata_b64 = base64.b64encode(metadata_json.encode()).decode()
+                request_kwargs["headers"]["X-User-Metadata"] = metadata_b64
+
+                logger.debug(
+                    f"Applied user metadata headers: user_id={verified_info.get('user_id')}, display_name={display_name}"
+                )
+            except Exception as e:
+                logger.warning(f"Error applying metadata headers: {str(e)}")
+                # Don't fail the request if metadata headers can't be added
 
         # Dispatch HTTP request
         return await self._make_http_request(method, request_kwargs)
