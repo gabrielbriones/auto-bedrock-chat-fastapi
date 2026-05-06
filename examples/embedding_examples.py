@@ -59,7 +59,7 @@ async def example_batch_embeddings():
 
     print(f"\nGenerated {len(embeddings)} embeddings")
     for i, (text, emb) in enumerate(zip(texts, embeddings)):
-        print(f"{i+1}. {text[:50]}... → {len(emb)} dims")
+        print(f"{i + 1}. {text[:50]}... → {len(emb)} dims")
 
 
 async def example_chunk_and_embed():
@@ -224,7 +224,7 @@ async def example_populate_kb_from_local_files():
     print(f"Query: '{query}'")
     print(f"Results: {len(results)}")
     for i, result in enumerate(results):
-        print(f"\n  {i+1}. Score: {result['similarity_score']:.3f}")
+        print(f"\n  {i + 1}. Score: {result['similarity_score']:.3f}")
         print(f"     From: {result['title']}")
         print(f"     Preview: {result['content'][:100]}...")
 

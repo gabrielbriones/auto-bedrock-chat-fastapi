@@ -260,6 +260,47 @@ class ChatSessionManager:
 
         return session.get_context_messages()
 
+    async def update_session_user_id(self, session_id: str, user_id: str) -> bool:
+        """Update the user_id for an existing session.
+
+        This is useful when a session is created without authentication
+        and the user authenticates later (e.g., OAuth2 verification).
+
+        Args:
+            session_id: The session ID to update
+            user_id: The new user_id to set
+
+        Returns:
+            True if the session was updated, False if session not found
+        """
+        session = self._sessions.get(session_id)
+        if not session:
+            logger.warning(f"Cannot update user_id: session {session_id} not found")
+            return False
+
+        old_user_id = session.user_id
+
+        # Remove from old user's session list if needed
+        if old_user_id and old_user_id in self._user_sessions:
+            user_sessions = self._user_sessions[old_user_id]
+            if session_id in user_sessions:
+                user_sessions.remove(session_id)
+            if not user_sessions:
+                del self._user_sessions[old_user_id]
+
+        # Update session user_id
+        session.user_id = user_id
+
+        # Add to new user's session list
+        if user_id:
+            if user_id not in self._user_sessions:
+                self._user_sessions[user_id] = []
+            if session_id not in self._user_sessions[user_id]:
+                self._user_sessions[user_id].append(session_id)
+
+        logger.info(f"Updated session {session_id} user_id: {old_user_id} -> {user_id}")
+        return True
+
     async def remove_session(self, websocket: WebSocket) -> Optional[str]:
         """Remove session when WebSocket disconnects"""
         session_id = self._websocket_to_session.pop(websocket, None)

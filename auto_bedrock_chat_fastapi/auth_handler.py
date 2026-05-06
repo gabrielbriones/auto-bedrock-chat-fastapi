@@ -315,7 +315,7 @@ class AuthenticationHandler:
 
     async def verify_credentials_remote(
         self, verification_endpoint: str, http_client: Optional[httpx.AsyncClient] = None
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, Optional[Dict[str, Any]]]:
         """
         Verify credentials against a remote verification endpoint.
 
@@ -328,8 +328,10 @@ class AuthenticationHandler:
             http_client: Optional HTTP client to use; creates a temporary one if not provided
 
         Returns:
-            Tuple of (is_valid, message) where is_valid is True if the endpoint
-            returned a 2XX status code, and message contains details.
+            Tuple of (is_valid, message, user_info) where:
+            - is_valid is True if the endpoint returned a 2XX status code
+            - message contains details
+            - user_info is the response body dict (if JSON) with user details, or None
         """
         client = http_client
         created_client = False
@@ -351,11 +353,23 @@ class AuthenticationHandler:
             response = await client.get(verification_endpoint, headers=headers)
 
             if 200 <= response.status_code < 300:
+                # Try to extract user info from response body
+                user_info = None
+                try:
+                    parsed = response.json()
+                    # Validate that the response is a dict (not array/string/etc.)
+                    if isinstance(parsed, dict):
+                        user_info = parsed
+                    else:
+                        logger.warning("Verification endpoint returned non-dict JSON: %s", type(parsed).__name__)
+                except Exception as e:
+                    logger.debug("Response not JSON: %s", str(e))
+
                 logger.info(
                     f"Credential verification succeeded "
                     f"(status {response.status_code}) for auth type {self.credentials.auth_type.value}"
                 )
-                return True, f"Credentials verified successfully (HTTP {response.status_code})"
+                return True, f"Credentials verified successfully (HTTP {response.status_code})", user_info
             else:
                 # Try to extract an error message from the response body
                 try:
@@ -369,22 +383,22 @@ class AuthenticationHandler:
                     msg += f": {detail}"
 
                 logger.warning(msg)
-                return False, msg
+                return False, msg, None
 
         except httpx.TimeoutException:
             log_msg = f"Credential verification timed out connecting to {verification_endpoint}"
             logger.error(log_msg)
             user_msg = "Credential verification request timed out"
-            return False, user_msg
+            return False, user_msg, None
         except httpx.ConnectError:
             log_msg = f"Could not connect to verification endpoint {verification_endpoint}"
             logger.error(log_msg)
             user_msg = "Could not connect to verification endpoint"
-            return False, user_msg
+            return False, user_msg, None
         except Exception:
             # Log full exception details server-side, but return a generic message to the caller
             logger.error("Credential verification error during remote verification", exc_info=True)
-            return False, "Credential verification error"
+            return False, "Credential verification error", None
         finally:
             if created_client and client:
                 await client.aclose()

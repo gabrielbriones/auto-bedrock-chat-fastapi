@@ -528,7 +528,7 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        is_valid, message = await handler.verify_credentials_remote(
+        is_valid, message, user_info = await handler.verify_credentials_remote(
             "https://api.example.com/verify", http_client=mock_client
         )
 
@@ -552,7 +552,9 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        is_valid, _ = await handler.verify_credentials_remote("https://api.example.com/verify", http_client=mock_client)
+        is_valid, _, _ = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
 
         assert is_valid is True
 
@@ -569,7 +571,7 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        is_valid, message = await handler.verify_credentials_remote(
+        is_valid, message, user_info = await handler.verify_credentials_remote(
             "https://api.example.com/verify", http_client=mock_client
         )
 
@@ -591,7 +593,7 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        is_valid, message = await handler.verify_credentials_remote(
+        is_valid, message, user_info = await handler.verify_credentials_remote(
             "https://api.example.com/verify", http_client=mock_client
         )
 
@@ -609,7 +611,7 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
 
-        is_valid, message = await handler.verify_credentials_remote(
+        is_valid, message, user_info = await handler.verify_credentials_remote(
             "https://api.example.com/verify", http_client=mock_client
         )
 
@@ -627,7 +629,7 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
 
-        is_valid, message = await handler.verify_credentials_remote(
+        is_valid, message, user_info = await handler.verify_credentials_remote(
             "https://api.example.com/verify", http_client=mock_client
         )
 
@@ -648,7 +650,9 @@ class TestVerifyCredentialsRemote:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
 
-        is_valid, _ = await handler.verify_credentials_remote("https://api.example.com/verify", http_client=mock_client)
+        is_valid, _, _ = await handler.verify_credentials_remote(
+            "https://api.example.com/verify", http_client=mock_client
+        )
 
         assert is_valid is True
         call_kwargs = mock_client.get.call_args
@@ -672,7 +676,7 @@ class TestVerifyCredentialsRemote:
         mock_temp_client.aclose = AsyncMock()
 
         with patch("auto_bedrock_chat_fastapi.auth_handler.httpx.AsyncClient", return_value=mock_temp_client):
-            is_valid, _ = await handler.verify_credentials_remote("https://api.example.com/verify")
+            is_valid, _, _ = await handler.verify_credentials_remote("https://api.example.com/verify")
 
         assert is_valid is True
         mock_temp_client.aclose.assert_called_once()

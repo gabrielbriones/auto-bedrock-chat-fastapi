@@ -458,13 +458,13 @@ async def kb_populate(
                 logger.warning(f"⚠️  Unknown source type: {source_type}")
 
         # Final summary
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info("✅ Knowledge base population complete!")
         logger.info(f"   Database: {db_path}")
         logger.info(f"   Total documents: {total_documents}")
         logger.info(f"   Total chunks: {total_chunks}")
         logger.info(f"   Unique URLs processed: {len(processed_urls)}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
 
         vector_db.close()
         return True

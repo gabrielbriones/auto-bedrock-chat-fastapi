@@ -21,6 +21,8 @@ class TestWebSocketAuthMessages:
         # Create a mock session
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         # Import after mocking
@@ -59,6 +61,8 @@ class TestWebSocketAuthMessages:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -92,6 +96,8 @@ class TestWebSocketAuthMessages:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -125,6 +131,8 @@ class TestWebSocketAuthMessages:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -161,6 +169,8 @@ class TestWebSocketAuthMessages:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -219,6 +229,8 @@ class TestWebSocketAuthMessages:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -249,6 +261,8 @@ class TestWebSocketAuthMessages:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -281,6 +295,8 @@ class TestWebSocketAuthVerification:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -320,6 +336,8 @@ class TestWebSocketAuthVerification:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -358,6 +376,8 @@ class TestWebSocketAuthVerification:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -391,6 +411,8 @@ class TestWebSocketAuthVerification:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
 
         from auto_bedrock_chat_fastapi.config import ChatConfig
@@ -427,6 +449,8 @@ class TestRequireToolAuth:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         # Default credentials with auth_type=NONE (as created by ChatSession dataclass)
         mock_session.credentials = Credentials()
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
@@ -458,6 +482,8 @@ class TestRequireToolAuth:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         # Authenticated credentials
         mock_session.credentials = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="valid-token")
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
@@ -508,6 +534,8 @@ class TestRequireToolAuth:
         mock_session_manager = AsyncMock()
         mock_session = Mock(spec=ChatSession)
         mock_session.session_id = "test-session"
+        mock_session.user_id = None
+        mock_session.metadata = {}
         mock_session.credentials = Credentials()  # Default NONE credentials
         mock_session_manager.get_session = AsyncMock(return_value=mock_session)
         mock_session_manager.add_message = AsyncMock()
