@@ -95,7 +95,7 @@ def format_conversation_summary(messages: List[Dict[str, Any]]) -> str:
         # Generate preview and calculate size
         content_len, preview = generate_message_preview(content)
 
-        summary_lines.append(f"  [{i+1}] {role} ({content_len:,} chars): {preview}")
+        summary_lines.append(f"  [{i + 1}] {role} ({content_len:,} chars): {preview}")
 
     return "\n".join(summary_lines)
 
