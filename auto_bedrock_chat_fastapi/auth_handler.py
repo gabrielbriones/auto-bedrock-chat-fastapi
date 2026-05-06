@@ -356,9 +356,14 @@ class AuthenticationHandler:
                 # Try to extract user info from response body
                 user_info = None
                 try:
-                    user_info = response.json()
-                except Exception:
-                    pass  # Response not JSON, that's okay
+                    parsed = response.json()
+                    # Validate that the response is a dict (not array/string/etc.)
+                    if isinstance(parsed, dict):
+                        user_info = parsed
+                    else:
+                        logger.warning("Verification endpoint returned non-dict JSON: %s", type(parsed).__name__)
+                except Exception as e:
+                    logger.debug("Response not JSON: %s", str(e))
 
                 logger.info(
                     f"Credential verification succeeded "

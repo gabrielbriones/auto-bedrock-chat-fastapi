@@ -7,8 +7,8 @@ Covers:
 - verify_credentials_remote returning user_info (3-tuple return type)
 - session.metadata storage with verified_user_info
 - update_session_user_id() functionality
-- metadata headers (X-User-ID, X-Tenant-ID, X-User-Display-Name, X-User-Metadata)
-- SSO verification endpoint integration
+- metadata headers (X-User-ID, X-User-Display-Name, X-User-Metadata)
+- propagation of verified user metadata to downstream requests
 - Error handling for non-JSON responses and missing fields
 """
 

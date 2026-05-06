@@ -252,9 +252,8 @@ When authenticating, the plugin can capture user-specific metadata (tenant ID, p
          ▼
 5. On every tool call, plugin injects HTTP headers:
    - X-User-ID: user-123
-   - X-Tenant-ID: tenant-456
    - X-User-Display-Name: John Doe
-   - X-User-Metadata: <base64-encoded full JSON>
+   - X-User-Metadata: <base64-encoded full JSON, including tenant_id and all verified fields>
          │
          ▼
 6. Your API receives tool calls with user context

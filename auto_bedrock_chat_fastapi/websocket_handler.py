@@ -640,13 +640,17 @@ class WebSocketChatHandler:
                 session.metadata["display_name"] = display_name
 
             logger.info(
-                f"Authentication configured for session {session.session_id}: {auth_type}, display_name={display_name}"
+                "Authentication configured for session %s: auth_type=%s, user_id=%s",
+                session.session_id,
+                auth_type,
+                session.user_id,
             )
             logger.debug(
-                "Session credentials configured for session %s: auth_type=%s, has_credentials=%s",
+                "Session credentials configured for session %s: auth_type=%s, has_credentials=%s, display_name=%s",
                 session.session_id,
                 auth_type,
                 bool(credentials),
+                display_name,
             )
 
             auth_response = {
