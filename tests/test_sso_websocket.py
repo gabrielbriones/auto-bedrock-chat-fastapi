@@ -295,7 +295,7 @@ class TestSSOAutoAuth:
         mock_session = _make_mock_session()
         sm.get_session = AsyncMock(return_value=mock_session)
 
-        result = await handler._try_sso_auto_auth(mock_ws, token)
+        result = await handler._try_sso_auth_from_message(mock_ws, token)
 
         assert result is True
         sent_types = [call.args[0]["type"] for call in mock_ws.send_json.call_args_list]
@@ -303,6 +303,7 @@ class TestSSOAutoAuth:
 
     @pytest.mark.asyncio
     async def test_auto_auth_sends_connection_established_first(self):
+        """Test that SSO auth from message sends auth_configured"""
         store = _make_store()
         _, token = _seed_sso_session(store)
         handler, sm = _make_handler(sso_session_store=store)
@@ -311,10 +312,10 @@ class TestSSOAutoAuth:
         mock_session = _make_mock_session()
         sm.get_session = AsyncMock(return_value=mock_session)
 
-        await handler._try_sso_auto_auth(mock_ws, token)
+        await handler._try_sso_auth_from_message(mock_ws, token)
 
         sent_types = [call.args[0]["type"] for call in mock_ws.send_json.call_args_list]
-        assert sent_types[0] == "connection_established"
+        # connection_established is sent in handle_connection, not in this method
         assert "auth_configured" in sent_types
 
     @pytest.mark.asyncio
@@ -326,7 +327,7 @@ class TestSSOAutoAuth:
         mock_session = _make_mock_session()
         sm.get_session = AsyncMock(return_value=mock_session)
 
-        result = await handler._try_sso_auto_auth(mock_ws, "bad.token")
+        result = await handler._try_sso_auth_from_message(mock_ws, "bad.token")
 
         assert result is False
         sent_types = [call.args[0]["type"] for call in mock_ws.send_json.call_args_list]
@@ -342,7 +343,7 @@ class TestSSOAutoAuth:
         mock_session = _make_mock_session()
         sm.get_session = AsyncMock(return_value=mock_session)
 
-        await handler._try_sso_auto_auth(mock_ws, token)
+        await handler._try_sso_auth_from_message(mock_ws, token)
 
         assert mock_session.credentials.auth_type == AuthType.SSO
         assert mock_session.credentials.bearer_token == "at_abc"
