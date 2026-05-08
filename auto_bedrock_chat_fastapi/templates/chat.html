@@ -79,6 +79,7 @@
             defaultAuthType: {{ default_auth_type | tojson }},
             modelId: {{ model_id | tojson }},
             presetPrompts: {{ preset_prompts | tojson }},
+            variables: {{ preset_variables | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
