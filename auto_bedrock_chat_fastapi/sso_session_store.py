@@ -5,7 +5,8 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,6 @@ class SSOSessionStore:
                 algorithms=[_SESSION_TOKEN_ALGORITHM],
             )
             return claims.get("session_id")
-        except JWTError as exc:
+        except PyJWTError as exc:
             logger.debug("Session token validation failed: %s", exc)
             return None

@@ -2,13 +2,16 @@
 
 import base64
 import hashlib
+import hmac
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urlencode
 
 import httpx
-from jose import ExpiredSignatureError, JWTError, jwk, jwt
+import jwt
+from jwt import ExpiredSignatureError, PyJWK
+from jwt.exceptions import PyJWTError
 
 if TYPE_CHECKING:
     from .config import ChatConfig
@@ -306,6 +309,24 @@ class SSOProvider:
         }
     )
 
+    # Map JWS algorithm -> hash function for OIDC ``at_hash`` computation
+    # (per OIDC Core 1.0 §3.1.3.6).  Defined as a class constant to avoid
+    # rebuilding the dict on every ``_compute_at_hash`` call.
+    _AT_HASH_ALG_MAP = {
+        "RS256": hashlib.sha256,
+        "ES256": hashlib.sha256,
+        "PS256": hashlib.sha256,
+        "HS256": hashlib.sha256,
+        "RS384": hashlib.sha384,
+        "ES384": hashlib.sha384,
+        "PS384": hashlib.sha384,
+        "HS384": hashlib.sha384,
+        "RS512": hashlib.sha512,
+        "ES512": hashlib.sha512,
+        "PS512": hashlib.sha512,
+        "HS512": hashlib.sha512,
+    }
+
     async def validate_id_token(self, id_token: str, access_token: Optional[str] = None) -> Dict[str, Any]:
         """Validate the ID token JWT signature and standard claims.
 
@@ -334,7 +355,7 @@ class SSOProvider:
         # Decode header to find the key ID
         try:
             unverified_header = jwt.get_unverified_header(id_token)
-        except JWTError as exc:
+        except PyJWTError as exc:
             raise SSOValidationError(f"Cannot read ID token header: {exc}") from exc
 
         kid = unverified_header.get("kid")
@@ -358,9 +379,9 @@ class SSOProvider:
                 f"Unsupported JWT algorithm {alg!r}. " f"Allowed: {sorted(self._ALLOWED_ALGORITHMS)}"
             )
 
-        # Build the public key object
+        # Build the public key object from the JWK dict
         try:
-            public_key = jwk.construct(matching_key, algorithm=alg)
+            public_key = PyJWK(matching_key, algorithm=alg).key
         except Exception as exc:
             raise SSOValidationError(f"Failed to construct public key from JWKS: {exc}") from exc
 
@@ -371,16 +392,38 @@ class SSOProvider:
         }
         if self._issuer:
             decode_kwargs["issuer"] = self._issuer
-        if access_token:
-            decode_kwargs["access_token"] = access_token
         try:
             claims = jwt.decode(id_token, public_key, **decode_kwargs)
         except ExpiredSignatureError as exc:
             raise SSOValidationError("ID token has expired.") from exc
-        except JWTError as exc:
+        except PyJWTError as exc:
             raise SSOValidationError(f"ID token validation failed: {exc}") from exc
 
+        # Optional ``at_hash`` validation (OIDC Core 1.0 §3.1.3.6).
+        # PyJWT does not validate ``at_hash`` natively, so we replicate the
+        # behaviour python-jose provided: take the leftmost half of the hash
+        # of the access_token (using the hash function paired with ``alg``)
+        # and compare with the ``at_hash`` claim, base64url-encoded without
+        # padding.
+        if access_token and "at_hash" in claims:
+            expected_at_hash = self._compute_at_hash(access_token, alg)
+            # Use constant-time comparison to avoid timing side-channels.
+            if not hmac.compare_digest(expected_at_hash, str(claims["at_hash"])):
+                raise SSOValidationError("ID token at_hash does not match access_token.")
+
         return claims
+
+    @staticmethod
+    def _compute_at_hash(access_token: str, alg: str) -> str:
+        """Compute the OIDC ``at_hash`` value for *access_token* under *alg*."""
+        hasher = SSOProvider._AT_HASH_ALG_MAP.get(alg, hashlib.sha256)
+        # Encode as UTF-8 to avoid UnicodeEncodeError on tokens that contain
+        # non-ASCII characters; the JWS spec allows the access_token octets
+        # to be any valid string, so ASCII-only encoding is too strict.
+        digest = hasher(access_token.encode("utf-8")).digest()
+        # Leftmost half
+        left_half = digest[: len(digest) // 2]
+        return base64.urlsafe_b64encode(left_half).rstrip(b"=").decode("ascii")
 
     async def _fetch_jwks(self) -> Dict[str, Any]:
         """Fetch the JWKS document from the IdP.
