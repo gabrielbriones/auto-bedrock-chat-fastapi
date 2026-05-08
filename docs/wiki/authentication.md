@@ -398,9 +398,154 @@ This provides visual confirmation of who is authenticated in the session.
 
 ---
 
+## Including Auth Info in LLM Prompts
+
+You can optionally include authenticated user metadata in the system prompt, allowing the LLM to answer identity questions like "who am I?" or personalize responses based on user attributes.
+
+### Configuration
+
+```python
+add_bedrock_chat(
+    app,
+    enable_tool_auth=True,
+    auth_verification_endpoint="/api/v1/auth/verify",
+    include_auth_info_in_prompts=True,  # Enable auth info in prompts
+)
+```
+
+Or via environment variable:
+
+```bash
+BEDROCK_ENABLE_TOOL_AUTH=true
+BEDROCK_AUTH_VERIFICATION_ENDPOINT=http://localhost:8000/api/v1/auth/verify
+BEDROCK_INCLUDE_AUTH_INFO_IN_PROMPTS=true
+```
+
+### How It Works
+
+When `include_auth_info_in_prompts` is enabled:
+
+1. User authenticates (OAuth2, Bearer Token, SSO, etc.)
+2. Verification endpoint returns user metadata (user_id, name, email, department, roles, etc.)
+3. Metadata is stored in `session.metadata["verified_user_info"]`
+4. **On each chat message**, the user info is formatted and prepended to the system prompt
+5. LLM receives context about the authenticated user
+6. User can now ask "who am I?" and get personalized responses
+
+### Example Interaction
+
+**User authenticates with:**
+
+```json
+{
+  "user_id": "alice@example.com",
+  "name": "Alice Johnson",
+  "department": "Engineering",
+  "role": "Senior Developer",
+  "team": "Platform"
+}
+```
+
+**User asks:** "Who am I?"
+
+**LLM responds:** "You are Alice Johnson, a Senior Developer in the Engineering department, part of the Platform team."
+
+**User asks:** "What department am I in?"
+
+**LLM responds:** "You are in the Engineering department."
+
+### System Prompt Format
+
+The plugin formats user info into a structured context block that's invisible to the user:
+
+```
+AUTHENTICATED USER CONTEXT:
+============================================================
+You are currently interacting with an authenticated user.
+The following information is available about this user:
+
+  user_id: alice@example.com
+  name: Alice Johnson
+  department: Engineering
+  role: Senior Developer
+  team: Platform
+
+INSTRUCTIONS:
+- This information is provided for context only - the user cannot see it
+- Use this information to personalize your responses when appropriate
+- If the user asks 'who am I?' or similar identity questions, use this context
+- Respect user privacy - only share information when directly asked
+- Be natural and conversational when using this information
+============================================================
+
+[Your system prompt continues here...]
+```
+
+### What Gets Included
+
+The plugin includes only simple field types from the verification endpoint response:
+
+- ✅ **Strings** — `name`, `email`, `user_id`, `department`
+- ✅ **Numbers** — `employee_id`, `age`, `years_of_service`
+- ✅ **Booleans** — `is_admin`, `is_active`, `verified`
+- ✅ **String lists** — `roles: ["admin", "editor"]` → `roles: admin, editor`
+- ❌ **Nested objects** — `{"address": {"city": "..."}}` (skipped for simplicity)
+- ❌ **Complex lists** — `[{"permission": "read"}, ...]` (skipped)
+
+This ensures the prompt stays clean and readable for the LLM.
+
+### Privacy Considerations
+
+**Important:** This feature exposes user metadata to the LLM (Amazon Bedrock). Before enabling:
+
+- Review what data your verification endpoint returns
+- Consider removing sensitive fields (SSN, passwords, tokens) from the response
+- Understand your LLM provider's data handling policies
+- Comply with GDPR, CCPA, and other privacy regulations
+- Document what user data is sent to the LLM
+
+### Combining with RAG
+
+Auth info works seamlessly alongside RAG (Retrieval-Augmented Generation):
+
+```python
+add_bedrock_chat(
+    app,
+    enable_rag=True,  # Knowledge base context
+    include_auth_info_in_prompts=True,  # User context
+    auth_verification_endpoint="/api/v1/auth/verify",
+)
+```
+
+The system prompt will include both:
+
+1. **Knowledge Base Context** — relevant documents/chunks
+2. **User Context** — authenticated user metadata
+3. **Base System Prompt** — your application instructions
+
+All three are combined into a single enhanced system message.
+
+### When to Use This Feature
+
+✅ **Good use cases:**
+
+- Internal tools where the LLM should know who's asking
+- Personalized recommendations based on user role/department
+- Context-aware responses ("as an admin, you can...")
+- Identity verification workflows
+
+❌ **Not recommended when:**
+
+- User metadata contains PII you don't want to send to LLM provider
+- Multi-tenant system where cross-tenant data leakage is a concern
+- Compliance prevents sending user data to third-party LLMs
+- You want the LLM to remain user-agnostic
+
+---
+
 ## See Also
 
 - [SSO (Single Sign-On)](sso.md) — OAuth2/OIDC SSO for automatic authentication via Identity Providers
 - [FastAPI Plugin Integration](fastapi-plugin.md)
 - [WebSocket Client](websocket-client.md) — client script with all auth examples
-- [Configuration](configuration.md) — `enable_tool_auth`, `supported_auth_types`
+- [Configuration](configuration.md) — `enable_tool_auth`, `supported_auth_types`, `include_auth_info_in_prompts`

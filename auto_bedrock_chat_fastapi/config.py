@@ -399,6 +399,19 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    include_auth_info_in_prompts: bool = Field(
+        default=False,
+        alias="BEDROCK_INCLUDE_AUTH_INFO_IN_PROMPTS",
+        description=(
+            "Include authenticated user information in the system prompt. "
+            "When enabled and a verification endpoint is configured, user metadata returned by "
+            "the verification endpoint (stored in session.metadata['verified_user_info']) is "
+            "appended to the system prompt. This allows the LLM to answer queries like 'who am I?' "
+            "with context about the authenticated user. Only works when auth_verification_endpoint "
+            "is configured and returns user information."
+        ),
+    )
+
     # SSO Configuration
     sso_enabled: bool = Field(
         default=False,
