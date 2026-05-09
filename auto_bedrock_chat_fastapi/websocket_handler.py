@@ -282,7 +282,7 @@ class WebSocketChatHandler:
                 verified_user_info = session.metadata.get("verified_user_info")
                 if verified_user_info:
                     auth_context_text = self._format_auth_context(verified_user_info)
-                    logger.info("Including authenticated user info in system prompt")
+                    logger.debug("Including authenticated user info in system prompt")
 
             # Inject KB context and/or auth context into system message if available
             if kb_context_text or auth_context_text:
@@ -303,7 +303,7 @@ class WebSocketChatHandler:
 
                 if kb_context_text:
                     logger.debug(
-                        f"Enhanced system prompt with KB context (first 500 chars):\n{enhanced_system_prompt[:500]}..."
+                        f"KB context added to enhanced system prompt (first 500 chars):\n{enhanced_system_prompt[:500]}..."
                     )
 
                 # Add enhanced system message to the beginning of message_dicts
@@ -1104,12 +1104,12 @@ class WebSocketChatHandler:
 
         return "\n".join(context_parts)
 
-    def _format_auth_context(self, user_info: Dict[str, Any]) -> str:
+    def _format_auth_context(self, user_info: Optional[Dict[str, Any]]) -> str:
         """
         Format authenticated user information for inclusion in system prompt.
 
         Args:
-            user_info: User metadata from verification endpoint
+            user_info: User metadata from verification endpoint (or None if not available)
 
         Returns:
             Formatted string with user context
