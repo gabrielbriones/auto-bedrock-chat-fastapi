@@ -276,16 +276,35 @@ class WebSocketChatHandler:
                     logger.debug(f"RAG: KB context length: {len(kb_context_text)} chars")
                     logger.debug(f"RAG: KB context preview (first 300 chars):\n{kb_context_text[:300]}...")
 
-            # Inject KB context into system message if available
-            if kb_context_text:
+            # Auth Info: Include verified user info if enabled
+            auth_context_text = None
+            if self.config.include_auth_info_in_prompts:
+                verified_user_info = session.metadata.get("verified_user_info")
+                if verified_user_info:
+                    auth_context_text = self._format_auth_context(verified_user_info)
+                    logger.debug("Including authenticated user info in system prompt")
+
+            # Inject KB context and/or auth context into system message if available
+            if kb_context_text or auth_context_text:
                 # Get the base system prompt
                 base_system_prompt = self.config.get_system_prompt()
-                # Prepend KB context to system prompt
-                enhanced_system_prompt = f"{kb_context_text}\n\n{base_system_prompt}"
-                logger.debug(f"RAG: Final system prompt length: {len(enhanced_system_prompt)} chars")
-                logger.debug(
-                    f"RAG: System prompt with KB context (first 500 chars):\n{enhanced_system_prompt[:500]}..."
-                )
+
+                # Build enhanced system prompt with available context
+                context_parts = []
+                if kb_context_text:
+                    context_parts.append(kb_context_text)
+                if auth_context_text:
+                    context_parts.append(auth_context_text)
+
+                # Combine contexts and base prompt
+                enhanced_system_prompt = "\n\n".join(context_parts + [base_system_prompt])
+
+                logger.debug(f"Enhanced system prompt length: {len(enhanced_system_prompt)} chars")
+
+                if kb_context_text:
+                    logger.debug(
+                        f"KB context added to enhanced system prompt (first 500 chars):\n{enhanced_system_prompt[:500]}..."
+                    )
 
                 # Add enhanced system message to the beginning of message_dicts
                 # First, remove any existing system messages
@@ -1081,6 +1100,42 @@ class WebSocketChatHandler:
         )
         context_parts.append("- If the context is not relevant to the question, answer from your general knowledge")
         context_parts.append("- Always be accurate and acknowledge if you're unsure")
+        context_parts.append("=" * 60)
+
+        return "\n".join(context_parts)
+
+    def _format_auth_context(self, user_info: Optional[Dict[str, Any]]) -> str:
+        """
+        Format authenticated user information for inclusion in system prompt.
+
+        Args:
+            user_info: User metadata from verification endpoint (or None if not available)
+
+        Returns:
+            Formatted string with user context
+        """
+        if not user_info:
+            return ""
+
+        context_parts = ["AUTHENTICATED USER CONTEXT:"]
+        context_parts.append("=" * 60)
+        context_parts.append("You are currently interacting with an authenticated user.")
+        context_parts.append("The following information is available about this user:\n")
+
+        # Format user info as key-value pairs
+        for key, value in user_info.items():
+            # Skip complex nested structures, only include simple values
+            if isinstance(value, (str, int, float, bool)):
+                context_parts.append(f"  {key}: {value}")
+            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+                context_parts.append(f"  {key}: {', '.join(value)}")
+
+        context_parts.append("\nINSTRUCTIONS:")
+        context_parts.append("- This information is provided for context only - the user cannot see it")
+        context_parts.append("- Use this information to personalize your responses when appropriate")
+        context_parts.append("- If the user asks 'who am I?' or similar identity questions, use this context")
+        context_parts.append("- Respect user privacy - only share information when directly asked")
+        context_parts.append("- Be natural and conversational when using this information")
         context_parts.append("=" * 60)
 
         return "\n".join(context_parts)
