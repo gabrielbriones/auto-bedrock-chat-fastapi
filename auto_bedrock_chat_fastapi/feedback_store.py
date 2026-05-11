@@ -45,10 +45,10 @@ class FeedbackAuthorizer(Protocol):
 
 
 class AuthenticatedUserAuthorizer:
-    """Default :class:`FeedbackAuthorizer` — any non-empty ``user_id`` passes."""
+    """Default :class:`FeedbackAuthorizer` — any non-whitespace ``user_id`` passes."""
 
     def can_submit(self, user_id: Optional[str]) -> bool:
-        return bool(user_id)
+        return bool(user_id and user_id.strip())
 
 
 def _import_psycopg_async() -> Tuple[Any, Any, Any]:
@@ -231,15 +231,20 @@ class FeedbackStore:
         return await self._fetch_all(sql, (ReviewStatus.PENDING_REVIEW.value, limit, offset))
 
     async def list_by_tags(self, tags: Sequence[str]) -> List[FeedbackEntry]:
-        """Return entries whose ``reviewer_tags`` overlap with ``tags``."""
-        if not tags:
+        """Return entries whose ``reviewer_tags`` overlap with ``tags``.
+
+        Caller-supplied tags are stripped and empty entries dropped; if no
+        non-empty tags remain, returns an empty list without querying.
+        """
+        normalized = [t.strip() for t in tags if t and t.strip()]
+        if not normalized:
             return []
         sql = f"""
             SELECT {_SELECT_COLS} FROM feedback
             WHERE reviewer_tags && %s::text[]
             ORDER BY created_at DESC, id ASC
         """
-        return await self._fetch_all(sql, (list(tags),))
+        return await self._fetch_all(sql, (normalized,))
 
     async def list_by_date_range(
         self,
@@ -283,7 +288,9 @@ class FeedbackStore:
         """Apply a reviewer decision and return the updated entry.
 
         ``reviewer_id`` is stripped of surrounding whitespace and must be
-        non-empty (mirrors the DB CHECK constraint).
+        non-empty (mirrors the DB CHECK constraint). ``tags`` are stripped,
+        empty entries dropped, and duplicates removed while preserving the
+        caller's order.
 
         Raises
         ------
@@ -300,6 +307,7 @@ class FeedbackStore:
         reviewer_id = (reviewer_id or "").strip()
         if not reviewer_id:
             raise ValueError("reviewer_id is required")
+        normalized_tags = list(dict.fromkeys(t.strip() for t in tags if t and t.strip()))
 
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -331,7 +339,7 @@ class FeedbackStore:
                     (
                         status.value,
                         reviewer_id,
-                        list(tags),
+                        normalized_tags,
                         comment,
                         feedback_id,
                     ),
