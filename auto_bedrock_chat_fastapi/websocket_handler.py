@@ -394,27 +394,27 @@ class WebSocketChatHandler:
                     for r in kb_results
                 ]
 
-            # Add the final AI response to history (if not a dangling tool call)
-            ai_message: Optional[ChatMessage] = None
-            if not final_response.get("tool_calls"):
-                ai_message = ChatMessage(
-                    role="assistant",
-                    content=final_response.get("content") or "",
-                    tool_calls=[],
-                    tool_results=[],
-                    metadata=response_metadata.copy(),
-                )
-                # Capture the user's preceding message so the feedback handler
-                # can recover it without scanning history.
-                ai_message.metadata["query"] = user_message
-                await self.session_manager.add_message(session.session_id, ai_message)
+            # Add the final AI response to history. Tool-call responses are
+            # persisted too (with empty content) so clients can submit
+            # feedback on them via ``message_id``.
+            ai_message = ChatMessage(
+                role="assistant",
+                content=final_response.get("content") or "",
+                tool_calls=final_response.get("tool_calls", []) or [],
+                tool_results=getattr(result, "tool_results", []) or [],
+                metadata=response_metadata.copy(),
+            )
+            # Capture the user's preceding message so the feedback handler
+            # can recover it without scanning history.
+            ai_message.metadata["query"] = user_message
+            await self.session_manager.add_message(session.session_id, ai_message)
 
             # Send response to client
             await self._send_message(
                 websocket,
                 {
                     "type": "ai_response",
-                    "message_id": ai_message.message_id if ai_message else None,
+                    "message_id": ai_message.message_id,
                     "message": final_response.get("content") or "",
                     "tool_calls": final_response.get("tool_calls", []),
                     "tool_results": result.tool_results,

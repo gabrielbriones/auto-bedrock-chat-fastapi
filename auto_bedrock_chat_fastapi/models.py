@@ -108,13 +108,20 @@ class FeedbackEntry(BaseModel):
 
     created_at: datetime = Field(default_factory=_utcnow)
 
-    @field_validator("correction_text", "user_comment", "reviewer_comment")
+    @field_validator("correction_text", "user_comment", "reviewer_comment", "reviewer_id")
     @classmethod
     def _strip_optional_text(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
         v = v.strip()
         return v or None
+
+    @field_validator("reviewer_tags")
+    @classmethod
+    def _strip_reviewer_tags(cls, v: List[str]) -> List[str]:
+        # Strip whitespace and drop empty tags so the persisted TEXT[] never
+        # contains blanks (mirrors the spirit of the DB CHECK constraints).
+        return [t.strip() for t in v if t and t.strip()]
 
     @model_validator(mode="after")
     def _validate_rating_payload(self) -> "FeedbackEntry":

@@ -83,6 +83,36 @@ def test_optional_text_fields_stripped_to_none():
     assert e.correction_text == "fix me"
 
 
+def test_reviewer_id_whitespace_rejected_for_decided_status():
+    """C7: reviewer_id is stripped; whitespace-only on a decided status fails."""
+    from datetime import datetime, timezone
+
+    with pytest.raises(ValidationError, match="reviewer_id"):
+        _entry(
+            review_status=ReviewStatus.APPROVED,
+            reviewer_id="   ",
+            reviewed_at=datetime.now(timezone.utc),
+        )
+
+
+def test_reviewer_id_stripped_to_value():
+    """C7: surrounding whitespace is trimmed."""
+    from datetime import datetime, timezone
+
+    e = _entry(
+        review_status=ReviewStatus.APPROVED,
+        reviewer_id="  alice  ",
+        reviewed_at=datetime.now(timezone.utc),
+    )
+    assert e.reviewer_id == "alice"
+
+
+def test_reviewer_tags_stripped_and_blanks_dropped():
+    """C7: reviewer_tags entries are stripped and empty/whitespace tags removed."""
+    e = _entry(reviewer_tags=["  bug ", "", "   ", "regression"])
+    assert e.reviewer_tags == ["bug", "regression"]
+
+
 # ---------------------------------------------------------------------------
 # Status-transition table
 # ---------------------------------------------------------------------------
@@ -394,3 +424,79 @@ async def test_startup_open_feedback_store_happy_path():
     store.close.assert_not_awaited()
     assert plugin._feedback_store is store
     assert plugin.websocket_handler.feedback_store is store
+
+
+# ---------------------------------------------------------------------------
+# C6: feedback for tool-call assistant messages
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_feedback_succeeds_for_tool_call_message(handler_factory):
+    """C6: tool-call assistant turns must be feedback-able via message_id."""
+    h = handler_factory()
+    sess = ChatSession(session_id="s1", websocket=MagicMock(), user_id="u1")
+    ai = ChatMessage(
+        role="assistant",
+        content="",  # tool-call turns may have empty content
+        tool_calls=[{"id": "t1", "name": "lookup", "input": {}}],
+        tool_results=[{"tool_use_id": "t1", "content": "ok"}],
+        metadata={
+            "query": "search docs",
+            "kb_sources": [],
+            "model_id": "anthropic.claude-test",
+        },
+    )
+    sess.conversation_history = [ai]
+    h.session_manager.get_session.return_value = sess
+    h.session_manager.get_conversation_history.return_value = [ai]
+
+    persisted = _entry(id=uuid4())
+    h.feedback_store.create.return_value = persisted
+
+    await h._handle_feedback_message(
+        MagicMock(),
+        {"message_id": ai.message_id, "rating": "positive"},
+    )
+
+    assert h.feedback_store.create.await_count == 1
+    assert h._sent[0]["type"] == "feedback_ack"
+
+
+# ---------------------------------------------------------------------------
+# C9: update_review rejects whitespace-only reviewer_id without DB round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_review_rejects_whitespace_reviewer_id():
+    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+
+    store = FeedbackStore.__new__(FeedbackStore)
+    store._pool = MagicMock()  # must not be touched
+    with pytest.raises(ValueError, match="reviewer_id is required"):
+        await store.update_review(
+            uuid4(),
+            ReviewStatus.APPROVED,
+            reviewer_id="   ",
+            tags=[],
+            comment=None,
+        )
+    store._pool.connection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_review_rejects_empty_reviewer_id():
+    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+
+    store = FeedbackStore.__new__(FeedbackStore)
+    store._pool = MagicMock()
+    with pytest.raises(ValueError, match="reviewer_id is required"):
+        await store.update_review(
+            uuid4(),
+            ReviewStatus.REJECTED,
+            reviewer_id="",
+            tags=[],
+            comment=None,
+        )
+    store._pool.connection.assert_not_called()

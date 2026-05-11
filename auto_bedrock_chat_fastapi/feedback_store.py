@@ -225,7 +225,7 @@ class FeedbackStore:
         sql = f"""
             SELECT {_SELECT_COLS} FROM feedback
             WHERE review_status = %s
-            ORDER BY created_at ASC
+            ORDER BY created_at ASC, id ASC
             LIMIT %s OFFSET %s
         """
         return await self._fetch_all(sql, (ReviewStatus.PENDING_REVIEW.value, limit, offset))
@@ -237,7 +237,7 @@ class FeedbackStore:
         sql = f"""
             SELECT {_SELECT_COLS} FROM feedback
             WHERE reviewer_tags && %s::text[]
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id ASC
         """
         return await self._fetch_all(sql, (list(tags),))
 
@@ -267,7 +267,7 @@ class FeedbackStore:
         sql = f"""
             SELECT {_SELECT_COLS} FROM feedback
             WHERE {' AND '.join(clauses)}
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id ASC
             LIMIT %s OFFSET %s
         """
         return await self._fetch_all(sql, tuple(params))
@@ -282,15 +282,22 @@ class FeedbackStore:
     ) -> FeedbackEntry:
         """Apply a reviewer decision and return the updated entry.
 
+        ``reviewer_id`` is stripped of surrounding whitespace and must be
+        non-empty (mirrors the DB CHECK constraint).
+
         Raises
         ------
         FeedbackNotFoundError
             if no entry exists with ``feedback_id``.
         InvalidStatusTransitionError
             if the current ``review_status`` cannot transition to ``status``.
+        ValueError
+            if ``reviewer_id`` is empty / whitespace-only or ``status`` is
+            ``pending_review``.
         """
         if status == ReviewStatus.PENDING_REVIEW:
             raise InvalidStatusTransitionError("Cannot transition into 'pending_review' via update_review")
+        reviewer_id = (reviewer_id or "").strip()
         if not reviewer_id:
             raise ValueError("reviewer_id is required")
 
