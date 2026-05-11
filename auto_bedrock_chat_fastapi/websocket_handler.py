@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .chat_manager import ChatManager
@@ -518,6 +519,17 @@ class WebSocketChatHandler:
                 kb_sources_used=meta.get("kb_sources", []) or [],
                 model_id=meta.get("model_id") or self.config.model_id,
             )
+        except ValidationError as exc:
+            # Pydantic v2 ValidationError is NOT a ValueError subclass; surface
+            # a concise message rather than the full multi-error dump.
+            first = exc.errors()[0] if exc.errors() else {"loc": (), "msg": "invalid feedback payload"}
+            loc = ".".join(str(p) for p in first.get("loc", ())) or "payload"
+            await self._send_feedback_error(
+                websocket,
+                "invalid_feedback",
+                f"{loc}: {first.get('msg', 'invalid value')}",
+            )
+            return
         except ValueError as exc:
             await self._send_feedback_error(websocket, "invalid_feedback", str(exc))
             return

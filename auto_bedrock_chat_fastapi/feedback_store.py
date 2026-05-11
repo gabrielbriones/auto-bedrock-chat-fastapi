@@ -297,10 +297,10 @@ class FeedbackStore:
         FeedbackNotFoundError
             if no entry exists with ``feedback_id``.
         InvalidStatusTransitionError
-            if the current ``review_status`` cannot transition to ``status``.
+            if the current ``review_status`` cannot transition to ``status``,
+            or if ``status`` is ``pending_review``.
         ValueError
-            if ``reviewer_id`` is empty / whitespace-only or ``status`` is
-            ``pending_review``.
+            if ``reviewer_id`` is empty / whitespace-only.
         """
         if status == ReviewStatus.PENDING_REVIEW:
             raise InvalidStatusTransitionError("Cannot transition into 'pending_review' via update_review")

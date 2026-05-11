@@ -143,7 +143,14 @@ def test_decisions_can_flip():
 
 @pytest.mark.parametrize(
     "user_id,allowed",
-    [("alice", True), ("u-123", True), (None, False), ("", False)],
+    [
+        ("alice", True),
+        ("u-123", True),
+        (None, False),
+        ("", False),
+        ("   ", False),
+        ("\t\n", False),
+    ],
 )
 def test_default_authorizer(user_id, allowed):
     assert AuthenticatedUserAuthorizer().can_submit(user_id) is allowed
@@ -291,6 +298,19 @@ async def test_feedback_missing_required_fields(handler_factory):
 
     await h._handle_feedback_message(MagicMock(), {"message_id": "x"})
     assert h._sent[-1]["code"] == "invalid_feedback"
+
+
+@pytest.mark.asyncio
+async def test_feedback_score_out_of_range_caught_as_invalid(handler_factory):
+    """C13: pydantic.ValidationError must be mapped to invalid_feedback."""
+    h = handler_factory()
+    _, ai = _seed_session(h)
+    await h._handle_feedback_message(
+        MagicMock(),
+        {"message_id": ai.message_id, "rating": "positive", "score": 99},
+    )
+    assert h._sent[-1]["code"] == "invalid_feedback"
+    assert "score" in h._sent[-1]["detail"]
 
 
 @pytest.mark.asyncio
@@ -500,3 +520,112 @@ async def test_update_review_rejects_empty_reviewer_id():
             comment=None,
         )
     store._pool.connection.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# C12: list_by_tags normalizes caller-provided tags
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_by_tags_normalizes_and_skips_empty():
+    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+
+    store = FeedbackStore.__new__(FeedbackStore)
+    store._fetch_all = AsyncMock(return_value=[])
+
+    result = await store.list_by_tags([" perf ", "", "  ", "bug"])
+
+    assert result == []
+    assert store._fetch_all.await_count == 1
+    args, _ = store._fetch_all.call_args
+    # params tuple is positional arg[1]
+    assert args[1] == (["perf", "bug"],)
+
+
+@pytest.mark.asyncio
+async def test_list_by_tags_all_empty_short_circuits():
+    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+
+    store = FeedbackStore.__new__(FeedbackStore)
+    store._fetch_all = AsyncMock(return_value=[])
+
+    result = await store.list_by_tags(["", "   ", "\t"])
+
+    assert result == []
+    store._fetch_all.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# C11: update_review normalizes reviewer tags before persisting
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_review_normalizes_tags():
+    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+
+    store = FeedbackStore.__new__(FeedbackStore)
+
+    # Capture the UPDATE call's params
+    executed: list = []
+
+    fid = uuid4()
+    row = (
+        fid,
+        "sess-1",
+        "alice",
+        "q",
+        "a",
+        "positive",
+        None,
+        None,
+        None,
+        "approved",
+        "reviewer-1",
+        ["bug", "regression"],
+        None,
+        None,
+        None,
+        None,
+    )
+
+    cur = MagicMock()
+    cur.__aenter__ = AsyncMock(return_value=cur)
+    cur.__aexit__ = AsyncMock(return_value=False)
+
+    async def _execute(sql, params):
+        executed.append((sql, params))
+
+    async def _fetchone():
+        # First call returns current status; second returns RETURNING row
+        return ("pending_review",) if len(executed) == 1 else row
+
+    cur.execute = _execute
+    cur.fetchone = _fetchone
+
+    conn = MagicMock()
+    conn.__aenter__ = AsyncMock(return_value=conn)
+    conn.__aexit__ = AsyncMock(return_value=False)
+    conn.cursor = MagicMock(return_value=cur)
+    conn.commit = AsyncMock()
+
+    pool = MagicMock()
+    pool.connection = MagicMock(return_value=conn)
+    store._pool = pool
+
+    # Stub the row mapper to avoid full model construction
+    store._row_to_entry = MagicMock(return_value="ENTRY")
+
+    result = await store.update_review(
+        fid,
+        ReviewStatus.APPROVED,
+        reviewer_id="reviewer-1",
+        tags=[" bug ", "", "regression", "bug", "  "],
+        comment=None,
+    )
+
+    assert result == "ENTRY"
+    # Second execute is the UPDATE; params[2] is the normalized tags list
+    update_params = executed[1][1]
+    assert update_params[2] == ["bug", "regression"]
