@@ -69,17 +69,24 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- Mirror the Pydantic-side validation (see auto_bedrock_chat_fastapi/models.py):
-    -- correction rating requires correction_text;
+    -- correction rating requires non-empty correction_text;
     -- positive rating must not carry a correction_text;
-    -- decided review_status requires reviewer_id + reviewed_at.
+    -- decided review_status requires non-empty reviewer_id + reviewed_at.
     CONSTRAINT feedback_correction_text_required
-        CHECK (rating <> 'correction' OR correction_text IS NOT NULL),
+        CHECK (
+            rating <> 'correction'
+            OR (correction_text IS NOT NULL AND length(btrim(correction_text)) > 0)
+        ),
     CONSTRAINT feedback_positive_no_correction
         CHECK (rating <> 'positive' OR correction_text IS NULL),
     CONSTRAINT feedback_review_decision_complete
         CHECK (
             review_status = 'pending_review'
-            OR (reviewer_id IS NOT NULL AND reviewed_at IS NOT NULL)
+            OR (
+                reviewer_id IS NOT NULL
+                AND length(btrim(reviewer_id)) > 0
+                AND reviewed_at IS NOT NULL
+            )
         )
 );
 

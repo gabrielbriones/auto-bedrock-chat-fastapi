@@ -268,7 +268,28 @@ async def test_feedback_no_session_returns_error(handler_factory):
     h = handler_factory()
     h.session_manager.get_session.return_value = None
     await h._handle_feedback_message(MagicMock(), {"message_id": "x", "rating": "positive"})
-    h._send_error.assert_awaited_once()
+    # C2: missing-session uses the feedback envelope, not the legacy error one.
+    h._send_error.assert_not_awaited()
+    assert h._sent[-1]["type"] == "error"
+    assert h._sent[-1]["code"] == "feedback_unavailable"
+    assert h._sent[-1]["detail"] == "Session not found"
+
+
+@pytest.mark.asyncio
+async def test_feedback_unexpected_exception_does_not_leak_detail(handler_factory):
+    """C3: catch-all path must not echo str(exc) (could leak SQL/driver internals)."""
+    h = handler_factory()
+    _, ai = _seed_session(h)
+    h.feedback_store.create.side_effect = RuntimeError('duplicate key value violates unique constraint "feedback_pkey"')
+    await h._handle_feedback_message(
+        MagicMock(),
+        {"message_id": ai.message_id, "rating": "positive"},
+    )
+    payload = h._sent[-1]
+    assert payload["code"] == "feedback_error"
+    assert payload["detail"] == "Internal error while processing feedback"
+    assert "feedback_pkey" not in payload["detail"]
+    assert h._total_errors == 1
 
 
 # ---------------------------------------------------------------------------
@@ -304,3 +325,72 @@ def test_feedback_stats_round_trip():
     dumped = s.model_dump()
     assert dumped["total"] == 3
     assert dumped["by_status"][ReviewStatus.PENDING_REVIEW] == 2
+
+
+# ---------------------------------------------------------------------------
+# Plugin startup: partial-open failure must close the pool (C1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_startup_open_feedback_store_closes_pool_on_failure():
+    """If FeedbackStore.open() raises (e.g. schema bootstrap fails after the
+    pool was opened), the plugin must explicitly close the partially-opened
+    pool — otherwise psycopg's background task and acquired connections leak.
+    """
+    from auto_bedrock_chat_fastapi.plugin import BedrockChatPlugin
+
+    plugin = BedrockChatPlugin.__new__(BedrockChatPlugin)
+    store = MagicMock()
+    store.open = AsyncMock(side_effect=RuntimeError("schema bootstrap failed"))
+    store.close = AsyncMock()
+    plugin._feedback_store = store
+    plugin.websocket_handler = MagicMock()
+    plugin.websocket_handler.feedback_store = store
+
+    await plugin._startup_open_feedback_store()
+
+    store.open.assert_awaited_once()
+    store.close.assert_awaited_once()
+    assert plugin._feedback_store is None
+    assert plugin.websocket_handler.feedback_store is None
+
+
+@pytest.mark.asyncio
+async def test_startup_open_feedback_store_swallows_close_failure():
+    """A secondary failure in close() must not mask the original disable path."""
+    from auto_bedrock_chat_fastapi.plugin import BedrockChatPlugin
+
+    plugin = BedrockChatPlugin.__new__(BedrockChatPlugin)
+    store = MagicMock()
+    store.open = AsyncMock(side_effect=RuntimeError("primary failure"))
+    store.close = AsyncMock(side_effect=RuntimeError("secondary failure"))
+    plugin._feedback_store = store
+    plugin.websocket_handler = MagicMock()
+    plugin.websocket_handler.feedback_store = store
+
+    await plugin._startup_open_feedback_store()  # must not raise
+
+    store.close.assert_awaited_once()
+    assert plugin._feedback_store is None
+    assert plugin.websocket_handler.feedback_store is None
+
+
+@pytest.mark.asyncio
+async def test_startup_open_feedback_store_happy_path():
+    from auto_bedrock_chat_fastapi.plugin import BedrockChatPlugin
+
+    plugin = BedrockChatPlugin.__new__(BedrockChatPlugin)
+    store = MagicMock()
+    store.open = AsyncMock()
+    store.close = AsyncMock()
+    plugin._feedback_store = store
+    plugin.websocket_handler = MagicMock()
+    plugin.websocket_handler.feedback_store = store
+
+    await plugin._startup_open_feedback_store()
+
+    store.open.assert_awaited_once()
+    store.close.assert_not_awaited()
+    assert plugin._feedback_store is store
+    assert plugin.websocket_handler.feedback_store is store

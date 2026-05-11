@@ -458,7 +458,7 @@ class WebSocketChatHandler:
 
         session = await self.session_manager.get_session(websocket)
         if not session:
-            await self._send_error(websocket, "Session not found")
+            await self._send_feedback_error(websocket, "feedback_unavailable", "Session not found")
             return
 
         # Authorization (stub by default; access-control task swaps in the
@@ -528,10 +528,17 @@ class WebSocketChatHandler:
             logger.warning("Feedback persistence failed: %s", exc)
             await self._send_feedback_error(websocket, "feedback_error", str(exc))
             return
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception:  # pragma: no cover - defensive
+            # Do NOT echo str(exc) to the client: psycopg/driver errors can
+            # leak SQL fragments, constraint names, table names, etc. Log the
+            # detail server-side and return a generic message.
             logger.exception("Unexpected error persisting feedback")
             self._total_errors += 1
-            await self._send_feedback_error(websocket, "feedback_error", str(exc))
+            await self._send_feedback_error(
+                websocket,
+                "feedback_error",
+                "Internal error while processing feedback",
+            )
             return
 
         await self._send_message(

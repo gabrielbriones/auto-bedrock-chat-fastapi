@@ -268,3 +268,56 @@ async def test_db_check_constraint_rejects_correction_without_text(store):
                     ("s", "u", "q", "a", "correction", "m"),
                 )
         await conn.rollback()
+
+
+@pytest.mark.asyncio
+async def test_db_check_constraint_rejects_whitespace_correction_text(store):
+    """C4: whitespace-only correction_text must be rejected at the DB layer."""
+    import psycopg
+
+    async with store._pool.connection() as conn:
+        async with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                await cur.execute(
+                    """
+                    INSERT INTO feedback (
+                        session_id, user_id, query, ai_response,
+                        rating, correction_text, model_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    ("s", "u", "q", "a", "correction", "   ", "m"),
+                )
+        await conn.rollback()
+
+
+@pytest.mark.asyncio
+async def test_db_check_constraint_rejects_whitespace_reviewer_id(store):
+    """C4: whitespace-only reviewer_id with a decided status must be rejected."""
+    from datetime import datetime, timezone
+
+    import psycopg
+
+    async with store._pool.connection() as conn:
+        async with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                await cur.execute(
+                    """
+                    INSERT INTO feedback (
+                        session_id, user_id, query, ai_response,
+                        rating, model_id,
+                        review_status, reviewer_id, reviewed_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        "s",
+                        "u",
+                        "q",
+                        "a",
+                        "positive",
+                        "m",
+                        "approved",
+                        "   ",
+                        datetime.now(timezone.utc),
+                    ),
+                )
+        await conn.rollback()

@@ -925,17 +925,34 @@ class BedrockChatPlugin:
 
             @self.app.on_event("startup")
             async def startup_open_feedback_store():
-                try:
-                    await self._feedback_store.open()
-                    logger.info("FeedbackStore connection pool opened")
-                except Exception as exc:
-                    logger.error(
-                        "Failed to open FeedbackStore pool: %s; disabling feedback collection.",
-                        exc,
-                        exc_info=True,
-                    )
-                    self._feedback_store = None
-                    self.websocket_handler.feedback_store = None
+                await self._startup_open_feedback_store()
+
+    async def _startup_open_feedback_store(self) -> None:
+        """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
+
+        ``FeedbackStore.open()`` opens the underlying ``AsyncConnectionPool``
+        before applying the schema, so a schema-bootstrap exception leaves the
+        pool open. Without an explicit ``close()`` the background reconnect
+        task and any acquired DB connections leak for the lifetime of the
+        process.
+        """
+        if self._feedback_store is None:
+            return
+        try:
+            await self._feedback_store.open()
+            logger.info("FeedbackStore connection pool opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open FeedbackStore pool: %s; disabling feedback collection.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._feedback_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened FeedbackStore pool")
+            self._feedback_store = None
+            self.websocket_handler.feedback_store = None
 
     async def shutdown(self):
         """Shutdown the Bedrock chat plugin"""

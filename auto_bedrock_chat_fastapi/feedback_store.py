@@ -161,8 +161,10 @@ class FeedbackStore:
     async def create(self, entry: FeedbackEntry) -> FeedbackEntry:
         """Insert ``entry`` and return the persisted row.
 
-        ``id`` and ``created_at`` are accepted from the entry if present
-        (useful for tests); otherwise the database defaults populate them.
+        The values already present on ``entry`` are persisted as-is,
+        including ``id`` and ``created_at``. Those fields are typically
+        pre-populated by :class:`FeedbackEntry` defaults and may be
+        overridden explicitly in tests.
         """
         sql = f"""
             INSERT INTO feedback (
