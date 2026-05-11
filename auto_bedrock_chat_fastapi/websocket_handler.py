@@ -12,8 +12,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .chat_manager import ChatManager
 from .config import ChatConfig
-from .exceptions import WebSocketError
+from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
+from .feedback_store import AuthenticatedUserAuthorizer, FeedbackAuthorizer, FeedbackStore
 from .kb_store_base import BaseKBStore
+from .models import FeedbackEntry, Rating
 from .session_manager import ChatMessage, ChatSessionManager
 from .sso_session_store import SSOSessionStore
 from .tool_manager import AuthInfo
@@ -41,6 +43,8 @@ class WebSocketChatHandler:
         app_base_url: str = "http://localhost:8000",
         sso_session_store: Optional[SSOSessionStore] = None,
         kb_store: Optional[BaseKBStore] = None,
+        feedback_store: Optional[FeedbackStore] = None,
+        feedback_authorizer: Optional[FeedbackAuthorizer] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -48,6 +52,10 @@ class WebSocketChatHandler:
         self.chat_manager = chat_manager
         self.sso_session_store = sso_session_store
         self.kb_store = kb_store
+        self.feedback_store = feedback_store
+        # Default to permissive (any authenticated user); access-control task
+        # swaps this in without touching the handler.
+        self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer()
 
         # HTTP client for making internal API calls
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
@@ -181,6 +189,8 @@ class WebSocketChatHandler:
                     await self._handle_auth_message(websocket, message_data)
                 elif message_type == "logout":
                     await self._handle_logout(websocket, message_data)
+                elif message_type == "feedback":
+                    await self._handle_feedback_message(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -365,19 +375,12 @@ class WebSocketChatHandler:
                         )
                         await self.session_manager.add_message(session.session_id, chat_msg)
 
-            # Add the final AI response to history (if not a dangling tool call)
-            if not final_response.get("tool_calls"):
-                ai_message = ChatMessage(
-                    role="assistant",
-                    content=final_response.get("content") or "",
-                    tool_calls=[],
-                    tool_results=[],
-                    metadata=final_response.get("metadata", {}),
-                )
-                await self.session_manager.add_message(session.session_id, ai_message)
-
-            # Prepare response metadata with KB info if RAG was used
+            # Build response metadata up-front so it can be persisted on the
+            # assistant ChatMessage. The feedback message handler recovers
+            # ``kb_sources_used`` and ``model_id`` from this metadata when
+            # constructing a FeedbackEntry.
             response_metadata = final_response.get("metadata", {}).copy()
+            response_metadata.setdefault("model_id", self.config.model_id)
             if kb_results:
                 response_metadata["kb_used"] = True
                 response_metadata["kb_chunks"] = len(kb_results)
@@ -391,11 +394,27 @@ class WebSocketChatHandler:
                     for r in kb_results
                 ]
 
+            # Add the final AI response to history (if not a dangling tool call)
+            ai_message: Optional[ChatMessage] = None
+            if not final_response.get("tool_calls"):
+                ai_message = ChatMessage(
+                    role="assistant",
+                    content=final_response.get("content") or "",
+                    tool_calls=[],
+                    tool_results=[],
+                    metadata=response_metadata.copy(),
+                )
+                # Capture the user's preceding message so the feedback handler
+                # can recover it without scanning history.
+                ai_message.metadata["query"] = user_message
+                await self.session_manager.add_message(session.session_id, ai_message)
+
             # Send response to client
             await self._send_message(
                 websocket,
                 {
                     "type": "ai_response",
+                    "message_id": ai_message.message_id if ai_message else None,
                     "message": final_response.get("content") or "",
                     "tool_calls": final_response.get("tool_calls", []),
                     "tool_results": result.tool_results,
@@ -424,6 +443,117 @@ class WebSocketChatHandler:
         """Handle ping message"""
 
         await self._send_message(websocket, {"type": "pong", "timestamp": datetime.now().isoformat()})
+
+    async def _handle_feedback_message(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Handle a ``feedback`` message from the chat client.
+
+        Validates the payload, recovers the original AI response context from
+        session history (keyed by ``message_id``), enforces authorization,
+        persists a :class:`FeedbackEntry` via :class:`FeedbackStore`, and
+        replies with a ``feedback_ack`` envelope.
+        """
+        if self.feedback_store is None:
+            await self._send_feedback_error(websocket, "feedback_unavailable", "Feedback collection is not enabled")
+            return
+
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return
+
+        # Authorization (stub by default; access-control task swaps in the
+        # real implementation).
+        if not self.feedback_authorizer.can_submit(session.user_id):
+            logger.info(
+                "Feedback rejected: unauthorized user_id=%s session=%s",
+                session.user_id,
+                session.session_id,
+            )
+            await self._send_feedback_error(
+                websocket,
+                "unauthorized_feedback",
+                "You are not authorized to submit feedback",
+            )
+            return
+
+        message_id = data.get("message_id")
+        rating_raw = data.get("rating")
+        if not message_id or not rating_raw:
+            await self._send_feedback_error(websocket, "invalid_feedback", "message_id and rating are required")
+            return
+
+        try:
+            rating = Rating(rating_raw)
+        except ValueError:
+            await self._send_feedback_error(websocket, "invalid_feedback", f"Unknown rating: {rating_raw!r}")
+            return
+
+        # Recover the original assistant response by message_id from session
+        # history. ``ChatMessage.metadata['query']`` was populated when the
+        # response was sent so we don't need to rescan for the user message.
+        history = await self.session_manager.get_conversation_history(session.session_id)
+        ai_message = next(
+            (m for m in history if getattr(m, "message_id", None) == message_id and m.role == "assistant"),
+            None,
+        )
+        if ai_message is None:
+            await self._send_feedback_error(
+                websocket,
+                "invalid_feedback",
+                f"No assistant message found for message_id={message_id!r}",
+            )
+            return
+
+        meta = ai_message.metadata or {}
+        try:
+            entry = FeedbackEntry(
+                session_id=session.session_id,
+                user_id=session.user_id or "",
+                query=meta.get("query", ""),
+                ai_response=ai_message.content or "",
+                rating=rating,
+                score=data.get("score"),
+                correction_text=data.get("correction_text"),
+                user_comment=data.get("user_comment"),
+                kb_sources_used=meta.get("kb_sources", []) or [],
+                model_id=meta.get("model_id") or self.config.model_id,
+            )
+        except ValueError as exc:
+            await self._send_feedback_error(websocket, "invalid_feedback", str(exc))
+            return
+
+        try:
+            persisted = await self.feedback_store.create(entry)
+        except (FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError) as exc:
+            logger.warning("Feedback persistence failed: %s", exc)
+            await self._send_feedback_error(websocket, "feedback_error", str(exc))
+            return
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Unexpected error persisting feedback")
+            self._total_errors += 1
+            await self._send_feedback_error(websocket, "feedback_error", str(exc))
+            return
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "feedback_ack",
+                "feedback_id": str(persisted.id),
+                "status": persisted.review_status.value,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _send_feedback_error(self, websocket: WebSocket, code: str, detail: str) -> None:
+        await self._send_message(
+            websocket,
+            {
+                "type": "error",
+                "code": code,
+                "detail": detail,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
 
     async def _handle_history_request(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle history request"""

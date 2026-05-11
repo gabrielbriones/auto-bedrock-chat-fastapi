@@ -608,6 +608,47 @@ class ChatConfig(BaseSettings):
         description="Connection pool size for PostgreSQL backend (default: 5).",
     )
 
+    # ------------------------------------------------------------------
+    # Feedback Storage Backend (XMGPLAT-10417)
+    # ------------------------------------------------------------------
+
+    feedback_enabled: bool = Field(
+        default=False,
+        alias="BEDROCK_FEEDBACK_ENABLED",
+        description=(
+            "Enable the feedback collection backend. When True, the plugin "
+            "instantiates a FeedbackStore and wires it into the WebSocket "
+            "handler so clients can submit 'feedback' messages."
+        ),
+    )
+
+    feedback_postgres_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_FEEDBACK_POSTGRES_URL",
+        description=(
+            "PostgreSQL connection URL for the feedback table. If unset, "
+            "falls back to BEDROCK_KB_POSTGRES_URL so a single Postgres "
+            "instance can host both the KB and feedback schemas."
+        ),
+    )
+
+    feedback_postgres_pool_size: int = Field(
+        default=5,
+        alias="BEDROCK_FEEDBACK_POSTGRES_POOL_SIZE",
+        gt=0,
+        le=100,
+        description="Async connection pool size for the feedback Postgres backend.",
+    )
+
+    feedback_init_schema: bool = Field(
+        default=True,
+        alias="BEDROCK_FEEDBACK_INIT_SCHEMA",
+        description=(
+            "Apply the feedback DDL on startup. Set False if a separate "
+            "database-provisioning task owns the schema lifecycle."
+        ),
+    )
+
     kb_embedding_dimensions: int = Field(
         default=1536,
         alias="BEDROCK_KB_EMBEDDING_DIMENSIONS",
