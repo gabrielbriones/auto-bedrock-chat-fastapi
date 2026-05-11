@@ -316,7 +316,14 @@ class ChatClient {
         // text: use validate field when present, else fall back to name convention
         if (def?.validate === 'uuid')    return UUID_RE.test(trimmed);
         if (def?.validate === 'nonempty') return trimmed.length > 0;
-        if (def?.validate)               return new RegExp(def.validate).test(trimmed);
+        if (def?.validate) {
+            try {
+                return new RegExp(def.validate).test(trimmed);
+            } catch (e) {
+                console.warn(`Invalid validate pattern for variable "${varName}":`, e);
+                return false;
+            }
+        }
 
         // backwards-compat fallback (no definition)
         if (varName.endsWith('_ID')) return UUID_RE.test(trimmed);
@@ -416,7 +423,13 @@ class ChatClient {
         for (const [name, def] of Object.entries(this._variableDefs)) {
             if (!def.detect_pattern) continue;
             if (def.input_type && def.input_type !== 'text') continue;
-            const re = new RegExp(def.detect_pattern, def.detect_flags || 'i');
+            let re;
+            try {
+                re = new RegExp(def.detect_pattern, def.detect_flags || 'i');
+            } catch (e) {
+                console.warn(`Invalid detect_pattern for variable "${name}":`, e);
+                continue;
+            }
             const match = message.match(re);
             if (match) {
                 const input = document.getElementById(`var_${name}`);
