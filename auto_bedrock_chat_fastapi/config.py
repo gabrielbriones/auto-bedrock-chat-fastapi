@@ -346,7 +346,9 @@ class ChatConfig(BaseSettings):
         description=(
             "Variable definitions for preset prompt placeholders. Each entry should have 'name' "
             "(SCREAMING_SNAKE_CASE matching {{NAME}} in templates) and optional 'label', "
-            "'input_type', 'validate', 'detect_pattern', 'placeholder', and 'default' fields."
+            "'input_type', 'validate', 'detect_pattern', 'placeholder', and 'default' fields. "
+            "When not provided, variables are automatically inferred from {{PLACEHOLDER}} patterns "
+            "found in preset prompt templates."
         ),
     )
 

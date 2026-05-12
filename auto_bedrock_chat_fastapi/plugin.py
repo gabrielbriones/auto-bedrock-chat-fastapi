@@ -219,31 +219,20 @@ class BedrockChatPlugin:
         logger.info(f"Bedrock Chat Plugin initialized with model: {self.config.model_id}")
 
     def _infer_variables_from_templates(self) -> list:
-        """Infer variable definitions from {{PLACEHOLDER}} patterns in preset prompt templates.
+        """Infer variable definitions from ``{{PLACEHOLDER}}`` patterns in preset prompt templates.
 
         Backwards-compatibility fallback when no explicit ``variables:`` section exists in the
-        YAML file.  Each unique placeholder is mapped to a definition by these rules:
-          - ``*_ID`` variables   → validate: "uuid"
-          - ``JOB_ID`` only      → validate: "uuid" + UUID detect_pattern
-          - Everything else      → validate: "nonempty"
+        YAML file.  Each unique placeholder is registered as a bare ``{"name": name}``
+        definition; the client-side ``_validateVar`` default (non-empty) applies automatically.
         """
-        _UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-        _PLACEHOLDER_RE = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+        placeholder_re = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 
+        # Collect unique placeholder names across all templates (preserving first-seen order).
         seen: dict[str, dict] = {}
         for prompt in self._preset_prompts:
-            template = prompt.get("template", "")
-            for name in _PLACEHOLDER_RE.findall(template):
-                if name in seen:
-                    continue
-                if name.endswith("_ID"):
-                    defn = {"name": name, "validate": "uuid"}
-                    if name == "JOB_ID":
-                        defn["detect_pattern"] = _UUID_PATTERN
-                        defn["detect_flags"] = "i"
-                else:
-                    defn = {"name": name, "validate": "nonempty"}
-                seen[name] = defn
+            for name in placeholder_re.findall(prompt.get("template", "")):
+                if name not in seen:
+                    seen[name] = {"name": name}
 
         return list(seen.values())
 
