@@ -180,6 +180,33 @@ class BedrockChatPlugin:
                     exc_info=True,
                 )
 
+        # Feedback store (XMGPLAT-10417). Constructed eagerly so the WebSocket
+        # handler can be wired immediately; the connection pool is opened in
+        # the FastAPI startup event below and closed during shutdown.
+        self._feedback_store = None
+        if self.config.feedback_enabled:
+            feedback_url = self.config.feedback_postgres_url or self.config.kb_postgres_url
+            if not feedback_url:
+                logger.warning(
+                    "feedback_enabled=True but neither BEDROCK_FEEDBACK_POSTGRES_URL "
+                    "nor BEDROCK_KB_POSTGRES_URL is set; feedback collection disabled."
+                )
+            else:
+                from .feedback_store import FeedbackStore
+
+                try:
+                    self._feedback_store = FeedbackStore(
+                        connection_url=feedback_url,
+                        pool_max_size=self.config.feedback_postgres_pool_size,
+                        init_schema=self.config.feedback_init_schema,
+                    )
+                except ImportError:
+                    logger.warning(
+                        "feedback_enabled=True but the [postgres] extra is not installed; "
+                        "feedback collection disabled.",
+                        exc_info=True,
+                    )
+
         self.websocket_handler = WebSocketChatHandler(
             session_manager=self.session_manager,
             config=self.config,
@@ -187,6 +214,7 @@ class BedrockChatPlugin:
             chat_manager=self.chat_manager,
             sso_session_store=self.sso_session_store,
             kb_store=self._kb_store,
+            feedback_store=self._feedback_store,
         )
 
         # Setup templates for UI
@@ -891,6 +919,41 @@ class BedrockChatPlugin:
             """Cleanup on shutdown"""
             await self.shutdown()
 
+        # Open the feedback-store connection pool on startup. Done after KB
+        # auto-population so it doesn't block KB readiness.
+        if self._feedback_store is not None:
+
+            @self.app.on_event("startup")
+            async def startup_open_feedback_store():
+                await self._startup_open_feedback_store()
+
+    async def _startup_open_feedback_store(self) -> None:
+        """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
+
+        ``FeedbackStore.open()`` opens the underlying ``AsyncConnectionPool``
+        before applying the schema, so a schema-bootstrap exception leaves the
+        pool open. Without an explicit ``close()`` the background reconnect
+        task and any acquired DB connections leak for the lifetime of the
+        process.
+        """
+        if self._feedback_store is None:
+            return
+        try:
+            await self._feedback_store.open()
+            logger.info("FeedbackStore connection pool opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open FeedbackStore pool: %s; disabling feedback collection.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._feedback_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened FeedbackStore pool")
+            self._feedback_store = None
+            self.websocket_handler.feedback_store = None
+
     async def shutdown(self):
         """Shutdown the Bedrock chat plugin"""
         try:
@@ -899,6 +962,9 @@ class BedrockChatPlugin:
             if self._kb_store is not None:
                 self._kb_store.close()
                 self._kb_store = None
+            if self._feedback_store is not None:
+                await self._feedback_store.close()
+                self._feedback_store = None
             logger.info("Bedrock chat plugin shutdown complete")
         except Exception as e:
             logger.error(f"Error during shutdown: {str(e)}")

@@ -85,3 +85,32 @@ class WebSocketError(BedrockChatError):
     """Raised when there's an issue with WebSocket communication"""
 
     pass
+
+
+# ---------------------------------------------------------------------------
+# Feedback (XMGPLAT-10417 — Feedback Storage Backend)
+# ---------------------------------------------------------------------------
+
+
+class FeedbackError(BedrockChatError):
+    """Base exception for feedback-store operations."""
+
+    pass
+
+
+class FeedbackNotFoundError(FeedbackError):
+    """Raised when a feedback entry cannot be located by id."""
+
+    pass
+
+
+class InvalidStatusTransitionError(FeedbackError):
+    """Raised when an attempted ``review_status`` change is not allowed."""
+
+    pass
+
+
+class UnauthorizedFeedbackError(FeedbackError):
+    """Raised when a user is not permitted to submit or modify feedback."""
+
+    pass

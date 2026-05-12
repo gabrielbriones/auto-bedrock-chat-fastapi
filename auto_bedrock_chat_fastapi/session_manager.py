@@ -26,10 +26,15 @@ class ChatMessage:
     tool_calls: Optional[List[Dict]] = None
     tool_results: Optional[List[Dict]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Stable identifier so clients can correlate later actions (e.g. feedback
+    # submission via the WebSocket ``feedback`` message type) with a specific
+    # assistant response. Generated server-side; echoed in outgoing payloads.
+    message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
+            "message_id": self.message_id,
             "role": self.role,
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
@@ -49,6 +54,7 @@ class ChatMessage:
             tool_calls=data.get("tool_calls"),
             tool_results=data.get("tool_results"),
             metadata=data.get("metadata", {}),
+            message_id=data.get("message_id", str(uuid.uuid4())),
         )
 
 
