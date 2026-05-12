@@ -1039,8 +1039,7 @@ def load_preset_config_from_yaml(path: str) -> Dict[str, Any]:
         import yaml
     except ImportError:  # pragma: no cover
         logger.warning(
-            "pyyaml is not installed; cannot load preset config from '%s'. "
-            "Install it with: pip install pyyaml",
+            "pyyaml is not installed; cannot load preset config from '%s'. " "Install it with: pip install pyyaml",
             path,
         )
         return {"prompts": [], "variables": []}
