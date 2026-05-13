@@ -47,12 +47,13 @@ The optional [postgres] extra is required for the Postgres backend:
 pip install "auto-bedrock-chat-fastapi[postgres]"
 ```
 
-When enabled, the FastAPI plugin opens the backend on startup (or lazily
-on first use when the host app uses Starlette `lifespan=` instead of
-`on_event`) and closes it on shutdown. If open fails (DB unreachable),
-feedback is disabled in-place and the rest of the app keeps working —
-clients that submit feedback messages receive a `feedback_unavailable`
-error rather than a crash.
+When enabled, the FastAPI plugin opens the backend on startup and closes
+it on shutdown. If the host app uses Starlette `lifespan=` instead of
+`on_event`, ensure the feedback store is explicitly opened during app
+startup, because the plugin's startup hook may not run in that setup. If
+open fails (DB unreachable), feedback is disabled in-place and the rest
+of the app keeps working — clients that submit feedback messages receive
+a `feedback_unavailable` error rather than a crash.
 
 ### Configuration reference
 
