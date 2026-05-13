@@ -543,10 +543,17 @@ class WebSocketChatHandler:
             return
 
         meta = ai_message.metadata or {}
+        # When the authorizer permits anonymous submissions (no SSO and no
+        # auth_verification_endpoint), ``session.user_id`` is ``None``. The
+        # FeedbackEntry / DB schema both require a non-empty ``user_id``, so
+        # we stamp these rows with an explicit sentinel rather than an empty
+        # string so audit/history queries can distinguish "unauthenticated"
+        # from a real user identifier.
+        effective_user_id = session.user_id or "anonymous"
         try:
             entry = FeedbackEntry(
                 session_id=session.session_id,
-                user_id=session.user_id or "",
+                user_id=effective_user_id,
                 query=meta.get("query", ""),
                 ai_response=ai_message.content or "",
                 rating=rating,

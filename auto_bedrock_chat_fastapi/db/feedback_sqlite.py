@@ -18,7 +18,7 @@ import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib import resources
 from typing import Any, Iterable, List, Optional, Sequence
 from uuid import UUID
@@ -53,16 +53,30 @@ _SELECT_COLS = ", ".join(_FEEDBACK_COLUMNS)
 
 
 def _dt_to_iso(value: Optional[datetime]) -> Optional[str]:
+    """Serialize a datetime to a UTC ISO-8601 string.
+
+    SQLite compares ``created_at`` / ``reviewed_at`` as TEXT, so lexical
+    order must match chronological order. Mixing tz-aware values with
+    different offsets (or mixing aware and naive) would break range
+    filters and ``ORDER BY`` results. We normalize to UTC and emit a
+    fixed-width ``+00:00`` suffix so every row sorts correctly.
+
+    Naive datetimes are *assumed* to be in the local timezone (matching
+    ``datetime.now()`` without ``astimezone()``) and converted to UTC
+    before formatting.
+    """
     if value is None:
         return None
-    return value.isoformat()
+    if value.tzinfo is None:
+        value = value.astimezone()  # attach local tz
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _iso_to_dt(value: Optional[str]) -> Optional[datetime]:
     if value is None:
         return None
     # ``datetime.fromisoformat`` handles the values produced by ``isoformat()``
-    # including timezone offsets across all supported Python versions.
+    # including the ``+00:00`` UTC suffix produced by ``_dt_to_iso``.
     return datetime.fromisoformat(value)
 
 

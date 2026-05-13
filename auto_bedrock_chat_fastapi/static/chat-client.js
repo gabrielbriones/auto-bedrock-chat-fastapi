@@ -711,6 +711,10 @@ class ChatClient {
         up.dataset.messageId = messageId;
         up.dataset.rating = 'positive';
         up.setAttribute('aria-label', 'Rate response helpful');
+        // Toggle semantics for assistive tech: starts unpressed and flips
+        // to ``true`` on successful submission (handled in _handlePositiveClick
+        // before the wrapper is replaced with the submitted indicator).
+        up.setAttribute('aria-pressed', 'false');
         up.textContent = '👍';
         wrapper.appendChild(up);
 
@@ -720,6 +724,11 @@ class ChatClient {
         down.dataset.messageId = messageId;
         down.dataset.rating = 'negative';
         down.setAttribute('aria-label', 'Rate response unhelpful');
+        down.setAttribute('aria-pressed', 'false');
+        // aria-expanded reflects whether the correction form is currently
+        // open. aria-controls is wired lazily when the form is built so its
+        // id is referenced only when the element actually exists in the DOM.
+        down.setAttribute('aria-expanded', 'false');
         down.textContent = '👎';
         wrapper.appendChild(down);
 
@@ -746,11 +755,16 @@ class ChatClient {
         if (this._submittedFeedback.has(messageId)) {
             return; // idempotent
         }
+        const upBtn = wrapper.querySelector('.feedback-btn-up');
         // Disable buttons immediately to prevent double-submit before the
         // round-trip completes.
         wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
             b.disabled = true;
         });
+        // Optimistic ARIA state: the thumbs-up is now the active choice.
+        if (upBtn) {
+            upBtn.setAttribute('aria-pressed', 'true');
+        }
         const ok = this._sendFeedback({ message_id: messageId, rating: 'positive' });
         if (!ok) {
             // Send failed locally (socket not open): re-enable and surface
@@ -758,6 +772,9 @@ class ChatClient {
             wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
                 b.disabled = false;
             });
+            if (upBtn) {
+                upBtn.setAttribute('aria-pressed', 'false');
+            }
             this._showInlineFeedbackError(wrapper, 'Connection unavailable. Please try again.');
             return;
         }
@@ -778,6 +795,7 @@ class ChatClient {
             return;
         }
         downBtn.classList.add('selected');
+        downBtn.setAttribute('aria-pressed', 'true');
         // Disable both buttons while the correction form is open so the user
         // cannot start a parallel positive submission mid-edit.
         wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
@@ -789,6 +807,10 @@ class ChatClient {
             staleErr.remove();
         }
         const form = this._buildCorrectionForm(messageId, wrapper, downBtn);
+        // Wire aria-expanded / aria-controls now that the form exists in the
+        // DOM and has a stable id.
+        downBtn.setAttribute('aria-expanded', 'true');
+        downBtn.setAttribute('aria-controls', form.id);
         wrapper.appendChild(form);
         const firstField = form.querySelector('textarea');
         if (firstField) {
@@ -800,6 +822,12 @@ class ChatClient {
         const form = document.createElement('div');
         form.className = 'feedback-form';
         form.dataset.messageId = messageId;
+        // Stable id so the parent ``feedback-btn-down`` can reference this
+        // form via ``aria-controls``. ``messageId`` is server-generated and
+        // safe to embed in an id.
+        form.id = `feedback-form-${messageId}`;
+        form.setAttribute('role', 'group');
+        form.setAttribute('aria-label', 'Provide correction or comment');
 
         const correctionLabel = document.createElement('label');
         correctionLabel.className = 'feedback-form-label';
@@ -859,6 +887,9 @@ class ChatClient {
         }
         if (downBtn) {
             downBtn.classList.remove('selected');
+            downBtn.setAttribute('aria-pressed', 'false');
+            downBtn.setAttribute('aria-expanded', 'false');
+            downBtn.removeAttribute('aria-controls');
         }
         // Re-enable buttons; no message was sent.
         wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
@@ -914,6 +945,10 @@ class ChatClient {
         const span = document.createElement('div');
         span.className = 'feedback-submitted';
         span.dataset.messageId = messageId;
+        // ``status`` + ``aria-live=polite`` lets screen readers announce the
+        // optimistic confirmation without stealing focus from the chat input.
+        span.setAttribute('role', 'status');
+        span.setAttribute('aria-live', 'polite');
         span.textContent = '✓ Feedback submitted';
         return span;
     }

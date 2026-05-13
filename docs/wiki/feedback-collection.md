@@ -191,7 +191,10 @@ The default `AuthenticatedUserAuthorizer` accepts any non-empty `user_id`.
 When `BEDROCK_FEEDBACK_ALLOW_ANONYMOUS=true`, the plugin constructs the
 authorizer with `allow_anonymous=True` so submissions without a resolved
 user identity are accepted (intended for local development and
-standalone deployments without SSO / auth-verification).
+standalone deployments without SSO / auth-verification). Anonymous rows
+are persisted with `user_id = "anonymous"` (sentinel) — never an empty
+string — so audit and history queries can distinguish them from real
+user identifiers.
 
 The dedicated access-control task swaps in a role/group-aware
 implementation by passing it to `WebSocketChatHandler`:
