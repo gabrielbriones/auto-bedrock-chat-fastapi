@@ -627,9 +627,16 @@ class ChatConfig(BaseSettings):
         default=False,
         alias="BEDROCK_FEEDBACK_ENABLED",
         description=(
-            "Enable the feedback collection backend. When True, the plugin "
-            "instantiates a FeedbackStore and wires it into the WebSocket "
-            "handler so clients can submit 'feedback' messages."
+            "Master switch for the feedback collection backend. When True, "
+            "the plugin calls ``db.create_feedback_store(config)`` to build "
+            "a ``BaseFeedbackStore`` implementation (SQLite or Postgres, "
+            "selected by ``feedback_storage_type``) and wires it into the "
+            "WebSocket handler so clients can submit ``feedback`` messages. "
+            "If the factory cannot construct a usable backend at runtime "
+            "(missing connection URL, missing optional dependency, etc.), "
+            "the feature is silently disabled in-place and submissions are "
+            "rejected with ``feedback_unavailable`` rather than crashing the "
+            "app."
         ),
     )
 

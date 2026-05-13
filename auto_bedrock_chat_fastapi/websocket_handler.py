@@ -544,12 +544,16 @@ class WebSocketChatHandler:
 
         meta = ai_message.metadata or {}
         # When the authorizer permits anonymous submissions (no SSO and no
-        # auth_verification_endpoint), ``session.user_id`` is ``None``. The
-        # FeedbackEntry / DB schema both require a non-empty ``user_id``, so
-        # we stamp these rows with an explicit sentinel rather than an empty
-        # string so audit/history queries can distinguish "unauthenticated"
-        # from a real user identifier.
-        effective_user_id = session.user_id or "anonymous"
+        # auth_verification_endpoint), ``session.user_id`` is ``None``. It
+        # can also be a whitespace-only string if an upstream
+        # auth-verification response surfaced a blank identifier. The
+        # FeedbackEntry / DB schema both require a non-empty ``user_id``,
+        # so we normalize first (strip + treat blank as missing) and stamp
+        # these rows with the ``"anonymous"`` sentinel rather than letting
+        # a blank value reach the DB — audit/history queries can then
+        # distinguish "unauthenticated" from a real user identifier.
+        normalized_user_id = (session.user_id or "").strip()
+        effective_user_id = normalized_user_id or "anonymous"
         try:
             entry = FeedbackEntry(
                 session_id=session.session_id,
