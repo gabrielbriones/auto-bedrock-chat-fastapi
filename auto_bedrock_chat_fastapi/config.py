@@ -633,13 +633,46 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    feedback_allow_anonymous: bool = Field(
+        default=False,
+        alias="BEDROCK_FEEDBACK_ALLOW_ANONYMOUS",
+        description=(
+            "When True, the feedback UI is rendered and submissions are "
+            "accepted even when no SSO/tool-auth user identity is available. "
+            "Intended for local development and standalone deployments where "
+            "authentication is not configured."
+        ),
+    )
+
+    feedback_storage_type: str = Field(
+        default="sqlite",
+        alias="BEDROCK_FEEDBACK_STORAGE_TYPE",
+        description=(
+            "Feedback storage backend. Valid values: 'sqlite' (default, "
+            "zero-config) or 'postgres' (requires BEDROCK_FEEDBACK_POSTGRES_URL "
+            "or BEDROCK_KB_POSTGRES_URL)."
+        ),
+    )
+
+    feedback_database_path: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_FEEDBACK_DATABASE_PATH",
+        description=(
+            "Filesystem path to the SQLite feedback database when "
+            "feedback_storage_type='sqlite'. When unset, falls back to "
+            "kb_database_path so a single SQLite file can host both KB and "
+            "feedback tables."
+        ),
+    )
+
     feedback_postgres_url: Optional[str] = Field(
         default=None,
         alias="BEDROCK_FEEDBACK_POSTGRES_URL",
         description=(
-            "PostgreSQL connection URL for the feedback table. If unset, "
-            "falls back to BEDROCK_KB_POSTGRES_URL so a single Postgres "
-            "instance can host both the KB and feedback schemas."
+            "PostgreSQL connection URL for the feedback table when "
+            "feedback_storage_type='postgres'. If unset, falls back to "
+            "BEDROCK_KB_POSTGRES_URL so a single Postgres instance can host "
+            "both the KB and feedback schemas."
         ),
     )
 

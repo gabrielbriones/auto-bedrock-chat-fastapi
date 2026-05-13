@@ -1,14 +1,14 @@
-"""Tests for KB store abstraction layer: BaseKBStore, factory, and backward compat alias."""
+"""Tests for KB store abstraction layer: BaseKBStore and factory."""
 
 import os
 import tempfile
-import warnings
 
 import numpy as np
 import pytest
 
-from auto_bedrock_chat_fastapi.kb_store_base import BaseKBStore, create_kb_store
-from auto_bedrock_chat_fastapi.vector_db import SQLiteKBStore, VectorDB
+from auto_bedrock_chat_fastapi.db import create_kb_store
+from auto_bedrock_chat_fastapi.db.kb_base import BaseKBStore
+from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
 
 # ---------------------------------------------------------------------------
 # SQLiteKBStore is a concrete BaseKBStore
@@ -44,60 +44,6 @@ class TestSQLiteKBStoreIsBaseKBStore:
             "close",
         ):
             assert hasattr(SQLiteKBStore, name), f"Missing method: {name}"
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible VectorDB alias
-# ---------------------------------------------------------------------------
-
-
-class TestVectorDBAlias:
-    """VectorDB should still work but emit a DeprecationWarning."""
-
-    def test_deprecation_warning(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db_path = tmp.name
-        try:
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                db = VectorDB(db_path)
-                assert len(w) == 1
-                assert issubclass(w[0].category, DeprecationWarning)
-                assert "VectorDB is deprecated" in str(w[0].message)
-                db.close()
-        finally:
-            os.unlink(db_path)
-
-    def test_is_instance_of_base(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db_path = tmp.name
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", DeprecationWarning)
-                db = VectorDB(db_path)
-                assert isinstance(db, BaseKBStore)
-                assert isinstance(db, SQLiteKBStore)
-                db.close()
-        finally:
-            os.unlink(db_path)
-
-    def test_functional_operations(self, sample_embedding):
-        """The alias should be fully functional."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db_path = tmp.name
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", DeprecationWarning)
-                db = VectorDB(db_path)
-
-            db.add_document(doc_id="compat-doc", content="Hello", title="Test")
-            doc = db.get_document("compat-doc")
-            assert doc is not None
-            assert doc["id"] == "compat-doc"
-
-            db.close()
-        finally:
-            os.unlink(db_path)
 
 
 # ---------------------------------------------------------------------------
@@ -148,22 +94,6 @@ class TestCreateKBStore:
         config = self._make_config(BEDROCK_KB_STORAGE_TYPE="redis")
         with pytest.raises(ValueError, match="Unknown kb_storage_type"):
             create_kb_store(config)
-
-    def test_factory_does_not_emit_deprecation(self):
-        """The factory should return SQLiteKBStore, NOT the deprecated VectorDB alias."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db_path = tmp.name
-        try:
-            config = self._make_config(KB_DATABASE_PATH=db_path)
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                store = create_kb_store(config)
-                # No DeprecationWarning should be emitted
-                dep_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-                assert len(dep_warnings) == 0
-                store.close()
-        finally:
-            os.unlink(db_path)
 
 
 # ---------------------------------------------------------------------------

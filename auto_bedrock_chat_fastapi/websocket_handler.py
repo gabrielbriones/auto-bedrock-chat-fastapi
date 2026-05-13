@@ -13,9 +13,8 @@ from pydantic import ValidationError
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .chat_manager import ChatManager
 from .config import ChatConfig
+from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, FeedbackAuthorizer
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
-from .feedback_store import AuthenticatedUserAuthorizer, FeedbackAuthorizer, FeedbackStore
-from .kb_store_base import BaseKBStore
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatMessage, ChatSessionManager
 from .sso_session_store import SSOSessionStore
@@ -44,7 +43,7 @@ class WebSocketChatHandler:
         app_base_url: str = "http://localhost:8000",
         sso_session_store: Optional[SSOSessionStore] = None,
         kb_store: Optional[BaseKBStore] = None,
-        feedback_store: Optional[FeedbackStore] = None,
+        feedback_store: Optional[BaseFeedbackStore] = None,
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
     ):
         self.session_manager = session_manager
@@ -56,7 +55,9 @@ class WebSocketChatHandler:
         self.feedback_store = feedback_store
         # Default to permissive (any authenticated user); access-control task
         # swaps this in without touching the handler.
-        self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer()
+        self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer(
+            allow_anonymous=getattr(config, "feedback_allow_anonymous", False)
+        )
 
         # HTTP client for making internal API calls
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
@@ -454,18 +455,22 @@ class WebSocketChatHandler:
         replies with a ``feedback_ack`` envelope.
         """
         if self.feedback_store is None:
+            logger.warning(
+                "Received feedback message but no FeedbackStore is configured; feedback collection is unavailable"
+            )
             await self._send_feedback_error(websocket, "feedback_unavailable", "Feedback collection is not enabled")
             return
 
         session = await self.session_manager.get_session(websocket)
         if not session:
+            logger.warning("Received feedback message but session not found for websocket %s", websocket)
             await self._send_feedback_error(websocket, "feedback_unavailable", "Session not found")
             return
 
         # Authorization (stub by default; access-control task swaps in the
         # real implementation).
         if not self.feedback_authorizer.can_submit(session.user_id):
-            logger.info(
+            logger.warning(
                 "Feedback rejected: unauthorized user_id=%s session=%s",
                 session.user_id,
                 session.session_id,
@@ -480,12 +485,14 @@ class WebSocketChatHandler:
         message_id = data.get("message_id")
         rating_raw = data.get("rating")
         if not message_id or not rating_raw:
+            logger.warning("Invalid feedback payload: missing message_id or rating (session=%s)", session.session_id)
             await self._send_feedback_error(websocket, "invalid_feedback", "message_id and rating are required")
             return
 
         try:
             rating = Rating(rating_raw)
         except ValueError:
+            logger.warning("Invalid feedback payload: unknown rating %r (session=%s)", rating_raw, session.session_id)
             await self._send_feedback_error(websocket, "invalid_feedback", f"Unknown rating: {rating_raw!r}")
             return
 
@@ -524,6 +531,7 @@ class WebSocketChatHandler:
             # a concise message rather than the full multi-error dump.
             first = exc.errors()[0] if exc.errors() else {"loc": (), "msg": "invalid feedback payload"}
             loc = ".".join(str(p) for p in first.get("loc", ())) or "payload"
+            logger.warning("Feedback payload validation error: %s (session=%s)", exc, session.session_id)
             await self._send_feedback_error(
                 websocket,
                 "invalid_feedback",
@@ -531,20 +539,27 @@ class WebSocketChatHandler:
             )
             return
         except ValueError as exc:
+            logger.warning("Feedback payload validation error: %s (session=%s)", exc, session.session_id)
             await self._send_feedback_error(websocket, "invalid_feedback", str(exc))
             return
 
         try:
             persisted = await self.feedback_store.create(entry)
+            logger.info(
+                "Feedback persisted: entry_id=%s session=%s rating=%s",
+                persisted.id,
+                session.session_id,
+                rating.value,
+            )
         except (FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError) as exc:
-            logger.warning("Feedback persistence failed: %s", exc)
+            logger.warning("Feedback persistence failed: %s (session=%s)", exc, session.session_id)
             await self._send_feedback_error(websocket, "feedback_error", str(exc))
             return
         except Exception:  # pragma: no cover - defensive
             # Do NOT echo str(exc) to the client: psycopg/driver errors can
             # leak SQL fragments, constraint names, table names, etc. Log the
             # detail server-side and return a generic message.
-            logger.exception("Unexpected error persisting feedback")
+            logger.exception("Unexpected error persisting feedback (session=%s)", session.session_id)
             self._total_errors += 1
             await self._send_feedback_error(
                 websocket,
@@ -579,6 +594,7 @@ class WebSocketChatHandler:
 
         session = await self.session_manager.get_session(websocket)
         if not session:
+            logger.warning("Session not found for websocket %s", websocket)
             await self._send_error(websocket, "Session not found")
             return
 
@@ -1149,7 +1165,7 @@ class WebSocketChatHandler:
                 vector_db = self.kb_store
                 _close_after = False
             else:
-                from .kb_store_base import create_kb_store
+                from .db import create_kb_store
 
                 vector_db = create_kb_store(self.config)
                 _close_after = True

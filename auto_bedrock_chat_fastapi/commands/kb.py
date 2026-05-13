@@ -28,7 +28,7 @@ def kb_status(config_path: Optional[str] = None, db_path: Optional[str] = None) 
     try:
         # Import here to avoid loading heavy dependencies if RAG not enabled
         from ..config import load_config
-        from ..kb_store_base import create_kb_store
+        from ..db import create_kb_store
 
         # Load configuration
         config = load_config()
@@ -151,7 +151,7 @@ async def kb_populate(
         from ..bedrock_client import BedrockClient
         from ..config import load_config
         from ..content_crawler import ContentCrawler
-        from ..kb_store_base import create_kb_store
+        from ..db import create_kb_store
 
         # Load configuration (use provided config or load from environment)
         if config is None:

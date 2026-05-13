@@ -75,7 +75,8 @@
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
-            ssoUserDisplay: {{ sso_user_display | tojson }}
+            ssoUserDisplay: {{ sso_user_display | tojson }},
+            feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }}
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

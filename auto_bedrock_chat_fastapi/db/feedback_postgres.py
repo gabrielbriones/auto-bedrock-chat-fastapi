@@ -1,12 +1,10 @@
 """
-Feedback Storage Backend (XMGPLAT-10417).
+PostgreSQL-backed feedback store (XMGPLAT-10417).
 
-This module provides :class:`FeedbackStore`, the async data-access class
-backing the user-feedback collection workflow described in the management
-proposal. Feedback entries are persisted in PostgreSQL using the schema
-defined in ``auto_bedrock_chat_fastapi/sql/feedback_schema.sql``.
+Production backend for :class:`~.feedback_base.BaseFeedbackStore`. Schema:
+``auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql``.
 
-Install the optional dependencies::
+Requires the optional ``[postgres]`` extra::
 
     pip install auto-bedrock-chat-fastapi[postgres]
 """
@@ -16,39 +14,20 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from importlib import resources
-from typing import Any, Iterable, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from .exceptions import FeedbackError, FeedbackNotFoundError, InvalidStatusTransitionError
-from .models import ALLOWED_REVIEW_TRANSITIONS, FeedbackEntry, FeedbackStats, Rating, ReviewStatus
+from ..exceptions import FeedbackError, FeedbackNotFoundError, InvalidStatusTransitionError
+from ..models import ALLOWED_REVIEW_TRANSITIONS, FeedbackEntry, FeedbackStats, Rating, ReviewStatus
+from .feedback_base import BaseFeedbackStore
 
 logger = logging.getLogger(__name__)
 
 
 _MISSING_DEPS_MSG = (
-    "FeedbackStore requires the optional PostgreSQL packages. "
+    "PostgresFeedbackStore requires the optional PostgreSQL packages. "
     "Install them with:  pip install auto-bedrock-chat-fastapi[postgres]"
 )
-
-
-class FeedbackAuthorizer(Protocol):
-    """Pluggable authorization hook for feedback submission.
-
-    The default implementation (:class:`AuthenticatedUserAuthorizer`) accepts
-    any authenticated user. The dedicated access-control task is expected to
-    swap this for a role/group-aware implementation without requiring a
-    refactor of :class:`~.websocket_handler.WebSocketChatHandler`.
-    """
-
-    def can_submit(self, user_id: Optional[str]) -> bool:
-        """Return ``True`` if ``user_id`` may submit feedback."""
-
-
-class AuthenticatedUserAuthorizer:
-    """Default :class:`FeedbackAuthorizer` — any non-whitespace ``user_id`` passes."""
-
-    def can_submit(self, user_id: Optional[str]) -> bool:
-        return bool(user_id and user_id.strip())
 
 
 def _import_psycopg_async() -> Tuple[Any, Any, Any]:
@@ -87,7 +66,7 @@ _FEEDBACK_COLUMNS: Tuple[str, ...] = (
 _SELECT_COLS = ", ".join(_FEEDBACK_COLUMNS)
 
 
-class FeedbackStore:
+class PostgresFeedbackStore(BaseFeedbackStore):
     """Async PostgreSQL-backed store for user feedback on AI responses.
 
     Parameters
@@ -102,7 +81,7 @@ class FeedbackStore:
         provisioning task owns the DDL lifecycle.
     """
 
-    SCHEMA_RESOURCE = ("auto_bedrock_chat_fastapi.sql", "feedback_schema.sql")
+    SCHEMA_RESOURCE = ("auto_bedrock_chat_fastapi.db.sql", "feedback_schema.sql")
 
     def __init__(
         self,
@@ -133,18 +112,11 @@ class FeedbackStore:
         await self._pool.open()
         if self._init_schema:
             await self._apply_schema()
-        logger.info("FeedbackStore ready (init_schema=%s)", self._init_schema)
+        logger.info("PostgresFeedbackStore ready (init_schema=%s)", self._init_schema)
 
     async def close(self) -> None:
         """Close the connection pool."""
         await self._pool.close()
-
-    async def __aenter__(self) -> "FeedbackStore":
-        await self.open()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        await self.close()
 
     async def _apply_schema(self) -> None:
         package, filename = self.SCHEMA_RESOURCE

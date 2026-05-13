@@ -1,18 +1,16 @@
 """Abstract base class for Knowledge Base storage backends.
 
-This module defines the interface that all KB storage implementations must
-follow, plus a factory function (``create_kb_store``) that instantiates the
-correct backend based on configuration.
+Concrete backends live in :mod:`auto_bedrock_chat_fastapi.db.kb_sqlite`
+and :mod:`auto_bedrock_chat_fastapi.db.kb_postgres`. Use
+:func:`auto_bedrock_chat_fastapi.db.create_kb_store` to instantiate the
+backend selected by ``ChatConfig.kb_storage_type``.
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
-
-if TYPE_CHECKING:
-    from .config import ChatConfig
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -124,66 +122,3 @@ class BaseKBStore(ABC):
     @abstractmethod
     def close(self) -> None:
         """Release resources (connections, file handles, …)."""
-
-
-# ------------------------------------------------------------------
-# Factory
-# ------------------------------------------------------------------
-
-_STORAGE_BACKENDS = {
-    "sqlite": "auto_bedrock_chat_fastapi.vector_db.SQLiteKBStore",
-    "pgvector": "auto_bedrock_chat_fastapi.pgvector_kb_store.PgVectorKBStore",
-}
-
-
-def create_kb_store(config: "ChatConfig") -> BaseKBStore:
-    """Instantiate the KB store configured by *config.kb_storage_type*.
-
-    Parameters
-    ----------
-    config:
-        Application configuration.  The factory inspects ``kb_storage_type``
-        (default ``"sqlite"``) and passes the relevant config fields to the
-        chosen backend constructor.
-
-    Returns
-    -------
-    BaseKBStore
-        A ready-to-use store instance.
-
-    Raises
-    ------
-    ValueError
-        If the requested storage type is unknown.
-    """
-    storage_type = config.kb_storage_type.lower()
-
-    if storage_type not in _STORAGE_BACKENDS:
-        raise ValueError(
-            f"Unknown kb_storage_type={storage_type!r}. " f"Valid options: {', '.join(sorted(_STORAGE_BACKENDS))}"
-        )
-
-    # Lazy-import the concrete class to avoid hard dependencies.
-    fqn = _STORAGE_BACKENDS[storage_type]
-    module_path, class_name = fqn.rsplit(".", 1)
-
-    import importlib
-
-    module = importlib.import_module(module_path)
-    cls = getattr(module, class_name)
-
-    # Construct with backend-specific args
-    if storage_type == "sqlite":
-        return cls(db_path=config.kb_database_path)
-
-    if storage_type == "pgvector":
-        if not config.kb_postgres_url:
-            raise ValueError("kb_storage_type='pgvector' requires BEDROCK_KB_POSTGRES_URL to be set.")
-        return cls(
-            connection_url=config.kb_postgres_url,
-            pool_size=config.kb_postgres_pool_size,
-            embedding_dimensions=config.kb_embedding_dimensions,
-        )
-
-    # Future backends will be handled here.
-    raise ValueError(f"No constructor logic for storage type {storage_type!r}")  # pragma: no cover

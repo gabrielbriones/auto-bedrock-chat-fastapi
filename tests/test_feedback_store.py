@@ -20,7 +20,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from auto_bedrock_chat_fastapi.feedback_store import AuthenticatedUserAuthorizer
+from auto_bedrock_chat_fastapi.db import AuthenticatedUserAuthorizer
 from auto_bedrock_chat_fastapi.models import (
     ALLOWED_REVIEW_TRANSITIONS,
     FeedbackEntry,
@@ -490,7 +490,7 @@ async def test_feedback_succeeds_for_tool_call_message(handler_factory):
 
 @pytest.mark.asyncio
 async def test_update_review_rejects_whitespace_reviewer_id():
-    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore
 
     store = FeedbackStore.__new__(FeedbackStore)
     store._pool = MagicMock()  # must not be touched
@@ -507,7 +507,7 @@ async def test_update_review_rejects_whitespace_reviewer_id():
 
 @pytest.mark.asyncio
 async def test_update_review_rejects_empty_reviewer_id():
-    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore
 
     store = FeedbackStore.__new__(FeedbackStore)
     store._pool = MagicMock()
@@ -529,7 +529,7 @@ async def test_update_review_rejects_empty_reviewer_id():
 
 @pytest.mark.asyncio
 async def test_list_by_tags_normalizes_and_skips_empty():
-    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore
 
     store = FeedbackStore.__new__(FeedbackStore)
     store._fetch_all = AsyncMock(return_value=[])
@@ -545,7 +545,7 @@ async def test_list_by_tags_normalizes_and_skips_empty():
 
 @pytest.mark.asyncio
 async def test_list_by_tags_all_empty_short_circuits():
-    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore
 
     store = FeedbackStore.__new__(FeedbackStore)
     store._fetch_all = AsyncMock(return_value=[])
@@ -563,7 +563,7 @@ async def test_list_by_tags_all_empty_short_circuits():
 
 @pytest.mark.asyncio
 async def test_update_review_normalizes_tags():
-    from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore
 
     store = FeedbackStore.__new__(FeedbackStore)
 

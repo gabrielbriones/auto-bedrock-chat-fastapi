@@ -22,6 +22,13 @@ class ChatClient {
             this._variableDefs[v.name] = v;
         });
 
+        // Feedback: track message_ids the user has already rated this session
+        // so we render the submitted indicator instead of the buttons on
+        // re-renders (history reload, etc.). Mirrored to sessionStorage so
+        // the state survives in-page re-renders within the same tab.
+        this._feedbackStorageKey = 'feedback.submitted';
+        this._submittedFeedback = this._loadSubmittedFeedback();
+
         this.setupEventListeners();
         this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
@@ -556,7 +563,15 @@ class ChatClient {
 
             case 'ai_response':
                 this.hideTypingIndicator();
-                this.addMessage('assistant', data.message, data.tool_calls, data.tool_results);
+                this.addMessage('assistant', data.message, data.tool_calls, data.tool_results, data.message_id);
+                break;
+
+            case 'feedback_ack':
+                this._handleFeedbackAck(data);
+                break;
+
+            case 'feedback_error':
+                this._handleFeedbackError(data);
                 break;
 
             case 'error':
@@ -602,7 +617,7 @@ class ChatClient {
         }
     }
 
-    addMessage(role, content, toolCalls, toolResults) {
+    addMessage(role, content, toolCalls, toolResults, messageId) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
 
@@ -662,8 +677,332 @@ class ChatClient {
         }
 
         messageDiv.appendChild(contentDiv);
+
+        // Feedback controls: server-gated, assistant-only, requires message_id
+        if (role === 'assistant'
+            && window.CONFIG
+            && window.CONFIG.feedbackEnabled === true
+            && messageId) {
+            const node = this._submittedFeedback.has(messageId)
+                ? this._buildFeedbackSubmitted(messageId)
+                : this._buildFeedbackControls(messageId);
+            if (node) {
+                messageDiv.appendChild(node);
+            }
+        }
+
         this.chatMessages.appendChild(messageDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    _buildFeedbackControls(messageId) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'feedback-controls';
+        wrapper.dataset.messageId = messageId;
+
+        const prompt = document.createElement('span');
+        prompt.className = 'feedback-prompt';
+        prompt.textContent = 'Was this response helpful?';
+        wrapper.appendChild(prompt);
+
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'feedback-btn feedback-btn-up';
+        up.dataset.messageId = messageId;
+        up.dataset.rating = 'positive';
+        up.setAttribute('aria-label', 'Rate response helpful');
+        up.textContent = '👍';
+        wrapper.appendChild(up);
+
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.className = 'feedback-btn feedback-btn-down';
+        down.dataset.messageId = messageId;
+        down.dataset.rating = 'negative';
+        down.setAttribute('aria-label', 'Rate response unhelpful');
+        down.textContent = '👎';
+        wrapper.appendChild(down);
+
+        // Event delegation: a single listener on the wrapper handles both
+        // buttons. Thumbs-down is wired by T4; here T3 owns the positive
+        // (one-click submit) path.
+        wrapper.addEventListener('click', (event) => {
+            const btn = event.target.closest('button.feedback-btn');
+            if (!btn || !wrapper.contains(btn)) {
+                return;
+            }
+            const rating = btn.dataset.rating;
+            if (rating === 'positive') {
+                this._handlePositiveClick(messageId, wrapper);
+            } else if (rating === 'negative') {
+                this._handleNegativeClick(messageId, wrapper, btn);
+            }
+        });
+
+        return wrapper;
+    }
+
+    _handlePositiveClick(messageId, wrapper) {
+        if (this._submittedFeedback.has(messageId)) {
+            return; // idempotent
+        }
+        // Disable buttons immediately to prevent double-submit before the
+        // round-trip completes.
+        wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+            b.disabled = true;
+        });
+        const ok = this._sendFeedback({ message_id: messageId, rating: 'positive' });
+        if (!ok) {
+            // Send failed locally (socket not open): re-enable and surface
+            // an inline error rather than swap to the submitted state.
+            wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+                b.disabled = false;
+            });
+            this._showInlineFeedbackError(wrapper, 'Connection unavailable. Please try again.');
+            return;
+        }
+        // Optimistic swap: mark locally and replace the controls with the
+        // submitted indicator. On feedback_error we will revert.
+        this._markFeedbackSubmitted(messageId);
+        const submitted = this._buildFeedbackSubmitted(messageId);
+        wrapper.replaceWith(submitted);
+    }
+
+    _handleNegativeClick(messageId, wrapper, downBtn) {
+        if (this._submittedFeedback.has(messageId)) {
+            return; // idempotent
+        }
+        // If a form is already open, this click is a no-op (textareas have
+        // focus management of their own).
+        if (wrapper.querySelector('.feedback-form')) {
+            return;
+        }
+        downBtn.classList.add('selected');
+        // Disable both buttons while the correction form is open so the user
+        // cannot start a parallel positive submission mid-edit.
+        wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+            b.disabled = true;
+        });
+        // Clear any stale inline error from a previous attempt.
+        const staleErr = wrapper.querySelector('.feedback-error');
+        if (staleErr) {
+            staleErr.remove();
+        }
+        const form = this._buildCorrectionForm(messageId, wrapper, downBtn);
+        wrapper.appendChild(form);
+        const firstField = form.querySelector('textarea');
+        if (firstField) {
+            firstField.focus();
+        }
+    }
+
+    _buildCorrectionForm(messageId, wrapper, downBtn) {
+        const form = document.createElement('div');
+        form.className = 'feedback-form';
+        form.dataset.messageId = messageId;
+
+        const correctionLabel = document.createElement('label');
+        correctionLabel.className = 'feedback-form-label';
+        correctionLabel.textContent = 'What should the correct answer be? (optional)';
+        const correctionId = `feedback-correction-${messageId}`;
+        correctionLabel.htmlFor = correctionId;
+        const correctionField = document.createElement('textarea');
+        correctionField.id = correctionId;
+        correctionField.name = 'correction_text';
+        correctionField.rows = 3;
+        correctionField.className = 'feedback-textarea';
+        form.appendChild(correctionLabel);
+        form.appendChild(correctionField);
+
+        const commentLabel = document.createElement('label');
+        commentLabel.className = 'feedback-form-label';
+        commentLabel.textContent = 'Additional comments (optional)';
+        const commentId = `feedback-comment-${messageId}`;
+        commentLabel.htmlFor = commentId;
+        const commentField = document.createElement('textarea');
+        commentField.id = commentId;
+        commentField.name = 'user_comment';
+        commentField.rows = 2;
+        commentField.className = 'feedback-textarea';
+        form.appendChild(commentLabel);
+        form.appendChild(commentField);
+
+        const actions = document.createElement('div');
+        actions.className = 'feedback-form-actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'feedback-form-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+            this._cancelCorrectionForm(wrapper, downBtn);
+        });
+        actions.appendChild(cancelBtn);
+
+        const submitBtn = document.createElement('button');
+        submitBtn.type = 'button';
+        submitBtn.className = 'feedback-form-submit';
+        submitBtn.textContent = 'Submit Feedback';
+        submitBtn.addEventListener('click', () => {
+            this._submitCorrectionForm(messageId, wrapper, form, submitBtn, cancelBtn);
+        });
+        actions.appendChild(submitBtn);
+
+        form.appendChild(actions);
+        return form;
+    }
+
+    _cancelCorrectionForm(wrapper, downBtn) {
+        const form = wrapper.querySelector('.feedback-form');
+        if (form) {
+            form.remove();
+        }
+        if (downBtn) {
+            downBtn.classList.remove('selected');
+        }
+        // Re-enable buttons; no message was sent.
+        wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+            b.disabled = false;
+        });
+    }
+
+    _submitCorrectionForm(messageId, wrapper, form, submitBtn, cancelBtn) {
+        if (this._submittedFeedback.has(messageId)) {
+            return; // idempotent
+        }
+        const correction = form.querySelector('textarea[name="correction_text"]').value.trim();
+        const comment = form.querySelector('textarea[name="user_comment"]').value.trim();
+        const payload = { message_id: messageId, rating: 'negative' };
+        if (correction) {
+            payload.correction_text = correction;
+        }
+        if (comment) {
+            payload.user_comment = comment;
+        }
+        // Disable submit/cancel during round-trip.
+        submitBtn.disabled = true;
+        cancelBtn.disabled = true;
+        const ok = this._sendFeedback(payload);
+        if (!ok) {
+            submitBtn.disabled = false;
+            cancelBtn.disabled = false;
+            this._showInlineFeedbackError(wrapper, 'Connection unavailable. Please try again.');
+            return;
+        }
+        // Optimistic swap: replace the entire controls+form block with the
+        // submitted indicator. feedback_error will revert (T3.3).
+        this._markFeedbackSubmitted(messageId);
+        const submitted = this._buildFeedbackSubmitted(messageId);
+        wrapper.replaceWith(submitted);
+    }
+
+    _sendFeedback(payload) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn('Cannot send feedback: WebSocket not open');
+            return false;
+        }
+        try {
+            this.ws.send(JSON.stringify({ type: 'feedback', ...payload }));
+            return true;
+        } catch (err) {
+            console.error('Failed to send feedback frame', err);
+            return false;
+        }
+    }
+
+    _buildFeedbackSubmitted(messageId) {
+        const span = document.createElement('div');
+        span.className = 'feedback-submitted';
+        span.dataset.messageId = messageId;
+        span.textContent = '✓ Feedback submitted';
+        return span;
+    }
+
+    _handleFeedbackAck(data) {
+        // Server confirmed persistence. The optimistic UI already shows
+        // the submitted indicator, so this is a no-op besides logging.
+        // Acks for unknown ids (e.g. after a tab refresh that wiped the
+        // in-memory set but where sessionStorage was cleared too) are
+        // benign and intentionally ignored.
+        const messageId = data && data.message_id;
+        if (messageId && !this._submittedFeedback.has(messageId)) {
+            console.debug('feedback_ack for unknown message_id (ignored)', data);
+            return;
+        }
+        console.debug('feedback_ack', data);
+    }
+
+    _handleFeedbackError(data) {
+        const messageId = data && data.message_id;
+        if (!messageId) {
+            console.warn('feedback_error without message_id', data);
+            return;
+        }
+        // Revert optimistic state so the user can retry.
+        this._unmarkFeedbackSubmitted(messageId);
+        const submitted = this.chatMessages.querySelector(
+            `.feedback-submitted[data-message-id="${CSS.escape(messageId)}"]`
+        );
+        if (submitted) {
+            const controls = this._buildFeedbackControls(messageId);
+            const errorMsg = (data && data.message) || 'Could not submit feedback. Please try again.';
+            this._showInlineFeedbackError(controls, errorMsg);
+            submitted.replaceWith(controls);
+        }
+    }
+
+    _showInlineFeedbackError(wrapper, message) {
+        // Remove any existing error to avoid stacking.
+        const existing = wrapper.querySelector('.feedback-error');
+        if (existing) {
+            existing.remove();
+        }
+        const err = document.createElement('span');
+        err.className = 'feedback-error';
+        err.setAttribute('role', 'alert');
+        err.textContent = message;
+        wrapper.appendChild(err);
+    }
+
+    _loadSubmittedFeedback() {
+        // Best-effort: sessionStorage may be unavailable (private mode in
+        // some browsers, sandboxed iframes). Degrade to in-memory Set.
+        try {
+            const raw = window.sessionStorage.getItem(this._feedbackStorageKey);
+            if (!raw) {
+                return new Set();
+            }
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                return new Set(parsed.filter((v) => typeof v === 'string'));
+            }
+        } catch (err) {
+            console.warn('Failed to load submitted-feedback cache; using in-memory only', err);
+        }
+        return new Set();
+    }
+
+    _persistSubmittedFeedback() {
+        try {
+            window.sessionStorage.setItem(
+                this._feedbackStorageKey,
+                JSON.stringify(Array.from(this._submittedFeedback))
+            );
+        } catch (err) {
+            // sessionStorage may throw (quota, private mode). Silently keep
+            // the in-memory state authoritative.
+            console.debug('sessionStorage write failed for submitted feedback', err);
+        }
+    }
+
+    _markFeedbackSubmitted(messageId) {
+        this._submittedFeedback.add(messageId);
+        this._persistSubmittedFeedback();
+    }
+
+    _unmarkFeedbackSubmitted(messageId) {
+        this._submittedFeedback.delete(messageId);
+        this._persistSubmittedFeedback();
     }
 
     showTypingIndicator(message = 'AI is typing...') {

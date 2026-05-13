@@ -185,7 +185,7 @@ class BedrockChatPlugin:
         # Shared KB store (created once, reused across requests)
         self._kb_store = None
         if self.config.enable_rag:
-            from .kb_store_base import create_kb_store
+            from .db import create_kb_store
 
             try:
                 self._kb_store = create_kb_store(self.config)
@@ -196,31 +196,14 @@ class BedrockChatPlugin:
                 )
 
         # Feedback store (XMGPLAT-10417). Constructed eagerly so the WebSocket
-        # handler can be wired immediately; the connection pool is opened in
-        # the FastAPI startup event below and closed during shutdown.
-        self._feedback_store = None
-        if self.config.feedback_enabled:
-            feedback_url = self.config.feedback_postgres_url or self.config.kb_postgres_url
-            if not feedback_url:
-                logger.warning(
-                    "feedback_enabled=True but neither BEDROCK_FEEDBACK_POSTGRES_URL "
-                    "nor BEDROCK_KB_POSTGRES_URL is set; feedback collection disabled."
-                )
-            else:
-                from .feedback_store import FeedbackStore
+        # handler can be wired immediately; the connection pool / SQLite file
+        # is opened in the FastAPI startup event below and closed during
+        # shutdown. Backend selection (sqlite vs postgres) and configuration
+        # validation live in the factory.
+        from .db import create_feedback_store
 
-                try:
-                    self._feedback_store = FeedbackStore(
-                        connection_url=feedback_url,
-                        pool_max_size=self.config.feedback_postgres_pool_size,
-                        init_schema=self.config.feedback_init_schema,
-                    )
-                except ImportError:
-                    logger.warning(
-                        "feedback_enabled=True but the [postgres] extra is not installed; "
-                        "feedback collection disabled.",
-                        exc_info=True,
-                    )
+        logger.debug("Checking feedback store configuration and initializing...")
+        self._feedback_store = create_feedback_store(self.config)
 
         self.websocket_handler = WebSocketChatHandler(
             session_manager=self.session_manager,
@@ -330,6 +313,7 @@ class BedrockChatPlugin:
             @self.app.get(self.config.ui_endpoint, response_class=HTMLResponse)
             async def chat_ui(request: Request):
                 """Serve chat UI"""
+                logger.info("chat_ui invoked")
 
                 if not self.templates:
                     template_dir = os.path.join(os.path.dirname(__file__), "templates")
@@ -371,6 +355,52 @@ class BedrockChatPlugin:
                                         or claims.get("cognito:username", "")
                                     )
 
+                    # Feedback rendering gate (server-side, feature-only).
+                    #
+                    # At HTTP-render time we cannot reliably know the
+                    # caller's identity: SSO is one mechanism, but tool-
+                    # auth (oauth2/api_key/…) delivers ``user_id`` via the
+                    # WebSocket ``auth`` message, not via cookies. Rather
+                    # than guess, we render the controls whenever the
+                    # feature is configured and defer per-user
+                    # authorization to the WebSocket handler, which
+                    # re-checks every submit against ``session.user_id``
+                    # via the configured :class:`FeedbackAuthorizer`.
+                    #
+                    # Hiding the UI is not a security boundary; the
+                    # authorizer in ``_handle_feedback_message`` is.
+                    #
+                    # Exception: when no mechanism that produces a
+                    # ``user_id`` is configured (no SSO and no
+                    # auth_verification_endpoint) AND anonymous feedback
+                    # is disabled, no submit can ever succeed, so we
+                    # suppress the UI to avoid showing controls that
+                    # would always error.
+                    #
+                    # Note: ``enable_tool_auth`` alone is NOT a user-
+                    # identity signal — tool-auth credentials are only
+                    # turned into ``session.metadata['verified_user_info']``
+                    # (and therefore a ``user_id``) when an
+                    # ``auth_verification_endpoint`` is configured.
+                    user_identity_available = bool(self.config.sso_enabled or self.config.auth_verification_endpoint)
+                    feedback_enabled = bool(
+                        self.config.feedback_enabled
+                        and self._feedback_store is not None
+                        and (user_identity_available or self.config.feedback_allow_anonymous)
+                    )
+                    logger.info(
+                        "Feedback UI gate resolved: feedback_enabled=%s "
+                        "(config.feedback_enabled=%s, store_present=%s, "
+                        "sso_enabled=%s, auth_verification_endpoint=%s, "
+                        "allow_anonymous=%s)",
+                        feedback_enabled,
+                        self.config.feedback_enabled,
+                        self._feedback_store is not None,
+                        self.config.sso_enabled,
+                        bool(self.config.auth_verification_endpoint),
+                        self.config.feedback_allow_anonymous,
+                    )
+
                     return self.templates.TemplateResponse(
                         request,
                         "chat.html",
@@ -390,6 +420,7 @@ class BedrockChatPlugin:
                             "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
+                            "feedback_enabled": feedback_enabled,
                         },
                     )
                 except Exception as e:
@@ -451,7 +482,7 @@ class BedrockChatPlugin:
                     # startup init was deferred (e.g. pg was unreachable).
                     vector_db = self._kb_store
                     if vector_db is None:
-                        from .kb_store_base import create_kb_store
+                        from .db import create_kb_store
 
                         vector_db = create_kb_store(self.config)
                         local_store = vector_db

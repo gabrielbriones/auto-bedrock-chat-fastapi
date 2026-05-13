@@ -39,8 +39,8 @@ if not _can_import_psycopg():
     pytestmark = pytest.mark.skip(reason="psycopg / psycopg_pool not installed")
 
 
+from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore  # noqa: E402
 from auto_bedrock_chat_fastapi.exceptions import FeedbackNotFoundError, InvalidStatusTransitionError  # noqa: E402
-from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore  # noqa: E402
 from auto_bedrock_chat_fastapi.models import FeedbackEntry, Rating, ReviewStatus  # noqa: E402
 
 

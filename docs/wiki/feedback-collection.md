@@ -11,6 +11,10 @@ WebSocket. Submissions are persisted with full provenance (original query,
 AI response, KB sources used, model id) so an expert reviewer can later
 approve, reject, and tag them.
 
+When the built-in chat UI is enabled, users see thumbs-up / thumbs-down
+buttons under each assistant message; 👎 opens an inline correction form
+(optional correction text + comment).
+
 Tracked under [XMGPLAT-10417](https://jira.devtools.intel.com/browse/XMGPLAT-10417).
 
 ---
@@ -21,33 +25,74 @@ Feedback collection is **off by default**. Enable it by setting:
 
 ```bash
 BEDROCK_FEEDBACK_ENABLED=true
+```
+
+The storage backend defaults to **SQLite** so no database setup is
+required for local development. To use Postgres in production, set:
+
+```bash
+BEDROCK_FEEDBACK_STORAGE_TYPE=postgres
 BEDROCK_FEEDBACK_POSTGRES_URL=postgresql://feedback:secret@db:5432/feedback
 ```
 
 If `BEDROCK_FEEDBACK_POSTGRES_URL` is not set, the store falls back to
 `BEDROCK_KB_POSTGRES_URL` so a single Postgres instance can host both
-schemas.
+schemas. Likewise, when `feedback_storage_type=sqlite` and
+`BEDROCK_FEEDBACK_DATABASE_PATH` is unset, the SQLite backend reuses
+`KB_DATABASE_PATH`.
 
-The optional [postgres] extra is required:
+The optional [postgres] extra is required for the Postgres backend:
 
 ```bash
 pip install "auto-bedrock-chat-fastapi[postgres]"
 ```
 
-When enabled, the FastAPI plugin opens an async connection pool on startup
-and closes it on shutdown. If the pool fails to open (DB unreachable),
-feedback is disabled in-place and the rest of the app keeps working — clients
-that submit feedback messages receive a `feedback_unavailable` error rather
-than a crash.
+When enabled, the FastAPI plugin opens the backend on startup (or lazily
+on first use when the host app uses Starlette `lifespan=` instead of
+`on_event`) and closes it on shutdown. If open fails (DB unreachable),
+feedback is disabled in-place and the rest of the app keeps working —
+clients that submit feedback messages receive a `feedback_unavailable`
+error rather than a crash.
 
 ### Configuration reference
 
-| Setting                       | Env var                               | Default | Notes                                                              |
-| ----------------------------- | ------------------------------------- | ------- | ------------------------------------------------------------------ |
-| `feedback_enabled`            | `BEDROCK_FEEDBACK_ENABLED`            | `false` | Master switch                                                      |
-| `feedback_postgres_url`       | `BEDROCK_FEEDBACK_POSTGRES_URL`       | `None`  | Falls back to `BEDROCK_KB_POSTGRES_URL`                            |
-| `feedback_postgres_pool_size` | `BEDROCK_FEEDBACK_POSTGRES_POOL_SIZE` | `5`     | Async pool max size                                                |
-| `feedback_init_schema`        | `BEDROCK_FEEDBACK_INIT_SCHEMA`        | `true`  | Set `false` if a separate provisioning task owns the DDL lifecycle |
+| Setting                       | Env var                               | Default  | Notes                                                                     |
+| ----------------------------- | ------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `feedback_enabled`            | `BEDROCK_FEEDBACK_ENABLED`            | `false`  | Master switch                                                             |
+| `feedback_allow_anonymous`    | `BEDROCK_FEEDBACK_ALLOW_ANONYMOUS`    | `false`  | Render the UI and accept submissions even without a `user_id` (dev/local) |
+| `feedback_storage_type`       | `BEDROCK_FEEDBACK_STORAGE_TYPE`       | `sqlite` | `sqlite` (zero-config) or `postgres`                                      |
+| `feedback_database_path`      | `BEDROCK_FEEDBACK_DATABASE_PATH`      | `None`   | SQLite file path; falls back to `KB_DATABASE_PATH`                        |
+| `feedback_postgres_url`       | `BEDROCK_FEEDBACK_POSTGRES_URL`       | `None`   | Falls back to `BEDROCK_KB_POSTGRES_URL`                                   |
+| `feedback_postgres_pool_size` | `BEDROCK_FEEDBACK_POSTGRES_POOL_SIZE` | `5`      | Async pool max size (Postgres only)                                       |
+| `feedback_init_schema`        | `BEDROCK_FEEDBACK_INIT_SCHEMA`        | `true`   | Set `false` if a separate provisioning task owns the DDL lifecycle        |
+
+---
+
+## UI rendering gate
+
+The built-in chat template renders rating controls only when the server
+injects `window.CONFIG.feedbackEnabled = true`. The gate is computed in
+[`plugin.py`](../../auto_bedrock_chat_fastapi/plugin.py) at every chat-UI
+request and is **feature-only** — it answers "could this deployment
+accept a feedback submission?", not "is _this user_ allowed to submit?":
+
+```
+feedbackEnabled = feedback_enabled
+               AND feedback_store_is_initialized
+               AND ( sso_enabled
+                  OR auth_verification_endpoint is set
+                  OR feedback_allow_anonymous )
+```
+
+The last clause suppresses the UI when no `user_id` can ever be produced
+(no SSO + no auth-verification endpoint) and anonymous submissions are
+disallowed, so users never see controls that would always error.
+
+> **Hiding the UI is not a security boundary.** Per-user authorization
+> is enforced at WebSocket-message time by `FeedbackAuthorizer.can_submit`
+> (see [Authorization](#authorization)). Anyone editing the rendered HTML
+> in dev tools can still send a `feedback` frame; the server will reject
+> it with `unauthorized_feedback` if the authorizer says so.
 
 ---
 
@@ -131,6 +176,11 @@ class FeedbackAuthorizer(Protocol):
 ```
 
 The default `AuthenticatedUserAuthorizer` accepts any non-empty `user_id`.
+When `BEDROCK_FEEDBACK_ALLOW_ANONYMOUS=true`, the plugin constructs the
+authorizer with `allow_anonymous=True` so submissions without a resolved
+user identity are accepted (intended for local development and
+standalone deployments without SSO / auth-verification).
+
 The dedicated access-control task swaps in a role/group-aware
 implementation by passing it to `WebSocketChatHandler`:
 
@@ -146,13 +196,15 @@ handler = WebSocketChatHandler(
 
 ## `FeedbackStore` API
 
-The async data-access class is exposed for the upcoming admin-API and
-Phase 3 synthesizer tasks:
+The async data-access classes are exposed for the upcoming admin-API and
+Phase 3 synthesizer tasks. Both backends implement the same
+[`BaseFeedbackStore`](../../auto_bedrock_chat_fastapi/db/feedback_base.py)
+interface; pick one via the factory:
 
 ```python
-from auto_bedrock_chat_fastapi.feedback_store import FeedbackStore
+from auto_bedrock_chat_fastapi.db import create_feedback_store
 
-store = FeedbackStore(connection_url="postgresql://...", pool_max_size=5)
+store = create_feedback_store(config)  # returns SQLite or Postgres impl
 async with store:
     pending = await store.list_pending(limit=20)
     await store.update_review(
@@ -163,6 +215,15 @@ async with store:
         comment="Verified",
     )
     summary = await store.stats()
+```
+
+Direct instantiation is also available:
+
+```python
+from auto_bedrock_chat_fastapi.db import SQLiteFeedbackStore, PostgresFeedbackStore
+
+sqlite_store = SQLiteFeedbackStore(db_path="data/feedback.db")
+pg_store = PostgresFeedbackStore(connection_url="postgresql://…", pool_max_size=5)
 ```
 
 | Method                                                             | Purpose                                                               |
@@ -190,11 +251,14 @@ decision is made, the entry stays in a decided state.
 
 ## Schema
 
-The DDL lives at
-[`auto_bedrock_chat_fastapi/sql/feedback_schema.sql`](../../auto_bedrock_chat_fastapi/sql/feedback_schema.sql).
-All statements are idempotent; the file can be applied directly with
-`psql -f` by the database-provisioning task or auto-bootstrapped by the
-store on startup (`feedback_init_schema=true`).
+The DDL ships in two flavors:
+
+- Postgres: [`auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql`](../../auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql)
+- SQLite: [`auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql`](../../auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql)
+
+All statements are idempotent; either file can be applied directly with
+`psql -f` / `sqlite3 < file.sql` by the database-provisioning task or
+auto-bootstrapped by the store on startup (`feedback_init_schema=true`).
 
 The schema enforces the same validation rules as the Pydantic
 [`FeedbackEntry`](../../auto_bedrock_chat_fastapi/models.py) model via
@@ -209,6 +273,18 @@ Unit tests run without a database:
 
 ```bash
 poetry run pytest tests/test_feedback_store.py -v
+```
+
+The SQLite backend has its own test suite (no external service required):
+
+```bash
+poetry run pytest tests/test_sqlite_feedback_store.py -v
+```
+
+Server-side rendering gate and WebSocket payload contract:
+
+```bash
+poetry run pytest tests/test_feedback_ui_flag.py tests/test_feedback_ws_payload_contract.py -v
 ```
 
 Integration tests against a live Postgres are gated on

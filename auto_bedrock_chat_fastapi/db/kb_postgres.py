@@ -18,7 +18,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from .kb_store_base import BaseKBStore
+from .kb_base import BaseKBStore
 
 logger = logging.getLogger(__name__)
 
