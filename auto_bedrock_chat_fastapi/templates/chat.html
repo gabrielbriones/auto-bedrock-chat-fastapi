@@ -51,17 +51,9 @@
             <span id="typingText">AI is typing...</span>
         </div>
 
-        <div class="preset-prompts" id="presetPromptsBar"></div>
+        <div class="preset-variables-section" id="presetVariablesSection"></div>
 
-        <div class="variable-panel hidden" id="variablePanel">
-            <div class="variable-panel-inputs" id="variableInputs">
-                <!-- Dynamically populated per-prompt by chat-client.js -->
-            </div>
-            <div class="variable-panel-actions">
-                <button id="varPanelSubmit">Send</button>
-                <button id="varPanelCancel">Cancel</button>
-            </div>
-        </div>
+        <div class="preset-prompts" id="presetPromptsBar"></div>
 
         <div class="chat-input">
             <textarea id="messageInput" placeholder="Type your message..." disabled rows="1"></textarea>
@@ -79,6 +71,7 @@
             defaultAuthType: {{ default_auth_type | tojson }},
             modelId: {{ model_id | tojson }},
             presetPrompts: {{ preset_prompts | tojson }},
+            variables: {{ preset_variables | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},

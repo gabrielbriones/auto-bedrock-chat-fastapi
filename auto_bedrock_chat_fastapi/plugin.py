@@ -5,6 +5,7 @@ import atexit
 import html
 import logging
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from typing import Callable, Optional
@@ -120,6 +121,7 @@ class BedrockChatPlugin:
         # Extract preset_prompts before passing to load_config so it never hits ChatConfig
         # (allows use with installed library versions that predate this field)
         self._preset_prompts = config_overrides.pop("preset_prompts", [])
+        self._preset_variables = config_overrides.pop("preset_variables", [])
         preset_prompts_file = config_overrides.pop("preset_prompts_file", None)
         self.config = config or load_config(**config_overrides)
 
@@ -132,9 +134,22 @@ class BedrockChatPlugin:
         if not self._preset_prompts:
             file_path = preset_prompts_file or self.config.preset_prompts_file
             if file_path:
-                from .config import load_preset_prompts_from_yaml
+                from .config import load_preset_config_from_yaml
 
-                self._preset_prompts = load_preset_prompts_from_yaml(file_path)
+                _preset_config = load_preset_config_from_yaml(file_path)
+                self._preset_prompts = _preset_config["prompts"]
+                if not self._preset_variables:
+                    self._preset_variables = _preset_config["variables"]
+
+        # Resolve preset variables with priority:
+        # 1. Direct override (preset_variables kwarg)
+        # 2. config.preset_variables
+        # 3. Already loaded from YAML file above
+        # 4. Infer from templates (backwards compat)
+        if not self._preset_variables:
+            self._preset_variables = self.config.preset_variables
+        if not self._preset_variables:
+            self._preset_variables = self._infer_variables_from_templates()
 
         # Setup logging configuration
         _setup_logging(self.config)
@@ -230,6 +245,24 @@ class BedrockChatPlugin:
         self._setup_shutdown()
 
         logger.info(f"Bedrock Chat Plugin initialized with model: {self.config.model_id}")
+
+    def _infer_variables_from_templates(self) -> list:
+        """Infer variable definitions from ``{{PLACEHOLDER}}`` patterns in preset prompt templates.
+
+        Backwards-compatibility fallback when no explicit ``variables:`` section exists in the
+        YAML file.  Each unique placeholder is registered as a bare ``{"name": name}``
+        definition; the client-side ``_validateVar`` default (non-empty) applies automatically.
+        """
+        placeholder_re = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+
+        # Collect unique placeholder names across all templates (preserving first-seen order).
+        seen: dict[str, dict] = {}
+        for prompt in self._preset_prompts:
+            for name in placeholder_re.findall(prompt.get("template", "")):
+                if name not in seen:
+                    seen[name] = {"name": name}
+
+        return list(seen.values())
 
     def _setup_templates(self):
         """Setup Jinja2 templates for UI and mount static files"""
@@ -352,6 +385,7 @@ class BedrockChatPlugin:
                             "ui_welcome_message": self.config.ui_welcome_message,
                             "app_title": self.app.title or "API",
                             "preset_prompts": self._preset_prompts,
+                            "preset_variables": self._preset_variables,
                             "sso_enabled": self.config.sso_enabled,
                             "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
                             "sso_authenticated": sso_authenticated,

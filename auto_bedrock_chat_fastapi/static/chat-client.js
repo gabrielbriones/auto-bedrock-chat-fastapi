@@ -15,11 +15,15 @@ class ChatClient {
         this.typingIndicator = document.getElementById('typingIndicator');
         this.typingText = document.getElementById('typingText');
 
-        this.currentPromptCache = {};       // Cache of resolved placeholder values, e.g. { JOB_ID: '...', PLATFORM: '...' }
-        this.pendingPromptTemplate = null;  // Template waiting for one or more variable values
+        // Variable definitions keyed by name, built from window.CONFIG.variables.
+        // Values live in the always-visible DOM inputs — no hidden JS cache.
+        this._variableDefs = {};
+        (window.CONFIG.variables || []).forEach(v => {
+            this._variableDefs[v.name] = v;
+        });
 
         this.setupEventListeners();
-        this._setupVariablePanel();
+        this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
@@ -108,9 +112,6 @@ class ChatClient {
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
             this._disablePresetButtons();
-            this.pendingPromptTemplate = null;
-            const variablePanel = document.getElementById('variablePanel');
-            if (variablePanel) variablePanel.classList.add('hidden');
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
@@ -154,11 +155,85 @@ class ChatClient {
         this.messageInput.disabled = false;
         this.sendButton.disabled = false;
         this._renderPresetButtons();
-        document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = false; });
+        this._updatePresetButtonStates();
     }
 
     _disablePresetButtons() {
         document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = true; });
+    }
+
+    _renderVariablesSection() {
+        const section = document.getElementById('presetVariablesSection');
+        if (!section || Object.keys(this._variableDefs).length === 0) return;
+
+        for (const [name, def] of Object.entries(this._variableDefs)) {
+            const row = document.createElement('div');
+            row.className = 'variable-input-row';
+
+            const label = document.createElement('label');
+            label.htmlFor = `var_${name}`;
+            label.textContent = def.label || this._prettifyVarName(name);
+
+            const el = this._createVariableInput(name, def);
+            const eventName = (def.input_type === 'select' || def.input_type === 'checkbox') ? 'change' : 'input';
+            el.addEventListener(eventName, () => this._updatePresetButtonStates());
+
+            row.appendChild(label);
+            row.appendChild(el);
+            section.appendChild(row);
+        }
+    }
+
+    _createVariableInput(name, def) {
+        const type = def.input_type || 'text';
+
+        if (type === 'select') {
+            const select = document.createElement('select');
+            select.id = `var_${name}`;
+            select.dataset.varName = name;
+            if (!def.default) {
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = def.placeholder || `Select ${def.label || name}…`;
+                select.appendChild(empty);
+            }
+            (def.options || []).forEach(opt => {
+                const option = document.createElement('option');
+                if (typeof opt === 'string') {
+                    option.value = opt;
+                    option.textContent = opt;
+                } else {
+                    option.value = opt.value;
+                    option.textContent = opt.label;
+                }
+                if (def.default && option.value === def.default) option.selected = true;
+                select.appendChild(option);
+            });
+            return select;
+        }
+
+        if (type === 'checkbox') {
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = `var_${name}`;
+            input.dataset.varName = name;
+            input.checked = def.default === 'true';
+            return input;
+        }
+
+        // text or number
+        const input = document.createElement('input');
+        input.type = type;
+        input.id = `var_${name}`;
+        input.dataset.varName = name;
+        if (def.placeholder) input.placeholder = def.placeholder;
+        if (def.default)     input.value = def.default;
+        if (type === 'number') {
+            if (def.min  != null) input.min  = def.min;
+            if (def.max  != null) input.max  = def.max;
+            if (def.step != null) input.step = def.step;
+        }
+        return input;
     }
 
     _renderPresetButtons() {
@@ -172,8 +247,33 @@ class ChatClient {
             btn.className = 'preset-prompt-btn';
             btn.textContent = prompt.label || 'Prompt';
             if (prompt.description) btn.title = prompt.description;
-            btn.addEventListener('click', () => this._handlePresetPrompt(prompt));
+
+            const requiredVars = this._getPlaceholders(prompt.template || '');
+            requiredVars.forEach(varName => {
+                const tag = document.createElement('span');
+                tag.className = 'preset-var-tag';
+                tag.textContent = varName;
+                btn.appendChild(tag);
+            });
+            btn.dataset.requiredVars = JSON.stringify(requiredVars);
+            btn.addEventListener('click', () => this._handlePresetClick(prompt));
             bar.appendChild(btn);
+        });
+        this._updatePresetButtonStates();
+    }
+
+    _getVarValue(varName) {
+        const el = document.getElementById(`var_${varName}`);
+        if (!el) return '';
+        const def = this._variableDefs[varName];
+        if (def && def.input_type === 'checkbox') return el.checked ? 'true' : 'false';
+        return el.value.trim();
+    }
+
+    _updatePresetButtonStates() {
+        document.querySelectorAll('.preset-prompt-btn').forEach(btn => {
+            const required = JSON.parse(btn.dataset.requiredVars || '[]');
+            btn.disabled = !required.every(name => this._validateVar(name, this._getVarValue(name)));
         });
     }
 
@@ -194,146 +294,52 @@ class ChatClient {
             .join(' ');
     }
 
-    // Validate a single placeholder value.
-    // Variables whose name ends with _ID must be valid UUIDs; others must be non-empty.
+    // Definition-driven validation.
     _validateVar(varName, value) {
-        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (varName.endsWith('_ID')) return UUID_RE.test(value.trim());
-        return value.trim().length > 0;
-    }
+        const def  = this._variableDefs[varName];
+        const type = def?.input_type || 'text';
+        const trimmed = (typeof value === 'string') ? value.trim() : String(value);
 
-    _handlePresetPrompt(prompt) {
-        const template = prompt.template || '';
-        const allVars = this._getPlaceholders(template);
+        if (type === 'checkbox') return true;
+        if (type === 'select')   return trimmed.length > 0;
 
-        if (allVars.length === 0) {
-            this._sendPresetMessage(template);
-            return;
+        if (type === 'number') {
+            if (trimmed.length === 0) return false;
+            const num = Number(trimmed);
+            if (isNaN(num)) return false;
+            if (def?.min != null && num < def.min) return false;
+            if (def?.max != null && num > def.max) return false;
+            return true;
         }
 
-        const missingVars = allVars.filter(v => !this.currentPromptCache[v]);
-
-        if (missingVars.length === 0) {
-            // All placeholders already resolved from cache
-            const resolved = allVars.reduce(
-                (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
-                template
-            );
-            this._sendPresetMessage(resolved);
-            return;
-        }
-
-        // Show the inline panel to collect the missing variable values
-        this.pendingPromptTemplate = template;
-        this._showVariablePanel(missingVars);
-    }
-
-    _showVariablePanel(vars) {
-        const panel = document.getElementById('variablePanel');
-        const container = document.getElementById('variableInputs');
-        if (!panel || !container) return;
-
-        container.innerHTML = '';
-        vars.forEach(varName => {
-            const row = document.createElement('div');
-            row.className = 'variable-row';
-
-            const label = document.createElement('label');
-            label.htmlFor = `varInput_${varName}`;
-            label.textContent = `${this._prettifyVarName(varName)}:`;
-
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.id = `varInput_${varName}`;
-            input.dataset.varName = varName;
-            if (varName.endsWith('_ID')) {
-                input.placeholder = 'e.g. e62f2481-b56e-4d2a-9c16-11cd8db76caa';
+        // text: use validate field when present
+        if (def?.validate === 'nonempty') return trimmed.length > 0;
+        if (def?.validate) {
+            try {
+                return new RegExp(def.validate).test(trimmed);
+            } catch (e) {
+                console.warn(`Invalid validate pattern for variable "${varName}":`, e);
+                return false;
             }
+        }
 
-            row.appendChild(label);
-            row.appendChild(input);
-            container.appendChild(row);
-        });
+        return trimmed.length > 0;
+    }
 
-        panel.classList.remove('hidden');
-        container.querySelector('input')?.focus();
+    _handlePresetClick(prompt) {
+        const template = prompt.template || '';
+        const vars = this._getPlaceholders(template);
+        const resolved = vars.reduce(
+            (t, name) => t.replaceAll(`{{${name}}}`, this._getVarValue(name)),
+            template
+        );
+        this._sendPresetMessage(resolved);
     }
 
     _sendPresetMessage(text) {
         if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.addMessage('user', text);
         this.ws.send(JSON.stringify({ type: 'chat', message: text }));
-    }
-
-    _setupVariablePanel() {
-        const panel     = document.getElementById('variablePanel');
-        const submitBtn = document.getElementById('varPanelSubmit');
-        const cancelBtn = document.getElementById('varPanelCancel');
-
-        if (!panel || !submitBtn || !cancelBtn) return;
-
-        const doSubmit = () => {
-            const inputs = panel.querySelectorAll('input[data-var-name]');
-            let allValid = true;
-            const submittedValues = {};
-
-            inputs.forEach(input => {
-                const varName = input.dataset.varName;
-                const value   = input.value.trim();
-                if (!this._validateVar(varName, value)) {
-                    input.classList.add('input-error');
-                    allValid = false;
-                } else {
-                    input.classList.remove('input-error');
-                    submittedValues[varName] = value;
-                }
-            });
-
-            if (!allValid) {
-                panel.querySelector('.input-error')?.focus();
-                return;
-            }
-
-            // Persist only JOB_ID to the long-lived cache so subsequent preset
-            // prompts can reuse the current-job context without re-asking.
-            // Template-specific vars (e.g. NEW_JOB_ID) are intentionally not
-            // cached so the panel always prompts for fresh values on each use.
-            if ('JOB_ID' in submittedValues) {
-                this.currentPromptCache['JOB_ID'] = submittedValues['JOB_ID'];
-            }
-
-            panel.classList.add('hidden');
-            if (this.pendingPromptTemplate) {
-                const allVars = this._getPlaceholders(this.pendingPromptTemplate);
-                // Merge long-lived cache (JOB_ID from history) with freshly
-                // submitted values; submittedValues takes precedence so the
-                // user can override a cached value when it appears in the panel.
-                const values = { ...this.currentPromptCache, ...submittedValues };
-                const resolved = allVars.reduce(
-                    (t, v) => t.replaceAll(`{{${v}}}`, values[v]),
-                    this.pendingPromptTemplate
-                );
-                this.pendingPromptTemplate = null;
-                this._sendPresetMessage(resolved);
-            }
-        };
-
-        submitBtn.addEventListener('click', doSubmit);
-
-        // Delegate key events for dynamically-created inputs
-        panel.addEventListener('keydown', (e) => {
-            if (e.target.tagName !== 'INPUT') return;
-            if (e.key === 'Enter')  { e.preventDefault(); doSubmit(); }
-            if (e.key === 'Escape') { cancelBtn.click(); }
-        });
-        panel.addEventListener('input', (e) => {
-            if (e.target.tagName === 'INPUT') e.target.classList.remove('input-error');
-        });
-
-        cancelBtn.addEventListener('click', () => {
-            this.pendingPromptTemplate = null;
-            panel.classList.add('hidden');
-        });
     }
 
     _recoverAuthSubmitButton() {
@@ -408,12 +414,30 @@ class ChatClient {
             return;
         }
 
-        // Keep the prompt cache up to date with values mentioned in free-form messages.
-        // UUIDs are stored as JOB_ID so that subsequent preset prompts referencing
-        // {{JOB_ID}} can be resolved without asking the user again.
-        const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-        if (uuidMatch) {
-            this.currentPromptCache['JOB_ID'] = uuidMatch[0];
+        // Auto-detect: run each variable's detect_pattern (or derive from validate)
+        // against the sent message and populate the corresponding input if matched.
+        for (const [name, def] of Object.entries(this._variableDefs)) {
+            if (def.input_type && def.input_type !== 'text') continue;
+            // Use explicit detect_pattern, or derive from validate by stripping anchors
+            const pattern = def.detect_pattern
+                || (def.validate && def.validate.replace(/^\^/, '').replace(/\$$/, ''))
+                || null;
+            if (!pattern) continue;
+            let re;
+            try {
+                re = new RegExp(pattern, def.detect_flags || 'i');
+            } catch (e) {
+                console.warn(`Invalid detect pattern for variable "${name}":`, e);
+                continue;
+            }
+            const match = message.match(re);
+            if (match) {
+                const input = document.getElementById(`var_${name}`);
+                if (input) {
+                    input.value = match[0];
+                    input.dispatchEvent(new Event('input'));
+                }
+            }
         }
 
         // Add user message to chat

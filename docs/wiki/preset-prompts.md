@@ -65,22 +65,22 @@ Each entry supports these keys:
 
 ## Template Placeholders
 
-Templates may contain any number of `{{VARIABLE_NAME}}` placeholders (double curly braces, SCREAMING\_SNAKE\_CASE). The client resolves each placeholder from a per-session **prompt cache** (`currentPromptCache`) in one of two ways:
-
-1. **Auto-detected (JOB\_ID only)** — the UI scans every user message for a UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) and caches the most recent one under the key `JOB_ID`. When a preset button is clicked, any `{{JOB_ID}}` is substituted automatically from this cache.
-
-2. **Inline panel** — for each placeholder whose value is not yet in the cache, a small input panel appears below the message box with one labelled field per missing variable. Entering a value stores it in the cache so that subsequent prompts requiring the same placeholder do not ask again.
+Templates may contain any number of `{{VARIABLE_NAME}}` placeholders (double curly braces, SCREAMING\_SNAKE\_CASE). Each placeholder maps to an input field shown in the variables panel above the message box. Preset buttons are disabled until all required variables pass validation.
 
 ### Validation rules
 
-The panel validates each field before sending:
+The default validation requires every text field to be **non-empty**. You can customise validation per-variable in the YAML `variables:` section:
 
-| Variable name pattern | Validation           |
-| --------------------- | -------------------- |
-| Ends with `_ID`       | Must be a valid UUID |
-| Any other name        | Must be non-empty    |
+| `validate` value   | Behaviour                                              |
+| ------------------ | ------------------------------------------------------ |
+| `"nonempty"`       | Must be non-empty (default when no `validate` is set)  |
+| Any other string   | Treated as a regex — field must match `new RegExp(…)`  |
 
-Invalid fields are highlighted with a red border; focus moves to the first failing field.
+For `number` inputs, the HTML `min`/`max` constraints are also enforced. `select` fields require a non-empty selection; `checkbox` fields always pass.
+
+### Auto-detect
+
+Variables with a `detect_pattern` in their definition will be auto-populated when the user sends a message that matches the pattern. This is configured per-variable in the YAML `variables:` section (see below).
 
 ### Adding new variable types
 
@@ -99,7 +99,50 @@ prompts:
       Generate a full report for tenant {{TENANT}} (job {{JOB_ID}}).
 ```
 
-When the user clicks "Tenant Report" and neither `TENANT` nor `JOB_ID` is in the cache, the panel will show two input rows — one for each missing value — and cache both on submit.
+When the user clicks "Tenant Report" and neither `TENANT` nor `JOB_ID` has a value, the corresponding input fields will be highlighted and the button remains disabled until they are filled in.
+
+---
+
+## Variable Definitions
+
+Variables can be explicitly defined in the YAML file under a top-level `variables:` key. When no `variables:` section is present, variables are **automatically inferred** from `{{PLACEHOLDER}}` patterns found in the prompt templates — each placeholder becomes a simple text input that must be non-empty.
+
+```yaml
+variables:
+  - name: JOB_ID
+    label: "Job ID"
+    placeholder: "Enter job identifier"
+    detect_pattern: "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    detect_flags: "i"
+
+  - name: PLATFORM
+    label: "Platform"
+    input_type: select
+    options:
+      - linux
+      - windows
+    default: linux
+
+  - name: VERBOSE
+    label: "Verbose output"
+    input_type: checkbox
+    default: "false"
+```
+
+Supported fields per variable:
+
+| Field             | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `name`            | **Required.** SCREAMING\_SNAKE\_CASE name matching `{{NAME}}` in templates |
+| `label`           | Display label (auto-generated from name if omitted)                         |
+| `input_type`      | `text` (default), `number`, `select`, or `checkbox`                         |
+| `placeholder`     | Placeholder text for `text`/`number` inputs                                 |
+| `default`         | Default value                                                               |
+| `validate`        | `"nonempty"` or a regex pattern string                                     |
+| `detect_pattern`  | Regex to auto-populate the field from user messages                         |
+| `detect_flags`    | Regex flags for `detect_pattern` (e.g. `"i"`)                              |
+| `options`         | List of choices for `select` type                                           |
+| `min` / `max` / `step` | Constraints for `number` type                                         |
 
 ---
 
@@ -118,6 +161,7 @@ When the user clicks "Tenant Report" and neither `TENANT` nor `JOB_ID` is in the
 | ---------------------- | ------------------------------- | -------- | ------------------------------------------------------------------------ |
 | `preset_prompts`       | —                               | `[]`     | In-memory prompt list; set programmatically or via a pre-built config    |
 | `preset_prompts_file`  | `BEDROCK_PRESET_PROMPTS_FILE`   | `None`   | Path to YAML file; honoured when `preset_prompts` is empty               |
+| `preset_variables`     | —                               | `[]`     | Variable definitions; auto-inferred from templates when not provided     |
 
 ### Resolution Priority
 

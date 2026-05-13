@@ -741,92 +741,90 @@ body {
     cursor: not-allowed;
 }
 
-/* ── Variable Prompt Panel ───────────────────────────────────────────────── */
+/* ── Always-Visible Variable Inputs ─────────────────────────────────────── */
 
-.variable-panel {
+.preset-variables-section {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 16px;
     padding: 10px 20px;
-    background: #fffbeb;
-    border-top: 1px solid #f6e05e;
+    background: #f8faff;
+    border-top: 1px solid #e2e8f0;
 }
 
-.variable-panel.hidden {
+.preset-variables-section:empty {
     display: none;
 }
 
-.variable-panel-inputs {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.variable-row {
+.variable-input-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
-.variable-row label {
-    font-size: 0.85rem;
+.variable-input-row label {
+    font-size: 0.82rem;
     font-weight: 600;
-    color: #744210;
+    color: #4a5568;
     white-space: nowrap;
-    min-width: 100px;
 }
 
-.variable-row input[type="text"] {
-    flex: 1;
-    padding: 7px 12px;
+.variable-input-row input[type="text"],
+.variable-input-row input[type="number"] {
+    padding: 5px 10px;
     border: 1px solid #e2e8f0;
     border-radius: 8px;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
     outline: none;
+    width: 220px;
 }
 
-.variable-row input[type="text"]:focus {
+.variable-input-row input[type="text"]:focus,
+.variable-input-row input[type="number"]:focus {
     border-color: #667eea;
     box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
 }
 
-.variable-row input[type="text"].input-error {
-    border-color: #e53e3e;
-    box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.15);
-}
-
-.variable-panel-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.variable-panel-actions button {
-    padding: 7px 16px;
-    border: none;
+.variable-input-row select {
+    padding: 5px 10px;
+    border: 1px solid #e2e8f0;
     border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 500;
+    font-size: 0.82rem;
+    background: white;
+    outline: none;
+}
+
+.variable-input-row select:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.variable-input-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
     cursor: pointer;
-    white-space: nowrap;
 }
 
-#varPanelSubmit {
-    background: #667eea;
-    color: white;
+/* Variable requirement tags on preset buttons */
+.preset-var-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    background: rgba(102, 126, 234, 0.15);
+    color: #4a56c1;
+    border-radius: 10px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    vertical-align: middle;
+    letter-spacing: 0.02em;
 }
 
-#varPanelSubmit:hover {
-    background: #5a67d8;
-}
-
-#varPanelCancel {
-    background: #e2e8f0;
-    color: #4a5568;
-}
-
-#varPanelCancel:hover {
-    background: #cbd5e0;
+.preset-prompt-btn:disabled .preset-var-tag {
+    background: rgba(160, 174, 192, 0.2);
+    color: #a0aec0;
 }
 
 /* ── SSO Login Button ────────────────────────────────────────────────────── */

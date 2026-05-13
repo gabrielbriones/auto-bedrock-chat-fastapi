@@ -341,6 +341,17 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    preset_variables: List[Dict] = Field(
+        default_factory=list,
+        description=(
+            "Variable definitions for preset prompt placeholders. Each entry should have 'name' "
+            "(SCREAMING_SNAKE_CASE matching {{NAME}} in templates) and optional 'label', "
+            "'input_type', 'validate', 'detect_pattern', 'placeholder', and 'default' fields. "
+            "When not provided, variables are automatically inferred from {{PLACEHOLDER}} patterns "
+            "found in preset prompt templates."
+        ),
+    )
+
     # Security Configuration
     auth_dependency: Optional[Callable] = Field(default=None, description="Authentication dependency function")
 
@@ -1068,6 +1079,42 @@ def load_config(
         raise ConfigurationError(f"Failed to load configuration: {str(e)}")
 
 
+def load_preset_config_from_yaml(path: str) -> Dict[str, Any]:
+    """
+    Load preset prompts and variable definitions from a YAML file.
+
+    Returns a dict with ``{"prompts": [...], "variables": [...]}``.  Both lists
+    are empty when the corresponding top-level key is absent from the file.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        logger.warning(
+            "pyyaml is not installed; cannot load preset config from '%s'. " "Install it with: pip install pyyaml",
+            path,
+        )
+        return {"prompts": [], "variables": []}
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+        if not isinstance(data, dict):
+            return {"prompts": [], "variables": []}
+        prompts = data.get("prompts", []) or []
+        variables = data.get("variables", []) or []
+        logger.info("Loaded %d preset prompt(s) and %d variable(s) from %s", len(prompts), len(variables), path)
+        return {"prompts": prompts, "variables": variables}
+    except FileNotFoundError:
+        logger.debug("Preset config file not found: %s", path)
+        return {"prompts": [], "variables": []}
+    except Exception as exc:
+        logger.warning("Could not load preset config from '%s': %s", path, exc)
+        return {"prompts": [], "variables": []}
+
+
 def load_preset_prompts_from_yaml(path: str) -> List[Dict[str, Any]]:
     """
     Load preset prompt button definitions from a YAML file.
@@ -1101,7 +1148,9 @@ def load_preset_prompts_from_yaml(path: str) -> List[Dict[str, Any]]:
         with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         prompts = data.get("prompts", []) if isinstance(data, dict) else []
+        variables = data.get("variables", []) if isinstance(data, dict) else []
         logger.info("Loaded %d preset prompt(s) from %s", len(prompts), path)
+        logger.info("Loaded %d variable(s) from %s", len(variables), path)
         return prompts
     except FileNotFoundError:
         logger.debug("Preset prompts file not found: %s", path)
