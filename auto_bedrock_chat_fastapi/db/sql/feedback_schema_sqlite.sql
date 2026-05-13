@@ -1,7 +1,7 @@
 -- ---------------------------------------------------------------------------
 -- XMGPLAT-10417 — Feedback Storage Backend (SQLite variant)
 --
--- Mirrors auto_bedrock_chat_fastapi/sql/feedback_schema.sql for the SQLite
+-- Mirrors auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql for the SQLite
 -- backend used as the zero-config default. Differences vs. the Postgres DDL:
 --
 --   * No native enum types — `rating` and `review_status` are TEXT with
