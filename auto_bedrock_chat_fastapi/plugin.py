@@ -313,7 +313,7 @@ class BedrockChatPlugin:
             @self.app.get(self.config.ui_endpoint, response_class=HTMLResponse)
             async def chat_ui(request: Request):
                 """Serve chat UI"""
-                logger.info("chat_ui invoked")
+                logger.debug("chat_ui invoked")
 
                 if not self.templates:
                     template_dir = os.path.join(os.path.dirname(__file__), "templates")
