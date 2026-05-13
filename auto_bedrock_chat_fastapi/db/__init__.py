@@ -26,7 +26,19 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from .feedback_base import AuthenticatedUserAuthorizer, BaseFeedbackStore, FeedbackAuthorizer
+from .feedback_sqlite import SQLiteFeedbackStore
 from .kb_base import BaseKBStore
+from .kb_sqlite import SQLiteKBStore
+
+try:  # optional [postgres] extra
+    from .feedback_postgres import PostgresFeedbackStore
+except ImportError:  # pragma: no cover - exercised only without the extra
+    PostgresFeedbackStore = None  # type: ignore[assignment,misc]
+
+try:  # optional [postgres] extra
+    from .kb_postgres import PgVectorKBStore
+except ImportError:  # pragma: no cover
+    PgVectorKBStore = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from ..config import ChatConfig
@@ -154,6 +166,10 @@ __all__ = [
     "BaseFeedbackStore",
     "BaseKBStore",
     "FeedbackAuthorizer",
+    "PgVectorKBStore",
+    "PostgresFeedbackStore",
+    "SQLiteFeedbackStore",
+    "SQLiteKBStore",
     "create_feedback_store",
     "create_kb_store",
 ]

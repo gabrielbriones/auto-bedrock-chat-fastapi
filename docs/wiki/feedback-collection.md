@@ -138,25 +138,36 @@ not need to repeat them.
 ```json
 {
   "type": "feedback_ack",
+  "message_id": "msg-uuid-of-the-rated-response",
   "feedback_id": "8c0c3f0e-...",
   "status": "pending_review",
   "timestamp": "2026-05-11T12:34:56.789012"
 }
 ```
 
+The `message_id` is echoed back so the client can reconcile optimistic UI
+state without bookkeeping a request-id.
+
 ### Error envelope
 
-Any failure returns a uniform error message. `code` enables clients to
-branch on the cause:
+Any failure returns a dedicated `feedback_error` envelope so the client
+can route it separately from generic chat errors. `code` enables
+programmatic branching; `message` is human-readable and safe to display:
 
 ```json
 {
-  "type": "error",
+  "type": "feedback_error",
   "code": "invalid_feedback",
-  "detail": "correction_text is required when rating is 'correction'",
+  "message": "correction_text is required when rating is 'correction'",
+  "message_id": "msg-uuid-of-the-rated-response",
   "timestamp": "2026-05-11T12:34:56.789012"
 }
 ```
+
+`message_id` is included whenever the failing payload carried one (which
+is every realistic case besides a malformed JSON frame). The chat-client
+uses it to locate and revert the optimistic "✓ Feedback submitted"
+indicator on the corresponding message.
 
 | `code`                  | When it fires                                                                                                                               |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |

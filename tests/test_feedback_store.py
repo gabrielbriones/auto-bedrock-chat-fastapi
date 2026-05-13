@@ -246,9 +246,10 @@ async def test_feedback_unauthorized(handler_factory):
     await h._handle_feedback_message(MagicMock(), {"message_id": "x", "rating": "positive"})
 
     assert h._sent[0] == {
-        "type": "error",
+        "type": "feedback_error",
         "code": "unauthorized_feedback",
-        "detail": "You are not authorized to submit feedback",
+        "message": "You are not authorized to submit feedback",
+        "message_id": "x",
         "timestamp": h._sent[0]["timestamp"],
     }
     assert h.feedback_store.create.await_count == 0
@@ -285,7 +286,7 @@ async def test_feedback_correction_requires_text(handler_factory):
     _, ai = _seed_session(h)
     await h._handle_feedback_message(MagicMock(), {"message_id": ai.message_id, "rating": "correction"})
     assert h._sent[0]["code"] == "invalid_feedback"
-    assert "correction_text" in h._sent[0]["detail"]
+    assert "correction_text" in h._sent[0]["message"]
 
 
 @pytest.mark.asyncio
@@ -310,7 +311,7 @@ async def test_feedback_score_out_of_range_caught_as_invalid(handler_factory):
         {"message_id": ai.message_id, "rating": "positive", "score": 99},
     )
     assert h._sent[-1]["code"] == "invalid_feedback"
-    assert "score" in h._sent[-1]["detail"]
+    assert "score" in h._sent[-1]["message"]
 
 
 @pytest.mark.asyncio
@@ -320,9 +321,9 @@ async def test_feedback_no_session_returns_error(handler_factory):
     await h._handle_feedback_message(MagicMock(), {"message_id": "x", "rating": "positive"})
     # C2: missing-session uses the feedback envelope, not the legacy error one.
     h._send_error.assert_not_awaited()
-    assert h._sent[-1]["type"] == "error"
+    assert h._sent[-1]["type"] == "feedback_error"
     assert h._sent[-1]["code"] == "feedback_unavailable"
-    assert h._sent[-1]["detail"] == "Session not found"
+    assert h._sent[-1]["message"] == "Session not found"
 
 
 @pytest.mark.asyncio
@@ -336,9 +337,10 @@ async def test_feedback_unexpected_exception_does_not_leak_detail(handler_factor
         {"message_id": ai.message_id, "rating": "positive"},
     )
     payload = h._sent[-1]
+    assert payload["type"] == "feedback_error"
     assert payload["code"] == "feedback_error"
-    assert payload["detail"] == "Internal error while processing feedback"
-    assert "feedback_pkey" not in payload["detail"]
+    assert payload["message"] == "Internal error while processing feedback"
+    assert "feedback_pkey" not in payload["message"]
     assert h._total_errors == 1
 
 

@@ -451,20 +451,39 @@ class WebSocketChatHandler:
 
         Validates the payload, recovers the original AI response context from
         session history (keyed by ``message_id``), enforces authorization,
-        persists a :class:`FeedbackEntry` via :class:`FeedbackStore`, and
-        replies with a ``feedback_ack`` envelope.
+        persists a :class:`FeedbackEntry` via the configured
+        :class:`BaseFeedbackStore` backend (SQLite or Postgres, selected by
+        :func:`auto_bedrock_chat_fastapi.db.create_feedback_store`), and
+        replies with a ``feedback_ack`` envelope. Failures emit a
+        dedicated ``feedback_error`` envelope (see
+        :meth:`_send_feedback_error`).
         """
+        # Best-effort: try to echo the client's message_id on every reply so
+        # the UI can reconcile optimistic state. Missing/invalid payloads
+        # may not have one — the client tolerates ``None``.
+        message_id = data.get("message_id") if isinstance(data, dict) else None
+
         if self.feedback_store is None:
             logger.warning(
                 "Received feedback message but no FeedbackStore is configured; feedback collection is unavailable"
             )
-            await self._send_feedback_error(websocket, "feedback_unavailable", "Feedback collection is not enabled")
+            await self._send_feedback_error(
+                websocket,
+                "feedback_unavailable",
+                "Feedback collection is not enabled",
+                message_id=message_id,
+            )
             return
 
         session = await self.session_manager.get_session(websocket)
         if not session:
             logger.warning("Received feedback message but session not found for websocket %s", websocket)
-            await self._send_feedback_error(websocket, "feedback_unavailable", "Session not found")
+            await self._send_feedback_error(
+                websocket,
+                "feedback_unavailable",
+                "Session not found",
+                message_id=message_id,
+            )
             return
 
         # Authorization (stub by default; access-control task swaps in the
@@ -479,21 +498,31 @@ class WebSocketChatHandler:
                 websocket,
                 "unauthorized_feedback",
                 "You are not authorized to submit feedback",
+                message_id=message_id,
             )
             return
 
-        message_id = data.get("message_id")
         rating_raw = data.get("rating")
         if not message_id or not rating_raw:
             logger.warning("Invalid feedback payload: missing message_id or rating (session=%s)", session.session_id)
-            await self._send_feedback_error(websocket, "invalid_feedback", "message_id and rating are required")
+            await self._send_feedback_error(
+                websocket,
+                "invalid_feedback",
+                "message_id and rating are required",
+                message_id=message_id,
+            )
             return
 
         try:
             rating = Rating(rating_raw)
         except ValueError:
             logger.warning("Invalid feedback payload: unknown rating %r (session=%s)", rating_raw, session.session_id)
-            await self._send_feedback_error(websocket, "invalid_feedback", f"Unknown rating: {rating_raw!r}")
+            await self._send_feedback_error(
+                websocket,
+                "invalid_feedback",
+                f"Unknown rating: {rating_raw!r}",
+                message_id=message_id,
+            )
             return
 
         # Recover the original assistant response by message_id from session
@@ -509,6 +538,7 @@ class WebSocketChatHandler:
                 websocket,
                 "invalid_feedback",
                 f"No assistant message found for message_id={message_id!r}",
+                message_id=message_id,
             )
             return
 
@@ -536,11 +566,12 @@ class WebSocketChatHandler:
                 websocket,
                 "invalid_feedback",
                 f"{loc}: {first.get('msg', 'invalid value')}",
+                message_id=message_id,
             )
             return
         except ValueError as exc:
             logger.warning("Feedback payload validation error: %s (session=%s)", exc, session.session_id)
-            await self._send_feedback_error(websocket, "invalid_feedback", str(exc))
+            await self._send_feedback_error(websocket, "invalid_feedback", str(exc), message_id=message_id)
             return
 
         try:
@@ -553,7 +584,7 @@ class WebSocketChatHandler:
             )
         except (FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError) as exc:
             logger.warning("Feedback persistence failed: %s (session=%s)", exc, session.session_id)
-            await self._send_feedback_error(websocket, "feedback_error", str(exc))
+            await self._send_feedback_error(websocket, "feedback_error", str(exc), message_id=message_id)
             return
         except Exception:  # pragma: no cover - defensive
             # Do NOT echo str(exc) to the client: psycopg/driver errors can
@@ -565,6 +596,7 @@ class WebSocketChatHandler:
                 websocket,
                 "feedback_error",
                 "Internal error while processing feedback",
+                message_id=message_id,
             )
             return
 
@@ -572,22 +604,38 @@ class WebSocketChatHandler:
             websocket,
             {
                 "type": "feedback_ack",
+                "message_id": message_id,
                 "feedback_id": str(persisted.id),
                 "status": persisted.review_status.value,
                 "timestamp": datetime.now().isoformat(),
             },
         )
 
-    async def _send_feedback_error(self, websocket: WebSocket, code: str, detail: str) -> None:
-        await self._send_message(
-            websocket,
-            {
-                "type": "error",
-                "code": code,
-                "detail": detail,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
+    async def _send_feedback_error(
+        self,
+        websocket: WebSocket,
+        code: str,
+        message: str,
+        *,
+        message_id: Optional[str] = None,
+    ) -> None:
+        """Send a ``feedback_error`` envelope matching the chat-client contract.
+
+        The client's ``_handleFeedbackError`` reads ``data.message_id`` (to
+        locate the optimistic indicator) and ``data.message`` (to display
+        inline). ``code`` is retained for programmatic branching and is
+        purely additive — the legacy generic ``{type: "error", code,
+        detail}`` envelope is no longer used for feedback failures.
+        """
+        payload: Dict[str, Any] = {
+            "type": "feedback_error",
+            "code": code,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if message_id is not None:
+            payload["message_id"] = message_id
+        await self._send_message(websocket, payload)
 
     async def _handle_history_request(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle history request"""
