@@ -1,12 +1,13 @@
 """
 SQLite-backed FeedbackStore (XMGPLAT-10417).
 
-Zero-config alternative to the Postgres :class:`~.feedback_store.FeedbackStore`.
-Uses the stdlib ``sqlite3`` module wrapped in :func:`asyncio.to_thread` so it
-satisfies the same async :class:`~.feedback_store.BaseFeedbackStore` interface
+Zero-config implementation of the async
+:class:`~.feedback_base.BaseFeedbackStore` interface using SQLite.
+Uses the stdlib ``sqlite3`` module wrapped in :func:`asyncio.to_thread`
 without adding a third-party async-SQLite dependency.
 
-Schema lives at ``auto_bedrock_chat_fastapi/sql/feedback_schema_sqlite.sql``.
+Schema lives at
+``auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql``.
 """
 
 from __future__ import annotations
