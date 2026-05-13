@@ -388,17 +388,9 @@ class BedrockChatPlugin:
                         and self._feedback_store is not None
                         and (user_identity_available or self.config.feedback_allow_anonymous)
                     )
-                    logger.info(
-                        "Feedback UI gate resolved: feedback_enabled=%s "
-                        "(config.feedback_enabled=%s, store_present=%s, "
-                        "sso_enabled=%s, auth_verification_endpoint=%s, "
-                        "allow_anonymous=%s)",
+                    logger.debug(
+                        "Feedback UI gate resolved: feedback_enabled=%s",
                         feedback_enabled,
-                        self.config.feedback_enabled,
-                        self._feedback_store is not None,
-                        self.config.sso_enabled,
-                        bool(self.config.auth_verification_endpoint),
-                        self.config.feedback_allow_anonymous,
                     )
 
                     return self.templates.TemplateResponse(
