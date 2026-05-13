@@ -269,8 +269,9 @@ The DDL ships in two flavors:
 - SQLite: [`auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql`](../../auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql)
 
 All statements are idempotent; either file can be applied directly with
-`psql -f` / `sqlite3 < file.sql` by the database-provisioning task or
-auto-bootstrapped by the store on startup (`feedback_init_schema=true`).
+`psql -f` / `sqlite3 /path/to/feedback.db < feedback_schema_sqlite.sql` by the
+database-provisioning task or auto-bootstrapped by the store on startup
+(`feedback_init_schema=true`).
 
 The schema enforces the same validation rules as the Pydantic
 [`FeedbackEntry`](../../auto_bedrock_chat_fastapi/models.py) model via
