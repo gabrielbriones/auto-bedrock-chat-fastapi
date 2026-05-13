@@ -300,7 +300,8 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         normalized_tags: List[str],
         comment: Optional[str],
     ) -> FeedbackEntry:
-        assert self._conn is not None, "store not opened"
+        self._ensure_open_sync()
+        assert self._conn is not None  # narrow for type checkers
         # SQLite's default isolation gives us an implicit transaction that
         # spans both the SELECT and the UPDATE under a single lock-held
         # block, so the read-modify-write is atomic.
@@ -357,7 +358,8 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         return await asyncio.to_thread(self._stats_sync)
 
     def _stats_sync(self) -> FeedbackStats:
-        assert self._conn is not None, "store not opened"
+        self._ensure_open_sync()
+        assert self._conn is not None  # narrow for type checkers
         with self._lock:
             cur = self._conn.execute("SELECT count(*) FROM feedback")
             total_row = cur.fetchone()
