@@ -461,7 +461,15 @@ class WebSocketChatHandler:
         # Best-effort: try to echo the client's message_id on every reply so
         # the UI can reconcile optimistic state. Missing/invalid payloads
         # may not have one — the client tolerates ``None``.
-        message_id = data.get("message_id") if isinstance(data, dict) else None
+        #
+        # Strict typing: only a *non-empty* ``str`` is accepted. A malicious
+        # or buggy client could send a list/object/number, which would then
+        # be echoed straight back into the JSON envelope and break the
+        # browser handler (``CSS.escape`` / dataset comparisons expect a
+        # string). We coerce anything else to ``None`` so the downstream
+        # required-field check rejects the request with ``invalid_feedback``.
+        raw_message_id = data.get("message_id") if isinstance(data, dict) else None
+        message_id = raw_message_id if isinstance(raw_message_id, str) and raw_message_id else None
 
         if self.feedback_store is None:
             logger.warning(
