@@ -627,9 +627,48 @@ class ChatConfig(BaseSettings):
         default=False,
         alias="BEDROCK_FEEDBACK_ENABLED",
         description=(
-            "Enable the feedback collection backend. When True, the plugin "
-            "instantiates a FeedbackStore and wires it into the WebSocket "
-            "handler so clients can submit 'feedback' messages."
+            "Master switch for the feedback collection backend. When True, "
+            "the plugin calls ``db.create_feedback_store(config)`` to build "
+            "a ``BaseFeedbackStore`` implementation (SQLite or Postgres, "
+            "selected by ``feedback_storage_type``) and wires it into the "
+            "WebSocket handler so clients can submit ``feedback`` messages. "
+            "If the factory cannot construct a usable backend at runtime "
+            "(missing connection URL, missing optional dependency, etc.), "
+            "the feature is silently disabled in-place and submissions are "
+            "rejected with ``feedback_unavailable`` rather than crashing the "
+            "app."
+        ),
+    )
+
+    feedback_allow_anonymous: bool = Field(
+        default=False,
+        alias="BEDROCK_FEEDBACK_ALLOW_ANONYMOUS",
+        description=(
+            "When True, the feedback UI is rendered and submissions are "
+            "accepted even when no SSO/tool-auth user identity is available. "
+            "Intended for local development and standalone deployments where "
+            "authentication is not configured."
+        ),
+    )
+
+    feedback_storage_type: str = Field(
+        default="sqlite",
+        alias="BEDROCK_FEEDBACK_STORAGE_TYPE",
+        description=(
+            "Feedback storage backend. Valid values: 'sqlite' (default, "
+            "zero-config) or 'postgres' (requires BEDROCK_FEEDBACK_POSTGRES_URL "
+            "or BEDROCK_KB_POSTGRES_URL)."
+        ),
+    )
+
+    feedback_database_path: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_FEEDBACK_DATABASE_PATH",
+        description=(
+            "Filesystem path to the SQLite feedback database when "
+            "feedback_storage_type='sqlite'. When unset, falls back to "
+            "kb_database_path so a single SQLite file can host both KB and "
+            "feedback tables."
         ),
     )
 
@@ -637,9 +676,10 @@ class ChatConfig(BaseSettings):
         default=None,
         alias="BEDROCK_FEEDBACK_POSTGRES_URL",
         description=(
-            "PostgreSQL connection URL for the feedback table. If unset, "
-            "falls back to BEDROCK_KB_POSTGRES_URL so a single Postgres "
-            "instance can host both the KB and feedback schemas."
+            "PostgreSQL connection URL for the feedback table when "
+            "feedback_storage_type='postgres'. If unset, falls back to "
+            "BEDROCK_KB_POSTGRES_URL so a single Postgres instance can host "
+            "both the KB and feedback schemas."
         ),
     )
 

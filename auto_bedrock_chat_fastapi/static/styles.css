@@ -271,6 +271,11 @@ body {
     color: white;
 }
 
+.message.assistant {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
 .message.assistant .message-content {
     background: white;
     border: 1px solid #e2e8f0;
@@ -898,4 +903,180 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------------------
+   Feedback rating controls
+   --------------------------------------------------------------------------- */
+.feedback-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    color: #718096;
+}
+
+.feedback-prompt {
+    margin-right: 4px;
+}
+
+.feedback-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.feedback-btn:hover {
+    background: #edf2f7;
+    border-color: #cbd5e0;
+}
+
+.feedback-btn:active {
+    transform: scale(0.95);
+}
+
+.feedback-btn:focus-visible {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+}
+
+.feedback-btn.selected {
+    background: #e2e8f0;
+    border-color: #a0aec0;
+}
+
+.feedback-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.feedback-btn:disabled:hover {
+    background: transparent;
+    border-color: transparent;
+}
+
+.feedback-btn.selected:disabled {
+    /* Keep the visual selection while the form is open even though the
+       button is non-interactive. */
+    opacity: 0.85;
+    background: #e2e8f0;
+    border-color: #a0aec0;
+}
+
+.feedback-submitted {
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    color: #2f855a;
+    animation: feedback-fade-in 160ms ease-out;
+}
+
+.feedback-error {
+    margin-left: 8px;
+    font-size: 0.8rem;
+    color: #c53030;
+}
+
+@keyframes feedback-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.feedback-form {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 8px;
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}
+
+.feedback-form-label {
+    font-size: 0.8rem;
+    color: #4a5568;
+}
+
+.feedback-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 0.9rem;
+    color: #2d3748;
+    background: #fff;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    resize: vertical;
+}
+
+.feedback-textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.feedback-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.feedback-form-cancel,
+.feedback-form-submit {
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.feedback-form-cancel {
+    background: transparent;
+    border: 1px solid #cbd5e0;
+    color: #4a5568;
+}
+
+.feedback-form-cancel:hover:not(:disabled) {
+    background: #edf2f7;
+}
+
+.feedback-form-submit {
+    background: #667eea;
+    border: 1px solid #667eea;
+    color: #fff;
+}
+
+.feedback-form-submit:hover:not(:disabled) {
+    background: #5a67d8;
+    border-color: #5a67d8;
+}
+
+.feedback-form-cancel:disabled,
+.feedback-form-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.feedback-form-cancel:focus-visible,
+.feedback-form-submit:focus-visible {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+}
+
+.feedback-form .feedback-error {
+    /* When the inline error appears inside the form, it should flow on
+       its own row instead of cramming against the action buttons. */
+    margin-left: 0;
+    margin-top: 4px;
 }

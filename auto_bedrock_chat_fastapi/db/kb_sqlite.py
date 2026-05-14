@@ -1,23 +1,19 @@
 """
-SQLite KB Store – Vector Database Module using SQLite with sqlite-vec extension.
+SQLite KB Store \u2014 vector database backed by SQLite + sqlite-vec.
 
-This module provides the :class:`SQLiteKBStore` implementation of
-:class:`~auto_bedrock_chat_fastapi.kb_store_base.BaseKBStore`, backed by
+Implements :class:`~auto_bedrock_chat_fastapi.db.kb_base.BaseKBStore` using
 SQLite + sqlite-vec (cosine similarity) + FTS5 (BM25 keyword search).
-
-A **deprecated** ``VectorDB`` alias is kept for backward compatibility.
 """
 
 import json
 import sqlite3
-import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import sqlite_vec
 
-from .kb_store_base import BaseKBStore
+from .kb_base import BaseKBStore
 
 
 class SQLiteKBStore(BaseKBStore):
@@ -669,20 +665,3 @@ class SQLiteKBStore(BaseKBStore):
     def close(self):
         """Close database connection."""
         self.conn.close()
-
-
-class _VectorDBCompat(SQLiteKBStore):
-    """Backward-compatible alias that emits a deprecation warning."""
-
-    def __init__(self, *args, **kwargs):
-        warnings.warn(
-            "VectorDB is deprecated and will be removed in a future release. "
-            "Use SQLiteKBStore (or the create_kb_store factory) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(*args, **kwargs)
-
-
-# Provide a module-level name so ``from .vector_db import VectorDB`` keeps working.
-VectorDB = _VectorDBCompat

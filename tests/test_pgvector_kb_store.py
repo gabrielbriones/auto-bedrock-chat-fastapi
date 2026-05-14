@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from auto_bedrock_chat_fastapi.kb_store_base import BaseKBStore, create_kb_store
+from auto_bedrock_chat_fastapi.db import create_kb_store
+from auto_bedrock_chat_fastapi.db.kb_base import BaseKBStore
 
 # ---------------------------------------------------------------------------
 # Helper: build a fake PgVectorKBStore that skips real DB connections
@@ -14,7 +15,7 @@ from auto_bedrock_chat_fastapi.kb_store_base import BaseKBStore, create_kb_store
 
 def _make_store(embedding_dimensions=1536):
     """Instantiate PgVectorKBStore with a fully-mocked connection pool."""
-    with patch("auto_bedrock_chat_fastapi.pgvector_kb_store._import_psycopg") as mock_import:
+    with patch("auto_bedrock_chat_fastapi.db.kb_postgres._import_psycopg") as mock_import:
         mock_psycopg = MagicMock()
         mock_pool_cls = MagicMock()
         mock_register = MagicMock()
@@ -31,7 +32,7 @@ def _make_store(embedding_dimensions=1536):
         mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
 
-        from auto_bedrock_chat_fastapi.pgvector_kb_store import PgVectorKBStore
+        from auto_bedrock_chat_fastapi.db.kb_postgres import PgVectorKBStore
 
         store = PgVectorKBStore(
             connection_url="postgresql://test:test@localhost/test",
@@ -53,7 +54,7 @@ class TestPgVectorConformance:
         assert isinstance(store, BaseKBStore)
 
     def test_has_all_abstract_methods(self):
-        from auto_bedrock_chat_fastapi.pgvector_kb_store import PgVectorKBStore
+        from auto_bedrock_chat_fastapi.db.kb_postgres import PgVectorKBStore
 
         for name in (
             "add_document",
@@ -388,7 +389,7 @@ class TestFactory:
     def test_factory_creates_pgvector(self):
         config = self._make_config()
 
-        with patch("auto_bedrock_chat_fastapi.pgvector_kb_store._import_psycopg") as mock_import:
+        with patch("auto_bedrock_chat_fastapi.db.kb_postgres._import_psycopg") as mock_import:
             mock_psycopg = MagicMock()
             mock_pool_cls = MagicMock()
             mock_register = MagicMock()
@@ -405,7 +406,7 @@ class TestFactory:
 
             store = create_kb_store(config)
 
-            from auto_bedrock_chat_fastapi.pgvector_kb_store import PgVectorKBStore
+            from auto_bedrock_chat_fastapi.db.kb_postgres import PgVectorKBStore
 
             assert isinstance(store, PgVectorKBStore)
             assert isinstance(store, BaseKBStore)
@@ -419,7 +420,7 @@ class TestFactory:
     def test_factory_passes_pool_size(self):
         config = self._make_config(BEDROCK_KB_POSTGRES_POOL_SIZE=10)
 
-        with patch("auto_bedrock_chat_fastapi.pgvector_kb_store._import_psycopg") as mock_import:
+        with patch("auto_bedrock_chat_fastapi.db.kb_postgres._import_psycopg") as mock_import:
             mock_psycopg = MagicMock()
             mock_pool_cls = MagicMock()
             mock_register = MagicMock()
@@ -445,7 +446,7 @@ class TestFactory:
     def test_factory_passes_dimensions(self):
         config = self._make_config(BEDROCK_KB_EMBEDDING_DIMENSIONS=384)
 
-        with patch("auto_bedrock_chat_fastapi.pgvector_kb_store._import_psycopg") as mock_import:
+        with patch("auto_bedrock_chat_fastapi.db.kb_postgres._import_psycopg") as mock_import:
             mock_psycopg = MagicMock()
             mock_pool_cls = MagicMock()
             mock_register = MagicMock()
@@ -475,10 +476,10 @@ class TestMissingDependency:
         with patch.dict("sys.modules", {"psycopg": None}):
             # Force re-import failure
             with patch(
-                "auto_bedrock_chat_fastapi.pgvector_kb_store._import_psycopg",
+                "auto_bedrock_chat_fastapi.db.kb_postgres._import_psycopg",
                 side_effect=ImportError("The 'pgvector' KB backend requires"),
             ):
                 with pytest.raises(ImportError, match="pgvector.*KB backend"):
-                    from auto_bedrock_chat_fastapi.pgvector_kb_store import PgVectorKBStore
+                    from auto_bedrock_chat_fastapi.db.kb_postgres import PgVectorKBStore
 
                     PgVectorKBStore("postgresql://x:x@localhost/x")

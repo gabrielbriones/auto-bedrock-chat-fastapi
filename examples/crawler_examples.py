@@ -69,10 +69,10 @@ def example_load_local_files():
 
 async def example_populate_knowledge_base():
     """Example: Crawl content and add to vector database."""
-    from auto_bedrock_chat_fastapi.vector_db import VectorDB
+    from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
 
     # Initialize database
-    db = VectorDB("knowledge_base.db")
+    db = SQLiteKBStore("knowledge_base.db")
 
     # Crawl content
     crawler = ContentCrawler()

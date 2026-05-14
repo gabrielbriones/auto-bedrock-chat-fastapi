@@ -83,7 +83,11 @@ class FeedbackEntry(BaseModel):
 
     id: UUID = Field(default_factory=uuid4)
     session_id: str
-    user_id: str
+    # Required, non-empty. Anonymous submissions (when the authorizer is
+    # configured with ``allow_anonymous=True``) are stamped with the
+    # ``"anonymous"`` sentinel by the WebSocket handler so audit queries
+    # can distinguish "we have no identity" from a real user_id.
+    user_id: str = Field(min_length=1)
 
     # Original AI response context
     query: str

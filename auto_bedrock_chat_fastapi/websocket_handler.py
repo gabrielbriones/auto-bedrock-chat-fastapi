@@ -13,9 +13,8 @@ from pydantic import ValidationError
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .chat_manager import ChatManager
 from .config import ChatConfig
+from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, FeedbackAuthorizer
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
-from .feedback_store import AuthenticatedUserAuthorizer, FeedbackAuthorizer, FeedbackStore
-from .kb_store_base import BaseKBStore
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatMessage, ChatSessionManager
 from .sso_session_store import SSOSessionStore
@@ -44,7 +43,7 @@ class WebSocketChatHandler:
         app_base_url: str = "http://localhost:8000",
         sso_session_store: Optional[SSOSessionStore] = None,
         kb_store: Optional[BaseKBStore] = None,
-        feedback_store: Optional[FeedbackStore] = None,
+        feedback_store: Optional[BaseFeedbackStore] = None,
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
     ):
         self.session_manager = session_manager
@@ -56,7 +55,9 @@ class WebSocketChatHandler:
         self.feedback_store = feedback_store
         # Default to permissive (any authenticated user); access-control task
         # swaps this in without touching the handler.
-        self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer()
+        self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer(
+            allow_anonymous=getattr(config, "feedback_allow_anonymous", False)
+        )
 
         # HTTP client for making internal API calls
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
@@ -450,22 +451,53 @@ class WebSocketChatHandler:
 
         Validates the payload, recovers the original AI response context from
         session history (keyed by ``message_id``), enforces authorization,
-        persists a :class:`FeedbackEntry` via :class:`FeedbackStore`, and
-        replies with a ``feedback_ack`` envelope.
+        persists a :class:`FeedbackEntry` via the configured
+        :class:`BaseFeedbackStore` backend (SQLite or Postgres, selected by
+        :func:`auto_bedrock_chat_fastapi.db.create_feedback_store`), and
+        replies with a ``feedback_ack`` envelope. Failures emit a
+        dedicated ``feedback_error`` envelope (see
+        :meth:`_send_feedback_error`).
         """
+        # Best-effort: try to echo the client's message_id on every reply so
+        # the UI can reconcile optimistic state. Missing/invalid payloads
+        # may not have one — the client tolerates ``None``.
+        #
+        # Strict typing: only a *non-empty* ``str`` is accepted. A malicious
+        # or buggy client could send a list/object/number, which would then
+        # be echoed straight back into the JSON envelope and break the
+        # browser handler (``CSS.escape`` / dataset comparisons expect a
+        # string). We coerce anything else to ``None`` so the downstream
+        # required-field check rejects the request with ``invalid_feedback``.
+        raw_message_id = data.get("message_id") if isinstance(data, dict) else None
+        message_id = raw_message_id if isinstance(raw_message_id, str) and raw_message_id else None
+
         if self.feedback_store is None:
-            await self._send_feedback_error(websocket, "feedback_unavailable", "Feedback collection is not enabled")
+            logger.warning(
+                "Received feedback message but no FeedbackStore is configured; feedback collection is unavailable"
+            )
+            await self._send_feedback_error(
+                websocket,
+                "feedback_unavailable",
+                "Feedback collection is not enabled",
+                message_id=message_id,
+            )
             return
 
         session = await self.session_manager.get_session(websocket)
         if not session:
-            await self._send_feedback_error(websocket, "feedback_unavailable", "Session not found")
+            logger.warning("Received feedback message but session not found for websocket %s", websocket)
+            await self._send_feedback_error(
+                websocket,
+                "feedback_unavailable",
+                "Session not found",
+                message_id=message_id,
+            )
             return
 
         # Authorization (stub by default; access-control task swaps in the
         # real implementation).
         if not self.feedback_authorizer.can_submit(session.user_id):
-            logger.info(
+            logger.warning(
                 "Feedback rejected: unauthorized user_id=%s session=%s",
                 session.user_id,
                 session.session_id,
@@ -474,19 +506,31 @@ class WebSocketChatHandler:
                 websocket,
                 "unauthorized_feedback",
                 "You are not authorized to submit feedback",
+                message_id=message_id,
             )
             return
 
-        message_id = data.get("message_id")
         rating_raw = data.get("rating")
         if not message_id or not rating_raw:
-            await self._send_feedback_error(websocket, "invalid_feedback", "message_id and rating are required")
+            logger.warning("Invalid feedback payload: missing message_id or rating (session=%s)", session.session_id)
+            await self._send_feedback_error(
+                websocket,
+                "invalid_feedback",
+                "message_id and rating are required",
+                message_id=message_id,
+            )
             return
 
         try:
             rating = Rating(rating_raw)
         except ValueError:
-            await self._send_feedback_error(websocket, "invalid_feedback", f"Unknown rating: {rating_raw!r}")
+            logger.warning("Invalid feedback payload: unknown rating %r (session=%s)", rating_raw, session.session_id)
+            await self._send_feedback_error(
+                websocket,
+                "invalid_feedback",
+                f"Unknown rating: {rating_raw!r}",
+                message_id=message_id,
+            )
             return
 
         # Recover the original assistant response by message_id from session
@@ -502,14 +546,26 @@ class WebSocketChatHandler:
                 websocket,
                 "invalid_feedback",
                 f"No assistant message found for message_id={message_id!r}",
+                message_id=message_id,
             )
             return
 
         meta = ai_message.metadata or {}
+        # When the authorizer permits anonymous submissions (no SSO and no
+        # auth_verification_endpoint), ``session.user_id`` is ``None``. It
+        # can also be a whitespace-only string if an upstream
+        # auth-verification response surfaced a blank identifier. The
+        # FeedbackEntry / DB schema both require a non-empty ``user_id``,
+        # so we normalize first (strip + treat blank as missing) and stamp
+        # these rows with the ``"anonymous"`` sentinel rather than letting
+        # a blank value reach the DB — audit/history queries can then
+        # distinguish "unauthenticated" from a real user identifier.
+        normalized_user_id = (session.user_id or "").strip()
+        effective_user_id = normalized_user_id or "anonymous"
         try:
             entry = FeedbackEntry(
                 session_id=session.session_id,
-                user_id=session.user_id or "",
+                user_id=effective_user_id,
                 query=meta.get("query", ""),
                 ai_response=ai_message.content or "",
                 rating=rating,
@@ -524,32 +580,42 @@ class WebSocketChatHandler:
             # a concise message rather than the full multi-error dump.
             first = exc.errors()[0] if exc.errors() else {"loc": (), "msg": "invalid feedback payload"}
             loc = ".".join(str(p) for p in first.get("loc", ())) or "payload"
+            logger.warning("Feedback payload validation error: %s (session=%s)", exc, session.session_id)
             await self._send_feedback_error(
                 websocket,
                 "invalid_feedback",
                 f"{loc}: {first.get('msg', 'invalid value')}",
+                message_id=message_id,
             )
             return
         except ValueError as exc:
-            await self._send_feedback_error(websocket, "invalid_feedback", str(exc))
+            logger.warning("Feedback payload validation error: %s (session=%s)", exc, session.session_id)
+            await self._send_feedback_error(websocket, "invalid_feedback", str(exc), message_id=message_id)
             return
 
         try:
             persisted = await self.feedback_store.create(entry)
+            logger.info(
+                "Feedback persisted: entry_id=%s session=%s rating=%s",
+                persisted.id,
+                session.session_id,
+                rating.value,
+            )
         except (FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError) as exc:
-            logger.warning("Feedback persistence failed: %s", exc)
-            await self._send_feedback_error(websocket, "feedback_error", str(exc))
+            logger.warning("Feedback persistence failed: %s (session=%s)", exc, session.session_id)
+            await self._send_feedback_error(websocket, "feedback_error", str(exc), message_id=message_id)
             return
         except Exception:  # pragma: no cover - defensive
             # Do NOT echo str(exc) to the client: psycopg/driver errors can
             # leak SQL fragments, constraint names, table names, etc. Log the
             # detail server-side and return a generic message.
-            logger.exception("Unexpected error persisting feedback")
+            logger.exception("Unexpected error persisting feedback (session=%s)", session.session_id)
             self._total_errors += 1
             await self._send_feedback_error(
                 websocket,
                 "feedback_error",
                 "Internal error while processing feedback",
+                message_id=message_id,
             )
             return
 
@@ -557,28 +623,45 @@ class WebSocketChatHandler:
             websocket,
             {
                 "type": "feedback_ack",
+                "message_id": message_id,
                 "feedback_id": str(persisted.id),
                 "status": persisted.review_status.value,
                 "timestamp": datetime.now().isoformat(),
             },
         )
 
-    async def _send_feedback_error(self, websocket: WebSocket, code: str, detail: str) -> None:
-        await self._send_message(
-            websocket,
-            {
-                "type": "error",
-                "code": code,
-                "detail": detail,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
+    async def _send_feedback_error(
+        self,
+        websocket: WebSocket,
+        code: str,
+        message: str,
+        *,
+        message_id: Optional[str] = None,
+    ) -> None:
+        """Send a ``feedback_error`` envelope matching the chat-client contract.
+
+        The client's ``_handleFeedbackError`` reads ``data.message_id`` (to
+        locate the optimistic indicator) and ``data.message`` (to display
+        inline). ``code`` is retained for programmatic branching and is
+        purely additive — the legacy generic ``{type: "error", code,
+        detail}`` envelope is no longer used for feedback failures.
+        """
+        payload: Dict[str, Any] = {
+            "type": "feedback_error",
+            "code": code,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if message_id is not None:
+            payload["message_id"] = message_id
+        await self._send_message(websocket, payload)
 
     async def _handle_history_request(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle history request"""
 
         session = await self.session_manager.get_session(websocket)
         if not session:
+            logger.warning("Session not found for websocket %s", websocket)
             await self._send_error(websocket, "Session not found")
             return
 
@@ -1149,7 +1232,7 @@ class WebSocketChatHandler:
                 vector_db = self.kb_store
                 _close_after = False
             else:
-                from .kb_store_base import create_kb_store
+                from .db import create_kb_store
 
                 vector_db = create_kb_store(self.config)
                 _close_after = True
