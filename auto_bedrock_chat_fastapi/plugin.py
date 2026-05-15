@@ -740,7 +740,7 @@ class BedrockChatPlugin:
             # Extract session token
             session_token = None
             auth_header = request.headers.get("Authorization", "")
-            
+
             if auth_header.startswith("Bearer "):
                 session_token = auth_header[7:]
             else:
@@ -749,7 +749,7 @@ class BedrockChatPlugin:
                     session_token = body.get("session_token")
                 except Exception:
                     pass
-            
+
             if not session_token:
                 session_token = request.cookies.get("sso_session_token")
 
@@ -772,16 +772,77 @@ class BedrockChatPlugin:
                     self.sso_session_store.delete_session(session_id)
                     logger.debug("SSO session deleted on logout: %s", session_id)
 
-            # Build IdP logout URL so the frontend can redirect to it.
+            # For the Cognito + federated chain mode, stash the id_token_hint
+            # in the short-lived hint store so the /signout-idp endpoint can
+            # pick it up after Cognito's /logout redirect.
+            # Only needed when BEDROCK_SSO_COGNITO_CHAIN_LOGOUT=true.
+            logout_hint_id = None
+            if (
+                id_token_hint
+                and self.config.sso_federated_logout_url
+                and self.config.sso_cognito_chain_logout
+            ):
+                logout_hint_id = secrets.token_urlsafe(32)
+                self.sso_session_store.store_logout_hint(logout_hint_id, id_token_hint)
+
+            # Build the first-hop logout URL (Cognito /logout for the
+            # Cognito+federated case, or the IdP end_session endpoint otherwise).
             idp_logout_url = None
             if self.sso_provider:
                 idp_logout_url = self.sso_provider.build_logout_url(id_token_hint=id_token_hint)
 
-            print("SSO LOGOUT CALLED")
-            print("Logout URL: ", idp_logout_url)
-
             response = JSONResponse({"logged_out": True, "logout_url": idp_logout_url})
             response.delete_cookie(key="sso_session_token")
+            if logout_hint_id:
+                # Short-lived cookie — consumed by /signout-idp after the
+                # Cognito redirect.  httponly prevents JS access; max_age
+                # limits exposure to 2 minutes.
+                response.set_cookie(
+                    key="sso_logout_hint",
+                    value=logout_hint_id,
+                    max_age=120,
+                    httponly=True,
+                    samesite="lax",
+                )
+            return response
+
+        @self.app.get(f"{self.config.chat_endpoint}/auth/sso/signout-idp")
+        async def sso_signout_idp(request: Request):
+            """Intermediate endpoint in the Cognito → federated IdP logout chain.
+
+            Cognito's ``/logout`` redirects here (after clearing its own
+            session cookie).  We then read the short-lived logout hint to
+            recover the ``id_token_hint`` and redirect the browser to the
+            federated IdP (e.g. Azure AD B2C) to finish the logout chain.
+
+            This endpoint URL must be registered as a Sign-out URL in the
+            Cognito app client::
+
+                <sso_public_base_url><chat_endpoint>/auth/sso/signout-idp
+            """
+            if not self.sso_provider:
+                # SSO not configured — just go home.
+                base = (self.config.sso_public_base_url or "").rstrip("/")
+                ui_path = (self.config.ui_endpoint or "/bedrock-chat/ui").lstrip("/")
+                return RedirectResponse(url=f"{base}/{ui_path}" if base else f"/{ui_path}", status_code=302)
+
+            hint_id = request.cookies.get("sso_logout_hint")
+            id_token_hint: Optional[str] = None
+            if hint_id:
+                id_token_hint = self.sso_session_store.get_and_consume_logout_hint(hint_id)
+
+            federated_url = self.sso_provider.build_federated_logout_url(id_token_hint=id_token_hint)
+            if not federated_url:
+                # No federated logout configured — redirect to the UI.
+                base = (self.config.sso_public_base_url or "").rstrip("/")
+                ui_path = (self.config.ui_endpoint or "/bedrock-chat/ui").lstrip("/")
+                federated_url = f"{base}/{ui_path}" if base else f"/{ui_path}"
+
+            logger.debug("signout-idp: redirecting to federated logout %s", federated_url)
+
+            response = RedirectResponse(url=federated_url, status_code=302)
+            # Clear the hint cookie regardless of whether it was valid.
+            response.delete_cookie(key="sso_logout_hint")
             return response
 
     def _check_kb_status(self):

@@ -527,7 +527,21 @@ class ChatConfig(BaseSettings):
         ),
     )
 
-    # Logging Configuration
+    sso_cognito_chain_logout: bool = Field(
+        default=False,
+        alias="BEDROCK_SSO_COGNITO_CHAIN_LOGOUT",
+        description=(
+            "Enable the full dual-session logout chain: Cognito /logout → "
+            "app /auth/sso/signout-idp → federated IdP (Azure AD B2C). "
+            "Requires <sso_public_base_url><chat_endpoint>/auth/sso/signout-idp "
+            "to be registered as a Sign-out URL in the Cognito app client. "
+            "When False (default), logout goes directly to the federated IdP "
+            "(clears Azure AD B2C session but leaves the Cognito browser "
+            "session cookie, which is acceptable when prompt=login is in use)."
+        ),
+    )
+
+
     log_level: str = Field(default="INFO", alias="BEDROCK_LOG_LEVEL", description="Logging level")
 
     log_api_calls: bool = Field(

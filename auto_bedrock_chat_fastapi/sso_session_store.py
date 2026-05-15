@@ -52,6 +52,10 @@ class SSOSessionStore:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         # key: state (str) → value: {code_verifier, expires_at}
         self._pending: Dict[str, Dict[str, Any]] = {}
+        # key: hint_id (str) → value: {id_token_hint, expires_at}
+        # Short-lived store used to ferry the id_token_hint across the
+        # Cognito /logout redirect → /auth/sso/signout-idp hop.
+        self._logout_hints: Dict[str, Dict[str, Any]] = {}
         # Counter for opportunistic cleanup in create_session()
         self._create_count: int = 0
         self._CLEANUP_INTERVAL: int = 100
@@ -210,6 +214,50 @@ class SSOSessionStore:
     def delete_pending(self, state: str) -> None:
         """Remove a pending auth entry (one-time use enforcement)."""
         self._pending.pop(state, None)
+
+    # ------------------------------------------------------------------
+    # Logout hint store (hint_id → id_token_hint)
+    # ------------------------------------------------------------------
+
+    _LOGOUT_HINT_TTL = 120  # 2 minutes — enough for the Cognito redirect hop
+
+    def store_logout_hint(self, hint_id: str, id_token_hint: str) -> None:
+        """Store an id_token_hint keyed by a random ``hint_id``.
+
+        The hint is short-lived (2 minutes) and consumed once by
+        ``get_and_consume_logout_hint``.  It bridges the gap between the
+        ``/auth/sso/logout`` call (where the session is deleted) and the
+        subsequent ``/auth/sso/signout-idp`` redirect (where we need the
+        token to clear the federated IdP session).
+
+        Args:
+            hint_id: A random UUID used as the lookup key.
+            id_token_hint: The raw id_token (or external IdP token) needed
+                by the federated logout endpoint.
+        """
+        self._logout_hints[hint_id] = {
+            "id_token_hint": id_token_hint,
+            "expires_at": time.time() + self._LOGOUT_HINT_TTL,
+        }
+        logger.debug("Logout hint stored: %s", hint_id)
+
+    def get_and_consume_logout_hint(self, hint_id: str) -> Optional[str]:
+        """Retrieve and immediately delete a logout hint (one-time use).
+
+        Returns the ``id_token_hint`` string, or ``None`` if the hint is
+        unknown, already consumed, or expired.
+
+        Args:
+            hint_id: The lookup key set by ``store_logout_hint``.
+        """
+        entry = self._logout_hints.pop(hint_id, None)
+        if entry is None:
+            return None
+        if time.time() > entry["expires_at"]:
+            logger.debug("Logout hint expired: %s", hint_id)
+            return None
+        logger.debug("Logout hint consumed: %s", hint_id)
+        return entry["id_token_hint"]
 
     # ------------------------------------------------------------------
     # Session token (JWT) helpers

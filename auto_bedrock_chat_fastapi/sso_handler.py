@@ -206,15 +206,28 @@ class SSOProvider:
     ) -> Optional[str]:
         """Build a logout URL that clears the upstream IdP session.
 
-        When ``sso_federated_logout_url`` is configured (Cognito → Azure AD),
-        we redirect directly to Azure AD's logout endpoint, bypassing
-        Cognito's problematic /logout.  Azure AD B2C requires
-        ``id_token_hint`` to identify the session to terminate.
+        **Cognito + federated IdP (e.g. Azure AD B2C) — two modes:**
+
+        *Direct mode* (``sso_cognito_chain_logout=False``, the default):
+            Redirects straight to the federated IdP logout endpoint.  This
+            clears the Azure AD B2C session so the next login requires
+            credentials, but leaves the Cognito browser session cookie alive.
+            Because ``prompt=login`` is sent on every authorization request,
+            Cognito will still route the user back through Azure AD B2C, and
+            since that session is gone the user must re-authenticate.
+
+        *Chain mode* (``sso_cognito_chain_logout=True``):
+            Redirects to Cognito ``/logout`` first (drops Cognito's browser
+            session cookie), which then redirects to the app's own
+            ``/auth/sso/signout-idp`` endpoint, which forwards to Azure AD B2C.
+            **Requires** ``<sso_public_base_url><chat_endpoint>/auth/sso/signout-idp``
+            to be registered as a Sign-out URL in the Cognito app client.
 
         Args:
             post_logout_redirect_uri: Where to land after logout completes.
-            id_token_hint: The raw ID token from login.  Required by Azure
-                AD B2C to identify which session to clear.
+            id_token_hint: The raw ID token from the federated IdP.  Required
+                by Azure AD B2C to identify which session to terminate (direct
+                mode).  Ignored in chain mode (passed via the hint store).
 
         Returns:
             The fully-qualified logout URL, or None if unavailable.
@@ -227,29 +240,37 @@ class SSOProvider:
         if provider == "cognito":
             federated_logout = self._config.sso_federated_logout_url
             if federated_logout:
-                # Redirect directly to the federated IdP's logout endpoint.
-                # Only id_token_hint is required — it tells Azure AD B2C
-                # which session to clear.  post_logout_redirect_uri is only
-                # included when explicitly configured (it must be registered
-                # in the Azure AD B2C app registration).
-                params: Dict[str, str] = {}
-                if id_token_hint:
-                    params["id_token_hint"] = id_token_hint
-                fed_redirect = (
-                    post_logout_redirect_uri
-                    or self._config.sso_federated_post_logout_redirect_uri
-                )
-                if fed_redirect:
-                    params["post_logout_redirect_uri"] = fed_redirect
-                return f"{federated_logout}?{urlencode(params)}"
+                if self._config.sso_cognito_chain_logout:
+                    # Chain mode: Cognito /logout → /signout-idp → Azure AD B2C.
+                    # logout_uri MUST be registered in the Cognito app client.
+                    base = (self._config.sso_public_base_url or self._config.api_base_url or "").rstrip("/")
+                    signout_idp_url = f"{base}{self._config.chat_endpoint}/auth/sso/signout-idp"
+                    params: Dict[str, str] = {
+                        "client_id": self._config.sso_client_id,
+                        "logout_uri": signout_idp_url,
+                    }
+                    logger.debug("build_logout_url: chain mode via %s", signout_idp_url)
+                    return f"{logout_endpoint}?{urlencode(params)}"
+                else:
+                    # Direct mode: go straight to the federated IdP.
+                    # post_logout_redirect_uri must be registered in Azure AD B2C.
+                    params = {}
+                    if id_token_hint:
+                        params["id_token_hint"] = id_token_hint
+                    fed_redirect = (
+                        post_logout_redirect_uri
+                        or self._config.sso_federated_post_logout_redirect_uri
+                    )
+                    if fed_redirect:
+                        params["post_logout_redirect_uri"] = fed_redirect
+                    logger.debug("build_logout_url: direct mode to %s", federated_logout)
+                    return f"{federated_logout}?{urlencode(params)}" if params else federated_logout
 
         # Compute default redirect for non-federated paths
         if not post_logout_redirect_uri:
             base = (self._config.sso_public_base_url or self._config.api_base_url or "").rstrip("/")
             ui_path = (self._config.ui_endpoint or "/bedrock-chat/ui").lstrip("/")
             post_logout_redirect_uri = f"{base}/{ui_path}" if base else f"/{ui_path}"
-            
-        # post_logout_redirect_uri = "http://localhost:8000/bedrock-chat/ui"
 
         if provider == "cognito":
             # No federated logout configured — use Cognito's /logout with
@@ -266,12 +287,48 @@ class SSOProvider:
             }
             if id_token_hint:
                 params["id_token_hint"] = id_token_hint
-                
-        print("build_logout_url called")
-        print("Logout URL " + f"{logout_endpoint}?{urlencode(params)}")
-        print("Logout URL params: " + str(params))
+
+        logger.debug("build_logout_url: %s?%s", logout_endpoint, urlencode(params))
         return f"{logout_endpoint}?{urlencode(params)}"
-        
+
+
+    def build_federated_logout_url(
+        self,
+        id_token_hint: Optional[str] = None,
+        post_logout_redirect_uri: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build the federated IdP (e.g. Azure AD B2C) logout URL directly.
+
+        Called by the ``/auth/sso/signout-idp`` intermediate endpoint after
+        Cognito has already cleared its own session.
+
+        Args:
+            id_token_hint: The raw id_token from the federated IdP.  Required
+                by Azure AD B2C to identify which session to terminate.
+            post_logout_redirect_uri: Where to land after the federated IdP
+                logout completes.  Falls back to
+                ``sso_federated_post_logout_redirect_uri`` from config.
+
+        Returns:
+            The fully-qualified federated logout URL, or None if
+            ``sso_federated_logout_url`` is not configured.
+        """
+        federated_logout = self._config.sso_federated_logout_url
+        if not federated_logout:
+            return None
+
+        params: Dict[str, str] = {}
+        if id_token_hint:
+            params["id_token_hint"] = id_token_hint
+
+        redirect = post_logout_redirect_uri or self._config.sso_federated_post_logout_redirect_uri
+        if redirect:
+            params["post_logout_redirect_uri"] = redirect
+
+        url = f"{federated_logout}?{urlencode(params)}" if params else federated_logout
+        logger.debug("build_federated_logout_url: %s", url)
+        return url
+
     # ------------------------------------------------------------------
     # Token exchange
     # ------------------------------------------------------------------
