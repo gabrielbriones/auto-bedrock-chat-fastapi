@@ -303,6 +303,7 @@ class ChatClient {
 
     // Definition-driven validation.
     _validateVar(varName, value) {
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         const def  = this._variableDefs[varName];
         const type = def?.input_type || 'text';
         const trimmed = (typeof value === 'string') ? value.trim() : String(value);
@@ -319,17 +320,13 @@ class ChatClient {
             return true;
         }
 
-        // text: use validate field when present
+        // text: use validate field when present, else fall back to name convention
+        if (def?.validate === 'uuid')    return UUID_RE.test(trimmed);
         if (def?.validate === 'nonempty') return trimmed.length > 0;
-        if (def?.validate) {
-            try {
-                return new RegExp(def.validate).test(trimmed);
-            } catch (e) {
-                console.warn(`Invalid validate pattern for variable "${varName}":`, e);
-                return false;
-            }
-        }
+        if (def?.validate)               return new RegExp(def.validate).test(trimmed);
 
+        // backwards-compat fallback (no definition)
+        if (varName.endsWith('_ID')) return UUID_RE.test(trimmed);
         return trimmed.length > 0;
     }
 
@@ -361,13 +358,21 @@ class ChatClient {
     handleAuthButtonClick() {
         if (this.authenticated) {
             // SSO logout: POST to the HTTP logout endpoint to clear the
-            // HttpOnly cookie and server-side session, then reload.
+            // HttpOnly cookie and server-side session, then redirect to IdP logout.
             if (window.CONFIG.ssoAuthenticated) {
                 const logoutUrl = (window.CONFIG.ssoLoginUrl || '').replace('/login', '/logout');
                 fetch(logoutUrl, {
                     method: 'POST',
                     credentials: 'same-origin',
-                }).then(function() {
+                }).then(function(response) {
+                    return response.json();
+                }).then(function(data) {
+                    if (data && data.logout_url) {
+                        window.location.href = data.logout_url;
+                    } else {
+                        window.location.reload();
+                    }
+                }).catch(function() {
                     window.location.reload();
                 });
                 return;
@@ -421,22 +426,12 @@ class ChatClient {
             return;
         }
 
-        // Auto-detect: run each variable's detect_pattern (or derive from validate)
-        // against the sent message and populate the corresponding input if matched.
+        // Auto-detect: run each variable's detect_pattern against the sent message
+        // and populate the corresponding input if matched.
         for (const [name, def] of Object.entries(this._variableDefs)) {
+            if (!def.detect_pattern) continue;
             if (def.input_type && def.input_type !== 'text') continue;
-            // Use explicit detect_pattern, or derive from validate by stripping anchors
-            const pattern = def.detect_pattern
-                || (def.validate && def.validate.replace(/^\^/, '').replace(/\$$/, ''))
-                || null;
-            if (!pattern) continue;
-            let re;
-            try {
-                re = new RegExp(pattern, def.detect_flags || 'i');
-            } catch (e) {
-                console.warn(`Invalid detect pattern for variable "${name}":`, e);
-                continue;
-            }
+            const re = new RegExp(def.detect_pattern, def.detect_flags || 'i');
             const match = message.match(re);
             if (match) {
                 const input = document.getElementById(`var_${name}`);

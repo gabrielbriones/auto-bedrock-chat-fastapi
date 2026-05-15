@@ -56,6 +56,7 @@ class SSOProvider:
         self._userinfo_endpoint: Optional[str] = None
         self._jwks_uri: Optional[str] = None
         self._issuer: Optional[str] = None
+        self._end_session_endpoint: Optional[str] = None
 
     @property
     def has_userinfo_endpoint(self) -> bool:
@@ -116,13 +117,15 @@ class SSOProvider:
         self._userinfo_endpoint = self._config.sso_userinfo_url or discovered.get("userinfo_endpoint")
         self._jwks_uri = self._config.sso_jwks_url or discovered.get("jwks_uri")
         self._issuer = discovered.get("issuer")
+        self._end_session_endpoint = discovered.get("end_session_endpoint")
 
         logger.debug(
-            "Resolved SSO endpoints — auth: %s, token: %s, userinfo: %s, jwks: %s",
+            "Resolved SSO endpoints — auth: %s, token: %s, userinfo: %s, jwks: %s, end_session: %s",
             self._authorization_endpoint,
             self._token_endpoint,
             self._userinfo_endpoint,
             self._jwks_uri,
+            self._end_session_endpoint,
         )
 
     # ------------------------------------------------------------------
@@ -185,11 +188,90 @@ class SSOProvider:
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
+            "prompt": "login",
+            "max_age": "0",  # OIDC: user must re-authenticate (0 seconds since last auth)
         }
 
         url = f"{self._authorization_endpoint}?{urlencode(params)}"
         return url, code_verifier
+    
+    # ------------------------------------------------------------------
+    # Logout URL construction
+    # ------------------------------------------------------------------
 
+    def build_logout_url(
+        self,
+        post_logout_redirect_uri: Optional[str] = None,
+        id_token_hint: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build a logout URL that clears the upstream IdP session.
+
+        When ``sso_federated_logout_url`` is configured (Cognito → Azure AD),
+        we redirect directly to Azure AD's logout endpoint, bypassing
+        Cognito's problematic /logout.  Azure AD B2C requires
+        ``id_token_hint`` to identify the session to terminate.
+
+        Args:
+            post_logout_redirect_uri: Where to land after logout completes.
+            id_token_hint: The raw ID token from login.  Required by Azure
+                AD B2C to identify which session to clear.
+
+        Returns:
+            The fully-qualified logout URL, or None if unavailable.
+        """
+        logout_endpoint = self._end_session_endpoint
+        if not logout_endpoint:
+            return None
+
+        provider = (self._config.sso_provider or "").lower()
+        if provider == "cognito":
+            federated_logout = self._config.sso_federated_logout_url
+            if federated_logout:
+                # Redirect directly to the federated IdP's logout endpoint.
+                # Only id_token_hint is required — it tells Azure AD B2C
+                # which session to clear.  post_logout_redirect_uri is only
+                # included when explicitly configured (it must be registered
+                # in the Azure AD B2C app registration).
+                params: Dict[str, str] = {}
+                if id_token_hint:
+                    params["id_token_hint"] = id_token_hint
+                fed_redirect = (
+                    post_logout_redirect_uri
+                    or self._config.sso_federated_post_logout_redirect_uri
+                )
+                if fed_redirect:
+                    params["post_logout_redirect_uri"] = fed_redirect
+                return f"{federated_logout}?{urlencode(params)}"
+
+        # Compute default redirect for non-federated paths
+        if not post_logout_redirect_uri:
+            base = (self._config.sso_public_base_url or self._config.api_base_url or "").rstrip("/")
+            ui_path = (self._config.ui_endpoint or "/bedrock-chat/ui").lstrip("/")
+            post_logout_redirect_uri = f"{base}/{ui_path}" if base else f"/{ui_path}"
+            
+        # post_logout_redirect_uri = "http://localhost:8000/bedrock-chat/ui"
+
+        if provider == "cognito":
+            # No federated logout configured — use Cognito's /logout with
+            # just client_id + logout_uri (no redirect_uri/response_type).
+            params = {
+                "client_id": self._config.sso_client_id,
+                "logout_uri": post_logout_redirect_uri,
+            }
+        else:
+            # Standard OIDC end_session_endpoint
+            params = {
+                "client_id": self._config.sso_client_id,
+                "post_logout_redirect_uri": post_logout_redirect_uri,
+            }
+            if id_token_hint:
+                params["id_token_hint"] = id_token_hint
+                
+        print("build_logout_url called")
+        print("Logout URL " + f"{logout_endpoint}?{urlencode(params)}")
+        print("Logout URL params: " + str(params))
+        return f"{logout_endpoint}?{urlencode(params)}"
+        
     # ------------------------------------------------------------------
     # Token exchange
     # ------------------------------------------------------------------
@@ -393,6 +475,7 @@ class SSOProvider:
             try:
                 response = await client.get(self._jwks_uri)
                 response.raise_for_status()
+                print(f"JWKS response: {response}")
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 raise SSOValidationError(

@@ -238,7 +238,6 @@ class BedrockChatPlugin:
         """
         placeholder_re = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 
-        # Collect unique placeholder names across all templates (preserving first-seen order).
         seen: dict[str, dict] = {}
         for prompt in self._preset_prompts:
             for name in placeholder_re.findall(prompt.get("template", "")):
@@ -792,6 +791,7 @@ class BedrockChatPlugin:
             # Extract session token
             session_token = None
             auth_header = request.headers.get("Authorization", "")
+            
             if auth_header.startswith("Bearer "):
                 session_token = auth_header[7:]
             else:
@@ -800,16 +800,38 @@ class BedrockChatPlugin:
                     session_token = body.get("session_token")
                 except Exception:
                     pass
+            
             if not session_token:
                 session_token = request.cookies.get("sso_session_token")
 
+            id_token_hint = None
             if session_token:
                 session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
                 if session_id:
+                    # Retrieve tokens before deleting the session.
+                    session = self.sso_session_store.get_session(session_id)
+                    if session:
+                        # Prefer the upstream Azure AD B2C id_token stored
+                        # by Cognito as a custom attribute mapping.  This is
+                        # the token Azure AD B2C needs for id_token_hint.
+                        claims = session.get("id_token_claims") or {}
+                        id_token_hint = claims.get("custom:external_id_token")
+                        if not id_token_hint:
+                            # Fallback: use the Cognito id_token (won't work
+                            # with Azure AD B2C but fine for other IdPs).
+                            id_token_hint = session.get("id_token")
                     self.sso_session_store.delete_session(session_id)
                     logger.debug("SSO session deleted on logout: %s", session_id)
 
-            response = JSONResponse({"logged_out": True})
+            # Build IdP logout URL so the frontend can redirect to it.
+            idp_logout_url = None
+            if self.sso_provider:
+                idp_logout_url = self.sso_provider.build_logout_url(id_token_hint=id_token_hint)
+
+            print("SSO LOGOUT CALLED")
+            print("Logout URL: ", idp_logout_url)
+
+            response = JSONResponse({"logged_out": True, "logout_url": idp_logout_url})
             response.delete_cookie(key="sso_session_token")
             return response
 
