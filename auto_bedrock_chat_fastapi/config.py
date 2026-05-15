@@ -346,9 +346,7 @@ class ChatConfig(BaseSettings):
         description=(
             "Variable definitions for preset prompt placeholders. Each entry should have 'name' "
             "(SCREAMING_SNAKE_CASE matching {{NAME}} in templates) and optional 'label', "
-            "'input_type', 'validate', 'detect_pattern', 'placeholder', and 'default' fields. "
-            "When not provided, variables are automatically inferred from {{PLACEHOLDER}} patterns "
-            "found in preset prompt templates."
+            "'input_type', 'validate', 'detect_pattern', 'placeholder', and 'default' fields."
         ),
     )
 
@@ -507,6 +505,26 @@ class ChatConfig(BaseSettings):
         alias="BEDROCK_SSO_SESSION_TTL",
         gt=0,
         description="SSO session duration in seconds before requiring re-authentication",
+    )
+
+    sso_federated_logout_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_FEDERATED_LOGOUT_URL",
+        description=(
+            "Logout endpoint of the upstream federated IdP (e.g., Azure AD B2C). "
+            "When set, logout chains through Cognito then to this URL to clear "
+            "the federated IdP session, preventing silent re-authentication."
+        ),
+    )
+
+    sso_federated_post_logout_redirect_uri: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_SSO_FEDERATED_POST_LOGOUT_REDIRECT_URI",
+        description=(
+            "Redirect URI sent to the federated IdP after logout.  Must be "
+            "registered in the IdP's app registration (e.g., Azure AD B2C).  "
+            "If not set, the federated IdP will show its own signed-out page."
+        ),
     )
 
     # Logging Configuration
@@ -1039,7 +1057,8 @@ def load_preset_config_from_yaml(path: str) -> Dict[str, Any]:
         import yaml
     except ImportError:  # pragma: no cover
         logger.warning(
-            "pyyaml is not installed; cannot load preset config from '%s'. " "Install it with: pip install pyyaml",
+            "pyyaml is not installed; cannot load preset config from '%s'. "
+            "Install it with: pip install pyyaml",
             path,
         )
         return {"prompts": [], "variables": []}
