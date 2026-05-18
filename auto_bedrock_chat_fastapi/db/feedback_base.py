@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import List, Optional, Protocol, Sequence
 from uuid import UUID
 
-from ..models import FeedbackEntry, FeedbackStats, ReviewStatus
+from ..models import FeedbackEntry, FeedbackListFilters, FeedbackStats, ReviewStatus
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,30 @@ class BaseFeedbackStore(ABC):
         offset: int = 0,
     ) -> List[FeedbackEntry]:
         """Return entries created within ``[start, end)``, newest-first."""
+
+    @abstractmethod
+    async def list_entries(
+        self,
+        filters: FeedbackListFilters,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[FeedbackEntry]:
+        """Return entries matching ``filters``, newest-first.
+
+        All filters in :class:`FeedbackListFilters` are optional and
+        combine with AND semantics. ``tags`` uses overlap matching (any
+        listed tag must appear in ``reviewer_tags``). ``date_from`` is
+        inclusive, ``date_to`` is exclusive. Pagination follows the same
+        contract as :meth:`list_pending`: ``limit > 0``, ``offset >= 0``.
+        """
+
+    @abstractmethod
+    async def count_entries(self, filters: FeedbackListFilters) -> int:
+        """Return the total number of entries matching ``filters``.
+
+        Companion to :meth:`list_entries` for paginated UIs that need a
+        ``total`` alongside the current page.
+        """
 
     @abstractmethod
     async def update_review(

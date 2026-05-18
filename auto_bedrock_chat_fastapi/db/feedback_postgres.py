@@ -18,7 +18,15 @@ from typing import Any, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from ..exceptions import FeedbackError, FeedbackNotFoundError, InvalidStatusTransitionError
-from ..models import ALLOWED_REVIEW_TRANSITIONS, FeedbackEntry, FeedbackStats, Rating, ReviewStatus
+from ..models import (
+    ALLOWED_REVIEW_TRANSITIONS,
+    FeedbackEntry,
+    FeedbackListFilters,
+    FeedbackStats,
+    Rating,
+    ReviewStatus,
+    TagCount,
+)
 from .feedback_base import BaseFeedbackStore
 
 logger = logging.getLogger(__name__)
@@ -112,6 +120,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         await self._pool.open()
         if self._init_schema:
             await self._apply_schema()
+        await self._migrate_legacy_correction_rows()
         logger.info("PostgresFeedbackStore ready (init_schema=%s)", self._init_schema)
 
     async def close(self) -> None:
@@ -125,6 +134,36 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             async with conn.cursor() as cur:
                 await cur.execute(ddl)
             await conn.commit()
+
+    async def _migrate_legacy_correction_rows(self) -> None:
+        """Rewrite legacy ``rating='correction'`` rows to ``'negative'``.
+
+        Pre-Phase-2 schemas allowed a third ``Rating`` value
+        ``"correction"`` that was retired in favor of the orthogonal
+        ``correction_text`` field. The ``feedback_rating`` enum
+        definition uses ``IF NOT EXISTS``, so existing deployments may
+        still have the old 3-value enum and rows that use it. This
+        migration is idempotent: it's a no-op once all rows are
+        ``'negative'``, and it stays safe to run repeatedly. The enum
+        value itself is left in place for forward-compat — only the
+        rows are rewritten.
+        """
+        try:
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("UPDATE feedback SET rating = 'negative' WHERE rating = 'correction'")
+                    rowcount = cur.rowcount
+                await conn.commit()
+            if rowcount:
+                logger.warning(
+                    "migrated %d legacy feedback row(s) from rating='correction' to 'negative'",
+                    rowcount,
+                )
+        except Exception as exc:  # pragma: no cover — defensive only
+            # The table may not exist yet (init_schema=False on a
+            # provisioning-from-scratch deploy), or the enum value may
+            # already be gone. Either way, log and continue.
+            logger.debug("legacy-correction migration skipped: %s", exc)
 
     # ------------------------------------------------------------------
     # CRUD
@@ -249,6 +288,76 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         """
         return await self._fetch_all(sql, tuple(params))
 
+    # ------------------------------------------------------------------
+    # Filtered list / count (T2)
+    # ------------------------------------------------------------------
+
+    def _build_filter_clauses(self, filters: FeedbackListFilters) -> Tuple[List[str], List[Any]]:
+        """Build WHERE clauses + positional params for ``filters``.
+
+        Filter values are bound via ``%s`` placeholders; nothing is
+        interpolated into the SQL string. Returns ``(clauses, params)``
+        with ``clauses`` empty when no filter is set.
+        """
+        clauses: List[str] = []
+        params: List[Any] = []
+
+        if filters.status is not None:
+            clauses.append("review_status = %s")
+            params.append(filters.status.value)
+        if filters.rating is not None:
+            clauses.append("rating = %s")
+            params.append(filters.rating.value)
+        if filters.has_correction is True:
+            clauses.append("correction_text IS NOT NULL")
+        elif filters.has_correction is False:
+            clauses.append("correction_text IS NULL")
+        if filters.user_id is not None:
+            clauses.append("user_id = %s")
+            params.append(filters.user_id)
+        if filters.date_from is not None:
+            clauses.append("created_at >= %s")
+            params.append(filters.date_from)
+        if filters.date_to is not None:
+            clauses.append("created_at < %s")
+            params.append(filters.date_to)
+        if filters.tags:
+            clauses.append("reviewer_tags && %s::text[]")
+            params.append(list(filters.tags))
+        return clauses, params
+
+    async def list_entries(
+        self,
+        filters: FeedbackListFilters,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[FeedbackEntry]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+
+        clauses, params = self._build_filter_clauses(filters)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([limit, offset])
+        sql = f"""
+            SELECT {_SELECT_COLS} FROM feedback
+            {where}
+            ORDER BY created_at DESC, id ASC
+            LIMIT %s OFFSET %s
+        """
+        return await self._fetch_all(sql, tuple(params))
+
+    async def count_entries(self, filters: FeedbackListFilters) -> int:
+        clauses, params = self._build_filter_clauses(filters)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT count(*) FROM feedback {where}"  # nosec B608 - where built from constants
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, tuple(params))
+                row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
     async def update_review(
         self,
         feedback_id: UUID,
@@ -335,9 +444,55 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                 await cur.execute("SELECT rating, count(*) FROM feedback GROUP BY rating")
                 by_rating_rows = await cur.fetchall()
 
+                await cur.execute("SELECT count(*) FROM feedback WHERE correction_text IS NOT NULL")
+                with_correction_row = await cur.fetchone()
+
+                # Top 10 reviewer tags via ``unnest`` of the TEXT[] column.
+                # ``trim`` defends against any blank tags that slipped past
+                # the ``_strip_reviewer_tags`` validator.
+                await cur.execute(
+                    """
+                    SELECT tag, count(*) AS c
+                      FROM feedback, unnest(reviewer_tags) AS tag
+                     WHERE tag IS NOT NULL AND btrim(tag) <> ''
+                     GROUP BY tag
+                     ORDER BY c DESC, tag ASC
+                     LIMIT 10
+                    """
+                )
+                tag_rows = await cur.fetchall()
+
+                # Age of the oldest pending entry, in hours. ``extract(epoch …)``
+                # returns seconds; divide for hours. Returns NULL when nothing
+                # is pending.
+                await cur.execute(
+                    """
+                    SELECT EXTRACT(EPOCH FROM (now() - min(created_at))) / 3600.0
+                      FROM feedback
+                     WHERE review_status = %s
+                    """,
+                    (ReviewStatus.PENDING_REVIEW.value,),
+                )
+                oldest_row = await cur.fetchone()
+
         by_status = {ReviewStatus(s): int(c) for s, c in by_status_rows}
         by_rating = {Rating(r): int(c) for r, c in by_rating_rows}
-        return FeedbackStats(total=total, by_status=by_status, by_rating=by_rating)
+        with_correction = int(with_correction_row[0]) if with_correction_row else 0
+        top_tags = [TagCount(tag=t, count=int(c)) for t, c in tag_rows]
+        if oldest_row and oldest_row[0] is not None:
+            # Clamp tiny negative values that can appear if ``now()`` and
+            # ``created_at`` cross a clock-skew boundary on different nodes.
+            oldest_pending_hours: Optional[float] = max(float(oldest_row[0]), 0.0)
+        else:
+            oldest_pending_hours = None
+        return FeedbackStats(
+            total=total,
+            by_status=by_status,
+            by_rating=by_rating,
+            with_correction=with_correction,
+            top_tags=top_tags,
+            oldest_pending_hours=oldest_pending_hours,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

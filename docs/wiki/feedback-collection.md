@@ -109,21 +109,21 @@ WebSocket. The server replies with a `feedback_ack` (success) or an `error`
 {
   "type": "feedback",
   "message_id": "msg-uuid-of-the-rated-response",
-  "rating": "correction",
+  "rating": "negative",
   "score": 2,
   "correction_text": "IPC = instructions / cycles, not cycles / instructions",
   "user_comment": "This calculation was inverted"
 }
 ```
 
-| Field             | Type   | Required    | Notes                                                                         |
-| ----------------- | ------ | ----------- | ----------------------------------------------------------------------------- |
-| `type`            | string | yes         | Must be `"feedback"`                                                          |
-| `message_id`      | string | yes         | The `message_id` echoed by a previous `ai_response`                           |
-| `rating`          | enum   | yes         | `positive` \| `negative` \| `correction`                                      |
-| `score`           | int    | no          | 1–5                                                                           |
-| `correction_text` | string | conditional | Required when `rating == "correction"`; forbidden when `rating == "positive"` |
-| `user_comment`    | string | no          | Free-text                                                                     |
+| Field             | Type   | Required    | Notes                                                         |
+| ----------------- | ------ | ----------- | ------------------------------------------------------------- |
+| `type`            | string | yes         | Must be `"feedback"`                                          |
+| `message_id`      | string | yes         | The `message_id` echoed by a previous `ai_response`           |
+| `rating`          | enum   | yes         | `positive` \| `negative`                                      |
+| `score`           | int    | no          | 1–5                                                           |
+| `correction_text` | string | conditional | Optional proposed fix; only valid when `rating == "negative"` |
+| `user_comment`    | string | no          | Free-text                                                     |
 
 The server resolves the original `query`, `ai_response`, `kb_sources_used`,
 and `model_id` from session history using `message_id`, so the client does
@@ -158,7 +158,7 @@ programmatic branching; `message` is human-readable and safe to display:
 {
   "type": "feedback_error",
   "code": "invalid_feedback",
-  "message": "correction_text is required when rating is 'correction'",
+  "message": "correction_text is only allowed when rating is 'negative'",
   "message_id": "msg-uuid-of-the-rated-response",
   "timestamp": "2026-05-11T12:34:56.789012"
 }
@@ -173,7 +173,7 @@ indicator on the corresponding message.
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `feedback_unavailable`  | Backend disabled or pool failed to open                                                                                                     |
 | `unauthorized_feedback` | Authorizer rejected the user                                                                                                                |
-| `invalid_feedback`      | Missing/unknown `message_id`, missing/unknown `rating`, validator failure (e.g. `correction` without `correction_text`, `score` out of 1–5) |
+| `invalid_feedback`      | Missing/unknown `message_id`, missing/unknown `rating`, validator failure (e.g. `correction_text` on a positive rating, `score` out of 1–5) |
 | `feedback_error`        | Persistence failed downstream                                                                                                               |
 
 ---
@@ -210,6 +210,13 @@ handler = WebSocketChatHandler(
 ---
 
 ## `FeedbackStore` API
+
+> **Looking for the production review workflow?** The HTTP-level
+> review surface — list pending feedback, approve / reject with tags,
+> view stats — is documented on the [Admin API](admin-api) page. The
+> `FeedbackStore` API below is the underlying async data-access layer,
+> primarily of interest to plugin embedders and the upcoming Phase 3
+> synthesizer.
 
 The async data-access classes are exposed for the upcoming admin-API and
 Phase 3 synthesizer tasks. Both backends implement the same
@@ -280,6 +287,29 @@ The schema enforces the same validation rules as the Pydantic
 [`FeedbackEntry`](../../auto_bedrock_chat_fastapi/models.py) model via
 `CHECK` constraints, so direct DB writes that bypass the application can't
 introduce invalid rows.
+
+### Migration notes
+
+The `Rating` enum used to include a third value `"correction"` that was
+retired in favor of the orthogonal `correction_text` field. The current
+schema (and Pydantic model) only allow `"positive"` / `"negative"`.
+
+Long-lived dev databases that still contain rows with
+`rating='correction'` are handled defensively on store init:
+
+- **Read path** — `FeedbackEntry` has a `mode="before"` validator on
+  `rating` that coerces `"correction"` → `"negative"`, so hydration
+  never fails.
+- **Write path** — both `SQLiteFeedbackStore.__init__` and
+  `PostgresFeedbackStore.open` run an idempotent
+  `UPDATE feedback SET rating='negative' WHERE rating='correction'`
+  on startup and log a `WARNING` with the affected row count when
+  any rows are rewritten.
+
+The Postgres `feedback_rating` enum value is **not** dropped — keeping
+it in the type lets the migration succeed and avoids a downtime-prone
+`ALTER TYPE` dance. Fresh deployments get the new 2-value enum from
+the `IF NOT EXISTS`-guarded DDL.
 
 ---
 

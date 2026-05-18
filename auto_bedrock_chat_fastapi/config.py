@@ -700,6 +700,51 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    # ------------------------------------------------------------------
+    # Admin API (Expert Review) — XMGPLAT-10417 Phase 2
+    # ------------------------------------------------------------------
+
+    admin_enabled: bool = Field(
+        default=False,
+        alias="BEDROCK_ADMIN_ENABLED",
+        description=(
+            "Master switch for the Expert Review admin endpoints "
+            "(``/admin/feedback`` and ``/admin/kb``). When False, the "
+            "entire ``/admin/*`` block is not registered so unauthorized "
+            "callers receive a clean 404. Disabling at runtime is NOT a "
+            "security boundary — authorization is enforced per request "
+            "via the configured ``AdminAuthorizer``."
+        ),
+    )
+
+    admin_verification_endpoint: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_ADMIN_VERIFICATION_ENDPOINT",
+        description=(
+            "URL of an endpoint that decides whether a given user is an "
+            "admin. When set, the plugin selects ``RemoteAdminAuthorizer``: "
+            "each admin request POSTs ``{user_id, email, groups, claims}`` "
+            "to this endpoint and expects a JSON body ``{is_admin: bool}`` "
+            "in the 2xx response. Relative paths (``/admin/check``) are "
+            "resolved against ``app_base_url`` to match the existing "
+            "``auth_verification_endpoint`` semantics. Decisions are not "
+            "cached, so revocations propagate immediately \u2014 admin traffic "
+            "is human-paced and the load on the endpoint is negligible."
+        ),
+    )
+
+    admin_required_groups: List[str] = Field(
+        default_factory=list,
+        alias="BEDROCK_ADMIN_REQUIRED_GROUPS",
+        description=(
+            "Comma-separated list of SSO group names that grant admin "
+            "access. Used only when ``admin_verification_endpoint`` is "
+            "not set. Selects ``SSOGroupAdminAuthorizer`` when non-empty. "
+            "The IdP must populate ``groups`` (or ``cognito:groups`` / "
+            "``roles``) in the userinfo or ID-token claims."
+        ),
+    )
+
     kb_embedding_dimensions: int = Field(
         default=1536,
         alias="BEDROCK_KB_EMBEDDING_DIMENSIONS",
@@ -789,7 +834,7 @@ class ChatConfig(BaseSettings):
         env_parse_enums=None,  # Disable enum parsing
     )
 
-    @field_validator("allowed_paths", "excluded_paths", "cors_origins", mode="before")
+    @field_validator("allowed_paths", "excluded_paths", "cors_origins", "admin_required_groups", mode="before")
     @classmethod
     def parse_list_from_string(cls, v):
         """Parse comma-separated string into list"""

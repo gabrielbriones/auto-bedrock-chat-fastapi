@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     ai_response         TEXT NOT NULL,
 
     rating              TEXT NOT NULL
-                        CHECK (rating IN ('positive', 'negative', 'correction')),
+                        CHECK (rating IN ('positive', 'negative')),
     score               INTEGER
                         CHECK (score IS NULL OR (score BETWEEN 1 AND 5)),
     correction_text     TEXT,
@@ -45,11 +45,13 @@ CREATE TABLE IF NOT EXISTS feedback (
 
     created_at          TEXT NOT NULL,
 
+    -- A correction is a proposed fix to the AI's answer; only meaningful
+    -- for negative feedback. If present, it must be non-empty.
+    CHECK (correction_text IS NULL OR rating = 'negative'),
     CHECK (
-        rating <> 'correction'
-        OR (correction_text IS NOT NULL AND length(trim(correction_text)) > 0)
+        correction_text IS NULL
+        OR length(trim(correction_text)) > 0
     ),
-    CHECK (rating <> 'positive' OR correction_text IS NULL),
     CHECK (
         review_status = 'pending_review'
         OR (
