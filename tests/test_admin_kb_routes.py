@@ -330,6 +330,27 @@ class TestPatch:
         assert body["tags"] == ["alpha", "beta"]
         assert body["metadata"]["tags"] == ["alpha", "beta"]
 
+    def test_blank_only_tags_collapse_to_cleared(self, admin_app, kb_store):
+        # PR review feedback #5: the ``tags`` validator advertises
+        # "collapse all-blank list to []". A list of just whitespace
+        # must reach the store as ``[]`` (i.e. clear the tags), not
+        # as ``["", ""]`` that depends on downstream normalization.
+        _seed(kb_store, "d1", metadata={"tags": ["keep", "me"]})
+        app, sso = admin_app
+        resp = _client(app, sso).patch(f"{_KB_PREFIX}/d1", json={"tags": ["", "   "]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tags"] == []
+        assert body["metadata"].get("tags", []) == []
+
+    def test_explicit_empty_tags_clears(self, admin_app, kb_store):
+        _seed(kb_store, "d1", metadata={"tags": ["keep", "me"]})
+        app, sso = admin_app
+        resp = _client(app, sso).patch(f"{_KB_PREFIX}/d1", json={"tags": []})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tags"] == []
+
     def test_unknown_field_rejected_422(self, admin_app, kb_store):
         _seed(kb_store, "d1")
         app, sso = admin_app

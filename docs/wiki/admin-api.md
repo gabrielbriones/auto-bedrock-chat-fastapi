@@ -175,7 +175,7 @@ Query parameters for `GET /admin/feedback`:
 | `has_correction` | `true` / `false`                           | Filter entries that include / lack `correction_text`. |
 | `user_id`        | string                                     | Exact match.                                          |
 | `date_from`      | ISO-8601                                   | Inclusive.                                            |
-| `date_to`        | ISO-8601                                   | Inclusive.                                            |
+| `date_to`        | ISO-8601                                   | Exclusive (matches `created_at < date_to`).           |
 | `limit`          | int, default 50, max 200                   | 422 on out-of-bounds.                                 |
 | `offset`         | int, default 0                             | 422 on negative.                                      |
 
@@ -288,7 +288,7 @@ All admin errors share a single flat shape:
 
 | HTTP | `code`                          | When                                                          |
 | ---- | ------------------------------- | ------------------------------------------------------------- |
-| 400  | `invalid_filter`                | Bad date window, malformed query value.                       |
+| 400  | `invalid_filters`               | Bad date window, malformed query value.                       |
 | 401  | `not_authenticated`             | No identity source resolved the caller.                       |
 | 403  | `not_admin`                     | Identity resolved but `AdminAuthorizer` rejected it.          |
 | 404  | `not_found`                     | Target id doesn't exist.                                      |

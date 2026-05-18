@@ -288,6 +288,29 @@ The schema enforces the same validation rules as the Pydantic
 `CHECK` constraints, so direct DB writes that bypass the application can't
 introduce invalid rows.
 
+### Migration notes
+
+The `Rating` enum used to include a third value `"correction"` that was
+retired in favor of the orthogonal `correction_text` field. The current
+schema (and Pydantic model) only allow `"positive"` / `"negative"`.
+
+Long-lived dev databases that still contain rows with
+`rating='correction'` are handled defensively on store init:
+
+- **Read path** — `FeedbackEntry` has a `mode="before"` validator on
+  `rating` that coerces `"correction"` → `"negative"`, so hydration
+  never fails.
+- **Write path** — both `SQLiteFeedbackStore.__init__` and
+  `PostgresFeedbackStore.open` run an idempotent
+  `UPDATE feedback SET rating='negative' WHERE rating='correction'`
+  on startup and log a `WARNING` with the affected row count when
+  any rows are rewritten.
+
+The Postgres `feedback_rating` enum value is **not** dropped — keeping
+it in the type lets the migration succeed and avoids a downtime-prone
+`ALTER TYPE` dance. Fresh deployments get the new 2-value enum from
+the `IF NOT EXISTS`-guarded DDL.
+
 ---
 
 ## Testing

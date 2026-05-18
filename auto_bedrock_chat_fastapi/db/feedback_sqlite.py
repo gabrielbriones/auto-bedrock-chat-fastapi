@@ -175,6 +175,24 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             ddl = resources.files(self.SCHEMA_RESOURCE[0]).joinpath(self.SCHEMA_RESOURCE[1]).read_text(encoding="utf-8")
             conn.executescript(ddl)
             conn.commit()
+        # Idempotent legacy-data migration: pre-Phase-2 schemas allowed a
+        # third ``rating`` value ``"correction"`` that was retired in
+        # favor of the orthogonal ``correction_text`` field. The new
+        # CHECK constraint forbids that value, but existing rows in
+        # long-lived dev DBs survive (SQLite doesn't re-evaluate CHECK
+        # on existing data) and need to be normalized to ``"negative"``.
+        try:
+            cur = conn.execute("UPDATE feedback SET rating = 'negative' WHERE rating = 'correction'")
+            if cur.rowcount:
+                logger.warning(
+                    "migrated %d legacy feedback row(s) from rating='correction' to 'negative'",
+                    cur.rowcount,
+                )
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Table doesn't exist yet (init_schema=False on a fresh DB);
+            # safe to skip — no legacy rows can exist.
+            pass
         self._conn = conn
 
     async def close(self) -> None:

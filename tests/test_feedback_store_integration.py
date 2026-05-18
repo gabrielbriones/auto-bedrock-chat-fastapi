@@ -400,3 +400,68 @@ async def test_stats_top_tags_and_oldest_pending(store):
     assert top.get("security") == 1
     assert stats.oldest_pending_hours is not None
     assert 2.9 <= stats.oldest_pending_hours <= 3.2
+
+
+# ---------------------------------------------------------------------------
+# Legacy ``rating='correction'`` migration (PR review feedback #3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_legacy_correction_rows_rewritten_on_open():
+    """Seed a row with the legacy ``'correction'`` value via raw SQL,
+    re-open the store, and assert the row reads as ``negative``.
+
+    The Postgres ``feedback_rating`` enum still contains the
+    ``'correction'`` value on upgraded deployments (``IF NOT EXISTS``
+    guards the type creation), so we can insert directly; the
+    ``_migrate_legacy_correction_rows`` step on ``open()`` rewrites it.
+    """
+    s = FeedbackStore(connection_url=PG_URL, pool_max_size=2, init_schema=True)
+    await s.open()
+    try:
+        # Truncate then seed a legacy row via raw SQL. We bypass the
+        # FeedbackEntry model entirely because the new Pydantic layer
+        # would coerce the value away before it ever hit the DB.
+        async with s._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("TRUNCATE feedback")
+                # Ensure the legacy enum value exists; on a fresh test
+                # DB the new 2-value enum is created, so add the
+                # legacy value if missing (idempotent).
+                await cur.execute("ALTER TYPE feedback_rating ADD VALUE IF NOT EXISTS 'correction'")
+            await conn.commit()
+        # The ALTER must commit before we can use the new value.
+        async with s._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO feedback (
+                        id, session_id, user_id, query, ai_response,
+                        rating, correction_text, model_id, created_at
+                    ) VALUES (
+                        gen_random_uuid(), 'sess-legacy', 'alice',
+                        'q', 'a', 'correction', 'fix',
+                        'anthropic.claude-3-5-sonnet-20241022-v2:0',
+                        NOW()
+                    )
+                    RETURNING id
+                    """
+                )
+                row = await cur.fetchone()
+                legacy_id = row[0]
+            await conn.commit()
+    finally:
+        await s.close()
+
+    # Re-open: the migration step runs as part of ``open()``.
+    s2 = FeedbackStore(connection_url=PG_URL, pool_max_size=2, init_schema=False)
+    await s2.open()
+    try:
+        fetched = await s2.get(legacy_id)
+    finally:
+        await s2.close()
+
+    assert fetched is not None
+    assert fetched.rating == Rating.NEGATIVE
+    assert fetched.correction_text == "fix"

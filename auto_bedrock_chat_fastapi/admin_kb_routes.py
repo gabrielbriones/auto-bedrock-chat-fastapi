@@ -111,10 +111,10 @@ class KBDocumentUpdateRequest(BaseModel):
     def _strip_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
         if v is None:
             return None
-        # Allow an explicit empty list (caller wants to clear tags); only
+        # Allow an explicit empty list (caller wants to clear tags); also
         # collapse a list that is entirely blank strings to ``[]`` so the
         # caller's "clear tags" intent is preserved.
-        return [t.strip() for t in v if isinstance(t, str)]
+        return [t.strip() for t in v if isinstance(t, str) and t.strip()]
 
 
 def register_admin_kb_routes(

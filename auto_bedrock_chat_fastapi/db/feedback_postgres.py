@@ -120,6 +120,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         await self._pool.open()
         if self._init_schema:
             await self._apply_schema()
+        await self._migrate_legacy_correction_rows()
         logger.info("PostgresFeedbackStore ready (init_schema=%s)", self._init_schema)
 
     async def close(self) -> None:
@@ -133,6 +134,36 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             async with conn.cursor() as cur:
                 await cur.execute(ddl)
             await conn.commit()
+
+    async def _migrate_legacy_correction_rows(self) -> None:
+        """Rewrite legacy ``rating='correction'`` rows to ``'negative'``.
+
+        Pre-Phase-2 schemas allowed a third ``Rating`` value
+        ``"correction"`` that was retired in favor of the orthogonal
+        ``correction_text`` field. The ``feedback_rating`` enum
+        definition uses ``IF NOT EXISTS``, so existing deployments may
+        still have the old 3-value enum and rows that use it. This
+        migration is idempotent: it's a no-op once all rows are
+        ``'negative'``, and it stays safe to run repeatedly. The enum
+        value itself is left in place for forward-compat — only the
+        rows are rewritten.
+        """
+        try:
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("UPDATE feedback SET rating = 'negative' WHERE rating = 'correction'")
+                    rowcount = cur.rowcount
+                await conn.commit()
+            if rowcount:
+                logger.warning(
+                    "migrated %d legacy feedback row(s) from rating='correction' to 'negative'",
+                    rowcount,
+                )
+        except Exception as exc:  # pragma: no cover — defensive only
+            # The table may not exist yet (init_schema=False on a
+            # provisioning-from-scratch deploy), or the enum value may
+            # already be gone. Either way, log and continue.
+            logger.debug("legacy-correction migration skipped: %s", exc)
 
     # ------------------------------------------------------------------
     # CRUD

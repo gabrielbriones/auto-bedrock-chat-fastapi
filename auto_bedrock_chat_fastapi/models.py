@@ -116,6 +116,20 @@ class FeedbackEntry(BaseModel):
 
     created_at: datetime = Field(default_factory=_utcnow)
 
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _coerce_legacy_correction_rating(cls, v: Any) -> Any:
+        # Backwards-compat: the ``Rating`` enum used to include a third
+        # value ``"correction"`` that was retired in favor of the
+        # orthogonal ``correction_text`` field. Pre-existing rows in
+        # long-lived dev databases may still carry that string value.
+        # Coerce on read so hydration doesn't explode; the
+        # ``_migrate_legacy_correction_rows`` step in both store
+        # backends rewrites the rows in place on startup.
+        if isinstance(v, str) and v == "correction":
+            return Rating.NEGATIVE.value
+        return v
+
     @field_validator("correction_text", "user_comment", "reviewer_comment", "reviewer_id")
     @classmethod
     def _strip_optional_text(cls, v: Optional[str]) -> Optional[str]:

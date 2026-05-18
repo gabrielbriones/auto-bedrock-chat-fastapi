@@ -544,3 +544,129 @@ class TestFeedbackListFilters:
             FeedbackListFilters(date_from=now, date_to=now)
         with pytest.raises(pydantic.ValidationError):
             FeedbackListFilters(date_from=now, date_to=now - timedelta(seconds=1))
+
+
+# ---------------------------------------------------------------------------
+# Legacy ``rating='correction'`` migration
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyCorrectionMigration:
+    """Pre-Phase-2 schemas allowed ``rating='correction'``. The current
+    schema forbids it via CHECK, but existing rows in long-lived dev
+    DBs must be migrated in place on store init so downstream code that
+    re-inserts / updates those rows doesn't fail. The model-layer
+    ``mode="before"`` validator on ``Rating`` also coerces the value
+    on read as a belt-and-braces measure.
+    """
+
+    def _seed_legacy_db(self, db_path: str) -> str:
+        """Create a feedback table with the *old* 3-value CHECK and a
+        single ``rating='correction'`` row, returning the row id."""
+        legacy_id = str(uuid4())
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE feedback (
+                    id              TEXT PRIMARY KEY,
+                    session_id      TEXT NOT NULL,
+                    user_id         TEXT NOT NULL,
+                    query           TEXT NOT NULL,
+                    ai_response     TEXT NOT NULL,
+                    rating          TEXT NOT NULL
+                                    CHECK (rating IN ('positive', 'negative', 'correction')),
+                    score           INTEGER,
+                    correction_text TEXT,
+                    user_comment    TEXT,
+                    kb_sources_used TEXT NOT NULL DEFAULT '[]',
+                    model_id        TEXT NOT NULL,
+                    review_status   TEXT NOT NULL DEFAULT 'pending_review',
+                    reviewer_id     TEXT,
+                    reviewer_tags   TEXT NOT NULL DEFAULT '[]',
+                    reviewer_comment TEXT,
+                    reviewed_at     TEXT,
+                    created_at      TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO feedback (id, session_id, user_id, query, ai_response, "
+                "rating, correction_text, model_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    legacy_id,
+                    "sess-legacy",
+                    "alice",
+                    "what is IPC?",
+                    "IPC is cycles per instruction",
+                    "correction",
+                    "IPC = instructions / cycles",
+                    "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return legacy_id
+
+    async def test_legacy_correction_rows_rewritten_on_open(self, tmp_path, caplog):
+        path = str(tmp_path / "legacy.db")
+        legacy_id = self._seed_legacy_db(path)
+
+        # Opening the store should run the idempotent UPDATE and
+        # rewrite the row to ``negative`` in place.
+        with caplog.at_level("WARNING"):
+            s = SQLiteFeedbackStore(db_path=path, init_schema=True)
+            await s.open()
+            try:
+                row = await s.get(legacy_id)
+            finally:
+                await s.close()
+
+        assert row is not None
+        assert row.rating == Rating.NEGATIVE
+        assert row.correction_text == "IPC = instructions / cycles"
+        # Migration log line surfaces the affected row count.
+        assert any(
+            "migrated" in r.message and "correction" in r.message and "negative" in r.message for r in caplog.records
+        ), "expected a WARNING log line announcing the legacy-correction migration"
+
+    async def test_migration_is_idempotent(self, tmp_path):
+        # Opening the store a second time on an already-migrated DB must
+        # be a no-op (UPDATE matches zero rows) and not log a warning.
+        path = str(tmp_path / "legacy.db")
+        self._seed_legacy_db(path)
+
+        s1 = SQLiteFeedbackStore(db_path=path, init_schema=True)
+        await s1.open()
+        await s1.close()
+
+        # Second open: the rewritten row should still read as ``negative``.
+        s2 = SQLiteFeedbackStore(db_path=path, init_schema=True)
+        await s2.open()
+        try:
+            stats = await s2.stats()
+        finally:
+            await s2.close()
+        assert stats.by_rating.get("negative", 0) == 1
+        assert stats.by_rating.get("correction", 0) == 0
+
+    def test_pydantic_read_alias(self):
+        # Independent of any DB: the ``mode="before"`` validator coerces
+        # ``"correction"`` → ``"negative"`` so legacy rows hydrating
+        # straight from a raw dict don't explode.
+        from datetime import datetime, timezone
+
+        entry = FeedbackEntry(
+            session_id="sess-1",
+            user_id="alice",
+            query="q",
+            ai_response="a",
+            rating="correction",  # legacy value
+            correction_text="fix",
+            model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            created_at=datetime.now(timezone.utc),
+        )
+        assert entry.rating == Rating.NEGATIVE
+        assert entry.correction_text == "fix"

@@ -107,7 +107,7 @@ async def _handle_feedback_not_found(_request: Request, exc: FeedbackNotFoundErr
 async def _handle_invalid_status_transition(_request: Request, exc: InvalidStatusTransitionError) -> JSONResponse:
     return JSONResponse(
         status_code=409,
-        content=_envelope(code="invalid_transition", detail=str(exc)),
+        content=_envelope(code="invalid_status_transition", detail=str(exc)),
     )
 
 
