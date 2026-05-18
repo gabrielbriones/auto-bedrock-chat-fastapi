@@ -156,7 +156,7 @@ class TestSSOSessionToken:
         assert SSOSessionStore.validate_session_token(token, "wrong-secret") is None
 
     def test_expired_token_returns_none(self):
-        from jose import jwt as jose_jwt
+        import jwt as pyjwt
 
         # Create a token that expired 1 second ago
         claims = {
@@ -164,7 +164,7 @@ class TestSSOSessionToken:
             "exp": int(time.time()) - 1,
             "iat": int(time.time()) - 3600,
         }
-        expired_token = jose_jwt.encode(claims, _SESSION_SECRET, algorithm="HS256")
+        expired_token = pyjwt.encode(claims, _SESSION_SECRET, algorithm="HS256")
         assert SSOSessionStore.validate_session_token(expired_token, _SESSION_SECRET) is None
 
 
