@@ -18,6 +18,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from ..exceptions import KBDocumentNotFoundError
+from ..models import KBDocument, KBDocumentListFilters
 from .kb_base import BaseKBStore
 
 logger = logging.getLogger(__name__)
@@ -508,6 +510,215 @@ class PgVectorKBStore(BaseKBStore):
 
         hybrid.sort(key=lambda x: x["hybrid_score"], reverse=True)
         return hybrid[:limit]
+
+    # ------------------------------------------------------------------
+    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_document(row, chunk_count: Optional[int] = None) -> KBDocument:
+        """Convert a SELECT row (id, content, title, source, source_url, topic,
+        date_published, metadata, created_at[, chunk_count]) into a KBDocument.
+        """
+        metadata = json.loads(row[7]) if row[7] else {}
+        raw_tags = metadata.get("tags") if isinstance(metadata, dict) else None
+        tags = list(raw_tags) if isinstance(raw_tags, list) else []
+        return KBDocument(
+            id=row[0],
+            content=row[1],
+            title=row[2],
+            source=row[3],
+            source_url=row[4],
+            topic=row[5],
+            date_published=row[6],
+            metadata=metadata,
+            tags=tags,
+            chunk_count=chunk_count,
+            created_at=row[8],
+        )
+
+    @staticmethod
+    def _build_list_where(filters: Optional[KBDocumentListFilters]) -> tuple[str, list]:
+        """Build the WHERE clause + params for list/count_documents."""
+        if filters is None:
+            return "", []
+
+        clauses: List[str] = []
+        params: List[Any] = []
+
+        if filters.source is not None:
+            clauses.append("d.source = %s")
+            params.append(filters.source)
+        if filters.topic is not None:
+            clauses.append("d.topic = %s")
+            params.append(filters.topic)
+        if filters.tags:
+            # ``metadata`` is stored as TEXT (JSON). Cast to JSONB at filter
+            # time so we can use the ?| (overlap) operator on the tags
+            # array. Each value must be text → use jsonb_array_elements_text.
+            placeholders = ",".join("%s" for _ in filters.tags)
+            clauses.append(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+                "(d.metadata::jsonb -> 'tags')) AS t(value) "
+                f"WHERE t.value IN ({placeholders}))"
+            )
+            params.extend(filters.tags)
+        if filters.date_from is not None:
+            # ``date_published`` is stored as an ISO-style string (typically
+            # date-only ``YYYY-MM-DD``). Compare against a date-only prefix
+            # so lexicographic ordering matches calendar ordering for both
+            # date-only and full-datetime stored values.
+            clauses.append("d.date_published >= %s")
+            params.append(filters.date_from.strftime("%Y-%m-%d"))
+        if filters.date_to is not None:
+            clauses.append("d.date_published < %s")
+            params.append(filters.date_to.strftime("%Y-%m-%d"))
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
+    def list_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[KBDocument]:
+        where, params = self._build_list_where(filters)
+        sql = f"""
+            SELECT d.id, d.content, d.title, d.source, d.source_url, d.topic,
+                   d.date_published, d.metadata, d.created_at,
+                   COALESCE(cc.chunk_count, 0) AS chunk_count
+            FROM documents d
+            LEFT JOIN (
+                SELECT document_id, COUNT(*) AS chunk_count
+                FROM chunks
+                GROUP BY document_id
+            ) cc ON cc.document_id = d.id
+            {where}
+            ORDER BY d.created_at DESC, d.id ASC
+            LIMIT %s OFFSET %s
+        """
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params + [int(limit), int(offset)])
+                rows = cur.fetchall()
+        out: List[KBDocument] = []
+        for row in rows:
+            # row layout: (id, content, title, source, source_url, topic,
+            #              date_published, metadata, created_at, chunk_count)
+            created_at = str(row[8]) if row[8] else None
+            base_row = (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], created_at)
+            out.append(self._row_to_document(base_row, chunk_count=int(row[9])))
+        return out
+
+    def count_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+    ) -> int:
+        where, params = self._build_list_where(filters)
+        sql = f"SELECT COUNT(*) FROM documents d {where}"
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return int(cur.fetchone()[0])
+
+    def update_document(
+        self,
+        doc_id: str,
+        *,
+        content: Optional[str] = None,
+        title: Optional[str] = None,
+        source: Optional[str] = None,
+        source_url: Optional[str] = None,
+        topic: Optional[str] = None,
+        date_published: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> KBDocument:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, content, title, source, source_url, topic,
+                           date_published, metadata, created_at
+                    FROM documents
+                    WHERE id = %s
+                    FOR UPDATE
+                    """,
+                    (doc_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    conn.rollback()
+                    raise KBDocumentNotFoundError(f"kb document {doc_id} not found")
+
+                existing_metadata: Dict[str, Any] = json.loads(row[7]) if row[7] else {}
+
+                new_content = row[1] if content is None else content
+                new_title = row[2] if title is None else title
+                new_source = row[3] if source is None else source
+                new_source_url = row[4] if source_url is None else source_url
+                new_topic = row[5] if topic is None else topic
+                new_date_published = row[6] if date_published is None else date_published
+
+                if metadata is None:
+                    new_metadata: Dict[str, Any] = dict(existing_metadata)
+                else:
+                    new_metadata = dict(metadata)
+
+                if tags is None:
+                    if "tags" not in new_metadata and isinstance(existing_metadata.get("tags"), list):
+                        new_metadata["tags"] = list(existing_metadata["tags"])
+                else:
+                    new_metadata["tags"] = KBDocument._normalize_tags(list(tags))
+
+                content_changed = content is not None and content != row[1]
+                if content_changed:
+                    cur.execute("DELETE FROM chunks WHERE document_id = %s", (doc_id,))
+
+                cur.execute(
+                    """
+                    UPDATE documents
+                    SET content = %s, title = %s, source = %s, source_url = %s,
+                        topic = %s, date_published = %s, metadata = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        new_content,
+                        new_title,
+                        new_source,
+                        new_source_url,
+                        new_topic,
+                        new_date_published,
+                        json.dumps(new_metadata) if new_metadata else None,
+                        doc_id,
+                    ),
+                )
+
+                if content_changed:
+                    chunk_count = 0
+                else:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM chunks WHERE document_id = %s",
+                        (doc_id,),
+                    )
+                    chunk_count = int(cur.fetchone()[0])
+
+            conn.commit()
+
+        created_at = str(row[8]) if row[8] else None
+        updated_row = (
+            doc_id,
+            new_content,
+            new_title,
+            new_source,
+            new_source_url,
+            new_topic,
+            new_date_published,
+            json.dumps(new_metadata) if new_metadata else None,
+            created_at,
+        )
+        return self._row_to_document(updated_row, chunk_count=chunk_count)
 
     # ------------------------------------------------------------------
     # Lifecycle / stats

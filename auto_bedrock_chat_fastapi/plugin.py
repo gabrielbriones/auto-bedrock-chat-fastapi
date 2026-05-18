@@ -123,6 +123,10 @@ class BedrockChatPlugin:
         self._preset_prompts = config_overrides.pop("preset_prompts", [])
         self._preset_variables = config_overrides.pop("preset_variables", [])
         preset_prompts_file = config_overrides.pop("preset_prompts_file", None)
+        # Optional explicit AdminAuthorizer injection (test stub or future
+        # Access Control implementation). When None, the plugin builds an
+        # authorizer from config via :func:`build_admin_authorizer`.
+        self._admin_authorizer_override = config_overrides.pop("admin_authorizer", None)
         self.config = config or load_config(**config_overrides)
 
         # Resolve preset prompts with the following priority:
@@ -204,6 +208,20 @@ class BedrockChatPlugin:
 
         logger.debug("Checking feedback store configuration and initializing...")
         self._feedback_store = create_feedback_store(self.config)
+
+        # Admin authorizer (XMGPLAT-10417 Phase 2). Built unconditionally so
+        # tests can introspect/swap it, but the ``/admin`` routes are only
+        # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
+        from .admin_auth import build_admin_authorizer
+
+        if self._admin_authorizer_override is not None:
+            self._admin_authorizer = self._admin_authorizer_override
+            logger.info("admin authorizer: caller-supplied override (%s)", type(self._admin_authorizer).__name__)
+        else:
+            self._admin_authorizer = build_admin_authorizer(
+                self.config,
+                app_base_url=self.app_base_url,
+            )
 
         self.websocket_handler = WebSocketChatHandler(
             session_manager=self.session_manager,
@@ -541,6 +559,12 @@ class BedrockChatPlugin:
         # SSO endpoints (only when SSO is enabled)
         if self.config.sso_enabled:
             self._setup_sso_routes()
+
+        # Admin endpoints (XMGPLAT-10417 Phase 2). Reserve the
+        # ``/admin/synthesis/*`` prefix for the Phase 3 plan — no stubs
+        # registered here so unknown subpaths get a clean 404.
+        if self.config.admin_enabled:
+            self._setup_admin_routes()
 
         logger.info("Chat routes setup complete:")
         logger.info(f"  WebSocket: {self.config.websocket_endpoint}")
@@ -927,6 +951,299 @@ class BedrockChatPlugin:
             logger.error(f"Unexpected error checking KB status: {e}")
             if not self.config.kb_allow_empty:
                 raise BedrockChatError(f"Failed to validate knowledge base: {e}")
+
+    def _setup_admin_routes(self):
+        """Register the ``/admin/*`` HTTP block for the Expert Review API.
+
+        Called by :meth:`_setup_routes` only when ``config.admin_enabled``
+        is True. Every route under the prefix runs through the
+        ``require_admin`` dependency:
+
+        * 401 if the caller's identity cannot be resolved from any
+          configured source (SSO cookie or ``auth_verification_endpoint``).
+        * 403 if the authenticated user is not recognized as an admin
+          by the configured :class:`AdminAuthorizer`.
+
+        Identity resolution tries two sources in order:
+
+        1. **SSO cookie** \u2014 when ``sso_enabled`` is True and the request
+           carries a valid ``sso_session_token`` cookie, identity is
+           built from the SSO session payload.
+        2. **Tool-auth verification endpoint** \u2014 when SSO is not
+           configured (or no cookie is present) and
+           ``auth_verification_endpoint`` is set, the caller's
+           ``Authorization`` / ``X-API-Key`` headers are forwarded to
+           the endpoint (mirroring the WebSocket auth flow) and the
+           returned user info is used as the admin identity.
+
+        CSRF is defended by the ``sso_session_token`` cookie's
+        ``SameSite=lax`` attribute for the SSO path. The header-forwarded
+        path is not vulnerable to classic CSRF because browsers do not
+        automatically attach ``Authorization`` / ``X-API-Key`` headers
+        on cross-site requests \u2014 the caller has to set them explicitly.
+        """
+        from fastapi import Security
+        from fastapi.security import APIKeyCookie, APIKeyHeader, HTTPBasic, HTTPBearer
+
+        from .admin_auth import (
+            AdminIdentity,
+            resolve_admin_identity_from_auth_endpoint,
+            resolve_admin_identity_from_sso_session,
+        )
+        from .admin_errors import register_admin_error_handlers
+        from .exceptions import AdminAPIError
+
+        admin_prefix = f"{self.config.chat_endpoint}/admin"
+
+        # Standardized error envelope for every admin endpoint (T6.2).
+        # Registering here means the four admin domain exceptions
+        # (AdminAPIError + FeedbackNotFoundError + InvalidStatusTransitionError
+        # + KBDocumentNotFoundError) map to ``{code, detail}`` JSON
+        # bodies regardless of which route raised them.
+        register_admin_error_handlers(self.app)
+
+        # Detect which identity sources are actually wired so we only
+        # advertise the matching OpenAPI security schemes. Showing a
+        # scheme that can't be used would mislead anyone clicking
+        # "Authorize" in SwaggerUI.
+        sso_configured = bool(
+            self.config.sso_enabled and self.sso_session_store is not None and self.config.sso_session_secret
+        )
+        auth_endpoint_configured = bool(self.config.auth_verification_endpoint)
+
+        # The header-forwarding identity resolver only fires when the
+        # host has wired ``auth_verification_endpoint``. Even then, the
+        # **set** of credential shapes the endpoint accepts is dictated
+        # by ``config.supported_auth_types`` — that's the list the chat
+        # UI offers users and the contract the verification endpoint is
+        # written against. Advertising a scheme that's not in that list
+        # would just mislead Swagger users into trying credentials the
+        # backend will reject.
+        supported = {t.lower() for t in (self.config.supported_auth_types or [])} if auth_endpoint_configured else set()
+
+        # ``auth_type`` strings that imply Bearer credentials on the wire.
+        _BEARER_TYPES = {
+            "bearer_token",
+            "oauth2",
+            "oauth2_client_credentials",
+        }
+        wants_bearer = bool(supported & _BEARER_TYPES)
+        wants_basic = "basic_auth" in supported
+        wants_api_key = "api_key" in supported
+
+        # Build only the security schemes that apply. ``auto_error=False``
+        # is required because the schemes are *alternatives* (any one
+        # may satisfy ``require_admin``) and we want to deliver our own
+        # 401/403 payload rather than FastAPI's default.
+        #
+        # Scheme names match FastAPI's class defaults ("HTTPBearer",
+        # "HTTPBasic", "APIKeyHeader") so they merge with any matching
+        # scheme the host app has already declared — preventing
+        # duplicate entries in the Swagger Authorize dialog.
+        sso_cookie_scheme = (
+            APIKeyCookie(
+                name="sso_session_token",
+                scheme_name="SSOSessionCookie",
+                description="Session cookie issued by the SSO callback endpoint.",
+                auto_error=False,
+            )
+            if sso_configured
+            else None
+        )
+        bearer_scheme = (
+            HTTPBearer(
+                description=(
+                    "Bearer token forwarded to the configured auth_verification_endpoint "
+                    "to resolve the caller's admin identity."
+                ),
+                auto_error=False,
+            )
+            if wants_bearer
+            else None
+        )
+        basic_scheme = (
+            HTTPBasic(
+                description=(
+                    "HTTP Basic credentials forwarded to the configured "
+                    "auth_verification_endpoint to resolve the caller's admin identity."
+                ),
+                auto_error=False,
+            )
+            if wants_basic
+            else None
+        )
+        api_key_scheme = (
+            APIKeyHeader(
+                name="X-API-Key",
+                description=(
+                    "API key forwarded to the configured auth_verification_endpoint "
+                    "to resolve the caller's admin identity."
+                ),
+                auto_error=False,
+            )
+            if wants_api_key
+            else None
+        )
+
+        # Ordered list of optional Security dependencies; ``None`` slots
+        # are dropped so only the configured schemes flow into the
+        # OpenAPI ``security`` list for each admin operation.
+        security_deps = [
+            Security(s) for s in (sso_cookie_scheme, bearer_scheme, basic_scheme, api_key_scheme) if s is not None
+        ]
+
+        async def _resolve_identity(request: Request) -> Optional[AdminIdentity]:
+            identity: Optional[AdminIdentity] = None
+            if sso_configured:
+                session_token = request.cookies.get("sso_session_token")
+                if session_token:
+                    sso_session_id = SSOSessionStore.validate_session_token(
+                        session_token, self.config.sso_session_secret
+                    )
+                    if sso_session_id:
+                        sso_session = self.sso_session_store.get_session(sso_session_id)
+                        if sso_session:
+                            identity = resolve_admin_identity_from_sso_session(sso_session)
+            if identity is None and auth_endpoint_configured:
+                endpoint_url = self.config.auth_verification_endpoint
+                if endpoint_url.startswith("/") and self.app_base_url:
+                    endpoint_url = f"{self.app_base_url}{endpoint_url}"
+                identity = await resolve_admin_identity_from_auth_endpoint(request, endpoint_url)
+            return identity
+
+        async def _enforce_admin(request: Request, identity: Optional[AdminIdentity]) -> AdminIdentity:
+            if identity is None:
+                # Auth-less dev / standalone escape hatch: when the host
+                # explicitly opts out of tool-call auth via
+                # ``require_tool_auth=False`` AND no identity source
+                # resolved the caller, treat the request as an anonymous
+                # admin. Mirrors the spirit of ``feedback_allow_anonymous``
+                # for the admin surface so local dev stays frictionless
+                # when no SSO / auth_verification_endpoint is wired.
+                #
+                # SECURITY: this bypasses the configured ``AdminAuthorizer``
+                # entirely — anyone who can reach the endpoint becomes
+                # admin. Do NOT ship this combination
+                # (``admin_enabled=True`` + ``require_tool_auth=False``)
+                # to a publicly-reachable deployment: ``/admin/*`` would
+                # become an unauthenticated control plane.
+                if not self.config.require_tool_auth:
+                    logger.warning(
+                        "admin request accepted as anonymous because "
+                        "require_tool_auth=False (method=%s path=%s); do not use "
+                        "this combination in production",
+                        request.method,
+                        request.url.path,
+                    )
+                    anon = AdminIdentity(
+                        user_id="anonymous",
+                        claims={"anonymous": True},
+                    )
+                    request.state.admin_identity = anon
+                    return anon
+
+                if not sso_configured and not auth_endpoint_configured:
+                    logger.warning(
+                        "admin endpoint hit but no identity source is configured "
+                        "(sso_enabled and auth_verification_endpoint both unset)"
+                    )
+                raise AdminAPIError(status_code=401, code="not_authenticated", detail="not authenticated")
+
+            if not await self._admin_authorizer.is_admin(identity):
+                logger.info(
+                    "admin authorization denied user_id=%s method=%s path=%s",
+                    identity.user_id,
+                    request.method,
+                    request.url.path,
+                )
+                raise AdminAPIError(status_code=403, code="not_admin", detail="not admin")
+
+            request.state.admin_identity = identity
+            return identity
+
+        # FastAPI picks up Security dependencies by inspecting a
+        # callable's parameter defaults. To advertise *only* the
+        # schemes that apply to the current config we synthesise a
+        # signature with one keyword-only parameter per configured
+        # Security dependency.
+        if security_deps:
+            import inspect
+
+            params = [inspect.Parameter("request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=Request)]
+            for i, dep in enumerate(security_deps):
+                params.append(
+                    inspect.Parameter(
+                        f"_sec_{i}",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=dep,
+                    )
+                )
+
+            async def require_admin(request: Request, **_kwargs) -> AdminIdentity:
+                return await _enforce_admin(request, await _resolve_identity(request))
+
+            require_admin.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+                parameters=params, return_annotation=AdminIdentity
+            )
+        else:
+
+            async def require_admin(request: Request) -> AdminIdentity:
+                # No identity sources configured. The admin block was
+                # registered (``admin_enabled=True``) but every request
+                # will 401 in ``_enforce_admin``. Surfacing this clearly
+                # via the log warning above is more useful than hiding
+                # the routes entirely.
+                return await _enforce_admin(request, None)
+
+        # Expose the dependency for downstream task wiring (T3, T5).
+        self._require_admin = require_admin
+
+        # Feedback Review endpoints. Only registered when a feedback
+        # store is actually wired; otherwise ``/admin/feedback`` would 500
+        # on every call. The admin block itself is opt-in via
+        # ``admin_enabled``; this nested check just avoids registering
+        # routes that can't function.
+        if getattr(self, "_feedback_store", None) is not None:
+            from .admin_feedback_routes import register_admin_feedback_routes
+
+            register_admin_feedback_routes(
+                self.app,
+                prefix=admin_prefix,
+                feedback_store=self._feedback_store,
+                require_admin=require_admin,
+            )
+        else:
+            logger.info(
+                "Admin feedback routes skipped: feedback_store is not configured "
+                "(feedback_enabled=False or backend init failed)"
+            )
+
+        # KB Management endpoints. Only registered when a KB store
+        # is wired; otherwise every call would 500. Builds a default
+        # re-embed callback wired to the same bedrock client + embedding
+        # model already used by the populate pipeline.
+        if getattr(self, "_kb_store", None) is not None:
+            from .admin_kb_routes import build_default_re_embed_callback, register_admin_kb_routes
+
+            re_embed = build_default_re_embed_callback(
+                kb_store=self._kb_store,
+                bedrock_client=self.bedrock_client,
+                embedding_model=self.config.kb_embedding_model,
+            )
+            register_admin_kb_routes(
+                self.app,
+                prefix=admin_prefix,
+                kb_store=self._kb_store,
+                require_admin=require_admin,
+                re_embed_document=re_embed,
+            )
+        else:
+            logger.info(
+                "Admin KB routes skipped: kb_store is not configured "
+                "(BEDROCK_KB_ENABLED=false or backend init failed)"
+            )
+
+        logger.info("Admin dependency registered (prefix=%s); routes will be added by T3/T5", admin_prefix)
 
     def _setup_shutdown(self):
         """Setup shutdown handler and startup event for KB auto-population"""

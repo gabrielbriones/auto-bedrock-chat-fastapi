@@ -41,7 +41,7 @@ if not _can_import_psycopg():
 
 from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore as FeedbackStore  # noqa: E402
 from auto_bedrock_chat_fastapi.exceptions import FeedbackNotFoundError, InvalidStatusTransitionError  # noqa: E402
-from auto_bedrock_chat_fastapi.models import FeedbackEntry, Rating, ReviewStatus  # noqa: E402
+from auto_bedrock_chat_fastapi.models import FeedbackEntry, FeedbackListFilters, Rating, ReviewStatus  # noqa: E402
 
 
 def _entry(**overrides) -> FeedbackEntry:
@@ -231,7 +231,7 @@ async def test_stats_counts_by_status_and_rating(store):
     a = await store.create(_entry(rating=Rating.POSITIVE))
     b = await store.create(_entry(rating=Rating.NEGATIVE, score=2))
     # third entry contributes to the stats; we don't reference it by id.
-    await store.create(_entry(rating=Rating.CORRECTION, correction_text="fix"))
+    await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix"))
     await store.update_review(a.id, ReviewStatus.APPROVED, "rev", [], None)
     await store.update_review(b.id, ReviewStatus.REJECTED, "rev", [], None)
 
@@ -241,8 +241,8 @@ async def test_stats_counts_by_status_and_rating(store):
     assert stats.by_status[ReviewStatus.APPROVED] == 1
     assert stats.by_status[ReviewStatus.REJECTED] == 1
     assert stats.by_rating[Rating.POSITIVE] == 1
-    assert stats.by_rating[Rating.NEGATIVE] == 1
-    assert stats.by_rating[Rating.CORRECTION] == 1
+    assert stats.by_rating[Rating.NEGATIVE] == 2
+    assert stats.with_correction == 1
 
 
 # ---------------------------------------------------------------------------
@@ -251,8 +251,8 @@ async def test_stats_counts_by_status_and_rating(store):
 
 
 @pytest.mark.asyncio
-async def test_db_check_constraint_rejects_correction_without_text(store):
-    """Bypass Pydantic and confirm the DB CHECK constraint fires."""
+async def test_db_check_constraint_rejects_positive_with_correction_text(store):
+    """Positive rating may not carry correction_text (DB CHECK)."""
     import psycopg
 
     async with store._pool.connection() as conn:
@@ -262,10 +262,10 @@ async def test_db_check_constraint_rejects_correction_without_text(store):
                     """
                     INSERT INTO feedback (
                         session_id, user_id, query, ai_response,
-                        rating, model_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                        rating, correction_text, model_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    ("s", "u", "q", "a", "correction", "m"),
+                    ("s", "u", "q", "a", "positive", "should not be allowed", "m"),
                 )
         await conn.rollback()
 
@@ -285,7 +285,7 @@ async def test_db_check_constraint_rejects_whitespace_correction_text(store):
                         rating, correction_text, model_id
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    ("s", "u", "q", "a", "correction", "   ", "m"),
+                    ("s", "u", "q", "a", "negative", "   ", "m"),
                 )
         await conn.rollback()
 
@@ -321,3 +321,82 @@ async def test_db_check_constraint_rejects_whitespace_reviewer_id(store):
                     ),
                 )
         await conn.rollback()
+
+
+# ---------------------------------------------------------------------------
+# T2 — list_entries / count_entries / extended stats
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_entries_no_filters_orders_newest_first(store):
+    a = await store.create(_entry())
+    b = await store.create(_entry())
+    rows = await store.list_entries(FeedbackListFilters())
+    assert [r.id for r in rows] == [b.id, a.id]
+    assert await store.count_entries(FeedbackListFilters()) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_entries_filters_compose_with_and(store):
+    a = await store.create(_entry(user_id="alice"))
+    b = await store.create(_entry(user_id="alice"))
+    await store.create(_entry(user_id="bob"))
+    await store.update_review(a.id, ReviewStatus.APPROVED, "rev", ["perf"], None)
+    await store.update_review(b.id, ReviewStatus.REJECTED, "rev", ["perf"], None)
+
+    rows = await store.list_entries(
+        FeedbackListFilters(
+            user_id="alice",
+            status=ReviewStatus.APPROVED,
+            tags=["perf"],
+        )
+    )
+    assert [r.id for r in rows] == [a.id]
+
+
+@pytest.mark.asyncio
+async def test_list_entries_tag_overlap(store):
+    a = await store.create(_entry())
+    b = await store.create(_entry())
+    await store.update_review(a.id, ReviewStatus.APPROVED, "rev", ["perf", "ipc"], None)
+    await store.update_review(b.id, ReviewStatus.APPROVED, "rev", ["security"], None)
+
+    rows = await store.list_entries(FeedbackListFilters(tags=["perf", "security"]))
+    assert {r.id for r in rows} == {a.id, b.id}
+
+
+@pytest.mark.asyncio
+async def test_list_entries_pagination_bounds(store):
+    for _ in range(3):
+        await store.create(_entry())
+    page = await store.list_entries(FeedbackListFilters(), limit=2, offset=1)
+    assert len(page) == 2
+    with pytest.raises(ValueError):
+        await store.list_entries(FeedbackListFilters(), limit=0)
+    with pytest.raises(ValueError):
+        await store.list_entries(FeedbackListFilters(), offset=-1)
+
+
+@pytest.mark.asyncio
+async def test_stats_top_tags_and_oldest_pending(store):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    # Decided entry — does not influence oldest_pending_hours.
+    old_decided = await store.create(_entry(created_at=now - timedelta(hours=8)))
+    await store.update_review(old_decided.id, ReviewStatus.APPROVED, "rev", ["perf", "perf"], None)
+    # Pending floor ~3h.
+    await store.create(_entry(created_at=now - timedelta(hours=3)))
+    a = await store.create(_entry(created_at=now - timedelta(minutes=10)))
+    b = await store.create(_entry(created_at=now - timedelta(minutes=5)))
+    await store.update_review(a.id, ReviewStatus.APPROVED, "rev", ["perf"], None)
+    await store.update_review(b.id, ReviewStatus.REJECTED, "rev", ["security"], None)
+
+    stats = await store.stats()
+    # ``perf`` 2x (a + old_decided dedup keeps one per row), ``security`` 1x.
+    top = {t.tag: t.count for t in stats.top_tags}
+    assert top.get("perf") == 2
+    assert top.get("security") == 1
+    assert stats.oldest_pending_hours is not None
+    assert 2.9 <= stats.oldest_pending_hours <= 3.2

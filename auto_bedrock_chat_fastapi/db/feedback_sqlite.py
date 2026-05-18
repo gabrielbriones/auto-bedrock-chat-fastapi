@@ -24,7 +24,15 @@ from typing import Any, Iterable, List, Optional, Sequence
 from uuid import UUID
 
 from ..exceptions import FeedbackError, FeedbackNotFoundError, InvalidStatusTransitionError
-from ..models import ALLOWED_REVIEW_TRANSITIONS, FeedbackEntry, FeedbackStats, Rating, ReviewStatus
+from ..models import (
+    ALLOWED_REVIEW_TRANSITIONS,
+    FeedbackEntry,
+    FeedbackListFilters,
+    FeedbackStats,
+    Rating,
+    ReviewStatus,
+    TagCount,
+)
 from .feedback_base import BaseFeedbackStore
 
 logger = logging.getLogger(__name__)
@@ -282,6 +290,78 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         rows = await asyncio.to_thread(self._fetchall, sql, tuple(params))
         return [self._row_to_entry(r) for r in rows]
 
+    # ------------------------------------------------------------------
+    # Filtered list / count (T2)
+    # ------------------------------------------------------------------
+
+    def _build_filter_clauses(self, filters: FeedbackListFilters) -> tuple[List[str], List[Any]]:
+        """Build the WHERE clauses + parameter list for a ``FeedbackListFilters``.
+
+        All filter values are bound as positional parameters; nothing
+        from the filter is interpolated into the SQL string.
+        Returns ``(clauses, params)``; ``clauses`` is empty when no
+        filter is set so callers can decide whether to emit ``WHERE``.
+        """
+        clauses: List[str] = []
+        params: List[Any] = []
+
+        if filters.status is not None:
+            clauses.append("review_status = ?")
+            params.append(filters.status.value)
+        if filters.rating is not None:
+            clauses.append("rating = ?")
+            params.append(filters.rating.value)
+        if filters.has_correction is True:
+            clauses.append("correction_text IS NOT NULL")
+        elif filters.has_correction is False:
+            clauses.append("correction_text IS NULL")
+        if filters.user_id is not None:
+            clauses.append("user_id = ?")
+            params.append(filters.user_id)
+        if filters.date_from is not None:
+            clauses.append("created_at >= ?")
+            params.append(_dt_to_iso(filters.date_from))
+        if filters.date_to is not None:
+            clauses.append("created_at < ?")
+            params.append(_dt_to_iso(filters.date_to))
+        if filters.tags:
+            placeholders = ", ".join("?" for _ in filters.tags)
+            clauses.append(
+                "EXISTS (SELECT 1 FROM json_each(feedback.reviewer_tags) je " f"WHERE je.value IN ({placeholders}))"
+            )
+            params.extend(filters.tags)
+        return clauses, params
+
+    async def list_entries(
+        self,
+        filters: FeedbackListFilters,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[FeedbackEntry]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+
+        clauses, params = self._build_filter_clauses(filters)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([limit, offset])
+        sql = f"""
+            SELECT {_SELECT_COLS} FROM feedback
+            {where}
+            ORDER BY created_at DESC, id ASC
+            LIMIT ? OFFSET ?
+        """
+        rows = await asyncio.to_thread(self._fetchall, sql, tuple(params))
+        return [self._row_to_entry(r) for r in rows]
+
+    async def count_entries(self, filters: FeedbackListFilters) -> int:
+        clauses, params = self._build_filter_clauses(filters)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT count(*) FROM feedback {where}"  # nosec B608 - where built from constants
+        row = await asyncio.to_thread(self._fetchone, sql, tuple(params))
+        return int(row[0]) if row else 0
+
     async def update_review(
         self,
         feedback_id: UUID,
@@ -385,9 +465,61 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             cur = self._conn.execute("SELECT rating, count(*) FROM feedback GROUP BY rating")
             rating_rows = cur.fetchall()
 
+            cur = self._conn.execute("SELECT count(*) FROM feedback WHERE correction_text IS NOT NULL")
+            with_correction_row = cur.fetchone()
+
+            # Top 10 reviewer tags by frequency. ``json_each`` explodes the
+            # JSON-encoded ``reviewer_tags`` array into one row per tag so we
+            # can GROUP BY tag value across the whole table. Empty tags are
+            # excluded defensively even though ``_strip_reviewer_tags``
+            # already prunes them on the way in.
+            cur = self._conn.execute(
+                """
+                SELECT je.value AS tag, count(*) AS c
+                  FROM feedback, json_each(feedback.reviewer_tags) je
+                 WHERE je.value IS NOT NULL AND je.value != ''
+                 GROUP BY je.value
+                 ORDER BY c DESC, je.value ASC
+                 LIMIT 10
+                """
+            )
+            tag_rows = cur.fetchall()
+
+            # Oldest pending entry — used by the admin dashboard to surface
+            # review-queue lag. Returns ``None`` when nothing is pending.
+            cur = self._conn.execute(
+                """
+                SELECT min(created_at) FROM feedback
+                 WHERE review_status = ?
+                """,
+                (ReviewStatus.PENDING_REVIEW.value,),
+            )
+            oldest_row = cur.fetchone()
+
         by_status = {ReviewStatus(s): int(c) for s, c in status_rows}
         by_rating = {Rating(r): int(c) for r, c in rating_rows}
-        return FeedbackStats(total=total, by_status=by_status, by_rating=by_rating)
+        with_correction = int(with_correction_row[0]) if with_correction_row else 0
+        top_tags = [TagCount(tag=t, count=int(c)) for t, c in tag_rows]
+        oldest_iso = oldest_row[0] if oldest_row else None
+        if oldest_iso:
+            oldest_dt = _iso_to_dt(oldest_iso)
+            # ``_dt_to_iso`` normalizes to UTC, so the stored string is
+            # always tz-aware. Compute the age against ``now(UTC)`` to
+            # avoid naive/aware subtraction errors.
+            assert oldest_dt is not None
+            delta = datetime.now(timezone.utc) - oldest_dt
+            oldest_pending_hours: Optional[float] = max(delta.total_seconds() / 3600.0, 0.0)
+        else:
+            oldest_pending_hours = None
+
+        return FeedbackStats(
+            total=total,
+            by_status=by_status,
+            by_rating=by_rating,
+            with_correction=with_correction,
+            top_tags=top_tags,
+            oldest_pending_hours=oldest_pending_hours,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers (run inside ``asyncio.to_thread``)

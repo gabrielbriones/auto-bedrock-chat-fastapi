@@ -16,7 +16,7 @@ import pytest
 from auto_bedrock_chat_fastapi.db import BaseFeedbackStore, create_feedback_store
 from auto_bedrock_chat_fastapi.db.feedback_sqlite import SQLiteFeedbackStore
 from auto_bedrock_chat_fastapi.exceptions import FeedbackNotFoundError, InvalidStatusTransitionError
-from auto_bedrock_chat_fastapi.models import FeedbackEntry, Rating, ReviewStatus
+from auto_bedrock_chat_fastapi.models import FeedbackEntry, FeedbackListFilters, Rating, ReviewStatus
 
 
 def _entry(
@@ -252,12 +252,13 @@ class TestStats:
     async def test_aggregates_counts(self, store):
         await store.create(_entry(rating=Rating.POSITIVE))
         await store.create(_entry(rating=Rating.POSITIVE))
-        await store.create(_entry(rating=Rating.CORRECTION, correction_text="actually 41"))
+        await store.create(_entry(rating=Rating.NEGATIVE, correction_text="actually 41"))
 
         stats = await store.stats()
         assert stats.total == 3
         assert stats.by_rating[Rating.POSITIVE] == 2
-        assert stats.by_rating[Rating.CORRECTION] == 1
+        assert stats.by_rating[Rating.NEGATIVE] == 1
+        assert stats.with_correction == 1
         assert stats.by_status[ReviewStatus.PENDING_REVIEW] == 3
 
 
@@ -322,3 +323,224 @@ class TestCreateFeedbackStore:
             feedback_storage_type="mysql",  # not supported
         )
         assert create_feedback_store(cfg) is None
+
+
+# ---------------------------------------------------------------------------
+# T2 — list_entries / count_entries / extended stats
+# ---------------------------------------------------------------------------
+
+
+class TestListEntries:
+    async def test_empty_filters_returns_all_newest_first(self, store):
+        now = datetime.now(timezone.utc)
+        a = await store.create(_entry(created_at=now - timedelta(seconds=2)))
+        b = await store.create(_entry(created_at=now - timedelta(seconds=1)))
+        c = await store.create(_entry(created_at=now))
+
+        rows = await store.list_entries(FeedbackListFilters())
+        assert [r.id for r in rows] == [c.id, b.id, a.id]
+        assert await store.count_entries(FeedbackListFilters()) == 3
+
+    async def test_status_filter(self, store):
+        a = await store.create(_entry())
+        b = await store.create(_entry())
+        await store.update_review(b.id, ReviewStatus.APPROVED, reviewer_id="bob", tags=[], comment=None)
+
+        pending = await store.list_entries(FeedbackListFilters(status=ReviewStatus.PENDING_REVIEW))
+        assert [r.id for r in pending] == [a.id]
+        assert await store.count_entries(FeedbackListFilters(status=ReviewStatus.APPROVED)) == 1
+
+    async def test_rating_filter(self, store):
+        await store.create(_entry(rating=Rating.POSITIVE))
+        n = await store.create(_entry(rating=Rating.NEGATIVE))
+        await store.create(_entry(rating=Rating.NEGATIVE, correction_text="actually 41"))
+
+        rows = await store.list_entries(FeedbackListFilters(rating=Rating.NEGATIVE))
+        assert {r.id for r in rows} >= {n.id}
+        assert len(rows) == 2
+
+    async def test_has_correction_filter(self, store):
+        pos = await store.create(_entry(rating=Rating.POSITIVE))
+        plain_neg = await store.create(_entry(rating=Rating.NEGATIVE))
+        with_text = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="actually 41"))
+
+        rows = await store.list_entries(FeedbackListFilters(has_correction=True))
+        assert [r.id for r in rows] == [with_text.id]
+
+        rows = await store.list_entries(FeedbackListFilters(has_correction=False))
+        assert {r.id for r in rows} == {pos.id, plain_neg.id}
+
+    async def test_user_id_filter(self, store):
+        a = await store.create(_entry(user_id="alice"))
+        await store.create(_entry(user_id="bob"))
+
+        rows = await store.list_entries(FeedbackListFilters(user_id="alice"))
+        assert [r.id for r in rows] == [a.id]
+
+    async def test_tag_overlap_filter(self, store):
+        a = await store.create(_entry())
+        b = await store.create(_entry())
+        c = await store.create(_entry())
+        await store.update_review(a.id, ReviewStatus.APPROVED, "bob", ["perf", "ipc"], None)
+        await store.update_review(b.id, ReviewStatus.APPROVED, "bob", ["security"], None)
+        await store.update_review(c.id, ReviewStatus.APPROVED, "bob", ["perf"], None)
+
+        rows = await store.list_entries(FeedbackListFilters(tags=["perf"]))
+        assert {r.id for r in rows} == {a.id, c.id}
+
+        rows = await store.list_entries(FeedbackListFilters(tags=["perf", "security"]))
+        assert {r.id for r in rows} == {a.id, b.id, c.id}
+
+    async def test_blank_only_tags_drop_to_no_constraint(self, store):
+        # Filter with only-blank tags is equivalent to "no tag filter",
+        # so all rows match (regression guard for the validator behavior).
+        await store.create(_entry())
+        await store.create(_entry())
+        rows = await store.list_entries(FeedbackListFilters(tags=["", "  "]))
+        assert len(rows) == 2
+
+    async def test_date_window_filter(self, store):
+        now = datetime.now(timezone.utc)
+        old = await store.create(_entry(created_at=now - timedelta(hours=2)))
+        recent = await store.create(_entry(created_at=now - timedelta(minutes=5)))
+        await store.create(_entry(created_at=now + timedelta(hours=1)))
+
+        rows = await store.list_entries(
+            FeedbackListFilters(
+                date_from=now - timedelta(hours=3),
+                date_to=now,
+            )
+        )
+        assert {r.id for r in rows} == {old.id, recent.id}
+
+    async def test_combined_filters_and_semantics(self, store):
+        now = datetime.now(timezone.utc)
+        a = await store.create(_entry(user_id="alice", created_at=now - timedelta(minutes=10)))
+        b = await store.create(_entry(user_id="alice", created_at=now - timedelta(minutes=5)))
+        await store.create(_entry(user_id="bob", created_at=now - timedelta(minutes=5)))
+        await store.update_review(a.id, ReviewStatus.APPROVED, "rev", ["topicX"], None)
+        await store.update_review(b.id, ReviewStatus.REJECTED, "rev", ["topicX"], None)
+
+        # alice + approved + tag overlap -> only ``a``
+        rows = await store.list_entries(
+            FeedbackListFilters(
+                user_id="alice",
+                status=ReviewStatus.APPROVED,
+                tags=["topicX"],
+            )
+        )
+        assert [r.id for r in rows] == [a.id]
+
+    async def test_pagination_bounds(self, store):
+        for i in range(3):
+            await store.create(_entry(created_at=datetime.now(timezone.utc) + timedelta(seconds=i)))
+        page = await store.list_entries(FeedbackListFilters(), limit=2, offset=1)
+        assert len(page) == 2
+
+        with pytest.raises(ValueError):
+            await store.list_entries(FeedbackListFilters(), limit=0)
+        with pytest.raises(ValueError):
+            await store.list_entries(FeedbackListFilters(), offset=-1)
+
+    async def test_empty_result_set(self, store):
+        await store.create(_entry(user_id="alice"))
+        rows = await store.list_entries(FeedbackListFilters(user_id="ghost"))
+        assert rows == []
+        assert await store.count_entries(FeedbackListFilters(user_id="ghost")) == 0
+
+    async def test_count_matches_filtered_total(self, store):
+        for _ in range(5):
+            await store.create(_entry(user_id="alice"))
+        for _ in range(3):
+            await store.create(_entry(user_id="bob"))
+        assert await store.count_entries(FeedbackListFilters()) == 8
+        assert await store.count_entries(FeedbackListFilters(user_id="alice")) == 5
+
+
+class TestExtendedStats:
+    async def test_top_tags_ordered_by_count_desc_then_name_asc(self, store):
+        a = await store.create(_entry())
+        b = await store.create(_entry())
+        c = await store.create(_entry())
+        d = await store.create(_entry())
+        # ``perf`` 3x, ``security`` 2x, ``api`` 1x (api < security alphabetically
+        # ensures the secondary sort is exercised on equal counts elsewhere).
+        await store.update_review(a.id, ReviewStatus.APPROVED, "bob", ["perf", "api"], None)
+        await store.update_review(b.id, ReviewStatus.APPROVED, "bob", ["perf", "security"], None)
+        await store.update_review(c.id, ReviewStatus.APPROVED, "bob", ["perf", "security"], None)
+        await store.update_review(d.id, ReviewStatus.APPROVED, "bob", [], None)
+
+        stats = await store.stats()
+        top = [(t.tag, t.count) for t in stats.top_tags]
+        assert top == [("perf", 3), ("security", 2), ("api", 1)]
+
+    async def test_oldest_pending_hours_none_when_nothing_pending(self, store):
+        e = await store.create(_entry())
+        await store.update_review(e.id, ReviewStatus.APPROVED, "bob", [], None)
+        stats = await store.stats()
+        assert stats.oldest_pending_hours is None
+
+    async def test_oldest_pending_hours_reflects_oldest_pending(self, store):
+        now = datetime.now(timezone.utc)
+        # An older, decided entry should NOT influence the result.
+        old_decided = await store.create(_entry(created_at=now - timedelta(hours=10)))
+        await store.update_review(old_decided.id, ReviewStatus.APPROVED, "bob", [], None)
+        # The pending floor is ~2h old.
+        await store.create(_entry(created_at=now - timedelta(hours=2)))
+        await store.create(_entry(created_at=now - timedelta(minutes=30)))
+
+        stats = await store.stats()
+        assert stats.oldest_pending_hours is not None
+        # Allow a small wallclock slack — the value is computed off ``now()``
+        # inside ``stats()`` so a few seconds may have elapsed.
+        assert 1.9 <= stats.oldest_pending_hours <= 2.2
+
+    async def test_oldest_pending_hours_handles_mixed_timezones(self, store):
+        # SQLite stores ``created_at`` as a normalized UTC ISO string, so
+        # mixing tz-aware datetimes in different offsets must still produce
+        # the right age.
+        now_utc = datetime.now(timezone.utc)
+        plus5 = timezone(timedelta(hours=5))
+        # Same instant expressed in two different offsets.
+        await store.create(_entry(created_at=now_utc - timedelta(hours=1)))
+        await store.create(_entry(created_at=(now_utc - timedelta(hours=3)).astimezone(plus5)))
+        stats = await store.stats()
+        assert stats.oldest_pending_hours is not None
+        assert 2.9 <= stats.oldest_pending_hours <= 3.2
+
+
+# ---------------------------------------------------------------------------
+# FeedbackListFilters model
+# ---------------------------------------------------------------------------
+
+
+class TestFeedbackListFilters:
+    def test_defaults_all_none(self):
+        f = FeedbackListFilters()
+        assert f.status is None
+        assert f.rating is None
+        assert f.tags is None
+        assert f.date_from is None
+        assert f.date_to is None
+        assert f.user_id is None
+
+    def test_tags_stripped_and_blanks_dropped(self):
+        f = FeedbackListFilters(tags=["  perf ", "", "ipc", "   "])
+        assert f.tags == ["perf", "ipc"]
+
+    def test_all_blank_tags_collapse_to_none(self):
+        f = FeedbackListFilters(tags=["", "  "])
+        assert f.tags is None
+
+    def test_user_id_stripped_to_none_when_blank(self):
+        f = FeedbackListFilters(user_id="   ")
+        assert f.user_id is None
+
+    def test_invalid_date_window_rejected(self):
+        import pydantic
+
+        now = datetime.now(timezone.utc)
+        with pytest.raises(pydantic.ValidationError):
+            FeedbackListFilters(date_from=now, date_to=now)
+        with pytest.raises(pydantic.ValidationError):
+            FeedbackListFilters(date_from=now, date_to=now - timedelta(seconds=1))
