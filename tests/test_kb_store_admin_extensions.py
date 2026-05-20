@@ -299,3 +299,66 @@ class TestUpdateDocument:
         assert listed[0].title == "renamed"
         assert listed[0].tags == ["x"]
         assert listed[0].chunk_count == updated.chunk_count
+
+
+# ---------------------------------------------------------------------------
+# Concurrency (PR review feedback #10)
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrency:
+    """SQLiteKBStore shares a single sqlite3.Connection across threads
+    (admin routes wrap calls in asyncio.to_thread). Without
+    serialization, the multi-statement update_document transaction
+    (BEGIN; delete chunks; UPDATE doc; COMMIT) races against
+    concurrent admin reads and writes. The ``@_locked`` decorator on
+    every public method must prevent that.
+    """
+
+    def test_concurrent_reads_and_writes_do_not_corrupt(self, store):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # Seed a handful of docs so list_documents has something to
+        # return on every read.
+        for i in range(5):
+            _seed(store, f"d{i}", content=f"original-{i}")
+
+        def reader(_):
+            for _ in range(10):
+                docs = store.list_documents()
+                assert len(docs) == 5
+                # ``count_documents`` must agree with ``list_documents``.
+                assert store.count_documents() == 5
+
+        def writer(i):
+            for j in range(5):
+                # Alternate content vs. metadata-only updates so we
+                # exercise both the chunk-clearing transaction and the
+                # fast-path no-content branch.
+                if j % 2 == 0:
+                    store.update_document(
+                        f"d{i}",
+                        content=f"rewritten-{i}-{j}",
+                    )
+                else:
+                    store.update_document(
+                        f"d{i}",
+                        title=f"t-{i}-{j}",
+                    )
+
+        # 5 writer threads (one per doc, no logical conflict beyond
+        # the shared connection) + 8 reader threads.
+        with ThreadPoolExecutor(max_workers=13) as pool:
+            futures = [pool.submit(writer, i) for i in range(5)]
+            futures += [pool.submit(reader, i) for i in range(8)]
+            for f in as_completed(futures):
+                # Surfaces "database is locked" or any race-induced
+                # OperationalError as a test failure.
+                f.result()
+
+        # After the dust settles every doc must still exist and be in
+        # a consistent state (content cleared chunks → re-seed to
+        # restore an invariant if your code re-embeds; here we just
+        # verify the row count is unchanged).
+        assert store.count_documents() == 5
+        assert len(store.list_documents()) == 5

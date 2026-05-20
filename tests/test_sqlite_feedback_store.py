@@ -649,8 +649,10 @@ class TestLegacyCorrectionMigration:
             stats = await s2.stats()
         finally:
             await s2.close()
-        assert stats.by_rating.get("negative", 0) == 1
-        assert stats.by_rating.get("correction", 0) == 0
+        assert stats.by_rating.get(Rating.NEGATIVE, 0) == 1
+        # And no legacy key leaked through — by_rating is keyed by the
+        # Rating enum (string keys would silently take the default).
+        assert set(stats.by_rating).issubset({Rating.POSITIVE, Rating.NEGATIVE})
 
     def test_pydantic_read_alias(self):
         # Independent of any DB: the ``mode="before"`` validator coerces

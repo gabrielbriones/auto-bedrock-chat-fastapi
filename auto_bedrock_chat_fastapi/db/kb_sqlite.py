@@ -5,8 +5,10 @@ Implements :class:`~auto_bedrock_chat_fastapi.db.kb_base.BaseKBStore` using
 SQLite + sqlite-vec (cosine similarity) + FTS5 (BM25 keyword search).
 """
 
+import functools
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +18,27 @@ import sqlite_vec
 from ..exceptions import KBDocumentNotFoundError
 from ..models import KBDocument, KBDocumentListFilters
 from .kb_base import BaseKBStore
+
+
+def _locked(func):
+    """Serialize access to ``self.conn`` via ``self._lock``.
+
+    ``SQLiteKBStore`` shares a single ``sqlite3.Connection`` with
+    ``check_same_thread=False`` across multiple worker threads (the
+    admin routes wrap every call in ``asyncio.to_thread``). Without
+    explicit serialization concurrent admin traffic can interleave
+    transactions on the same connection and trigger "database is
+    locked" / corruption. The lock is an :class:`threading.RLock` so a
+    decorated method may call another decorated method without
+    deadlocking.
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class SQLiteKBStore(BaseKBStore):
@@ -29,6 +52,12 @@ class SQLiteKBStore(BaseKBStore):
             db_path: Path to SQLite database file
         """
         self.db_path = db_path
+        # RLock so decorated methods may call other decorated methods
+        # without deadlocking. All access to ``self.conn`` is serialized
+        # through ``@_locked``; ``_init_schema`` is invoked from
+        # ``__init__`` before any concurrent caller can exist and so
+        # runs without the lock.
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.enable_load_extension(True)
 
@@ -145,6 +174,7 @@ class SQLiteKBStore(BaseKBStore):
 
         self.conn.commit()
 
+    @_locked
     def add_document(
         self,
         doc_id: str,
@@ -189,6 +219,7 @@ class SQLiteKBStore(BaseKBStore):
         )
         self.conn.commit()
 
+    @_locked
     def add_chunk(
         self,
         chunk_id: str,
@@ -262,6 +293,7 @@ class SQLiteKBStore(BaseKBStore):
 
         self.conn.commit()
 
+    @_locked
     def semantic_search(
         self,
         query_embedding: List[float],
@@ -389,6 +421,7 @@ class SQLiteKBStore(BaseKBStore):
         # (FTS5 default is implicit AND which is too restrictive)
         return " OR ".join(words)
 
+    @_locked
     def keyword_search(
         self,
         query: str,
@@ -486,6 +519,7 @@ class SQLiteKBStore(BaseKBStore):
 
         return formatted_results
 
+    @_locked
     def hybrid_search(
         self,
         query: str,
@@ -565,6 +599,7 @@ class SQLiteKBStore(BaseKBStore):
         hybrid_results.sort(key=lambda x: x["hybrid_score"], reverse=True)
         return hybrid_results[:limit]
 
+    @_locked
     def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve a document by ID.
@@ -602,6 +637,7 @@ class SQLiteKBStore(BaseKBStore):
             "created_at": row[8],
         }
 
+    @_locked
     def list_sources(self) -> List[Dict[str, Any]]:
         """Get list of all unique sources with document counts."""
         cursor = self.conn.cursor()
@@ -617,6 +653,7 @@ class SQLiteKBStore(BaseKBStore):
 
         return [{"source": row[0], "count": row[1]} for row in cursor.fetchall()]
 
+    @_locked
     def list_topics(self) -> List[Dict[str, Any]]:
         """Get list of all unique topics with document counts."""
         cursor = self.conn.cursor()
@@ -632,6 +669,7 @@ class SQLiteKBStore(BaseKBStore):
 
         return [{"topic": row[0], "count": row[1]} for row in cursor.fetchall()]
 
+    @_locked
     def delete_document(self, doc_id: str) -> None:
         """Delete a document and all its chunks."""
         cursor = self.conn.cursor()
@@ -716,6 +754,7 @@ class SQLiteKBStore(BaseKBStore):
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return where, params
 
+    @_locked
     def list_documents(
         self,
         filters: Optional[KBDocumentListFilters] = None,
@@ -742,6 +781,7 @@ class SQLiteKBStore(BaseKBStore):
         rows = cursor.fetchall()
         return [self._row_to_document(row[:9], chunk_count=row[9]) for row in rows]
 
+    @_locked
     def count_documents(
         self,
         filters: Optional[KBDocumentListFilters] = None,
@@ -763,6 +803,7 @@ class SQLiteKBStore(BaseKBStore):
             cursor.execute("DELETE FROM fts_chunks WHERE chunk_id = ?", (chunk_id,))
         cursor.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
 
+    @_locked
     def update_document(
         self,
         doc_id: str,
@@ -873,6 +914,7 @@ class SQLiteKBStore(BaseKBStore):
         )
         return self._row_to_document(updated_row, chunk_count=chunk_count)
 
+    @_locked
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics."""
         cursor = self.conn.cursor()
@@ -893,6 +935,7 @@ class SQLiteKBStore(BaseKBStore):
             "db_size_bytes": Path(self.db_path).stat().st_size if Path(self.db_path).exists() else 0,
         }
 
+    @_locked
     def close(self):
         """Close database connection."""
         self.conn.close()
