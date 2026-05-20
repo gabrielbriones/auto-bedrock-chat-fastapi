@@ -56,11 +56,6 @@ def test_defaults_pending_review_and_uuid_id():
     assert str(e.id)
 
 
-def test_correction_requires_correction_text():
-    with pytest.raises(ValidationError, match="correction_text"):
-        _entry(rating=Rating.CORRECTION)
-
-
 def test_positive_forbids_correction_text():
     with pytest.raises(ValidationError, match="correction_text"):
         _entry(correction_text="nope")
@@ -281,10 +276,14 @@ async def test_feedback_unknown_message_id(handler_factory):
 
 
 @pytest.mark.asyncio
-async def test_feedback_correction_requires_text(handler_factory):
+async def test_feedback_positive_forbids_correction_text(handler_factory):
+    """correction_text is only valid for negative ratings (positive + text → 422)."""
     h = handler_factory()
     _, ai = _seed_session(h)
-    await h._handle_feedback_message(MagicMock(), {"message_id": ai.message_id, "rating": "correction"})
+    await h._handle_feedback_message(
+        MagicMock(),
+        {"message_id": ai.message_id, "rating": "positive", "correction_text": "nope"},
+    )
     assert h._sent[0]["code"] == "invalid_feedback"
     assert "correction_text" in h._sent[0]["message"]
 
@@ -372,11 +371,13 @@ def test_feedback_stats_round_trip():
     s = FeedbackStats(
         total=3,
         by_status={ReviewStatus.PENDING_REVIEW: 2, ReviewStatus.APPROVED: 1},
-        by_rating={Rating.POSITIVE: 2, Rating.CORRECTION: 1},
+        by_rating={Rating.POSITIVE: 2, Rating.NEGATIVE: 1},
+        with_correction=1,
     )
     dumped = s.model_dump()
     assert dumped["total"] == 3
     assert dumped["by_status"][ReviewStatus.PENDING_REVIEW] == 2
+    assert dumped["with_correction"] == 1
 
 
 # ---------------------------------------------------------------------------

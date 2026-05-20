@@ -110,11 +110,10 @@ async def test_negative_payload_with_correction_matches_js_contract(handler):
     """T4: the exact JS payload for a 👎 submit (with both optional
     free-text fields filled in) is accepted by the handler.
 
-    Mirrors ``_submitCorrectionForm`` in ``chat-client.js``. Note that
-    rating ``"negative"`` is what the JS sends; if the user also fills
-    in ``correction_text`` the backend may upgrade to
-    ``Rating.CORRECTION`` semantics — that promotion is not the JS's
-    job and is intentionally not asserted here.
+    Mirrors ``_submitCorrectionForm`` in ``chat-client.js``. The rating
+    stays ``"negative"`` whether or not the user fills in
+    ``correction_text``; the optional fix text is an orthogonal signal
+    carried alongside the rating.
     """
     ai = _seed(handler)
     handler.feedback_store.create.return_value = _entry(

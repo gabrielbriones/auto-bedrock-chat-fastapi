@@ -23,7 +23,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'feedback_rating') THEN
-        CREATE TYPE feedback_rating AS ENUM ('positive', 'negative', 'correction');
+        CREATE TYPE feedback_rating AS ENUM ('positive', 'negative');
     END IF;
 END$$;
 
@@ -69,16 +69,16 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- Mirror the Pydantic-side validation (see auto_bedrock_chat_fastapi/models.py):
-    -- correction rating requires non-empty correction_text;
-    -- positive rating must not carry a correction_text;
-    -- decided review_status requires non-empty reviewer_id + reviewed_at.
-    CONSTRAINT feedback_correction_text_required
+    -- correction_text is a proposed fix and only makes sense for negative
+    -- feedback; when present it must also be non-empty.
+    -- A decided review_status requires non-empty reviewer_id + reviewed_at.
+    CONSTRAINT feedback_correction_text_negative_only
+        CHECK (correction_text IS NULL OR rating = 'negative'),
+    CONSTRAINT feedback_correction_text_non_empty
         CHECK (
-            rating <> 'correction'
-            OR (correction_text IS NOT NULL AND length(btrim(correction_text)) > 0)
+            correction_text IS NULL
+            OR length(btrim(correction_text)) > 0
         ),
-    CONSTRAINT feedback_positive_no_correction
-        CHECK (rating <> 'positive' OR correction_text IS NULL),
     CONSTRAINT feedback_review_decision_complete
         CHECK (
             review_status = 'pending_review'

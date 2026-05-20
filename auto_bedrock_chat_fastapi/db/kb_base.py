@@ -12,6 +12,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from ..models import KBDocument, KBDocumentListFilters
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +58,72 @@ class BaseKBStore(ABC):
     @abstractmethod
     def list_topics(self) -> List[Dict[str, Any]]:
         """Return unique topics with document counts."""
+
+    # ------------------------------------------------------------------
+    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def list_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[KBDocument]:
+        """Return paginated documents matching ``filters``, ordered by
+        ``created_at`` descending (newest first). Each returned
+        :class:`KBDocument` has ``chunk_count`` populated via a JOIN
+        against the ``chunks`` table.
+        """
+
+    @abstractmethod
+    def count_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+    ) -> int:
+        """Return the total number of documents matching ``filters``
+        (ignoring pagination). Must be consistent with
+        :meth:`list_documents` under the same filters.
+        """
+
+    @abstractmethod
+    def update_document(
+        self,
+        doc_id: str,
+        *,
+        content: Optional[str] = None,
+        title: Optional[str] = None,
+        source: Optional[str] = None,
+        source_url: Optional[str] = None,
+        topic: Optional[str] = None,
+        date_published: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> KBDocument:
+        """Partial-update a document.
+
+        ``None`` for any field means "don't touch". To clear a field
+        explicitly, pass an empty value (``""`` for text columns,
+        ``{}`` for metadata, ``[]`` for tags).
+
+        When ``content`` is provided and differs from the stored value,
+        the store transactionally deletes all existing chunks for that
+        document so the caller can re-embed cleanly. The store does
+        **not** invoke the embedding pipeline itself — that
+        orchestration is the responsibility of the admin route layer
+        (T5). After a content-clearing update, ``chunk_count`` on the
+        returned :class:`KBDocument` is ``0``.
+
+        ``tags`` are persisted inside ``metadata['tags']``. Passing
+        ``metadata`` and ``tags`` together merges as follows:
+        ``metadata['tags']`` from the explicit ``tags`` argument wins
+        and overwrites anything in the supplied ``metadata`` dict.
+
+        Raises
+        ------
+        KBDocumentNotFoundError
+            If no document with ``doc_id`` exists.
+        """
 
     # ------------------------------------------------------------------
     # Chunk / embedding operations
