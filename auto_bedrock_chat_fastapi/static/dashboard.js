@@ -383,8 +383,9 @@
         apiGet('/feedback/stats')
             .then(function (stats) {
                 view.innerHTML = '';
-                view.appendChild(el('div', 'section-header').appendChild(el('h2', null, 'Feedback Stats')));
-                view.insertBefore(buildStatsGrid(stats), view.firstChild);
+                var header = el('div', 'section-header');
+                header.appendChild(el('h2', null, 'Feedback Stats'));
+                view.appendChild(header);
                 view.appendChild(buildStatsGrid(stats));
                 if (stats.top_tags && stats.top_tags.length > 0) {
                     view.appendChild(buildTagsChart(stats.top_tags));
@@ -757,8 +758,8 @@
                 .catch(function (e) {
                     var transErrEl = document.getElementById('review-transition-err');
                     if (e.status === 409) {
-                        transErrEl.textContent = 'Status transition conflict: decision already recorded. ' +
-                            'Refetch the entry to see the current state.';
+                        transErrEl.textContent = (e.data && e.data.detail) ||
+                            'Status transition not allowed. Reload the entry and try again.';
                         transErrEl.classList.add('visible');
                     } else if (e.status === 422) {
                         transErrEl.textContent = 'Validation error: ' + (e.data && e.data.detail ? e.data.detail : String(e));

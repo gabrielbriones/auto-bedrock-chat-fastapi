@@ -267,11 +267,12 @@ Status transitions (enforced by both `update_review` and the DB):
 | `rejected`       | `approved`, `rejected` |
 
 Once a decision is recorded, admins may update it freely — including
-changing only the tags or comment while keeping the same decision — as
-long as the entry has **not** yet been converted into a KB article
-(future guard: `kb_article_id` non-null will block further updates until
-the KB article is rolled back). `pending_review` can never be set as a
-target via `update_review`.
+changing only the tags or comment while keeping the same decision.
+`pending_review` can never be set as a target via `update_review`.
+
+Future work: if review entries are later linked to KB articles, the store
+can add a guard (for example, via a `kb_article_id` field) to block further
+updates until that KB linkage is rolled back.
 
 ---
 

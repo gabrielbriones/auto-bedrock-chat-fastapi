@@ -413,11 +413,15 @@ class TestPatchFeedback:
         app, sso_store = admin_app
         entry = await store.create(_entry())
         client = _client_with_cookie(app, sso_store)
-        # Approve with initial tags.
-        client.patch(
+        # Approve with initial tags — assert this succeeds so the second PATCH
+        # is definitely a same-status update and not a first-time approval.
+        initial = client.patch(
             f"{_FEEDBACK_PREFIX}/{entry.id}",
             json={"review_status": "approved", "reviewer_tags": ["old-tag"]},
         )
+        assert initial.status_code == 200
+        assert initial.json()["review_status"] == "approved"
+        assert initial.json()["reviewer_tags"] == ["old-tag"]
         # Re-approve with corrected tags and a new comment — must return 200.
         r = client.patch(
             f"{_FEEDBACK_PREFIX}/{entry.id}",

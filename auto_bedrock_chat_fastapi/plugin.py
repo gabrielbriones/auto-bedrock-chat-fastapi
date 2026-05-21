@@ -1125,36 +1125,32 @@ class BedrockChatPlugin:
             return identity
 
         async def _enforce_admin(request: Request, identity: Optional[AdminIdentity]) -> AdminIdentity:
-            if identity is None:
-                # Auth-less dev / standalone escape hatch: when the host
-                # explicitly opts out of tool-call auth via
-                # ``require_tool_auth=False`` AND no identity source
-                # resolved the caller, treat the request as an anonymous
-                # admin. Mirrors the spirit of ``feedback_allow_anonymous``
-                # for the admin surface so local dev stays frictionless
-                # when no SSO / auth_verification_endpoint is wired.
-                #
-                # SECURITY: this bypasses the configured ``AdminAuthorizer``
-                # entirely — anyone who can reach the endpoint becomes
-                # admin. Do NOT ship this combination
-                # (``admin_enabled=True`` + ``require_tool_auth=False``)
-                # to a publicly-reachable deployment: ``/admin/*`` would
-                # become an unauthenticated control plane.
-                if not self.config.require_tool_auth:
-                    logger.warning(
-                        "admin request accepted as anonymous because "
-                        "require_tool_auth=False (method=%s path=%s); do not use "
-                        "this combination in production",
-                        request.method,
-                        request.url.path,
-                    )
-                    anon = AdminIdentity(
-                        user_id="anonymous",
-                        claims={"anonymous": True},
-                    )
-                    request.state.admin_identity = anon
-                    return anon
+            # Anonymous-admin escape hatch: ``require_tool_auth=False`` +
+            # ``admin_enabled=True`` means ALL requests are treated as
+            # anonymous admin regardless of whether any identity source is
+            # configured or whether the caller presented valid credentials.
+            # This is a deliberate dev-mode override — identity resolution is
+            # irrelevant because there is no auth enforcement at all.
+            #
+            # SECURITY: anyone who can reach the endpoint becomes admin.
+            # Do NOT use ``admin_enabled=True`` + ``require_tool_auth=False``
+            # in a publicly-reachable deployment.
+            if not self.config.require_tool_auth:
+                logger.warning(
+                    "admin request accepted as anonymous because "
+                    "require_tool_auth=False (method=%s path=%s); do not use "
+                    "this combination in production",
+                    request.method,
+                    request.url.path,
+                )
+                anon = AdminIdentity(
+                    user_id="anonymous",
+                    claims={"anonymous": True},
+                )
+                request.state.admin_identity = anon
+                return anon
 
+            if identity is None:
                 if not sso_configured and not auth_endpoint_configured:
                     logger.warning(
                         "admin endpoint hit but no identity source is configured "
@@ -1231,15 +1227,16 @@ class BedrockChatPlugin:
             """Return ``{is_admin, anonymous}`` — always 200, never 403.
 
             Used by the Chat UI on page load to decide whether to show
-            the Dashboard button.  When ``require_tool_auth=False`` and
-            no identity source resolves the caller, the anonymous-admin
-            escape hatch is active and ``anonymous`` is set to ``true``
-            so the dashboard renders a yellow dev-mode warning banner.
+            the Dashboard button.  When ``require_tool_auth=False``, the
+            anonymous-admin escape hatch is unconditionally active:
+            ``{is_admin: true, anonymous: true}`` is returned regardless
+            of whether any identity sources are configured or the caller
+            presented credentials.
             """
+            if not self.config.require_tool_auth:
+                return JSONResponse({"is_admin": True, "anonymous": True})
             identity = await _resolve_identity(request)
             if identity is None:
-                if not self.config.require_tool_auth:
-                    return JSONResponse({"is_admin": True, "anonymous": True})
                 return JSONResponse({"is_admin": False, "anonymous": False})
             is_admin_result = await self._admin_authorizer.is_admin(identity)
             return JSONResponse({"is_admin": is_admin_result, "anonymous": False})

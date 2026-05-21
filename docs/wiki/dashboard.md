@@ -116,12 +116,12 @@ closes and the table row refreshes.
 
 Error handling:
 
-| Status         | Behaviour                                            |
-| -------------- | ---------------------------------------------------- |
-| 200            | Drawer closes, table reloads, pending badge updates. |
-| 409 conflict   | Inline error: "decision already recorded".           |
-| 422 validation | Inline error with the API detail.                    |
-| Other          | Toast notification.                                  |
+| Status         | Behaviour                                                                                                                                                                                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200            | Drawer closes, table reloads, pending badge updates.                                                                                                                                               |
+| 409 conflict   | Inline error with the API `detail` for `invalid_status_transition` (e.g. attempted to set `pending_review`). Currently unreachable via normal HTTP — blocked upstream by request validation (422). |
+| 422 validation | Inline error with the API detail.                                                                                                                                                                  |
+| Other          | Toast notification.                                                                                                                                                                                |
 
 ---
 
@@ -164,12 +164,15 @@ and all its chunks. This cannot be undone."). Confirmed → `DELETE
 ## Dev-mode banner
 
 When the anonymous-admin escape hatch is active
-(`require_tool_auth=false` + no identity source), the capability probe
-returns `{"is_admin": true, "anonymous": true}`. The dashboard renders
-a yellow banner:
+(`require_tool_auth=false` and `admin_enabled=true`), the capability
+probe returns `{"is_admin": true, "anonymous": true}`. This fires
+unconditionally — regardless of whether SSO or an auth verification
+endpoint is configured, and regardless of whether the caller presents
+credentials. The dashboard renders a yellow banner:
 
 > **Dev mode — anonymous admin** — `require_tool_auth=false` is active;
-> every request is treated as admin. Do not use this in production.
+> every request is treated as admin regardless of credentials. Do not
+> use this in production.
 
 This banner is also the signal to reviewers that they are operating in a
 development environment.

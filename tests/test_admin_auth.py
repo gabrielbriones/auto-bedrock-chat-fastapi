@@ -400,8 +400,10 @@ def test_admin_requires_identity_source_when_sso_disabled_and_no_auth_endpoint()
 
 
 class TestAnonymousAdminEscapeHatch:
-    """When ``require_tool_auth=False`` and no identity resolves, ``_enforce_admin``
-    accepts the request as an anonymous admin (``user_id='anonymous'``).
+    """When ``require_tool_auth=False``, ``_enforce_admin`` unconditionally
+    accepts every request as an anonymous admin (``user_id='anonymous'``)
+    regardless of whether an identity source is configured or the caller
+    presents valid credentials.
 
     This is a dev/standalone convenience — see the security warning in
     ``plugin.py::_enforce_admin``.
@@ -435,9 +437,10 @@ class TestAnonymousAdminEscapeHatch:
         assert resp.status_code == 401
         assert resp.json()["code"] == "not_authenticated"
 
-    def test_resolved_identity_still_passes_through_authorizer(self):
-        """``require_tool_auth=False`` is a fallback only — a resolved identity
-        is still subject to the authorizer's verdict (no auto-admin)."""
+    def test_resolved_identity_ignored_when_require_tool_auth_disabled(self):
+        """``require_tool_auth=False`` is unconditional — even a caller with a
+        valid SSO session is accepted as anonymous admin, not as their real
+        identity.  The authorizer is never consulted."""
         authz = _StubAuthorizer(allowed_user_ids=set())  # nobody is admin
         sso_store = SSOSessionStore(session_ttl=3600)
         app, _plugin, _store = _build_admin_test_app(authz, sso_session_store=sso_store)
@@ -447,10 +450,10 @@ class TestAnonymousAdminEscapeHatch:
         client = TestClient(app)
         client.cookies.set("sso_session_token", token)
         resp = client.get("/bedrock-chat/admin/_probe")
-        # Identity resolved → authorizer ran → bob is not admin → 403.
-        assert resp.status_code == 403
-        assert resp.json()["code"] == "not_admin"
-        assert authz.calls == 1
+        # escape hatch fires before identity resolution → anonymous, not bob
+        assert resp.status_code == 200
+        assert resp.json()["user_id"] == "anonymous"
+        assert authz.calls == 0
 
 
 # ---------------------------------------------------------------------------

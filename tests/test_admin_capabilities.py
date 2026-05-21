@@ -1,15 +1,15 @@
 """Tests for the GET /admin/_capabilities endpoint (dashboard capability probe).
 
-Covers the four server-state × require_tool_auth combinations from the
-spec, as well as admin-disabled and always-200 semantics:
+Covers the server-state × require_tool_auth combinations from the spec,
+as well as admin-disabled and always-200 semantics:
 
-| admin_enabled | identity resolves | authorizer decision | require_tool_auth | Expected              |
-|---------------|-------------------|---------------------|-------------------|-----------------------|
-| False         | —                 | —                   | any               | 404 (route not mounted)|
-| True          | Yes               | True                | any               | 200 {is_admin: T, anonymous: F}|
-| True          | Yes               | False               | any               | 200 {is_admin: F, anonymous: F}|
-| True          | No                | —                   | True              | 200 {is_admin: F, anonymous: F}|
-| True          | No                | —                   | False (anon)      | 200 {is_admin: T, anonymous: T}|
+| admin_enabled | require_tool_auth | identity resolves | authorizer decision | Expected                       |
+|---------------|-------------------|-------------------|---------------------|--------------------------------|
+| False         | any               | —                 | —                   | 404 (route not mounted)        |
+| True          | False             | any               | — (bypassed)        | 200 {is_admin: T, anonymous: T}|
+| True          | True              | Yes               | True                | 200 {is_admin: T, anonymous: F}|
+| True          | True              | Yes               | False               | 200 {is_admin: F, anonymous: F}|
+| True          | True              | No                | —                   | 200 {is_admin: F, anonymous: F}|
 """
 
 from __future__ import annotations
@@ -178,12 +178,12 @@ def test_capabilities_unauthenticated_with_require_auth_returns_false():
 
 
 # ---------------------------------------------------------------------------
-# admin_enabled=True, no identity, require_tool_auth=False (anon admin)
+# admin_enabled=True, require_tool_auth=False (anon admin — unconditional)
 # ---------------------------------------------------------------------------
 
 
 def test_capabilities_anonymous_admin_returns_is_admin_true_anonymous_true():
-    """Anonymous-admin escape hatch active → {is_admin: true, anonymous: true}."""
+    """Anonymous-admin escape hatch active — no credentials → {is_admin: true, anonymous: true}."""
     authz = _StubAuthorizer()  # empty — authorizer never called
     app, _ = _build_app(authz, require_tool_auth=False)
 
@@ -191,6 +191,29 @@ def test_capabilities_anonymous_admin_returns_is_admin_true_anonymous_true():
     resp = client.get("/bedrock-chat/admin/_capabilities")
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    assert body == {"is_admin": True, "anonymous": True}
+
+
+def test_capabilities_anonymous_admin_ignores_valid_sso_cookie():
+    """require_tool_auth=False overrides any presented credentials.
+
+    Even when the caller has a valid SSO session belonging to a user the
+    authorizer would grant, the anonymous-admin escape hatch fires
+    unconditionally: the response is {is_admin: true, anonymous: true},
+    not {is_admin: true, anonymous: false}.
+    """
+    authz = _StubAuthorizer(allowed={"alice@example.com"})
+    app, store = _build_app(authz, sso_enabled=True, require_tool_auth=False)
+    token = _make_session(store, "alice@example.com")
+
+    client = TestClient(app)
+    resp = client.get(
+        "/bedrock-chat/admin/_capabilities",
+        cookies={"sso_session_token": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Must be anonymous=True, not the SSO identity
     assert body == {"is_admin": True, "anonymous": True}
 
 
