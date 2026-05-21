@@ -388,20 +388,8 @@ class TestPatchFeedback:
         # Validator rejects with 422 before we hit the store.
         assert resp.status_code == 422
 
-    async def test_patch_illegal_transition_returns_409(self, admin_app, store):
-        """approved → pending is forbidden by the transition matrix; the
-        model validator already blocks ``pending_review`` (covered above),
-        so to actually exercise the 409 path we need a target the model
-        accepts but the store rejects. The store rejects re-approving an
-        already-approved row only when targeting ``pending_review``, but
-        approved → rejected is allowed; we instead force a stale-state
-        race by approving twice (idempotency). The transition matrix
-        permits flips, so test the only truly-illegal transition: try
-        moving a freshly-approved entry to ``pending_review`` via a
-        bypass — since the validator blocks that, the 409 path is
-        functionally unreachable through the HTTP surface alone. We
-        keep this test focused on the documented matrix and assert flip
-        behavior is allowed (no 409)."""
+    async def test_patch_flip_between_decided_states_returns_200(self, admin_app, store):
+        """Flip approved → rejected and rejected → approved are both allowed."""
         app, sso_store = admin_app
         entry = await store.create(_entry())
         client = _client_with_cookie(app, sso_store)
@@ -418,6 +406,32 @@ class TestPatchFeedback:
         )
         assert r2.status_code == 200
         assert r2.json()["review_status"] == "rejected"
+
+    async def test_patch_decided_same_status_updates_tags_and_comment(self, admin_app, store):
+        """Admins can correct tags / comment on an already-decided entry without
+        changing the decision (same-status update).  Previously this raised 409."""
+        app, sso_store = admin_app
+        entry = await store.create(_entry())
+        client = _client_with_cookie(app, sso_store)
+        # Approve with initial tags.
+        client.patch(
+            f"{_FEEDBACK_PREFIX}/{entry.id}",
+            json={"review_status": "approved", "reviewer_tags": ["old-tag"]},
+        )
+        # Re-approve with corrected tags and a new comment — must return 200.
+        r = client.patch(
+            f"{_FEEDBACK_PREFIX}/{entry.id}",
+            json={
+                "review_status": "approved",
+                "reviewer_tags": ["corrected-tag"],
+                "reviewer_comment": "fixed comment",
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["review_status"] == "approved"
+        assert body["reviewer_tags"] == ["corrected-tag"]
+        assert body["reviewer_comment"] == "fixed comment"
 
     def test_patch_unknown_id_returns_404(self, admin_app):
         app, sso_store = admin_app

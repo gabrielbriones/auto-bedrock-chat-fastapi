@@ -64,10 +64,20 @@ class ReviewStatus(str, Enum):
 
 
 # Allowed status transitions for ``FeedbackStore.update_review``.
+#
+# Decided entries (approved / rejected) may be updated to *either* decided
+# state — including staying in the same state — so that admins can correct
+# mistakes (wrong decision, wrong tags, wrong comment) before the entry is
+# converted into a KB article. Once a KB article has been created from the
+# entry (future: ``kb_article_id`` is non-null) that conversion must be
+# rolled back first; that guard is not yet implemented.
+#
+# The only permanently forbidden target is ``pending_review``: once a
+# decision has been recorded the entry cannot be reset to the review queue.
 ALLOWED_REVIEW_TRANSITIONS: Dict[ReviewStatus, frozenset[ReviewStatus]] = {
     ReviewStatus.PENDING_REVIEW: frozenset({ReviewStatus.APPROVED, ReviewStatus.REJECTED}),
-    ReviewStatus.APPROVED: frozenset({ReviewStatus.REJECTED}),
-    ReviewStatus.REJECTED: frozenset({ReviewStatus.APPROVED}),
+    ReviewStatus.APPROVED: frozenset({ReviewStatus.APPROVED, ReviewStatus.REJECTED}),
+    ReviewStatus.REJECTED: frozenset({ReviewStatus.APPROVED, ReviewStatus.REJECTED}),
 }
 
 

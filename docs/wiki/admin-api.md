@@ -3,12 +3,14 @@
 The **Admin API** is the HTTP control plane for the human-in-the-loop
 review workflow that backs the [Feedback Collection](feedback-collection)
 feature and the knowledge base. It exposes two route groups under
-`/admin/`:
+`/admin/`, plus a capability probe used by the Dashboard UI:
 
 - **Feedback Review** — `/admin/feedback/*` — list, inspect, decide on
   user-submitted 👍 / 👎 corrections.
 - **KB Management** — `/admin/kb/documents/*` — list, inspect, edit, and
   delete KB documents (re-embeds on content change).
+- **Capability probe** — `GET /admin/_capabilities` — tells the Chat UI
+  whether the current caller is an admin; always 200.
 
 The synthesis-control surface (`/admin/synthesis/*`) is **reserved but
 unimplemented** in this release; requests return 404. See
@@ -155,6 +157,32 @@ All endpoints sit under `/admin/`. Responses use a flat error envelope:
 ```json
 { "code": "not_found", "detail": "kb document foo not found" }
 ```
+
+### Capability probe
+
+| Method | Path                   | Description                                                         |
+| ------ | ---------------------- | ------------------------------------------------------------------- |
+| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous}` — **always 200**, never 403 or 401. |
+
+Response shape:
+
+```json
+{ "is_admin": true, "anonymous": false }
+```
+
+| Field       | Type    | Notes                                                                                     |
+| ----------- | ------- | ----------------------------------------------------------------------------------------- |
+| `is_admin`  | boolean | `true` when the caller is authenticated and authorised as an admin.                       |
+| `anonymous` | boolean | `true` only in the anonymous-admin escape hatch (`require_tool_auth=false`, no identity). |
+
+The Chat UI calls this endpoint on page load. If `is_admin=true` it
+reveals the Dashboard button in the header; otherwise the button stays
+hidden. If `admin_enabled=false` this route is not mounted at all,
+returning a clean 404 — the button is not even rendered in that case.
+
+The endpoint **never** returns 403 or 401 so the capability check is
+transparent to non-admin users (the button simply stays hidden rather
+than triggering a visible error).
 
 ### Feedback Review
 

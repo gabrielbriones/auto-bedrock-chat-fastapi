@@ -431,6 +431,15 @@ class BedrockChatPlugin:
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
                             "feedback_enabled": feedback_enabled,
+                            # Admin Dashboard button visibility probe.
+                            # When admin_enabled=False the button is never
+                            # rendered; the capability endpoint is also
+                            # absent so any stale client request gets 404.
+                            "admin_enabled": self.config.admin_enabled,
+                            "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
+                            "dashboard_url": (
+                                f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
+                            ),
                         },
                     )
                 except Exception as e:
@@ -576,6 +585,10 @@ class BedrockChatPlugin:
             logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
+        if self.config.admin_enabled:
+            logger.info(f"  Admin Capabilities: {self.config.chat_endpoint}/admin/_capabilities")
+            if self.config.enable_ui:
+                logger.info(f"  Dashboard: {self.config.chat_endpoint}/dashboard")
         if self.config.sso_enabled:
             logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
             logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
@@ -1197,6 +1210,65 @@ class BedrockChatPlugin:
 
         # Expose the dependency for downstream task wiring (T3, T5).
         self._require_admin = require_admin
+
+        # ----------------------------------------------------------------
+        # Capability probe — GET /admin/_capabilities
+        #
+        # Always returns 200 {is_admin, anonymous}. Never raises a 403 so
+        # the Chat UI can silently hide the Dashboard button rather than
+        # surfacing an error to non-admin users.  The anonymous-admin
+        # escape hatch (require_tool_auth=False + no resolved identity)
+        # is reflected as ``anonymous=true`` so the dashboard can render
+        # a visible dev-mode warning banner.
+        # ----------------------------------------------------------------
+
+        @self.app.get(
+            f"{admin_prefix}/_capabilities",
+            tags=["admin"],
+            summary="Capability probe — is the current caller an admin?",
+        )
+        async def get_admin_capabilities(request: Request) -> JSONResponse:
+            """Return ``{is_admin, anonymous}`` — always 200, never 403.
+
+            Used by the Chat UI on page load to decide whether to show
+            the Dashboard button.  When ``require_tool_auth=False`` and
+            no identity source resolves the caller, the anonymous-admin
+            escape hatch is active and ``anonymous`` is set to ``true``
+            so the dashboard renders a yellow dev-mode warning banner.
+            """
+            identity = await _resolve_identity(request)
+            if identity is None:
+                if not self.config.require_tool_auth:
+                    return JSONResponse({"is_admin": True, "anonymous": True})
+                return JSONResponse({"is_admin": False, "anonymous": False})
+            is_admin_result = await self._admin_authorizer.is_admin(identity)
+            return JSONResponse({"is_admin": is_admin_result, "anonymous": False})
+
+        # ----------------------------------------------------------------
+        # Admin Dashboard UI — GET {chat_endpoint}/dashboard
+        #
+        # Server-rendered shell page.  Wired only when the UI is enabled
+        # (templates are initialised) so the endpoint can't 500 if the
+        # template directory is absent.
+        # ----------------------------------------------------------------
+
+        if self.config.enable_ui and getattr(self, "templates", None) is not None:
+            dashboard_url = f"{self.config.chat_endpoint}/dashboard"
+
+            @self.app.get(dashboard_url, response_class=HTMLResponse, include_in_schema=False)
+            async def admin_dashboard_page(request: Request):
+                """Serve the Admin Dashboard shell page."""
+                return self.templates.TemplateResponse(
+                    request,
+                    "dashboard.html",
+                    context={
+                        "app_title": self.app.title or "API",
+                        "admin_prefix": admin_prefix,
+                        "chat_url": self.config.ui_endpoint,
+                    },
+                )
+
+            logger.info("  Dashboard UI: %s", dashboard_url)
 
         # Feedback Review endpoints. Only registered when a feedback
         # store is actually wired; otherwise ``/admin/feedback`` would 500

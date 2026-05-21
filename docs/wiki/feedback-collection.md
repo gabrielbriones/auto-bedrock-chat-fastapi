@@ -263,11 +263,15 @@ Status transitions (enforced by both `update_review` and the DB):
 | From             | Allowed targets        |
 | ---------------- | ---------------------- |
 | `pending_review` | `approved`, `rejected` |
-| `approved`       | `rejected`             |
-| `rejected`       | `approved`             |
+| `approved`       | `approved`, `rejected` |
+| `rejected`       | `approved`, `rejected` |
 
-`pending_review` cannot be set as a target via `update_review` — once a
-decision is made, the entry stays in a decided state.
+Once a decision is recorded, admins may update it freely — including
+changing only the tags or comment while keeping the same decision — as
+long as the entry has **not** yet been converted into a KB article
+(future guard: `kb_article_id` non-null will block further updates until
+the KB article is rolled back). `pending_review` can never be set as a
+target via `update_review`.
 
 ---
 
