@@ -170,10 +170,10 @@ Response shape:
 { "is_admin": true, "anonymous": false }
 ```
 
-| Field       | Type    | Notes                                                                                     |
-| ----------- | ------- | ----------------------------------------------------------------------------------------- |
-| `is_admin`  | boolean | `true` when the caller is authenticated and authorised as an admin.                       |
-| `anonymous` | boolean | `true` only in the anonymous-admin escape hatch (`require_tool_auth=false`, no identity). |
+| Field       | Type    | Notes                                                                                                                |
+| ----------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `is_admin`  | boolean | `true` when the caller is authenticated and authorised as an admin.                                                  |
+| `anonymous` | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely. |
 
 The Chat UI calls this endpoint on page load. If `is_admin=true` it
 reveals the Dashboard button in the header; otherwise the button stays
@@ -345,9 +345,10 @@ stay bounded.
 
 ## Anonymous admin escape hatch (development only)
 
-When **`require_tool_auth=False`** (the default) AND `require_admin`
-cannot resolve an identity, the request is accepted as an anonymous
-admin (`user_id="anonymous"`) and the authorizer is **bypassed**.
+When **`require_tool_auth=False`** (the default), every request to an
+admin endpoint is accepted as an anonymous admin (`user_id="anonymous"`)
+and the authorizer is **bypassed entirely** — regardless of whether
+credentials or a resolvable identity are presented.
 Every such request emits a `WARNING` on the `bedrock.audit` channel:
 
 ```
@@ -363,10 +364,6 @@ ergonomic, but it is a foot-gun:
 > `BEDROCK_ADMIN_ENABLED=true`. Otherwise any request to `/admin/*`
 > with no identity becomes an unauthenticated admin. Hook the
 > `"accepted as anonymous"` log line into your alerting.
-
-When an identity **is** resolved (SSO cookie or auth endpoint), the
-authorizer always runs — anonymous fallback is for missing-identity
-only, never an auto-promote.
 
 ---
 

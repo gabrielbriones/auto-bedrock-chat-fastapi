@@ -6,9 +6,9 @@ reviewers and KB administrators. It is served at
 both `admin_enabled=True` and `enable_ui=True` are set.
 
 The dashboard is a pure client-side application: the HTML shell is
-server-rendered by FastAPI, but all data is loaded via XHR calls to the
-existing [Admin API](admin-api.md). No new server endpoints are needed
-for data — the only new endpoint is the capability probe
+server-rendered by FastAPI at `GET {chat_endpoint}/dashboard`, but all
+data is loaded via XHR calls to the existing [Admin API](admin-api.md).
+The only new Admin API endpoint introduced is the capability probe
 (`GET /admin/_capabilities`) used to show or hide the Dashboard button
 in the Chat UI header.
 
