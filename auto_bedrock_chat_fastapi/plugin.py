@@ -431,6 +431,15 @@ class BedrockChatPlugin:
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
                             "feedback_enabled": feedback_enabled,
+                            # Admin Dashboard button visibility probe.
+                            # When admin_enabled=False the button is never
+                            # rendered; the capability endpoint is also
+                            # absent so any stale client request gets 404.
+                            "admin_enabled": self.config.admin_enabled,
+                            "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
+                            "dashboard_url": (
+                                f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
+                            ),
                         },
                     )
                 except Exception as e:
@@ -576,6 +585,10 @@ class BedrockChatPlugin:
             logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
+        if self.config.admin_enabled:
+            logger.info(f"  Admin Capabilities: {self.config.chat_endpoint}/admin/_capabilities")
+            if self.config.enable_ui:
+                logger.info(f"  Dashboard: {self.config.chat_endpoint}/dashboard")
         if self.config.sso_enabled:
             logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
             logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
@@ -1112,36 +1125,32 @@ class BedrockChatPlugin:
             return identity
 
         async def _enforce_admin(request: Request, identity: Optional[AdminIdentity]) -> AdminIdentity:
-            if identity is None:
-                # Auth-less dev / standalone escape hatch: when the host
-                # explicitly opts out of tool-call auth via
-                # ``require_tool_auth=False`` AND no identity source
-                # resolved the caller, treat the request as an anonymous
-                # admin. Mirrors the spirit of ``feedback_allow_anonymous``
-                # for the admin surface so local dev stays frictionless
-                # when no SSO / auth_verification_endpoint is wired.
-                #
-                # SECURITY: this bypasses the configured ``AdminAuthorizer``
-                # entirely — anyone who can reach the endpoint becomes
-                # admin. Do NOT ship this combination
-                # (``admin_enabled=True`` + ``require_tool_auth=False``)
-                # to a publicly-reachable deployment: ``/admin/*`` would
-                # become an unauthenticated control plane.
-                if not self.config.require_tool_auth:
-                    logger.warning(
-                        "admin request accepted as anonymous because "
-                        "require_tool_auth=False (method=%s path=%s); do not use "
-                        "this combination in production",
-                        request.method,
-                        request.url.path,
-                    )
-                    anon = AdminIdentity(
-                        user_id="anonymous",
-                        claims={"anonymous": True},
-                    )
-                    request.state.admin_identity = anon
-                    return anon
+            # Anonymous-admin escape hatch: ``require_tool_auth=False`` +
+            # ``admin_enabled=True`` means ALL requests are treated as
+            # anonymous admin regardless of whether any identity source is
+            # configured or whether the caller presented valid credentials.
+            # This is a deliberate dev-mode override — identity resolution is
+            # irrelevant because there is no auth enforcement at all.
+            #
+            # SECURITY: anyone who can reach the endpoint becomes admin.
+            # Do NOT use ``admin_enabled=True`` + ``require_tool_auth=False``
+            # in a publicly-reachable deployment.
+            if not self.config.require_tool_auth:
+                logger.warning(
+                    "admin request accepted as anonymous because "
+                    "require_tool_auth=False (method=%s path=%s); do not use "
+                    "this combination in production",
+                    request.method,
+                    request.url.path,
+                )
+                anon = AdminIdentity(
+                    user_id="anonymous",
+                    claims={"anonymous": True},
+                )
+                request.state.admin_identity = anon
+                return anon
 
+            if identity is None:
                 if not sso_configured and not auth_endpoint_configured:
                     logger.warning(
                         "admin endpoint hit but no identity source is configured "
@@ -1197,6 +1206,71 @@ class BedrockChatPlugin:
 
         # Expose the dependency for downstream task wiring (T3, T5).
         self._require_admin = require_admin
+
+        # ----------------------------------------------------------------
+        # Capability probe — GET /admin/_capabilities
+        #
+        # Always returns 200 {is_admin, anonymous}. Never raises a 403 so
+        # the Chat UI can silently hide the Dashboard button rather than
+        # surfacing an error to non-admin users.  When
+        # ``require_tool_auth=False``, the anonymous-admin escape hatch is
+        # unconditional: identity is ignored even if credentials are
+        # present, and this is reflected as ``anonymous=true`` so the
+        # dashboard can render a visible dev-mode warning banner.
+        # ----------------------------------------------------------------
+
+        @self.app.get(
+            f"{admin_prefix}/_capabilities",
+            tags=["admin"],
+            summary="Capability probe — is the current caller an admin?",
+        )
+        async def get_admin_capabilities(request: Request) -> JSONResponse:
+            """Return ``{is_admin, anonymous}`` — always 200, never 403.
+
+            Used by the Chat UI on page load to decide whether to show
+            the Dashboard button.  When ``require_tool_auth=False``, the
+            anonymous-admin escape hatch is unconditionally active:
+            ``{is_admin: true, anonymous: true}`` is returned regardless
+            of whether any identity sources are configured or the caller
+            presented credentials.
+            """
+            if not self.config.require_tool_auth:
+                return JSONResponse({"is_admin": True, "anonymous": True})
+            try:
+                identity = await _resolve_identity(request)
+                if identity is None:
+                    return JSONResponse({"is_admin": False, "anonymous": False})
+                is_admin_result = await self._admin_authorizer.is_admin(identity)
+                return JSONResponse({"is_admin": is_admin_result, "anonymous": False})
+            except Exception:
+                logger.exception("Failed to resolve admin capabilities")
+                return JSONResponse({"is_admin": False, "anonymous": False})
+
+        # ----------------------------------------------------------------
+        # Admin Dashboard UI — GET {chat_endpoint}/dashboard
+        #
+        # Server-rendered shell page.  Wired only when the UI is enabled
+        # (templates are initialised) so the endpoint can't 500 if the
+        # template directory is absent.
+        # ----------------------------------------------------------------
+
+        if self.config.enable_ui and getattr(self, "templates", None) is not None:
+            dashboard_url = f"{self.config.chat_endpoint}/dashboard"
+
+            @self.app.get(dashboard_url, response_class=HTMLResponse, include_in_schema=False)
+            async def admin_dashboard_page(request: Request):
+                """Serve the Admin Dashboard shell page."""
+                return self.templates.TemplateResponse(
+                    request,
+                    "dashboard.html",
+                    context={
+                        "app_title": self.app.title or "API",
+                        "admin_prefix": admin_prefix,
+                        "chat_url": self.config.ui_endpoint,
+                    },
+                )
+
+            logger.info("  Dashboard UI: %s", dashboard_url)
 
         # Feedback Review endpoints. Only registered when a feedback
         # store is actually wired; otherwise ``/admin/feedback`` would 500

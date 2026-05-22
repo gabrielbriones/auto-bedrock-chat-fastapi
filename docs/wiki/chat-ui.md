@@ -118,3 +118,4 @@ BEDROCK_ENABLE_UI=false
 - [WebSocket Client](websocket-client.md) — build a custom client
 - [Authentication](authentication.md) — securing tool calls
 - [Configuration](configuration.md) — endpoint path settings
+- [Admin Dashboard](dashboard.md) — the Dashboard button shown to admins

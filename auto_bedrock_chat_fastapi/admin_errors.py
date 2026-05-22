@@ -60,12 +60,22 @@ ADMIN_COMMON_RESPONSES: Dict[int, Dict[str, Any]] = {
     },
 }
 
-# Admin-feedback PATCH adds 409 for invalid status transitions.
+# Admin-feedback PATCH declares 409 for invalid status transitions.
+# In practice this is currently unreachable via the HTTP surface: the
+# ``ReviewUpdateRequest`` Pydantic validator rejects ``pending_review``
+# targets before they reach the store, so every invalid-transition path
+# is caught at the 422 level first.  The entry is kept so the OpenAPI
+# spec stays honest about what the underlying store can raise, and to
+# provide a correct error shape if the validator is ever relaxed.
 ADMIN_FEEDBACK_PATCH_RESPONSES: Dict[int, Dict[str, Any]] = {
     **ADMIN_COMMON_RESPONSES,
     409: {
         "model": ErrorResponse,
-        "description": "Review-status transition not allowed",
+        "description": (
+            "Review-status transition not allowed (e.g. targeting "
+            "'pending_review'). Currently unreachable via normal HTTP — "
+            "the request validator blocks invalid targets at 422."
+        ),
     },
 }
 

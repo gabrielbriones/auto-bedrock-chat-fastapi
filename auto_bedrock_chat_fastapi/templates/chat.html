@@ -34,6 +34,10 @@
             </div>
             <div class="chat-header-right">
                 <span id="ssoUserDisplay" class="sso-user-display"></span>
+                {% if admin_enabled %}
+                <button id="dashboardButton" class="dashboard-btn" style="display:none"
+                        title="Admin Dashboard">Dashboard</button>
+                {% endif %}
                 <button id="authButton" class="auth-button">Log in</button>
             </div>
         </div>
@@ -76,7 +80,10 @@
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
             ssoUserDisplay: {{ sso_user_display | tojson }},
-            feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }}
+            feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }},
+            adminEnabled: {{ 'true' if admin_enabled else 'false' }},
+            adminPrefix: {{ admin_prefix | tojson }},
+            dashboardUrl: {{ dashboard_url | tojson }},
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

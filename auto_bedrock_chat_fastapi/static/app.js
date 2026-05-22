@@ -44,6 +44,28 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Admin Dashboard button — probe capabilities and reveal if admin.
+    // Must run unconditionally (before any early return) so the button
+    // is visible whether the user arrived via SSO, tool-auth, or anon.
+    // A 404 or network error means admin is disabled or unreachable;
+    // the button stays hidden so there is no visual noise for non-admins.
+    if (window.CONFIG.adminEnabled && window.CONFIG.adminPrefix) {
+        fetch(window.CONFIG.adminPrefix + '/_capabilities', { credentials: 'include' })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(data) {
+                if (data && data.is_admin) {
+                    var btn = document.getElementById('dashboardButton');
+                    if (btn) {
+                        btn.style.display = '';
+                        btn.addEventListener('click', function() {
+                            window.location.href = window.CONFIG.dashboardUrl;
+                        });
+                    }
+                }
+            })
+            .catch(function() { /* silently ignore — button stays hidden */ });
+    }
+
     // If the user has an active SSO session, skip the auth modal —
     // the HttpOnly cookie will auto-authenticate the WebSocket connection.
     if (ssoAuthenticated) {

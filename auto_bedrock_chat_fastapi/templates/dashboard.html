@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard — {{ app_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='dashboard.css') }}">
+</head>
+<body>
+    <!-- Dev-mode banner: shown by JS when anonymous=true -->
+    <div id="devBanner" class="dev-banner hidden" role="alert">
+        <strong>Dev mode — anonymous admin</strong>
+        &nbsp;<code>require_tool_auth=false</code> is active; every request is treated as
+        admin. <strong>Do not use this configuration in production.</strong>
+    </div>
+
+    <!-- Access denied empty state -->
+    <div id="accessDenied" class="full-page-state hidden">
+        <div class="state-card">
+            <div class="state-icon">🔒</div>
+            <h1>Access Denied</h1>
+            <p>You do not have admin access to this dashboard.</p>
+            <a href="{{ chat_url }}" class="btn-primary">Back to Chat</a>
+        </div>
+    </div>
+
+    <!-- Loading state (shown on startup) -->
+    <div id="loadingState" class="full-page-state">
+        <div class="state-card">
+            <div class="loading-spinner"></div>
+            <p>Loading dashboard…</p>
+        </div>
+    </div>
+
+    <!-- Main dashboard (revealed by JS after access is confirmed) -->
+    <div id="dashboardApp" class="dashboard-app hidden">
+
+        <!-- Sidebar navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <a href="{{ chat_url }}" class="back-link">← Chat</a>
+                <span class="sidebar-title">Admin Dashboard</span>
+            </div>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-view="feedback-queue">
+                    <span class="nav-label">Feedback Queue</span>
+                    <span class="nav-badge" id="pendingBadge"></span>
+                </button>
+                <button class="nav-item" data-view="feedback-reviewed">
+                    <span class="nav-label">Reviewed</span>
+                </button>
+                <button class="nav-item" data-view="feedback-stats">
+                    <span class="nav-label">Feedback Stats</span>
+                </button>
+                <button class="nav-item" data-view="kb-browser">
+                    <span class="nav-label">KB Browser</span>
+                </button>
+            </nav>
+        </aside>
+
+        <!-- Main content area — populated by JS -->
+        <main class="main-content">
+            <div id="view-feedback-queue"    class="view active"></div>
+            <div id="view-feedback-reviewed" class="view hidden"></div>
+            <div id="view-feedback-stats"    class="view hidden"></div>
+            <div id="view-kb-browser"        class="view hidden"></div>
+        </main>
+    </div>
+
+    <!-- Review Drawer (slide-in overlay) -->
+    <div id="reviewDrawer" class="overlay hidden"
+         role="dialog" aria-modal="true" aria-labelledby="reviewDrawerTitle">
+        <div class="drawer" role="document">
+            <div class="drawer-header">
+                <h2 id="reviewDrawerTitle">Review Feedback</h2>
+                <button class="close-btn" id="reviewDrawerClose" aria-label="Close drawer">×</button>
+            </div>
+            <div class="drawer-body" id="reviewDrawerBody"></div>
+        </div>
+    </div>
+
+    <!-- KB Document Editor (slide-in overlay) -->
+    <div id="kbEditor" class="overlay hidden"
+         role="dialog" aria-modal="true" aria-labelledby="kbEditorTitle">
+        <div class="drawer drawer-wide" role="document">
+            <div class="drawer-header">
+                <h2 id="kbEditorTitle">KB Document Editor</h2>
+                <button class="close-btn" id="kbEditorClose" aria-label="Close editor">×</button>
+            </div>
+            <div class="drawer-body" id="kbEditorBody"></div>
+        </div>
+    </div>
+
+    <!-- Generic confirmation modal (used for delete) -->
+    <div id="confirmModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <h3 id="confirmTitle">Confirm</h3>
+            <p id="confirmMessage"></p>
+            <div class="modal-actions">
+                <button class="btn-danger" id="confirmOk">Confirm</button>
+                <button class="btn-secondary" id="confirmCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <script>
+        /* Server-injected config — never put user content here */
+        window.ADMIN_CONFIG = {
+            adminPrefix: {{ admin_prefix | tojson }},
+            chatUrl:     {{ chat_url | tojson }},
+        };
+    </script>
+    <script src="{{ url_for('static', path='dashboard.js') }}"></script>
+</body>
+</html>

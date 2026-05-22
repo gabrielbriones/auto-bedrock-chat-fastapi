@@ -131,6 +131,12 @@ def test_decisions_can_flip():
     assert ReviewStatus.APPROVED in ALLOWED_REVIEW_TRANSITIONS[ReviewStatus.REJECTED]
 
 
+def test_decided_can_update_in_same_status():
+    # Admins can re-submit with corrected tags/comment without changing decision.
+    assert ReviewStatus.APPROVED in ALLOWED_REVIEW_TRANSITIONS[ReviewStatus.APPROVED]
+    assert ReviewStatus.REJECTED in ALLOWED_REVIEW_TRANSITIONS[ReviewStatus.REJECTED]
+
+
 # ---------------------------------------------------------------------------
 # Default authorizer
 # ---------------------------------------------------------------------------

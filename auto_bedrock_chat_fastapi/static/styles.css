@@ -387,6 +387,26 @@ body {
     background: #e53e3e;
 }
 
+/* Dashboard button in the chat header */
+.dashboard-btn {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.18);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background 0.2s, border-color 0.2s;
+    margin-right: 8px;
+}
+
+.dashboard-btn:hover {
+    background: rgba(255, 255, 255, 0.30);
+    border-color: rgba(255, 255, 255, 0.65);
+}
+
 .connection-status {
     padding: 8px 12px;
     border-radius: 15px;
