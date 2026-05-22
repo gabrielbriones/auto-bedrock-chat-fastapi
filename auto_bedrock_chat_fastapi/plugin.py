@@ -1212,10 +1212,11 @@ class BedrockChatPlugin:
         #
         # Always returns 200 {is_admin, anonymous}. Never raises a 403 so
         # the Chat UI can silently hide the Dashboard button rather than
-        # surfacing an error to non-admin users.  The anonymous-admin
-        # escape hatch (require_tool_auth=False + no resolved identity)
-        # is reflected as ``anonymous=true`` so the dashboard can render
-        # a visible dev-mode warning banner.
+        # surfacing an error to non-admin users.  When
+        # ``require_tool_auth=False``, the anonymous-admin escape hatch is
+        # unconditional: identity is ignored even if credentials are
+        # present, and this is reflected as ``anonymous=true`` so the
+        # dashboard can render a visible dev-mode warning banner.
         # ----------------------------------------------------------------
 
         @self.app.get(
@@ -1235,11 +1236,15 @@ class BedrockChatPlugin:
             """
             if not self.config.require_tool_auth:
                 return JSONResponse({"is_admin": True, "anonymous": True})
-            identity = await _resolve_identity(request)
-            if identity is None:
+            try:
+                identity = await _resolve_identity(request)
+                if identity is None:
+                    return JSONResponse({"is_admin": False, "anonymous": False})
+                is_admin_result = await self._admin_authorizer.is_admin(identity)
+                return JSONResponse({"is_admin": is_admin_result, "anonymous": False})
+            except Exception:
+                logger.exception("Failed to resolve admin capabilities")
                 return JSONResponse({"is_admin": False, "anonymous": False})
-            is_admin_result = await self._admin_authorizer.is_admin(identity)
-            return JSONResponse({"is_admin": is_admin_result, "anonymous": False})
 
         # ----------------------------------------------------------------
         # Admin Dashboard UI — GET {chat_endpoint}/dashboard
