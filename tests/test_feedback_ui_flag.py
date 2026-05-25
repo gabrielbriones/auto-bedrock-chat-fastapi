@@ -211,3 +211,39 @@ class TestFeedbackEnabledAllowlistSSO:
 
         assert response.status_code == 200
         assert "feedbackEnabled: false" in response.text
+
+    @patch("boto3.Session")
+    @patch("auto_bedrock_chat_fastapi.bedrock_client.boto3.Session")
+    def test_flag_false_when_sso_authenticated_but_no_resolvable_identity(self, mock_bc, mock_b):
+        """T6: feedbackEnabled=false when SSO session exists but all identity claims are blank/absent.
+
+        Previously the ``and sso_user_id`` guard caused the allowlist check to
+        be skipped entirely, leaving feedback_enabled=True for unresolvable
+        identities. The fix always applies the gate when sso_authenticated,
+        short-circuiting to False when sso_user_id is None.
+        """
+        mock_bc.return_value = _mock_boto3()
+        mock_b.return_value = _mock_boto3()
+        app, plugin = _build_plugin_with_ui()
+        plugin.config.feedback_enabled = True
+        plugin.config.sso_enabled = True
+        plugin.config.sso_session_secret = "test-secret-32-chars-padding-here"
+        plugin.config.feedback_authorized_users = ["alice@example.com"]
+        plugin._feedback_store = Mock()
+        plugin._feedback_authorizer = AllowlistFeedbackAuthorizer(authorized_users=["alice@example.com"])
+        store = SSOSessionStore()
+        plugin.sso_session_store = store
+
+        # Session with no usable identity claims at all
+        token = self._make_sso_session(
+            store,
+            plugin.config.sso_session_secret,
+            user_info={},
+            claims={},
+        )
+
+        client = TestClient(app, cookies={"sso_session_token": token})
+        response = client.get(plugin.config.ui_endpoint)
+
+        assert response.status_code == 200
+        assert "feedbackEnabled: false" in response.text

@@ -425,8 +425,8 @@ class BedrockChatPlugin:
                     # identity only arrives via the WebSocket ``auth`` message;
                     # those users see the controls but are gated server-side by
                     # the FeedbackAuthorizer on every submission.
-                    if feedback_enabled and self.config.feedback_authorized_users and sso_authenticated and sso_user_id:
-                        feedback_enabled = self._feedback_authorizer.can_submit(sso_user_id)
+                    if feedback_enabled and self.config.feedback_authorized_users and sso_authenticated:
+                        feedback_enabled = bool(sso_user_id) and self._feedback_authorizer.can_submit(sso_user_id)
                     logger.debug(
                         "Feedback UI gate resolved: feedback_enabled=%s",
                         feedback_enabled,

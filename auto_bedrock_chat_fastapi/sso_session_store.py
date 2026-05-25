@@ -286,12 +286,18 @@ def extract_user_id_from_sso_session(
     admin identity resolver so the ``user_id`` produced in every context is
     always identical.
     """
-    return (
-        user_info.get("email")
-        or id_token_claims.get("email")
-        or user_info.get("sub")
-        or id_token_claims.get("sub")
-        or user_info.get("username")
-        or id_token_claims.get("cognito:username")
-        or id_token_claims.get("preferred_username")
+    candidates = (
+        user_info.get("email"),
+        id_token_claims.get("email"),
+        user_info.get("sub"),
+        id_token_claims.get("sub"),
+        user_info.get("username"),
+        id_token_claims.get("cognito:username"),
+        id_token_claims.get("preferred_username"),
     )
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            candidate = candidate.strip()
+            if candidate:
+                return candidate
+    return None
