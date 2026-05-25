@@ -658,7 +658,9 @@ class ChatConfig(BaseSettings):
             "Comma-separated list of user identifiers (email addresses or SSO "
             "sub claims) allowed to submit feedback. When non-empty, only listed "
             "users can submit feedback; the WebSocket handler rejects others with "
-            "an explanatory error. Comparisons are case-insensitive. "
+            "an explanatory error. Email-like identifiers are normalized to "
+            "lowercase for comparison, but opaque identifiers such as SSO/OIDC "
+            "sub claims are matched case-sensitively and must use exact casing. "
             "When empty or unset, any authenticated user may submit feedback "
             "(subject to feedback_enabled and feedback_allow_anonymous settings)."
         ),
