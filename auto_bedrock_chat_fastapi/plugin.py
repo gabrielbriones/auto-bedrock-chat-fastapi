@@ -204,10 +204,17 @@ class BedrockChatPlugin:
         # is opened in the FastAPI startup event below and closed during
         # shutdown. Backend selection (sqlite vs postgres) and configuration
         # validation live in the factory.
-        from .db import create_feedback_store
+        from .db import AllowlistFeedbackAuthorizer, create_feedback_store
 
         logger.debug("Checking feedback store configuration and initializing...")
         self._feedback_store = create_feedback_store(self.config)
+
+        # Feedback authorizer: allow-list when configured, open to all
+        # authenticated users otherwise.
+        self._feedback_authorizer = AllowlistFeedbackAuthorizer(
+            authorized_users=self.config.feedback_authorized_users,
+            allow_anonymous=getattr(self.config, "feedback_allow_anonymous", False),
+        )
 
         # Admin authorizer (XMGPLAT-10417 Phase 2). Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
@@ -231,6 +238,7 @@ class BedrockChatPlugin:
             sso_session_store=self.sso_session_store,
             kb_store=self._kb_store,
             feedback_store=self._feedback_store,
+            feedback_authorizer=self._feedback_authorizer,
         )
 
         # Setup templates for UI
@@ -406,6 +414,19 @@ class BedrockChatPlugin:
                         and self._feedback_store is not None
                         and (user_identity_available or self.config.feedback_allow_anonymous)
                     )
+                    # Per-user allowlist gate for SSO users: identity is
+                    # available at render time via cookie, so we can suppress
+                    # the UI immediately for unlisted users. Non-SSO (tool-auth)
+                    # identity only arrives via the WebSocket ``auth`` message;
+                    # those users see the controls but are gated server-side by
+                    # the FeedbackAuthorizer on every submission.
+                    if (
+                        feedback_enabled
+                        and self.config.feedback_authorized_users
+                        and sso_authenticated
+                        and sso_user_display
+                    ):
+                        feedback_enabled = self._feedback_authorizer.can_submit(sso_user_display)
                     logger.debug(
                         "Feedback UI gate resolved: feedback_enabled=%s",
                         feedback_enabled,

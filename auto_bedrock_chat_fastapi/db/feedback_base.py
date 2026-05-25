@@ -53,6 +53,35 @@ class AuthenticatedUserAuthorizer:
         return self.allow_anonymous
 
 
+class AllowlistFeedbackAuthorizer:
+    """Allowlist-based :class:`FeedbackAuthorizer`.
+
+    When ``authorized_users`` is non-empty, only explicitly listed identifiers
+    (email addresses or SSO ``sub`` claims) may submit feedback. Comparisons
+    are case-insensitive.
+
+    When ``authorized_users`` is empty or ``None``, behaviour falls back to
+    :class:`AuthenticatedUserAuthorizer` — any authenticated (non-empty)
+    ``user_id`` passes. This preserves the existing open-access default when
+    the configuration is absent, rather than silently locking everyone out.
+    """
+
+    def __init__(
+        self,
+        authorized_users: Optional[Sequence[str]] = None,
+        allow_anonymous: bool = False,
+    ) -> None:
+        self._authorized = {u.strip().lower() for u in (authorized_users or []) if u.strip()}
+        self._fallback = AuthenticatedUserAuthorizer(allow_anonymous=allow_anonymous)
+
+    def can_submit(self, user_id: Optional[str]) -> bool:
+        if not self._authorized:
+            return self._fallback.can_submit(user_id)
+        if not user_id or not user_id.strip():
+            return False
+        return user_id.strip().lower() in self._authorized
+
+
 class BaseFeedbackStore(ABC):
     """Abstract async data-access layer for feedback entries.
 
