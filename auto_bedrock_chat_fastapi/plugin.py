@@ -22,7 +22,7 @@ from .config import ChatConfig, load_config, validate_config
 from .exceptions import BedrockChatError
 from .session_manager import ChatSessionManager
 from .sso_handler import SSODiscoveryError, SSOProvider, SSOTokenError, SSOValidationError
-from .sso_session_store import SSOSessionStore
+from .sso_session_store import SSOSessionStore, extract_user_id_from_sso_session
 from .tool_manager import ToolManager
 from .websocket_handler import WebSocketChatHandler
 
@@ -204,10 +204,17 @@ class BedrockChatPlugin:
         # is opened in the FastAPI startup event below and closed during
         # shutdown. Backend selection (sqlite vs postgres) and configuration
         # validation live in the factory.
-        from .db import create_feedback_store
+        from .db import AllowlistFeedbackAuthorizer, create_feedback_store
 
         logger.debug("Checking feedback store configuration and initializing...")
         self._feedback_store = create_feedback_store(self.config)
+
+        # Feedback authorizer: allow-list when configured, open to all
+        # authenticated users otherwise.
+        self._feedback_authorizer = AllowlistFeedbackAuthorizer(
+            authorized_users=self.config.feedback_authorized_users,
+            allow_anonymous=getattr(self.config, "feedback_allow_anonymous", False),
+        )
 
         # Admin authorizer (XMGPLAT-10417 Phase 2). Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
@@ -231,6 +238,7 @@ class BedrockChatPlugin:
             sso_session_store=self.sso_session_store,
             kb_store=self._kb_store,
             feedback_store=self._feedback_store,
+            feedback_authorizer=self._feedback_authorizer,
         )
 
         # Setup templates for UI
@@ -352,6 +360,7 @@ class BedrockChatPlugin:
 
                     # Check for active SSO session from HttpOnly cookie
                     sso_user_display = ""
+                    sso_user_id: Optional[str] = None
                     sso_authenticated = False
                     if self.config.sso_enabled and self.sso_session_store:
                         session_token = request.cookies.get("sso_session_token")
@@ -366,6 +375,10 @@ class BedrockChatPlugin:
                                     sso_authenticated = True
                                     user_info = session.get("user_info", {})
                                     claims = session.get("id_token_claims", {})
+                                    # Canonical identity — same precedence as WS handler
+                                    # so allowlist checks match what session.user_id holds.
+                                    sso_user_id = extract_user_id_from_sso_session(user_info, claims)
+                                    # Display name is presentation-only; kept separate.
                                     sso_user_display = (
                                         user_info.get("email")
                                         or claims.get("email")
@@ -406,6 +419,14 @@ class BedrockChatPlugin:
                         and self._feedback_store is not None
                         and (user_identity_available or self.config.feedback_allow_anonymous)
                     )
+                    # Per-user allowlist gate for SSO users: identity is
+                    # available at render time via cookie, so we can suppress
+                    # the UI immediately for unlisted users. Non-SSO (tool-auth)
+                    # identity only arrives via the WebSocket ``auth`` message;
+                    # those users see the controls but are gated server-side by
+                    # the FeedbackAuthorizer on every submission.
+                    if feedback_enabled and self.config.feedback_authorized_users and sso_authenticated:
+                        feedback_enabled = bool(sso_user_id) and self._feedback_authorizer.can_submit(sso_user_id)
                     logger.debug(
                         "Feedback UI gate resolved: feedback_enabled=%s",
                         feedback_enabled,

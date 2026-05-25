@@ -651,6 +651,21 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    feedback_authorized_users: List[str] = Field(
+        default_factory=list,
+        alias="BEDROCK_FEEDBACK_AUTHORIZED_USERS",
+        description=(
+            "Comma-separated list of user identifiers (email addresses or SSO "
+            "sub claims) allowed to submit feedback. When non-empty, only listed "
+            "users can submit feedback; the WebSocket handler rejects others with "
+            "an explanatory error. Email-like identifiers are normalized to "
+            "lowercase for comparison, but opaque identifiers such as SSO/OIDC "
+            "sub claims are matched case-sensitively and must use exact casing. "
+            "When empty or unset, any authenticated user may submit feedback "
+            "(subject to feedback_enabled and feedback_allow_anonymous settings)."
+        ),
+    )
+
     feedback_storage_type: str = Field(
         default="sqlite",
         alias="BEDROCK_FEEDBACK_STORAGE_TYPE",
@@ -834,7 +849,14 @@ class ChatConfig(BaseSettings):
         env_parse_enums=None,  # Disable enum parsing
     )
 
-    @field_validator("allowed_paths", "excluded_paths", "cors_origins", "admin_required_groups", mode="before")
+    @field_validator(
+        "allowed_paths",
+        "excluded_paths",
+        "cors_origins",
+        "admin_required_groups",
+        "feedback_authorized_users",
+        mode="before",
+    )
     @classmethod
     def parse_list_from_string(cls, v):
         """Parse comma-separated string into list"""

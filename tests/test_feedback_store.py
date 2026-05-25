@@ -20,7 +20,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from auto_bedrock_chat_fastapi.db import AuthenticatedUserAuthorizer
+from auto_bedrock_chat_fastapi.db import AllowlistFeedbackAuthorizer, AuthenticatedUserAuthorizer
 from auto_bedrock_chat_fastapi.models import (
     ALLOWED_REVIEW_TRANSITIONS,
     FeedbackEntry,
@@ -29,6 +29,7 @@ from auto_bedrock_chat_fastapi.models import (
     ReviewStatus,
 )
 from auto_bedrock_chat_fastapi.session_manager import ChatMessage, ChatSession
+from auto_bedrock_chat_fastapi.sso_session_store import extract_user_id_from_sso_session
 from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
 
 # ---------------------------------------------------------------------------
@@ -155,6 +156,134 @@ def test_decided_can_update_in_same_status():
 )
 def test_default_authorizer(user_id, allowed):
     assert AuthenticatedUserAuthorizer().can_submit(user_id) is allowed
+
+
+# ---------------------------------------------------------------------------
+# AllowlistFeedbackAuthorizer
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistFeedbackAuthorizer:
+    """Covers all branches of AllowlistFeedbackAuthorizer.can_submit."""
+
+    # --- Empty / unset allowlist: fall back to AuthenticatedUserAuthorizer ---
+
+    def test_empty_list_permits_authenticated_user(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[]).can_submit("alice@example.com") is True
+
+    def test_none_list_permits_authenticated_user(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=None).can_submit("alice@example.com") is True
+
+    def test_empty_list_rejects_anonymous_by_default(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[]).can_submit(None) is False
+
+    def test_empty_list_rejects_whitespace_only(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[]).can_submit("   ") is False
+
+    def test_empty_list_allows_anonymous_when_flag_set(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[], allow_anonymous=True).can_submit(None) is True
+
+    # --- Non-empty allowlist: strict membership check ---
+
+    @pytest.mark.parametrize(
+        "configured,user_id,expected",
+        [
+            # Email: case-insensitive match
+            (["alice@example.com"], "alice@example.com", True),
+            (["Alice@Example.COM"], "alice@example.com", True),
+            (["alice@example.com"], "ALICE@EXAMPLE.COM", True),
+            # Email: whitespace trimming on input user_id
+            (["alice@example.com"], "  alice@example.com  ", True),
+            # Email: not in list
+            (["alice@example.com"], "bob@example.com", False),
+            # Opaque sub: exact (case-sensitive) match
+            (["a1b2c3d4-sub-value"], "a1b2c3d4-sub-value", True),
+            # Opaque sub: different case must NOT match (OIDC sub is case-sensitive)
+            (["a1b2c3d4-sub-value"], "A1B2C3D4-SUB-VALUE", False),
+            # Opaque sub: whitespace trimming still applies
+            (["a1b2c3d4-sub-value"], "  a1b2c3d4-sub-value  ", True),
+        ],
+    )
+    def test_allowlist_membership(self, configured, user_id, expected):
+        assert AllowlistFeedbackAuthorizer(authorized_users=configured).can_submit(user_id) is expected
+
+    def test_opaque_id_case_mismatch_does_not_authorize(self):
+        """Sub identifiers are compared case-sensitively per OIDC Core §2."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["SubValue-ABC"])
+        assert auth.can_submit("subvalue-abc") is False
+        assert auth.can_submit("SubValue-ABC") is True
+
+    def test_email_cross_contamination_with_opaque_set(self):
+        """An email allowlist entry must not accidentally match an opaque user_id."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["alice@example.com"])
+        # opaque user_id that contains '@' must be treated as email
+        assert auth.can_submit("alice@example.com") is True
+        # a sub that doesn't contain '@' must use the exact set
+        assert auth.can_submit("alice") is False
+
+    def test_allowlist_rejects_anonymous_regardless_of_allow_anonymous_flag(self):
+        """When an allowlist is set, anonymous users are always rejected."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["alice@example.com"], allow_anonymous=True)
+        assert auth.can_submit(None) is False
+        assert auth.can_submit("") is False
+        assert auth.can_submit("   ") is False
+
+    def test_whitespace_only_entries_ignored_at_init(self):
+        """Whitespace-only strings in authorized_users must not create phantom entries."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["  ", "\t", ""])
+        # allowlist is effectively empty — falls back to authenticated-user behaviour
+        assert auth.can_submit("anyone@example.com") is True
+
+    def test_allowlist_entries_trimmed_at_init(self):
+        """Leading/trailing whitespace in configured entries is stripped."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["  alice@example.com  "])
+        assert auth.can_submit("alice@example.com") is True
+
+
+# ---------------------------------------------------------------------------
+# extract_user_id_from_sso_session
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUserIdFromSSOSession:
+    """Covers T8: blank/non-string candidate skipping."""
+
+    def test_returns_email_when_present(self):
+        assert extract_user_id_from_sso_session({"email": "a@b.com"}, {}) == "a@b.com"
+
+    def test_skips_to_sub_when_email_blank(self):
+        result = extract_user_id_from_sso_session(
+            {"email": "   ", "sub": "sub-value"},
+            {},
+        )
+        assert result == "sub-value"
+
+    def test_skips_non_string_claim(self):
+        """A list or int claim must not be returned as the user_id."""
+        result = extract_user_id_from_sso_session(
+            {"email": ["list@example.com"], "sub": "real-sub"},
+            {},
+        )
+        assert result == "real-sub"
+
+    def test_returns_stripped_value(self):
+        """Returned value is stripped of surrounding whitespace."""
+        result = extract_user_id_from_sso_session({}, {"email": "  spaced@example.com  "})
+        assert result == "spaced@example.com"
+
+    def test_returns_none_when_all_blank(self):
+        result = extract_user_id_from_sso_session(
+            {"email": "   ", "sub": "\t"},
+            {"email": "", "sub": " "},
+        )
+        assert result is None
+
+    def test_returns_none_on_empty_dicts(self):
+        assert extract_user_id_from_sso_session({}, {}) is None
+
+    def test_cognito_username_fallback(self):
+        result = extract_user_id_from_sso_session({}, {"cognito:username": "cog-user"})
+        assert result == "cog-user"
 
 
 # ---------------------------------------------------------------------------

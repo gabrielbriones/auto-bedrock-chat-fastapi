@@ -263,3 +263,41 @@ class SSOSessionStore:
         except PyJWTError as exc:
             logger.debug("Session token validation failed: %s", exc)
             return None
+
+
+# ---------------------------------------------------------------------------
+# Identity helpers
+# ---------------------------------------------------------------------------
+
+
+def extract_user_id_from_sso_session(
+    user_info: Dict[str, Any],
+    id_token_claims: Dict[str, Any],
+) -> Optional[str]:
+    """Canonical SSO user_id resolution — single source of truth.
+
+    Field precedence (first non-empty string wins)::
+
+        user_info.email → claims.email → user_info.sub → claims.sub
+        → user_info.username → claims[cognito:username]
+        → claims.preferred_username
+
+    Used by the WebSocket SSO auth path, the HTTP chat-page route, and the
+    admin identity resolver so the ``user_id`` produced in every context is
+    always identical.
+    """
+    candidates = (
+        user_info.get("email"),
+        id_token_claims.get("email"),
+        user_info.get("sub"),
+        id_token_claims.get("sub"),
+        user_info.get("username"),
+        id_token_claims.get("cognito:username"),
+        id_token_claims.get("preferred_username"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            candidate = candidate.strip()
+            if candidate:
+                return candidate
+    return None

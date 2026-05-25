@@ -53,6 +53,53 @@ class AuthenticatedUserAuthorizer:
         return self.allow_anonymous
 
 
+def _is_email(value: str) -> bool:
+    """Heuristic: treat any identifier containing '@' as an email address."""
+    return "@" in value
+
+
+class AllowlistFeedbackAuthorizer:
+    """Allowlist-based :class:`FeedbackAuthorizer`.
+
+    When ``authorized_users`` is non-empty, only explicitly listed identifiers
+    (email addresses or SSO ``sub`` claims) may submit feedback.
+
+    Normalisation is identifier-type aware:
+
+    * **Email-like identifiers** (contain ``@``) are compared
+      case-insensitively, matching common provider behaviour and RFC 5321
+      local-part conventions.
+    * **Opaque identifiers** (no ``@``, e.g. OIDC ``sub``) are compared
+      with exact case, as required by OIDC Core §2.
+
+    When ``authorized_users`` is empty or ``None``, behaviour falls back to
+    :class:`AuthenticatedUserAuthorizer` — any authenticated (non-empty)
+    ``user_id`` passes. This preserves the existing open-access default when
+    the configuration is absent, rather than silently locking everyone out.
+    """
+
+    def __init__(
+        self,
+        authorized_users: Optional[Sequence[str]] = None,
+        allow_anonymous: bool = False,
+    ) -> None:
+        self._email_authorized = {
+            u.strip().lower() for u in (authorized_users or []) if u.strip() and _is_email(u.strip())
+        }
+        self._exact_authorized = {u.strip() for u in (authorized_users or []) if u.strip() and not _is_email(u.strip())}
+        self._fallback = AuthenticatedUserAuthorizer(allow_anonymous=allow_anonymous)
+
+    def can_submit(self, user_id: Optional[str]) -> bool:
+        if not self._email_authorized and not self._exact_authorized:
+            return self._fallback.can_submit(user_id)
+        if not user_id or not user_id.strip():
+            return False
+        uid = user_id.strip()
+        if _is_email(uid):
+            return uid.lower() in self._email_authorized
+        return uid in self._exact_authorized
+
+
 class BaseFeedbackStore(ABC):
     """Abstract async data-access layer for feedback entries.
 

@@ -25,7 +25,12 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from .feedback_base import AuthenticatedUserAuthorizer, BaseFeedbackStore, FeedbackAuthorizer
+from .feedback_base import (
+    AllowlistFeedbackAuthorizer,
+    AuthenticatedUserAuthorizer,
+    BaseFeedbackStore,
+    FeedbackAuthorizer,
+)
 from .feedback_sqlite import SQLiteFeedbackStore
 from .kb_base import BaseKBStore
 from .kb_sqlite import SQLiteKBStore
@@ -162,6 +167,7 @@ def create_feedback_store(config: "ChatConfig") -> Optional[BaseFeedbackStore]:
 
 
 __all__ = [
+    "AllowlistFeedbackAuthorizer",
     "AuthenticatedUserAuthorizer",
     "BaseFeedbackStore",
     "BaseKBStore",
