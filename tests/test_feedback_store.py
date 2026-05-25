@@ -20,7 +20,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from auto_bedrock_chat_fastapi.db import AuthenticatedUserAuthorizer
+from auto_bedrock_chat_fastapi.db import AllowlistFeedbackAuthorizer, AuthenticatedUserAuthorizer
 from auto_bedrock_chat_fastapi.models import (
     ALLOWED_REVIEW_TRANSITIONS,
     FeedbackEntry,
@@ -155,6 +155,72 @@ def test_decided_can_update_in_same_status():
 )
 def test_default_authorizer(user_id, allowed):
     assert AuthenticatedUserAuthorizer().can_submit(user_id) is allowed
+
+
+# ---------------------------------------------------------------------------
+# AllowlistFeedbackAuthorizer
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistFeedbackAuthorizer:
+    """Covers all branches of AllowlistFeedbackAuthorizer.can_submit."""
+
+    # --- Empty / unset allowlist: fall back to AuthenticatedUserAuthorizer ---
+
+    def test_empty_list_permits_authenticated_user(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[]).can_submit("alice@example.com") is True
+
+    def test_none_list_permits_authenticated_user(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=None).can_submit("alice@example.com") is True
+
+    def test_empty_list_rejects_anonymous_by_default(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[]).can_submit(None) is False
+
+    def test_empty_list_rejects_whitespace_only(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[]).can_submit("   ") is False
+
+    def test_empty_list_allows_anonymous_when_flag_set(self):
+        assert AllowlistFeedbackAuthorizer(authorized_users=[], allow_anonymous=True).can_submit(None) is True
+
+    # --- Non-empty allowlist: strict membership check ---
+
+    @pytest.mark.parametrize(
+        "configured,user_id,expected",
+        [
+            # Exact match
+            (["alice@example.com"], "alice@example.com", True),
+            # Case-insensitive
+            (["Alice@Example.COM"], "alice@example.com", True),
+            (["alice@example.com"], "ALICE@EXAMPLE.COM", True),
+            # Whitespace trimming on input user_id
+            (["alice@example.com"], "  alice@example.com  ", True),
+            # Not in list
+            (["alice@example.com"], "bob@example.com", False),
+            # sub / opaque identifier
+            (["a1b2c3d4-sub-value"], "a1b2c3d4-sub-value", True),
+            (["a1b2c3d4-sub-value"], "A1B2C3D4-SUB-VALUE", True),
+        ],
+    )
+    def test_allowlist_membership(self, configured, user_id, expected):
+        assert AllowlistFeedbackAuthorizer(authorized_users=configured).can_submit(user_id) is expected
+
+    def test_allowlist_rejects_anonymous_regardless_of_allow_anonymous_flag(self):
+        """When an allowlist is set, anonymous users are always rejected."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["alice@example.com"], allow_anonymous=True)
+        assert auth.can_submit(None) is False
+        assert auth.can_submit("") is False
+        assert auth.can_submit("   ") is False
+
+    def test_whitespace_only_entries_ignored_at_init(self):
+        """Whitespace-only strings in authorized_users must not create phantom entries."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["  ", "\t", ""])
+        # allowlist is effectively empty — falls back to authenticated-user behaviour
+        assert auth.can_submit("anyone@example.com") is True
+
+    def test_allowlist_entries_trimmed_at_init(self):
+        """Leading/trailing whitespace in configured entries is stripped."""
+        auth = AllowlistFeedbackAuthorizer(authorized_users=["  alice@example.com  "])
+        assert auth.can_submit("alice@example.com") is True
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, Fee
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatMessage, ChatSessionManager
-from .sso_session_store import SSOSessionStore
+from .sso_session_store import SSOSessionStore, extract_user_id_from_sso_session
 from .tool_manager import AuthInfo
 
 logger = logging.getLogger(__name__)
@@ -1011,16 +1011,8 @@ class WebSocketChatHandler:
         user_info = sso_session.get("user_info", {})
         id_token_claims = sso_session.get("id_token_claims", {})
 
-        # Determine user_id (prefer email, fall back to other identifiers)
-        user_id = (
-            user_info.get("email")
-            or id_token_claims.get("email")
-            or user_info.get("sub")
-            or id_token_claims.get("sub")
-            or user_info.get("username")
-            or id_token_claims.get("cognito:username")
-            or id_token_claims.get("preferred_username")
-        )
+        # Determine user_id using the shared canonical resolution helper.
+        user_id = extract_user_id_from_sso_session(user_info, id_token_claims)
 
         display_name = (
             user_info.get("name")

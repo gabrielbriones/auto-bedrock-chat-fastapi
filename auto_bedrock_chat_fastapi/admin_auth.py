@@ -32,6 +32,8 @@ from typing import Any, Dict, List, Optional, Protocol
 
 import httpx
 
+from .sso_session_store import extract_user_id_from_sso_session
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,15 +284,7 @@ def resolve_admin_identity_from_sso_session(sso_session: Dict[str, Any]) -> Opti
     user_info = sso_session.get("user_info") or {}
     id_token_claims = sso_session.get("id_token_claims") or {}
 
-    user_id = (
-        user_info.get("email")
-        or id_token_claims.get("email")
-        or user_info.get("sub")
-        or id_token_claims.get("sub")
-        or user_info.get("username")
-        or id_token_claims.get("cognito:username")
-        or id_token_claims.get("preferred_username")
-    )
+    user_id = extract_user_id_from_sso_session(user_info, id_token_claims)
     if not user_id:
         return None
 
