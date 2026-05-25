@@ -51,7 +51,7 @@ add_bedrock_chat(app, allowed_paths=["/products"])
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=your-key
 AWS_SECRET_ACCESS_KEY=your-secret
-BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6
 ```
 
 ### Run

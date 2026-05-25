@@ -56,7 +56,7 @@ class ChatConfig(BaseSettings):
 
     # Model Configuration
     model_id: str = Field(
-        default="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        default="us.anthropic.claude-sonnet-4-6",
         alias="BEDROCK_MODEL_ID",
         description="Bedrock model identifier",
     )
