@@ -8,7 +8,7 @@ so no external services or populated knowledge base are needed.
 import numpy as np
 import pytest
 
-from auto_bedrock_chat_fastapi.vector_db import VectorDB
+from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,9 +98,9 @@ DOCS = [
 
 @pytest.fixture
 def seeded_db(tmp_path):
-    """Create a VectorDB at a temp path and seed it with test data."""
+    """Create a SQLiteKBStore at a temp path and seed it with test data."""
     db_path = str(tmp_path / "test_kb.db")
-    db = VectorDB(db_path)
+    db = SQLiteKBStore(db_path)
 
     seed = 0
     for doc in DOCS:
@@ -170,7 +170,7 @@ def test_bm25_handles_special_characters(seeded_db):
 
 def test_sanitize_fts5_query():
     """Test the FTS5 query sanitizer directly."""
-    sanitize = VectorDB._sanitize_fts5_query
+    sanitize = SQLiteKBStore._sanitize_fts5_query
 
     assert sanitize("what is cheetah for?") == "what OR is OR cheetah OR for"
     assert sanitize('RuntimeError("task")') == "RuntimeError OR task"
@@ -332,7 +332,7 @@ def test_hybrid_search_limit(seeded_db):
 def test_fts_table_populated_on_add_chunk(tmp_path):
     """Adding a chunk should populate both vec_chunks and fts_chunks."""
     db_path = str(tmp_path / "fts_test.db")
-    db = VectorDB(db_path)
+    db = SQLiteKBStore(db_path)
 
     db.add_document(doc_id="d1", content="Test doc", title="Test")
     db.add_chunk(

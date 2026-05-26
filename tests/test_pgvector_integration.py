@@ -39,7 +39,7 @@ if not _can_import_psycopg():
 @pytest.fixture(scope="module")
 def pg_store():
     """Create a PgVectorKBStore for integration testing, clean up afterwards."""
-    from auto_bedrock_chat_fastapi.pgvector_kb_store import PgVectorKBStore
+    from auto_bedrock_chat_fastapi.db.kb_postgres import PgVectorKBStore
 
     store = PgVectorKBStore(
         connection_url=PG_URL,

@@ -51,7 +51,7 @@ add_bedrock_chat(app, allowed_paths=["/products"])
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=your-key
 AWS_SECRET_ACCESS_KEY=your-secret
-BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6
 ```
 
 ### Run
@@ -134,20 +134,21 @@ docs/wiki/                  # Full documentation wiki
 
 Full documentation is in [`docs/wiki/`](docs/wiki/):
 
-| Topic                        | Page                                                       |
-| ---------------------------- | ---------------------------------------------------------- |
-| System architecture          | [architecture.md](docs/wiki/architecture.md)               |
-| All configuration settings   | [configuration.md](docs/wiki/configuration.md)             |
-| FastAPI plugin integration   | [fastapi-plugin.md](docs/wiki/fastapi-plugin.md)           |
-| OpenAPI / framework-agnostic | [openapi-integration.md](docs/wiki/openapi-integration.md) |
-| Tool calling & generation    | [tool-calling.md](docs/wiki/tool-calling.md)               |
-| Built-in Chat UI             | [chat-ui.md](docs/wiki/chat-ui.md)                         |
-| WebSocket client script      | [websocket-client.md](docs/wiki/websocket-client.md)       |
-| Authentication methods       | [authentication.md](docs/wiki/authentication.md)           |
-| RAG (crawler + vector DB)    | [rag-feature.md](docs/wiki/rag-feature.md)                 |
-| Token management             | [token-management.md](docs/wiki/token-management.md)       |
-| CI pipelines                 | [ci-pipelines.md](docs/wiki/ci-pipelines.md)               |
-| CD / deployment              | [cd-pipelines.md](docs/wiki/cd-pipelines.md)               |
+| Topic                         | Page                                                       |
+| ----------------------------- | ---------------------------------------------------------- |
+| System architecture           | [architecture.md](docs/wiki/architecture.md)               |
+| All configuration settings    | [configuration.md](docs/wiki/configuration.md)             |
+| FastAPI plugin integration    | [fastapi-plugin.md](docs/wiki/fastapi-plugin.md)           |
+| OpenAPI / framework-agnostic  | [openapi-integration.md](docs/wiki/openapi-integration.md) |
+| Tool calling & generation     | [tool-calling.md](docs/wiki/tool-calling.md)               |
+| Built-in Chat UI              | [chat-ui.md](docs/wiki/chat-ui.md)                         |
+| WebSocket client script       | [websocket-client.md](docs/wiki/websocket-client.md)       |
+| Authentication methods        | [authentication.md](docs/wiki/authentication.md)           |
+| RAG (crawler + vector DB)     | [rag-feature.md](docs/wiki/rag-feature.md)                 |
+| Feedback collection (Phase 2) | [feedback-collection.md](docs/wiki/feedback-collection.md) |
+| Token management              | [token-management.md](docs/wiki/token-management.md)       |
+| CI pipelines                  | [ci-pipelines.md](docs/wiki/ci-pipelines.md)               |
+| CD / deployment               | [cd-pipelines.md](docs/wiki/cd-pipelines.md)               |
 
 ---
 

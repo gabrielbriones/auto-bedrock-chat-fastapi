@@ -1,23 +1,44 @@
 """
-SQLite KB Store – Vector Database Module using SQLite with sqlite-vec extension.
+SQLite KB Store \u2014 vector database backed by SQLite + sqlite-vec.
 
-This module provides the :class:`SQLiteKBStore` implementation of
-:class:`~auto_bedrock_chat_fastapi.kb_store_base.BaseKBStore`, backed by
+Implements :class:`~auto_bedrock_chat_fastapi.db.kb_base.BaseKBStore` using
 SQLite + sqlite-vec (cosine similarity) + FTS5 (BM25 keyword search).
-
-A **deprecated** ``VectorDB`` alias is kept for backward compatibility.
 """
 
+import functools
 import json
 import sqlite3
-import warnings
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import sqlite_vec
 
-from .kb_store_base import BaseKBStore
+from ..exceptions import KBDocumentNotFoundError
+from ..models import KBDocument, KBDocumentListFilters
+from .kb_base import BaseKBStore
+
+
+def _locked(func):
+    """Serialize access to ``self.conn`` via ``self._lock``.
+
+    ``SQLiteKBStore`` shares a single ``sqlite3.Connection`` with
+    ``check_same_thread=False`` across multiple worker threads (the
+    admin routes wrap every call in ``asyncio.to_thread``). Without
+    explicit serialization concurrent admin traffic can interleave
+    transactions on the same connection and trigger "database is
+    locked" / corruption. The lock is an :class:`threading.RLock` so a
+    decorated method may call another decorated method without
+    deadlocking.
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class SQLiteKBStore(BaseKBStore):
@@ -31,6 +52,12 @@ class SQLiteKBStore(BaseKBStore):
             db_path: Path to SQLite database file
         """
         self.db_path = db_path
+        # RLock so decorated methods may call other decorated methods
+        # without deadlocking. All access to ``self.conn`` is serialized
+        # through ``@_locked``; ``_init_schema`` is invoked from
+        # ``__init__`` before any concurrent caller can exist and so
+        # runs without the lock.
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.enable_load_extension(True)
 
@@ -147,6 +174,7 @@ class SQLiteKBStore(BaseKBStore):
 
         self.conn.commit()
 
+    @_locked
     def add_document(
         self,
         doc_id: str,
@@ -191,6 +219,7 @@ class SQLiteKBStore(BaseKBStore):
         )
         self.conn.commit()
 
+    @_locked
     def add_chunk(
         self,
         chunk_id: str,
@@ -235,20 +264,28 @@ class SQLiteKBStore(BaseKBStore):
             ),
         )
 
-        # Add embedding vector
+        # Add embedding vector.
+        # NOTE: sqlite-vec's vec0 virtual tables do NOT support
+        # `INSERT OR REPLACE` — attempting it raises
+        # `UNIQUE constraint failed on vec_chunks primary key`.
+        # Delete-then-insert is the supported upsert pattern.
         embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
+        cursor.execute("DELETE FROM vec_chunks WHERE chunk_id = ?", (chunk_id,))
         cursor.execute(
             """
-            INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding)
+            INSERT INTO vec_chunks (chunk_id, embedding)
             VALUES (?, ?)
         """,
             (chunk_id, embedding_bytes),
         )
 
-        # Add to FTS5 index for keyword search
+        # Add to FTS5 index for keyword search.
+        # FTS5 external-content tables similarly don't support
+        # `INSERT OR REPLACE`, so mirror the delete-then-insert pattern.
+        cursor.execute("DELETE FROM fts_chunks WHERE chunk_id = ?", (chunk_id,))
         cursor.execute(
             """
-            INSERT OR REPLACE INTO fts_chunks (chunk_id, content)
+            INSERT INTO fts_chunks (chunk_id, content)
             VALUES (?, ?)
         """,
             (chunk_id, content),
@@ -256,6 +293,7 @@ class SQLiteKBStore(BaseKBStore):
 
         self.conn.commit()
 
+    @_locked
     def semantic_search(
         self,
         query_embedding: List[float],
@@ -383,6 +421,7 @@ class SQLiteKBStore(BaseKBStore):
         # (FTS5 default is implicit AND which is too restrictive)
         return " OR ".join(words)
 
+    @_locked
     def keyword_search(
         self,
         query: str,
@@ -480,6 +519,7 @@ class SQLiteKBStore(BaseKBStore):
 
         return formatted_results
 
+    @_locked
     def hybrid_search(
         self,
         query: str,
@@ -559,6 +599,7 @@ class SQLiteKBStore(BaseKBStore):
         hybrid_results.sort(key=lambda x: x["hybrid_score"], reverse=True)
         return hybrid_results[:limit]
 
+    @_locked
     def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve a document by ID.
@@ -596,6 +637,7 @@ class SQLiteKBStore(BaseKBStore):
             "created_at": row[8],
         }
 
+    @_locked
     def list_sources(self) -> List[Dict[str, Any]]:
         """Get list of all unique sources with document counts."""
         cursor = self.conn.cursor()
@@ -611,6 +653,7 @@ class SQLiteKBStore(BaseKBStore):
 
         return [{"source": row[0], "count": row[1]} for row in cursor.fetchall()]
 
+    @_locked
     def list_topics(self) -> List[Dict[str, Any]]:
         """Get list of all unique topics with document counts."""
         cursor = self.conn.cursor()
@@ -626,6 +669,7 @@ class SQLiteKBStore(BaseKBStore):
 
         return [{"topic": row[0], "count": row[1]} for row in cursor.fetchall()]
 
+    @_locked
     def delete_document(self, doc_id: str) -> None:
         """Delete a document and all its chunks."""
         cursor = self.conn.cursor()
@@ -646,6 +690,231 @@ class SQLiteKBStore(BaseKBStore):
 
         self.conn.commit()
 
+    # ------------------------------------------------------------------
+    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_document(row, chunk_count: Optional[int] = None) -> KBDocument:
+        """Convert a SELECT row (id, content, title, source, source_url, topic,
+        date_published, metadata, created_at[, chunk_count]) into a KBDocument.
+        """
+        metadata = json.loads(row[7]) if row[7] else {}
+        raw_tags = metadata.get("tags") if isinstance(metadata, dict) else None
+        tags = list(raw_tags) if isinstance(raw_tags, list) else []
+        # created_at comes back as a string from SQLite's TIMESTAMP DEFAULT
+        return KBDocument(
+            id=row[0],
+            content=row[1],
+            title=row[2],
+            source=row[3],
+            source_url=row[4],
+            topic=row[5],
+            date_published=row[6],
+            metadata=metadata,
+            tags=tags,
+            chunk_count=chunk_count,
+            created_at=row[8],
+        )
+
+    @staticmethod
+    def _build_list_where(filters: Optional[KBDocumentListFilters]) -> tuple[str, list]:
+        """Build the WHERE clause + params for list/count_documents."""
+        if filters is None:
+            return "", []
+
+        clauses: List[str] = []
+        params: List[Any] = []
+
+        if filters.source is not None:
+            clauses.append("d.source = ?")
+            params.append(filters.source)
+        if filters.topic is not None:
+            clauses.append("d.topic = ?")
+            params.append(filters.topic)
+        if filters.tags:
+            # Overlap: any of the supplied tags must appear in metadata.tags
+            placeholders = ",".join("?" for _ in filters.tags)
+            clauses.append(
+                f"EXISTS (SELECT 1 FROM json_each(json_extract(d.metadata, '$.tags')) "
+                f"WHERE value IN ({placeholders}))"
+            )
+            params.extend(filters.tags)
+        if filters.date_from is not None:
+            # ``date_published`` is stored as an ISO-style string (typically
+            # date-only ``YYYY-MM-DD``). Compare against a date-only prefix
+            # so lexicographic ordering matches calendar ordering for both
+            # date-only and full-datetime stored values.
+            clauses.append("d.date_published >= ?")
+            params.append(filters.date_from.strftime("%Y-%m-%d"))
+        if filters.date_to is not None:
+            clauses.append("d.date_published < ?")
+            params.append(filters.date_to.strftime("%Y-%m-%d"))
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
+    @_locked
+    def list_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[KBDocument]:
+        where, params = self._build_list_where(filters)
+        sql = f"""
+            SELECT d.id, d.content, d.title, d.source, d.source_url, d.topic,
+                   d.date_published, d.metadata, d.created_at,
+                   COALESCE(cc.chunk_count, 0) AS chunk_count
+            FROM documents d
+            LEFT JOIN (
+                SELECT document_id, COUNT(*) AS chunk_count
+                FROM chunks
+                GROUP BY document_id
+            ) cc ON cc.document_id = d.id
+            {where}
+            ORDER BY d.created_at DESC, d.id ASC
+            LIMIT ? OFFSET ?
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params + [int(limit), int(offset)])
+        rows = cursor.fetchall()
+        return [self._row_to_document(row[:9], chunk_count=row[9]) for row in rows]
+
+    @_locked
+    def count_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+    ) -> int:
+        where, params = self._build_list_where(filters)
+        sql = f"SELECT COUNT(*) FROM documents d {where}"
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params)
+        return int(cursor.fetchone()[0])
+
+    def _delete_chunks_for(self, cursor: sqlite3.Cursor, doc_id: str) -> None:
+        """Remove all chunks for ``doc_id`` from chunks, vec_chunks, and
+        fts_chunks. Caller owns the transaction.
+        """
+        cursor.execute("SELECT id FROM chunks WHERE document_id = ?", (doc_id,))
+        chunk_ids = [r[0] for r in cursor.fetchall()]
+        for chunk_id in chunk_ids:
+            cursor.execute("DELETE FROM vec_chunks WHERE chunk_id = ?", (chunk_id,))
+            cursor.execute("DELETE FROM fts_chunks WHERE chunk_id = ?", (chunk_id,))
+        cursor.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
+
+    @_locked
+    def update_document(
+        self,
+        doc_id: str,
+        *,
+        content: Optional[str] = None,
+        title: Optional[str] = None,
+        source: Optional[str] = None,
+        source_url: Optional[str] = None,
+        topic: Optional[str] = None,
+        date_published: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> KBDocument:
+        cursor = self.conn.cursor()
+        # Use an explicit transaction so the content-change + chunk-delete
+        # happen atomically. sqlite3's default isolation level commits on
+        # the next "non-DML" statement, but we want a single visible step.
+        cursor.execute("BEGIN")
+        try:
+            cursor.execute(
+                """
+                SELECT id, content, title, source, source_url, topic,
+                       date_published, metadata, created_at
+                FROM documents
+                WHERE id = ?
+                """,
+                (doc_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise KBDocumentNotFoundError(f"kb document {doc_id} not found")
+
+            existing_metadata: Dict[str, Any] = json.loads(row[7]) if row[7] else {}
+
+            # Compose the new column values; ``None`` == "don't touch".
+            new_content = row[1] if content is None else content
+            new_title = row[2] if title is None else title
+            new_source = row[3] if source is None else source
+            new_source_url = row[4] if source_url is None else source_url
+            new_topic = row[5] if topic is None else topic
+            new_date_published = row[6] if date_published is None else date_published
+
+            # Merge metadata + tags. ``metadata=None`` keeps the stored dict.
+            # ``tags=None`` keeps the stored tags. When both are provided,
+            # ``tags`` wins over any ``tags`` key inside the supplied metadata.
+            if metadata is None:
+                new_metadata: Dict[str, Any] = dict(existing_metadata)
+            else:
+                new_metadata = dict(metadata)
+
+            if tags is None:
+                if "tags" not in new_metadata and isinstance(existing_metadata.get("tags"), list):
+                    new_metadata["tags"] = list(existing_metadata["tags"])
+            else:
+                # Normalize via the model's validator (strip/dedupe/order).
+                normalized = KBDocument._normalize_tags(list(tags))
+                new_metadata["tags"] = normalized
+
+            content_changed = content is not None and content != row[1]
+            if content_changed:
+                self._delete_chunks_for(cursor, doc_id)
+
+            cursor.execute(
+                """
+                UPDATE documents
+                SET content = ?, title = ?, source = ?, source_url = ?,
+                    topic = ?, date_published = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (
+                    new_content,
+                    new_title,
+                    new_source,
+                    new_source_url,
+                    new_topic,
+                    new_date_published,
+                    json.dumps(new_metadata) if new_metadata else None,
+                    doc_id,
+                ),
+            )
+
+            # Compute current chunk_count for the response. After a
+            # content change this is 0 by construction.
+            if content_changed:
+                chunk_count = 0
+            else:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE document_id = ?",
+                    (doc_id,),
+                )
+                chunk_count = int(cursor.fetchone()[0])
+
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+        updated_row = (
+            doc_id,
+            new_content,
+            new_title,
+            new_source,
+            new_source_url,
+            new_topic,
+            new_date_published,
+            json.dumps(new_metadata) if new_metadata else None,
+            row[8],
+        )
+        return self._row_to_document(updated_row, chunk_count=chunk_count)
+
+    @_locked
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics."""
         cursor = self.conn.cursor()
@@ -666,23 +935,7 @@ class SQLiteKBStore(BaseKBStore):
             "db_size_bytes": Path(self.db_path).stat().st_size if Path(self.db_path).exists() else 0,
         }
 
+    @_locked
     def close(self):
         """Close database connection."""
         self.conn.close()
-
-
-class _VectorDBCompat(SQLiteKBStore):
-    """Backward-compatible alias that emits a deprecation warning."""
-
-    def __init__(self, *args, **kwargs):
-        warnings.warn(
-            "VectorDB is deprecated and will be removed in a future release. "
-            "Use SQLiteKBStore (or the create_kb_store factory) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(*args, **kwargs)
-
-
-# Provide a module-level name so ``from .vector_db import VectorDB`` keeps working.
-VectorDB = _VectorDBCompat

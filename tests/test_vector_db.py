@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from auto_bedrock_chat_fastapi.vector_db import VectorDB
+from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def temp_db():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name
 
-    db = VectorDB(db_path)
+    db = SQLiteKBStore(db_path)
     yield db
 
     # Cleanup

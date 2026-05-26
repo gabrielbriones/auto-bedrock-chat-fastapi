@@ -17,3 +17,10 @@ exclude =
 per-file-ignores =
     __init__.py:F401
     examples/fastAPI/app_auth.py:B008
+    # FastAPI's idiomatic dependency-injection pattern uses ``Depends(...)``
+    # and ``Query(...)`` as default values; B008 misfires here.
+    auto_bedrock_chat_fastapi/admin_feedback_routes.py:B008
+    auto_bedrock_chat_fastapi/admin_kb_routes.py:B008
+    tests/test_admin_auth.py:B008
+    # Protocol method body uses ``...`` on the same line (PEP 544 idiom).
+    auto_bedrock_chat_fastapi/admin_auth.py:E704

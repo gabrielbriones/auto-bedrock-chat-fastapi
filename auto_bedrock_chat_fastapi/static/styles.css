@@ -271,6 +271,11 @@ body {
     color: white;
 }
 
+.message.assistant {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
 .message.assistant .message-content {
     background: white;
     border: 1px solid #e2e8f0;
@@ -380,6 +385,26 @@ body {
 
 .auth-button.logout:hover {
     background: #e53e3e;
+}
+
+/* Dashboard button in the chat header */
+.dashboard-btn {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.18);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background 0.2s, border-color 0.2s;
+    margin-right: 8px;
+}
+
+.dashboard-btn:hover {
+    background: rgba(255, 255, 255, 0.30);
+    border-color: rgba(255, 255, 255, 0.65);
 }
 
 .connection-status {
@@ -741,92 +766,90 @@ body {
     cursor: not-allowed;
 }
 
-/* ── Variable Prompt Panel ───────────────────────────────────────────────── */
+/* ── Always-Visible Variable Inputs ─────────────────────────────────────── */
 
-.variable-panel {
+.preset-variables-section {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 16px;
     padding: 10px 20px;
-    background: #fffbeb;
-    border-top: 1px solid #f6e05e;
+    background: #f8faff;
+    border-top: 1px solid #e2e8f0;
 }
 
-.variable-panel.hidden {
+.preset-variables-section:empty {
     display: none;
 }
 
-.variable-panel-inputs {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.variable-row {
+.variable-input-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
-.variable-row label {
-    font-size: 0.85rem;
+.variable-input-row label {
+    font-size: 0.82rem;
     font-weight: 600;
-    color: #744210;
+    color: #4a5568;
     white-space: nowrap;
-    min-width: 100px;
 }
 
-.variable-row input[type="text"] {
-    flex: 1;
-    padding: 7px 12px;
+.variable-input-row input[type="text"],
+.variable-input-row input[type="number"] {
+    padding: 5px 10px;
     border: 1px solid #e2e8f0;
     border-radius: 8px;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
     outline: none;
+    width: 220px;
 }
 
-.variable-row input[type="text"]:focus {
+.variable-input-row input[type="text"]:focus,
+.variable-input-row input[type="number"]:focus {
     border-color: #667eea;
     box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
 }
 
-.variable-row input[type="text"].input-error {
-    border-color: #e53e3e;
-    box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.15);
-}
-
-.variable-panel-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.variable-panel-actions button {
-    padding: 7px 16px;
-    border: none;
+.variable-input-row select {
+    padding: 5px 10px;
+    border: 1px solid #e2e8f0;
     border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 500;
+    font-size: 0.82rem;
+    background: white;
+    outline: none;
+}
+
+.variable-input-row select:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.variable-input-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
     cursor: pointer;
-    white-space: nowrap;
 }
 
-#varPanelSubmit {
-    background: #667eea;
-    color: white;
+/* Variable requirement tags on preset buttons */
+.preset-var-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    background: rgba(102, 126, 234, 0.15);
+    color: #4a56c1;
+    border-radius: 10px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    vertical-align: middle;
+    letter-spacing: 0.02em;
 }
 
-#varPanelSubmit:hover {
-    background: #5a67d8;
-}
-
-#varPanelCancel {
-    background: #e2e8f0;
-    color: #4a5568;
-}
-
-#varPanelCancel:hover {
-    background: #cbd5e0;
+.preset-prompt-btn:disabled .preset-var-tag {
+    background: rgba(160, 174, 192, 0.2);
+    color: #a0aec0;
 }
 
 /* ── SSO Login Button ────────────────────────────────────────────────────── */
@@ -900,4 +923,180 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------------------
+   Feedback rating controls
+   --------------------------------------------------------------------------- */
+.feedback-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    color: #718096;
+}
+
+.feedback-prompt {
+    margin-right: 4px;
+}
+
+.feedback-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.feedback-btn:hover {
+    background: #edf2f7;
+    border-color: #cbd5e0;
+}
+
+.feedback-btn:active {
+    transform: scale(0.95);
+}
+
+.feedback-btn:focus-visible {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+}
+
+.feedback-btn.selected {
+    background: #e2e8f0;
+    border-color: #a0aec0;
+}
+
+.feedback-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.feedback-btn:disabled:hover {
+    background: transparent;
+    border-color: transparent;
+}
+
+.feedback-btn.selected:disabled {
+    /* Keep the visual selection while the form is open even though the
+       button is non-interactive. */
+    opacity: 0.85;
+    background: #e2e8f0;
+    border-color: #a0aec0;
+}
+
+.feedback-submitted {
+    margin-top: 6px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    color: #2f855a;
+    animation: feedback-fade-in 160ms ease-out;
+}
+
+.feedback-error {
+    margin-left: 8px;
+    font-size: 0.8rem;
+    color: #c53030;
+}
+
+@keyframes feedback-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.feedback-form {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 8px;
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}
+
+.feedback-form-label {
+    font-size: 0.8rem;
+    color: #4a5568;
+}
+
+.feedback-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 0.9rem;
+    color: #2d3748;
+    background: #fff;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    resize: vertical;
+}
+
+.feedback-textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.feedback-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.feedback-form-cancel,
+.feedback-form-submit {
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.feedback-form-cancel {
+    background: transparent;
+    border: 1px solid #cbd5e0;
+    color: #4a5568;
+}
+
+.feedback-form-cancel:hover:not(:disabled) {
+    background: #edf2f7;
+}
+
+.feedback-form-submit {
+    background: #667eea;
+    border: 1px solid #667eea;
+    color: #fff;
+}
+
+.feedback-form-submit:hover:not(:disabled) {
+    background: #5a67d8;
+    border-color: #5a67d8;
+}
+
+.feedback-form-cancel:disabled,
+.feedback-form-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.feedback-form-cancel:focus-visible,
+.feedback-form-submit:focus-visible {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+}
+
+.feedback-form .feedback-error {
+    /* When the inline error appears inside the form, it should flow on
+       its own row instead of cramming against the action buttons. */
+    margin-left: 0;
+    margin-top: 4px;
 }

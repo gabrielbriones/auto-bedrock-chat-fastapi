@@ -32,6 +32,7 @@ knowledge_base:
         - "/uk/" # Ukrainian docs
         - "/ja" # Japanese root (no trailing slash)
         - "/zh" # Chinese root (no trailing slash)
+        - "/zh-hant" # Chinese Traditional root
         - "/de" # German root (no trailing slash)
         - "/es" # Spanish root (no trailing slash)
         - "/pt" # Portuguese root (no trailing slash)
@@ -39,6 +40,7 @@ knowledge_base:
         - "/fr" # French root (no trailing slash)
         - "/ko" # Korean root (no trailing slash)
         - "/uk" # Ukrainian root (no trailing slash)
+        - "/tr" # Turkish root
       respect_robots_txt: true
 
     - name: "FastAPI Advanced User Guide"
@@ -63,6 +65,7 @@ knowledge_base:
         - "/uk/" # Ukrainian docs
         - "/ja" # Japanese root
         - "/zh" # Chinese root
+        - "/zh-hant" # Chinese Traditional root
         - "/de" # German root
         - "/es" # Spanish root
         - "/pt" # Portuguese root
@@ -70,6 +73,7 @@ knowledge_base:
         - "/fr" # French root
         - "/ko" # Korean root
         - "/uk" # Ukrainian root
+        - "/tr" # Turkish root
       respect_robots_txt: true
 
     - name: "FastAPI Reference"
@@ -100,6 +104,9 @@ knowledge_base:
         - "/fr" # French root
         - "/ko" # Korean root
         - "/uk" # Ukrainian root
+        - "/tr" # Turkish root
+        - "/zh-hant" # Chinese Traditional root
+
       respect_robots_txt: true
 # Note: The app is configured with:
 # - kb_populate_on_startup=True (auto-populate on first run)

@@ -56,7 +56,7 @@ class ChatConfig(BaseSettings):
 
     # Model Configuration
     model_id: str = Field(
-        default="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        default="us.anthropic.claude-sonnet-4-6",
         alias="BEDROCK_MODEL_ID",
         description="Bedrock model identifier",
     )
@@ -341,6 +341,17 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    preset_variables: List[Dict] = Field(
+        default_factory=list,
+        description=(
+            "Variable definitions for preset prompt placeholders. Each entry should have 'name' "
+            "(SCREAMING_SNAKE_CASE matching {{NAME}} in templates) and optional 'label', "
+            "'input_type', 'validate', 'detect_pattern', 'placeholder', and 'default' fields. "
+            "When not provided, variables are automatically inferred from {{PLACEHOLDER}} patterns "
+            "found in preset prompt templates."
+        ),
+    )
+
     # Security Configuration
     auth_dependency: Optional[Callable] = Field(default=None, description="Authentication dependency function")
 
@@ -608,6 +619,147 @@ class ChatConfig(BaseSettings):
         description="Connection pool size for PostgreSQL backend (default: 5).",
     )
 
+    # ------------------------------------------------------------------
+    # Feedback Storage Backend (XMGPLAT-10417)
+    # ------------------------------------------------------------------
+
+    feedback_enabled: bool = Field(
+        default=False,
+        alias="BEDROCK_FEEDBACK_ENABLED",
+        description=(
+            "Master switch for the feedback collection backend. When True, "
+            "the plugin calls ``db.create_feedback_store(config)`` to build "
+            "a ``BaseFeedbackStore`` implementation (SQLite or Postgres, "
+            "selected by ``feedback_storage_type``) and wires it into the "
+            "WebSocket handler so clients can submit ``feedback`` messages. "
+            "If the factory cannot construct a usable backend at runtime "
+            "(missing connection URL, missing optional dependency, etc.), "
+            "the feature is silently disabled in-place and submissions are "
+            "rejected with ``feedback_unavailable`` rather than crashing the "
+            "app."
+        ),
+    )
+
+    feedback_allow_anonymous: bool = Field(
+        default=False,
+        alias="BEDROCK_FEEDBACK_ALLOW_ANONYMOUS",
+        description=(
+            "When True, the feedback UI is rendered and submissions are "
+            "accepted even when no SSO/tool-auth user identity is available. "
+            "Intended for local development and standalone deployments where "
+            "authentication is not configured."
+        ),
+    )
+
+    feedback_authorized_users: List[str] = Field(
+        default_factory=list,
+        alias="BEDROCK_FEEDBACK_AUTHORIZED_USERS",
+        description=(
+            "Comma-separated list of user identifiers (email addresses or SSO "
+            "sub claims) allowed to submit feedback. When non-empty, only listed "
+            "users can submit feedback; the WebSocket handler rejects others with "
+            "an explanatory error. Email-like identifiers are normalized to "
+            "lowercase for comparison, but opaque identifiers such as SSO/OIDC "
+            "sub claims are matched case-sensitively and must use exact casing. "
+            "When empty or unset, any authenticated user may submit feedback "
+            "(subject to feedback_enabled and feedback_allow_anonymous settings)."
+        ),
+    )
+
+    feedback_storage_type: str = Field(
+        default="sqlite",
+        alias="BEDROCK_FEEDBACK_STORAGE_TYPE",
+        description=(
+            "Feedback storage backend. Valid values: 'sqlite' (default, "
+            "zero-config) or 'postgres' (requires BEDROCK_FEEDBACK_POSTGRES_URL "
+            "or BEDROCK_KB_POSTGRES_URL)."
+        ),
+    )
+
+    feedback_database_path: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_FEEDBACK_DATABASE_PATH",
+        description=(
+            "Filesystem path to the SQLite feedback database when "
+            "feedback_storage_type='sqlite'. When unset, falls back to "
+            "kb_database_path so a single SQLite file can host both KB and "
+            "feedback tables."
+        ),
+    )
+
+    feedback_postgres_url: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_FEEDBACK_POSTGRES_URL",
+        description=(
+            "PostgreSQL connection URL for the feedback table when "
+            "feedback_storage_type='postgres'. If unset, falls back to "
+            "BEDROCK_KB_POSTGRES_URL so a single Postgres instance can host "
+            "both the KB and feedback schemas."
+        ),
+    )
+
+    feedback_postgres_pool_size: int = Field(
+        default=5,
+        alias="BEDROCK_FEEDBACK_POSTGRES_POOL_SIZE",
+        gt=0,
+        le=100,
+        description="Async connection pool size for the feedback Postgres backend.",
+    )
+
+    feedback_init_schema: bool = Field(
+        default=True,
+        alias="BEDROCK_FEEDBACK_INIT_SCHEMA",
+        description=(
+            "Apply the feedback DDL on startup. Set False if a separate "
+            "database-provisioning task owns the schema lifecycle."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Admin API (Expert Review) — XMGPLAT-10417 Phase 2
+    # ------------------------------------------------------------------
+
+    admin_enabled: bool = Field(
+        default=False,
+        alias="BEDROCK_ADMIN_ENABLED",
+        description=(
+            "Master switch for the Expert Review admin endpoints "
+            "(``/admin/feedback`` and ``/admin/kb``). When False, the "
+            "entire ``/admin/*`` block is not registered so unauthorized "
+            "callers receive a clean 404. Disabling at runtime is NOT a "
+            "security boundary — authorization is enforced per request "
+            "via the configured ``AdminAuthorizer``."
+        ),
+    )
+
+    admin_verification_endpoint: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_ADMIN_VERIFICATION_ENDPOINT",
+        description=(
+            "URL of an endpoint that decides whether a given user is an "
+            "admin. When set, the plugin selects ``RemoteAdminAuthorizer``: "
+            "each admin request POSTs ``{user_id, email, groups, claims}`` "
+            "to this endpoint and expects a JSON body ``{is_admin: bool}`` "
+            "in the 2xx response. Relative paths (``/admin/check``) are "
+            "resolved against ``app_base_url`` to match the existing "
+            "``auth_verification_endpoint`` semantics. Decisions are not "
+            "cached, so revocations propagate immediately \u2014 admin traffic "
+            "is human-paced and the load on the endpoint is negligible."
+        ),
+    )
+
+    admin_required_groups: List[str] = Field(
+        default_factory=list,
+        alias="BEDROCK_ADMIN_REQUIRED_GROUPS",
+        description=(
+            "Comma-separated list of SSO group names that grant admin "
+            "access. Used only when ``admin_verification_endpoint`` is "
+            "not set. Selects ``SSOGroupAdminAuthorizer`` when non-empty. "
+            "The IdP must populate ``groups`` (or ``cognito:groups`` / "
+            "``roles``) in the userinfo or ID-token claims."
+        ),
+    )
+
     kb_embedding_dimensions: int = Field(
         default=1536,
         alias="BEDROCK_KB_EMBEDDING_DIMENSIONS",
@@ -697,7 +849,14 @@ class ChatConfig(BaseSettings):
         env_parse_enums=None,  # Disable enum parsing
     )
 
-    @field_validator("allowed_paths", "excluded_paths", "cors_origins", mode="before")
+    @field_validator(
+        "allowed_paths",
+        "excluded_paths",
+        "cors_origins",
+        "admin_required_groups",
+        "feedback_authorized_users",
+        mode="before",
+    )
     @classmethod
     def parse_list_from_string(cls, v):
         """Parse comma-separated string into list"""
@@ -1027,6 +1186,42 @@ def load_config(
         raise ConfigurationError(f"Failed to load configuration: {str(e)}")
 
 
+def load_preset_config_from_yaml(path: str) -> Dict[str, Any]:
+    """
+    Load preset prompts and variable definitions from a YAML file.
+
+    Returns a dict with ``{"prompts": [...], "variables": [...]}``.  Both lists
+    are empty when the corresponding top-level key is absent from the file.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        logger.warning(
+            "pyyaml is not installed; cannot load preset config from '%s'. " "Install it with: pip install pyyaml",
+            path,
+        )
+        return {"prompts": [], "variables": []}
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+        if not isinstance(data, dict):
+            return {"prompts": [], "variables": []}
+        prompts = data.get("prompts", []) or []
+        variables = data.get("variables", []) or []
+        logger.info("Loaded %d preset prompt(s) and %d variable(s) from %s", len(prompts), len(variables), path)
+        return {"prompts": prompts, "variables": variables}
+    except FileNotFoundError:
+        logger.debug("Preset config file not found: %s", path)
+        return {"prompts": [], "variables": []}
+    except Exception as exc:
+        logger.warning("Could not load preset config from '%s': %s", path, exc)
+        return {"prompts": [], "variables": []}
+
+
 def load_preset_prompts_from_yaml(path: str) -> List[Dict[str, Any]]:
     """
     Load preset prompt button definitions from a YAML file.
@@ -1060,7 +1255,9 @@ def load_preset_prompts_from_yaml(path: str) -> List[Dict[str, Any]]:
         with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         prompts = data.get("prompts", []) if isinstance(data, dict) else []
+        variables = data.get("variables", []) if isinstance(data, dict) else []
         logger.info("Loaded %d preset prompt(s) from %s", len(prompts), path)
+        logger.info("Loaded %d variable(s) from %s", len(variables), path)
         return prompts
     except FileNotFoundError:
         logger.debug("Preset prompts file not found: %s", path)

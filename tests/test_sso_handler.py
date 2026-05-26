@@ -3,10 +3,10 @@
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwt as jose_jwt
 
 from auto_bedrock_chat_fastapi.sso_handler import SSODiscoveryError, SSOProvider, SSOTokenError, SSOValidationError
 
@@ -109,7 +109,7 @@ def _make_id_token(
         "email": "user@example.com",
         "name": "Test User",
     }
-    return jose_jwt.encode(claims, private_pem, algorithm="RS256", headers={"kid": kid})
+    return pyjwt.encode(claims, private_pem, algorithm="RS256", headers={"kid": kid})
 
 
 def _public_pem_to_jwks(public_pem: bytes, kid="test-kid") -> dict:
@@ -786,3 +786,164 @@ class TestAlgorithmAllowlist:
             claims = await p.validate_id_token(token)
 
         assert claims["sub"] == "user123"
+
+
+# ---------------------------------------------------------------------------
+# Tests: validate_id_token() — at_hash validation
+# ---------------------------------------------------------------------------
+
+
+# Independent reference implementation of the OIDC at_hash computation
+# (OIDC Core 1.0 §3.1.3.6).  Implemented directly with hashlib + base64 so
+# the tests validate the spec rather than mirror the production code under
+# test in ``SSOProvider._compute_at_hash``.
+_AT_HASH_REFERENCE_ALGS = {
+    "RS256": "sha256",
+    "ES256": "sha256",
+    "PS256": "sha256",
+    "HS256": "sha256",
+    "RS384": "sha384",
+    "ES384": "sha384",
+    "PS384": "sha384",
+    "HS384": "sha384",
+    "RS512": "sha512",
+    "ES512": "sha512",
+    "PS512": "sha512",
+    "HS512": "sha512",
+}
+
+
+def _reference_at_hash(access_token: str, algorithm: str) -> str:
+    """Compute at_hash per OIDC Core 1.0 §3.1.3.6 using hashlib + base64url."""
+    import base64 as _b64
+    import hashlib as _hashlib
+
+    hash_name = _AT_HASH_REFERENCE_ALGS.get(algorithm, "sha256")
+    digest = _hashlib.new(hash_name, access_token.encode("utf-8")).digest()
+    left_half = digest[: len(digest) // 2]
+    return _b64.urlsafe_b64encode(left_half).rstrip(b"=").decode("ascii")
+
+
+def _make_id_token_with_at_hash(
+    private_pem: bytes,
+    access_token: str,
+    *,
+    algorithm: str = "RS256",
+    aud: str = "test-client-id",
+    iss: str = "https://idp.example.com",
+    exp_offset: int = 300,
+    kid: str = "test-kid",
+    at_hash_override=None,
+) -> str:
+    """Sign an ID token containing an ``at_hash`` claim derived from *access_token*.
+
+    If *at_hash_override* is given, that value is used instead of the computed
+    one (useful for mismatch tests).
+    """
+    at_hash = at_hash_override if at_hash_override is not None else _reference_at_hash(access_token, algorithm)
+    now = int(time.time())
+    claims = {
+        "sub": "user123",
+        "aud": aud,
+        "iss": iss,
+        "iat": now,
+        "exp": now + exp_offset,
+        "email": "user@example.com",
+        "at_hash": at_hash,
+    }
+    return pyjwt.encode(claims, private_pem, algorithm=algorithm, headers={"kid": kid})
+
+
+class TestAtHashValidation:
+    """validate_id_token() must verify the OIDC ``at_hash`` claim when present."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("algorithm", ["RS256", "RS512"])
+    async def test_valid_at_hash_passes(self, rsa_private_pem, rsa_public_pem, algorithm):
+        access_token = "test-access-token-value"
+        token = _make_id_token_with_at_hash(rsa_private_pem, access_token, algorithm=algorithm)
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+        # Advertise the same algorithm in the JWKS entry so the
+        # algorithm-confusion guard accepts it.
+        jwks["keys"][0]["alg"] = algorithm
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            claims = await p.validate_id_token(token, access_token=access_token)
+
+        assert claims["sub"] == "user123"
+        assert "at_hash" in claims
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("algorithm", ["RS256", "RS512"])
+    async def test_mismatched_at_hash_raises(self, rsa_private_pem, rsa_public_pem, algorithm):
+        access_token = "test-access-token-value"
+        # Compute at_hash for a *different* access token to force a mismatch.
+        bad_at_hash = _reference_at_hash("some-other-token", algorithm)
+        token = _make_id_token_with_at_hash(
+            rsa_private_pem, access_token, algorithm=algorithm, at_hash_override=bad_at_hash
+        )
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+        jwks["keys"][0]["alg"] = algorithm
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(SSOValidationError, match="at_hash"):
+                await p.validate_id_token(token, access_token=access_token)
+
+    @pytest.mark.asyncio
+    async def test_at_hash_skipped_when_access_token_not_provided(self, rsa_private_pem, rsa_public_pem):
+        """If no access_token is supplied, the at_hash claim is not checked."""
+        # Token contains an at_hash that would NOT match if we tried to verify.
+        token = _make_id_token_with_at_hash(rsa_private_pem, "real-access-token", at_hash_override="bogus")
+        jwks = _public_pem_to_jwks(rsa_public_pem)
+
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.status_code = 200
+        mock_jwks_response.json.return_value = jwks
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        p = _make_resolved_provider()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client_cls.return_value = mock_client
+
+            # Should succeed — at_hash check is skipped without access_token.
+            claims = await p.validate_id_token(token)
+
+        assert claims["sub"] == "user123"
+
+    def test_compute_at_hash_handles_non_ascii_access_token(self):
+        """_compute_at_hash() must not raise on non-ASCII access tokens."""
+        # Should encode as UTF-8 internally; no exception expected.
+        result = SSOProvider._compute_at_hash("tökén-with-ünicode", "RS256")
+        assert isinstance(result, str)
+        assert result  # non-empty

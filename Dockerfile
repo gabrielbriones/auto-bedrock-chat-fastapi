@@ -1,6 +1,6 @@
 # Docker configuration for auto-bedrock-chat-fastapi
 # Multi-stage build for optimal image size
-FROM python:3.11-slim AS builder
+FROM python:3.15-slim AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -9,10 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install build dependencies
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential=12.9 \
-    curl=7.88.1-10+deb12u14 \
-    ca-certificates=20230311+deb12u1 \
+    build-essential \
+    curl \
+    ca-certificates \
     && apt-mark auto build-essential curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
@@ -28,7 +29,7 @@ WORKDIR /tmp/src
 RUN pip install ".[postgres]"
 
 # Production stage
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -36,9 +37,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 
 # Install runtime dependencies
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl=7.88.1-10+deb12u14 \
-    ca-certificates=20230311+deb12u1 \
+    curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

@@ -34,6 +34,10 @@
             </div>
             <div class="chat-header-right">
                 <span id="ssoUserDisplay" class="sso-user-display"></span>
+                {% if admin_enabled %}
+                <button id="dashboardButton" class="dashboard-btn" style="display:none"
+                        title="Admin Dashboard">Dashboard</button>
+                {% endif %}
                 <button id="authButton" class="auth-button">Log in</button>
             </div>
         </div>
@@ -51,17 +55,9 @@
             <span id="typingText">AI is typing...</span>
         </div>
 
-        <div class="preset-prompts" id="presetPromptsBar"></div>
+        <div class="preset-variables-section" id="presetVariablesSection"></div>
 
-        <div class="variable-panel hidden" id="variablePanel">
-            <div class="variable-panel-inputs" id="variableInputs">
-                <!-- Dynamically populated per-prompt by chat-client.js -->
-            </div>
-            <div class="variable-panel-actions">
-                <button id="varPanelSubmit">Send</button>
-                <button id="varPanelCancel">Cancel</button>
-            </div>
-        </div>
+        <div class="preset-prompts" id="presetPromptsBar"></div>
 
         <div class="chat-input">
             <textarea id="messageInput" placeholder="Type your message..." disabled rows="1"></textarea>
@@ -79,10 +75,15 @@
             defaultAuthType: {{ default_auth_type | tojson }},
             modelId: {{ model_id | tojson }},
             presetPrompts: {{ preset_prompts | tojson }},
+            variables: {{ preset_variables | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
-            ssoUserDisplay: {{ sso_user_display | tojson }}
+            ssoUserDisplay: {{ sso_user_display | tojson }},
+            feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }},
+            adminEnabled: {{ 'true' if admin_enabled else 'false' }},
+            adminPrefix: {{ admin_prefix | tojson }},
+            dashboardUrl: {{ dashboard_url | tojson }},
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

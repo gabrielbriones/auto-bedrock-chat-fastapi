@@ -15,11 +15,22 @@ class ChatClient {
         this.typingIndicator = document.getElementById('typingIndicator');
         this.typingText = document.getElementById('typingText');
 
-        this.currentPromptCache = {};       // Cache of resolved placeholder values, e.g. { JOB_ID: '...', PLATFORM: '...' }
-        this.pendingPromptTemplate = null;  // Template waiting for one or more variable values
+        // Variable definitions keyed by name, built from window.CONFIG.variables.
+        // Values live in the always-visible DOM inputs — no hidden JS cache.
+        this._variableDefs = {};
+        (window.CONFIG.variables || []).forEach(v => {
+            this._variableDefs[v.name] = v;
+        });
+
+        // Feedback: track message_ids the user has already rated this session
+        // so we render the submitted indicator instead of the buttons on
+        // re-renders (history reload, etc.). Mirrored to sessionStorage so
+        // the state survives in-page re-renders within the same tab.
+        this._feedbackStorageKey = 'feedback.submitted';
+        this._submittedFeedback = this._loadSubmittedFeedback();
 
         this.setupEventListeners();
-        this._setupVariablePanel();
+        this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
     }
@@ -108,9 +119,6 @@ class ChatClient {
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
             this._disablePresetButtons();
-            this.pendingPromptTemplate = null;
-            const variablePanel = document.getElementById('variablePanel');
-            if (variablePanel) variablePanel.classList.add('hidden');
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
@@ -154,11 +162,85 @@ class ChatClient {
         this.messageInput.disabled = false;
         this.sendButton.disabled = false;
         this._renderPresetButtons();
-        document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = false; });
+        this._updatePresetButtonStates();
     }
 
     _disablePresetButtons() {
         document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = true; });
+    }
+
+    _renderVariablesSection() {
+        const section = document.getElementById('presetVariablesSection');
+        if (!section || Object.keys(this._variableDefs).length === 0) return;
+
+        for (const [name, def] of Object.entries(this._variableDefs)) {
+            const row = document.createElement('div');
+            row.className = 'variable-input-row';
+
+            const label = document.createElement('label');
+            label.htmlFor = `var_${name}`;
+            label.textContent = def.label || this._prettifyVarName(name);
+
+            const el = this._createVariableInput(name, def);
+            const eventName = (def.input_type === 'select' || def.input_type === 'checkbox') ? 'change' : 'input';
+            el.addEventListener(eventName, () => this._updatePresetButtonStates());
+
+            row.appendChild(label);
+            row.appendChild(el);
+            section.appendChild(row);
+        }
+    }
+
+    _createVariableInput(name, def) {
+        const type = def.input_type || 'text';
+
+        if (type === 'select') {
+            const select = document.createElement('select');
+            select.id = `var_${name}`;
+            select.dataset.varName = name;
+            if (!def.default) {
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = def.placeholder || `Select ${def.label || name}…`;
+                select.appendChild(empty);
+            }
+            (def.options || []).forEach(opt => {
+                const option = document.createElement('option');
+                if (typeof opt === 'string') {
+                    option.value = opt;
+                    option.textContent = opt;
+                } else {
+                    option.value = opt.value;
+                    option.textContent = opt.label;
+                }
+                if (def.default && option.value === def.default) option.selected = true;
+                select.appendChild(option);
+            });
+            return select;
+        }
+
+        if (type === 'checkbox') {
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = `var_${name}`;
+            input.dataset.varName = name;
+            input.checked = def.default === 'true';
+            return input;
+        }
+
+        // text or number
+        const input = document.createElement('input');
+        input.type = type;
+        input.id = `var_${name}`;
+        input.dataset.varName = name;
+        if (def.placeholder) input.placeholder = def.placeholder;
+        if (def.default)     input.value = def.default;
+        if (type === 'number') {
+            if (def.min  != null) input.min  = def.min;
+            if (def.max  != null) input.max  = def.max;
+            if (def.step != null) input.step = def.step;
+        }
+        return input;
     }
 
     _renderPresetButtons() {
@@ -172,8 +254,33 @@ class ChatClient {
             btn.className = 'preset-prompt-btn';
             btn.textContent = prompt.label || 'Prompt';
             if (prompt.description) btn.title = prompt.description;
-            btn.addEventListener('click', () => this._handlePresetPrompt(prompt));
+
+            const requiredVars = this._getPlaceholders(prompt.template || '');
+            requiredVars.forEach(varName => {
+                const tag = document.createElement('span');
+                tag.className = 'preset-var-tag';
+                tag.textContent = varName;
+                btn.appendChild(tag);
+            });
+            btn.dataset.requiredVars = JSON.stringify(requiredVars);
+            btn.addEventListener('click', () => this._handlePresetClick(prompt));
             bar.appendChild(btn);
+        });
+        this._updatePresetButtonStates();
+    }
+
+    _getVarValue(varName) {
+        const el = document.getElementById(`var_${varName}`);
+        if (!el) return '';
+        const def = this._variableDefs[varName];
+        if (def && def.input_type === 'checkbox') return el.checked ? 'true' : 'false';
+        return el.value.trim();
+    }
+
+    _updatePresetButtonStates() {
+        document.querySelectorAll('.preset-prompt-btn').forEach(btn => {
+            const required = JSON.parse(btn.dataset.requiredVars || '[]');
+            btn.disabled = !required.every(name => this._validateVar(name, this._getVarValue(name)));
         });
     }
 
@@ -194,146 +301,52 @@ class ChatClient {
             .join(' ');
     }
 
-    // Validate a single placeholder value.
-    // Variables whose name ends with _ID must be valid UUIDs; others must be non-empty.
+    // Definition-driven validation.
     _validateVar(varName, value) {
-        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (varName.endsWith('_ID')) return UUID_RE.test(value.trim());
-        return value.trim().length > 0;
-    }
+        const def  = this._variableDefs[varName];
+        const type = def?.input_type || 'text';
+        const trimmed = (typeof value === 'string') ? value.trim() : String(value);
 
-    _handlePresetPrompt(prompt) {
-        const template = prompt.template || '';
-        const allVars = this._getPlaceholders(template);
+        if (type === 'checkbox') return true;
+        if (type === 'select')   return trimmed.length > 0;
 
-        if (allVars.length === 0) {
-            this._sendPresetMessage(template);
-            return;
+        if (type === 'number') {
+            if (trimmed.length === 0) return false;
+            const num = Number(trimmed);
+            if (isNaN(num)) return false;
+            if (def?.min != null && num < def.min) return false;
+            if (def?.max != null && num > def.max) return false;
+            return true;
         }
 
-        const missingVars = allVars.filter(v => !this.currentPromptCache[v]);
-
-        if (missingVars.length === 0) {
-            // All placeholders already resolved from cache
-            const resolved = allVars.reduce(
-                (t, v) => t.replaceAll(`{{${v}}}`, this.currentPromptCache[v]),
-                template
-            );
-            this._sendPresetMessage(resolved);
-            return;
-        }
-
-        // Show the inline panel to collect the missing variable values
-        this.pendingPromptTemplate = template;
-        this._showVariablePanel(missingVars);
-    }
-
-    _showVariablePanel(vars) {
-        const panel = document.getElementById('variablePanel');
-        const container = document.getElementById('variableInputs');
-        if (!panel || !container) return;
-
-        container.innerHTML = '';
-        vars.forEach(varName => {
-            const row = document.createElement('div');
-            row.className = 'variable-row';
-
-            const label = document.createElement('label');
-            label.htmlFor = `varInput_${varName}`;
-            label.textContent = `${this._prettifyVarName(varName)}:`;
-
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.id = `varInput_${varName}`;
-            input.dataset.varName = varName;
-            if (varName.endsWith('_ID')) {
-                input.placeholder = 'e.g. e62f2481-b56e-4d2a-9c16-11cd8db76caa';
+        // text: use validate field when present
+        if (def?.validate === 'nonempty') return trimmed.length > 0;
+        if (def?.validate) {
+            try {
+                return new RegExp(def.validate).test(trimmed);
+            } catch (e) {
+                console.warn(`Invalid validate pattern for variable "${varName}":`, e);
+                return false;
             }
+        }
 
-            row.appendChild(label);
-            row.appendChild(input);
-            container.appendChild(row);
-        });
+        return trimmed.length > 0;
+    }
 
-        panel.classList.remove('hidden');
-        container.querySelector('input')?.focus();
+    _handlePresetClick(prompt) {
+        const template = prompt.template || '';
+        const vars = this._getPlaceholders(template);
+        const resolved = vars.reduce(
+            (t, name) => t.replaceAll(`{{${name}}}`, this._getVarValue(name)),
+            template
+        );
+        this._sendPresetMessage(resolved);
     }
 
     _sendPresetMessage(text) {
         if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.addMessage('user', text);
         this.ws.send(JSON.stringify({ type: 'chat', message: text }));
-    }
-
-    _setupVariablePanel() {
-        const panel     = document.getElementById('variablePanel');
-        const submitBtn = document.getElementById('varPanelSubmit');
-        const cancelBtn = document.getElementById('varPanelCancel');
-
-        if (!panel || !submitBtn || !cancelBtn) return;
-
-        const doSubmit = () => {
-            const inputs = panel.querySelectorAll('input[data-var-name]');
-            let allValid = true;
-            const submittedValues = {};
-
-            inputs.forEach(input => {
-                const varName = input.dataset.varName;
-                const value   = input.value.trim();
-                if (!this._validateVar(varName, value)) {
-                    input.classList.add('input-error');
-                    allValid = false;
-                } else {
-                    input.classList.remove('input-error');
-                    submittedValues[varName] = value;
-                }
-            });
-
-            if (!allValid) {
-                panel.querySelector('.input-error')?.focus();
-                return;
-            }
-
-            // Persist only JOB_ID to the long-lived cache so subsequent preset
-            // prompts can reuse the current-job context without re-asking.
-            // Template-specific vars (e.g. NEW_JOB_ID) are intentionally not
-            // cached so the panel always prompts for fresh values on each use.
-            if ('JOB_ID' in submittedValues) {
-                this.currentPromptCache['JOB_ID'] = submittedValues['JOB_ID'];
-            }
-
-            panel.classList.add('hidden');
-            if (this.pendingPromptTemplate) {
-                const allVars = this._getPlaceholders(this.pendingPromptTemplate);
-                // Merge long-lived cache (JOB_ID from history) with freshly
-                // submitted values; submittedValues takes precedence so the
-                // user can override a cached value when it appears in the panel.
-                const values = { ...this.currentPromptCache, ...submittedValues };
-                const resolved = allVars.reduce(
-                    (t, v) => t.replaceAll(`{{${v}}}`, values[v]),
-                    this.pendingPromptTemplate
-                );
-                this.pendingPromptTemplate = null;
-                this._sendPresetMessage(resolved);
-            }
-        };
-
-        submitBtn.addEventListener('click', doSubmit);
-
-        // Delegate key events for dynamically-created inputs
-        panel.addEventListener('keydown', (e) => {
-            if (e.target.tagName !== 'INPUT') return;
-            if (e.key === 'Enter')  { e.preventDefault(); doSubmit(); }
-            if (e.key === 'Escape') { cancelBtn.click(); }
-        });
-        panel.addEventListener('input', (e) => {
-            if (e.target.tagName === 'INPUT') e.target.classList.remove('input-error');
-        });
-
-        cancelBtn.addEventListener('click', () => {
-            this.pendingPromptTemplate = null;
-            panel.classList.add('hidden');
-        });
     }
 
     _recoverAuthSubmitButton() {
@@ -408,12 +421,30 @@ class ChatClient {
             return;
         }
 
-        // Keep the prompt cache up to date with values mentioned in free-form messages.
-        // UUIDs are stored as JOB_ID so that subsequent preset prompts referencing
-        // {{JOB_ID}} can be resolved without asking the user again.
-        const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-        if (uuidMatch) {
-            this.currentPromptCache['JOB_ID'] = uuidMatch[0];
+        // Auto-detect: run each variable's detect_pattern (or derive from validate)
+        // against the sent message and populate the corresponding input if matched.
+        for (const [name, def] of Object.entries(this._variableDefs)) {
+            if (def.input_type && def.input_type !== 'text') continue;
+            // Use explicit detect_pattern, or derive from validate by stripping anchors
+            const pattern = def.detect_pattern
+                || (def.validate && def.validate.replace(/^\^/, '').replace(/\$$/, ''))
+                || null;
+            if (!pattern) continue;
+            let re;
+            try {
+                re = new RegExp(pattern, def.detect_flags || 'i');
+            } catch (e) {
+                console.warn(`Invalid detect pattern for variable "${name}":`, e);
+                continue;
+            }
+            const match = message.match(re);
+            if (match) {
+                const input = document.getElementById(`var_${name}`);
+                if (input) {
+                    input.value = match[0];
+                    input.dispatchEvent(new Event('input'));
+                }
+            }
         }
 
         // Add user message to chat
@@ -532,7 +563,15 @@ class ChatClient {
 
             case 'ai_response':
                 this.hideTypingIndicator();
-                this.addMessage('assistant', data.message, data.tool_calls, data.tool_results);
+                this.addMessage('assistant', data.message, data.tool_calls, data.tool_results, data.message_id);
+                break;
+
+            case 'feedback_ack':
+                this._handleFeedbackAck(data);
+                break;
+
+            case 'feedback_error':
+                this._handleFeedbackError(data);
                 break;
 
             case 'error':
@@ -578,7 +617,7 @@ class ChatClient {
         }
     }
 
-    addMessage(role, content, toolCalls, toolResults) {
+    addMessage(role, content, toolCalls, toolResults, messageId) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
 
@@ -638,8 +677,367 @@ class ChatClient {
         }
 
         messageDiv.appendChild(contentDiv);
+
+        // Feedback controls: server-gated, assistant-only, requires message_id
+        if (role === 'assistant'
+            && window.CONFIG
+            && window.CONFIG.feedbackEnabled === true
+            && messageId) {
+            const node = this._submittedFeedback.has(messageId)
+                ? this._buildFeedbackSubmitted(messageId)
+                : this._buildFeedbackControls(messageId);
+            if (node) {
+                messageDiv.appendChild(node);
+            }
+        }
+
         this.chatMessages.appendChild(messageDiv);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    _buildFeedbackControls(messageId) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'feedback-controls';
+        wrapper.dataset.messageId = messageId;
+
+        const prompt = document.createElement('span');
+        prompt.className = 'feedback-prompt';
+        prompt.textContent = 'Was this response helpful?';
+        wrapper.appendChild(prompt);
+
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'feedback-btn feedback-btn-up';
+        up.dataset.messageId = messageId;
+        up.dataset.rating = 'positive';
+        up.setAttribute('aria-label', 'Rate response helpful');
+        // Toggle semantics for assistive tech: starts unpressed and flips
+        // to ``true`` on successful submission (handled in _handlePositiveClick
+        // before the wrapper is replaced with the submitted indicator).
+        up.setAttribute('aria-pressed', 'false');
+        up.textContent = '👍';
+        wrapper.appendChild(up);
+
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.className = 'feedback-btn feedback-btn-down';
+        down.dataset.messageId = messageId;
+        down.dataset.rating = 'negative';
+        down.setAttribute('aria-label', 'Rate response unhelpful');
+        down.setAttribute('aria-pressed', 'false');
+        // aria-expanded reflects whether the correction form is currently
+        // open. aria-controls is wired lazily when the form is built so its
+        // id is referenced only when the element actually exists in the DOM.
+        down.setAttribute('aria-expanded', 'false');
+        down.textContent = '👎';
+        wrapper.appendChild(down);
+
+        // Event delegation: a single listener on the wrapper handles both
+        // buttons. Thumbs-down is wired by T4; here T3 owns the positive
+        // (one-click submit) path.
+        wrapper.addEventListener('click', (event) => {
+            const btn = event.target.closest('button.feedback-btn');
+            if (!btn || !wrapper.contains(btn)) {
+                return;
+            }
+            const rating = btn.dataset.rating;
+            if (rating === 'positive') {
+                this._handlePositiveClick(messageId, wrapper);
+            } else if (rating === 'negative') {
+                this._handleNegativeClick(messageId, wrapper, btn);
+            }
+        });
+
+        return wrapper;
+    }
+
+    _handlePositiveClick(messageId, wrapper) {
+        if (this._submittedFeedback.has(messageId)) {
+            return; // idempotent
+        }
+        const upBtn = wrapper.querySelector('.feedback-btn-up');
+        // Disable buttons immediately to prevent double-submit before the
+        // round-trip completes.
+        wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+            b.disabled = true;
+        });
+        // Optimistic ARIA state: the thumbs-up is now the active choice.
+        if (upBtn) {
+            upBtn.setAttribute('aria-pressed', 'true');
+        }
+        const ok = this._sendFeedback({ message_id: messageId, rating: 'positive' });
+        if (!ok) {
+            // Send failed locally (socket not open): re-enable and surface
+            // an inline error rather than swap to the submitted state.
+            wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+                b.disabled = false;
+            });
+            if (upBtn) {
+                upBtn.setAttribute('aria-pressed', 'false');
+            }
+            this._showInlineFeedbackError(wrapper, 'Connection unavailable. Please try again.');
+            return;
+        }
+        // Optimistic swap: mark locally and replace the controls with the
+        // submitted indicator. On feedback_error we will revert.
+        this._markFeedbackSubmitted(messageId);
+        const submitted = this._buildFeedbackSubmitted(messageId);
+        wrapper.replaceWith(submitted);
+    }
+
+    _handleNegativeClick(messageId, wrapper, downBtn) {
+        if (this._submittedFeedback.has(messageId)) {
+            return; // idempotent
+        }
+        // If a form is already open, this click is a no-op (textareas have
+        // focus management of their own).
+        if (wrapper.querySelector('.feedback-form')) {
+            return;
+        }
+        downBtn.classList.add('selected');
+        downBtn.setAttribute('aria-pressed', 'true');
+        // Disable both buttons while the correction form is open so the user
+        // cannot start a parallel positive submission mid-edit.
+        wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+            b.disabled = true;
+        });
+        // Clear any stale inline error from a previous attempt.
+        const staleErr = wrapper.querySelector('.feedback-error');
+        if (staleErr) {
+            staleErr.remove();
+        }
+        const form = this._buildCorrectionForm(messageId, wrapper, downBtn);
+        // Wire aria-expanded / aria-controls now that the form exists in the
+        // DOM and has a stable id.
+        downBtn.setAttribute('aria-expanded', 'true');
+        downBtn.setAttribute('aria-controls', form.id);
+        wrapper.appendChild(form);
+        const firstField = form.querySelector('textarea');
+        if (firstField) {
+            firstField.focus();
+        }
+    }
+
+    _buildCorrectionForm(messageId, wrapper, downBtn) {
+        const form = document.createElement('div');
+        form.className = 'feedback-form';
+        form.dataset.messageId = messageId;
+        // Stable id so the parent ``feedback-btn-down`` can reference this
+        // form via ``aria-controls``. ``messageId`` is server-generated and
+        // safe to embed in an id.
+        form.id = `feedback-form-${messageId}`;
+        form.setAttribute('role', 'group');
+        form.setAttribute('aria-label', 'Provide correction or comment');
+
+        const correctionLabel = document.createElement('label');
+        correctionLabel.className = 'feedback-form-label';
+        correctionLabel.textContent = 'What should the correct answer be? (optional)';
+        const correctionId = `feedback-correction-${messageId}`;
+        correctionLabel.htmlFor = correctionId;
+        const correctionField = document.createElement('textarea');
+        correctionField.id = correctionId;
+        correctionField.name = 'correction_text';
+        correctionField.rows = 3;
+        correctionField.className = 'feedback-textarea';
+        form.appendChild(correctionLabel);
+        form.appendChild(correctionField);
+
+        const commentLabel = document.createElement('label');
+        commentLabel.className = 'feedback-form-label';
+        commentLabel.textContent = 'Additional comments (optional)';
+        const commentId = `feedback-comment-${messageId}`;
+        commentLabel.htmlFor = commentId;
+        const commentField = document.createElement('textarea');
+        commentField.id = commentId;
+        commentField.name = 'user_comment';
+        commentField.rows = 2;
+        commentField.className = 'feedback-textarea';
+        form.appendChild(commentLabel);
+        form.appendChild(commentField);
+
+        const actions = document.createElement('div');
+        actions.className = 'feedback-form-actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'feedback-form-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+            this._cancelCorrectionForm(wrapper, downBtn);
+        });
+        actions.appendChild(cancelBtn);
+
+        const submitBtn = document.createElement('button');
+        submitBtn.type = 'button';
+        submitBtn.className = 'feedback-form-submit';
+        submitBtn.textContent = 'Submit Feedback';
+        submitBtn.addEventListener('click', () => {
+            this._submitCorrectionForm(messageId, wrapper, form, submitBtn, cancelBtn);
+        });
+        actions.appendChild(submitBtn);
+
+        form.appendChild(actions);
+        return form;
+    }
+
+    _cancelCorrectionForm(wrapper, downBtn) {
+        const form = wrapper.querySelector('.feedback-form');
+        if (form) {
+            form.remove();
+        }
+        if (downBtn) {
+            downBtn.classList.remove('selected');
+            downBtn.setAttribute('aria-pressed', 'false');
+            downBtn.setAttribute('aria-expanded', 'false');
+            downBtn.removeAttribute('aria-controls');
+        }
+        // Re-enable buttons; no message was sent.
+        wrapper.querySelectorAll('button.feedback-btn').forEach((b) => {
+            b.disabled = false;
+        });
+    }
+
+    _submitCorrectionForm(messageId, wrapper, form, submitBtn, cancelBtn) {
+        if (this._submittedFeedback.has(messageId)) {
+            return; // idempotent
+        }
+        const correction = form.querySelector('textarea[name="correction_text"]').value.trim();
+        const comment = form.querySelector('textarea[name="user_comment"]').value.trim();
+        const payload = { message_id: messageId, rating: 'negative' };
+        if (correction) {
+            payload.correction_text = correction;
+        }
+        if (comment) {
+            payload.user_comment = comment;
+        }
+        // Disable submit/cancel during round-trip.
+        submitBtn.disabled = true;
+        cancelBtn.disabled = true;
+        const ok = this._sendFeedback(payload);
+        if (!ok) {
+            submitBtn.disabled = false;
+            cancelBtn.disabled = false;
+            this._showInlineFeedbackError(wrapper, 'Connection unavailable. Please try again.');
+            return;
+        }
+        // Optimistic swap: replace the entire controls+form block with the
+        // submitted indicator. feedback_error will revert (T3.3).
+        this._markFeedbackSubmitted(messageId);
+        const submitted = this._buildFeedbackSubmitted(messageId);
+        wrapper.replaceWith(submitted);
+    }
+
+    _sendFeedback(payload) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn('Cannot send feedback: WebSocket not open');
+            return false;
+        }
+        try {
+            this.ws.send(JSON.stringify({ type: 'feedback', ...payload }));
+            return true;
+        } catch (err) {
+            console.error('Failed to send feedback frame', err);
+            return false;
+        }
+    }
+
+    _buildFeedbackSubmitted(messageId) {
+        const span = document.createElement('div');
+        span.className = 'feedback-submitted';
+        span.dataset.messageId = messageId;
+        // ``status`` + ``aria-live=polite`` lets screen readers announce the
+        // optimistic confirmation without stealing focus from the chat input.
+        span.setAttribute('role', 'status');
+        span.setAttribute('aria-live', 'polite');
+        span.textContent = '✓ Feedback submitted';
+        return span;
+    }
+
+    _handleFeedbackAck(data) {
+        // Server confirmed persistence. The optimistic UI already shows
+        // the submitted indicator, so this is a no-op besides logging.
+        // Acks for unknown ids (e.g. after a tab refresh that wiped the
+        // in-memory set but where sessionStorage was cleared too) are
+        // benign and intentionally ignored.
+        const messageId = data && data.message_id;
+        if (messageId && !this._submittedFeedback.has(messageId)) {
+            console.debug('feedback_ack for unknown message_id (ignored)', data);
+            return;
+        }
+        console.debug('feedback_ack', data);
+    }
+
+    _handleFeedbackError(data) {
+        const messageId = data && data.message_id;
+        if (!messageId) {
+            console.warn('feedback_error without message_id', data);
+            return;
+        }
+        // Revert optimistic state so the user can retry.
+        this._unmarkFeedbackSubmitted(messageId);
+        const submitted = this.chatMessages.querySelector(
+            `.feedback-submitted[data-message-id="${CSS.escape(messageId)}"]`
+        );
+        if (submitted) {
+            const controls = this._buildFeedbackControls(messageId);
+            const errorMsg = (data && data.message) || 'Could not submit feedback. Please try again.';
+            this._showInlineFeedbackError(controls, errorMsg);
+            submitted.replaceWith(controls);
+        }
+    }
+
+    _showInlineFeedbackError(wrapper, message) {
+        // Remove any existing error to avoid stacking.
+        const existing = wrapper.querySelector('.feedback-error');
+        if (existing) {
+            existing.remove();
+        }
+        const err = document.createElement('span');
+        err.className = 'feedback-error';
+        err.setAttribute('role', 'alert');
+        err.textContent = message;
+        wrapper.appendChild(err);
+    }
+
+    _loadSubmittedFeedback() {
+        // Best-effort: sessionStorage may be unavailable (private mode in
+        // some browsers, sandboxed iframes). Degrade to in-memory Set.
+        try {
+            const raw = window.sessionStorage.getItem(this._feedbackStorageKey);
+            if (!raw) {
+                return new Set();
+            }
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                return new Set(parsed.filter((v) => typeof v === 'string'));
+            }
+        } catch (err) {
+            console.warn('Failed to load submitted-feedback cache; using in-memory only', err);
+        }
+        return new Set();
+    }
+
+    _persistSubmittedFeedback() {
+        try {
+            window.sessionStorage.setItem(
+                this._feedbackStorageKey,
+                JSON.stringify(Array.from(this._submittedFeedback))
+            );
+        } catch (err) {
+            // sessionStorage may throw (quota, private mode). Silently keep
+            // the in-memory state authoritative.
+            console.debug('sessionStorage write failed for submitted feedback', err);
+        }
+    }
+
+    _markFeedbackSubmitted(messageId) {
+        this._submittedFeedback.add(messageId);
+        this._persistSubmittedFeedback();
+    }
+
+    _unmarkFeedbackSubmitted(messageId) {
+        this._submittedFeedback.delete(messageId);
+        this._persistSubmittedFeedback();
     }
 
     showTypingIndicator(message = 'AI is typing...') {

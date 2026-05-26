@@ -6,8 +6,8 @@ import logging
 from auto_bedrock_chat_fastapi.bedrock_client import BedrockClient
 from auto_bedrock_chat_fastapi.config import ChatConfig
 from auto_bedrock_chat_fastapi.content_crawler import LocalContentLoader
+from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
 from auto_bedrock_chat_fastapi.embedding_pipeline import EmbeddingGenerator, EmbeddingPipeline, TextChunker
-from auto_bedrock_chat_fastapi.vector_db import VectorDB
 
 # Configure logging
 logging.basicConfig(
@@ -141,7 +141,7 @@ async def example_populate_kb_from_local_files():
     # Initialize components
     config = ChatConfig()
     bedrock_client = BedrockClient(config)
-    vector_db = VectorDB(db_path)
+    vector_db = SQLiteKBStore(db_path)
 
     # Load local markdown files
     loader = LocalContentLoader()

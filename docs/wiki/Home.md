@@ -20,6 +20,8 @@ Welcome to the **auto-bedrock-chat-fastapi** documentation wiki. This library le
 | [SSO (Single Sign-On)](sso)                  | OAuth2/OIDC SSO integration, provider examples, and troubleshooting  |
 | [RAG Feature](rag-feature)                   | Web crawler, vector DB, embedding pipeline, hybrid search            |
 | [Token Management](token-management)         | Input token limits, AI summarization, text truncation                |
+| [Feedback Collection](feedback-collection)   | 👍 / 👎 ratings, corrections, FeedbackStore backends                 |
+| [Admin API](admin-api)                       | Reviewer HTTP surface for feedback + KB management                   |
 | [CI Pipelines](ci-pipelines)                 | GitHub Actions for tests, linting, and code quality                  |
 | [CD Pipelines](cd-pipelines)                 | GitHub Actions for builds, Docker, staging, and production           |
 

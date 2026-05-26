@@ -1,18 +1,18 @@
 """Abstract base class for Knowledge Base storage backends.
 
-This module defines the interface that all KB storage implementations must
-follow, plus a factory function (``create_kb_store``) that instantiates the
-correct backend based on configuration.
+Concrete backends live in :mod:`auto_bedrock_chat_fastapi.db.kb_sqlite`
+and :mod:`auto_bedrock_chat_fastapi.db.kb_postgres`. Use
+:func:`auto_bedrock_chat_fastapi.db.create_kb_store` to instantiate the
+backend selected by ``ChatConfig.kb_storage_type``.
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-if TYPE_CHECKING:
-    from .config import ChatConfig
+from ..models import KBDocument, KBDocumentListFilters
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,72 @@ class BaseKBStore(ABC):
     @abstractmethod
     def list_topics(self) -> List[Dict[str, Any]]:
         """Return unique topics with document counts."""
+
+    # ------------------------------------------------------------------
+    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def list_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[KBDocument]:
+        """Return paginated documents matching ``filters``, ordered by
+        ``created_at`` descending (newest first). Each returned
+        :class:`KBDocument` has ``chunk_count`` populated via a JOIN
+        against the ``chunks`` table.
+        """
+
+    @abstractmethod
+    def count_documents(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+    ) -> int:
+        """Return the total number of documents matching ``filters``
+        (ignoring pagination). Must be consistent with
+        :meth:`list_documents` under the same filters.
+        """
+
+    @abstractmethod
+    def update_document(
+        self,
+        doc_id: str,
+        *,
+        content: Optional[str] = None,
+        title: Optional[str] = None,
+        source: Optional[str] = None,
+        source_url: Optional[str] = None,
+        topic: Optional[str] = None,
+        date_published: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> KBDocument:
+        """Partial-update a document.
+
+        ``None`` for any field means "don't touch". To clear a field
+        explicitly, pass an empty value (``""`` for text columns,
+        ``{}`` for metadata, ``[]`` for tags).
+
+        When ``content`` is provided and differs from the stored value,
+        the store transactionally deletes all existing chunks for that
+        document so the caller can re-embed cleanly. The store does
+        **not** invoke the embedding pipeline itself — that
+        orchestration is the responsibility of the admin route layer
+        (T5). After a content-clearing update, ``chunk_count`` on the
+        returned :class:`KBDocument` is ``0``.
+
+        ``tags`` are persisted inside ``metadata['tags']``. Passing
+        ``metadata`` and ``tags`` together merges as follows:
+        ``metadata['tags']`` from the explicit ``tags`` argument wins
+        and overwrites anything in the supplied ``metadata`` dict.
+
+        Raises
+        ------
+        KBDocumentNotFoundError
+            If no document with ``doc_id`` exists.
+        """
 
     # ------------------------------------------------------------------
     # Chunk / embedding operations
@@ -124,66 +190,3 @@ class BaseKBStore(ABC):
     @abstractmethod
     def close(self) -> None:
         """Release resources (connections, file handles, …)."""
-
-
-# ------------------------------------------------------------------
-# Factory
-# ------------------------------------------------------------------
-
-_STORAGE_BACKENDS = {
-    "sqlite": "auto_bedrock_chat_fastapi.vector_db.SQLiteKBStore",
-    "pgvector": "auto_bedrock_chat_fastapi.pgvector_kb_store.PgVectorKBStore",
-}
-
-
-def create_kb_store(config: "ChatConfig") -> BaseKBStore:
-    """Instantiate the KB store configured by *config.kb_storage_type*.
-
-    Parameters
-    ----------
-    config:
-        Application configuration.  The factory inspects ``kb_storage_type``
-        (default ``"sqlite"``) and passes the relevant config fields to the
-        chosen backend constructor.
-
-    Returns
-    -------
-    BaseKBStore
-        A ready-to-use store instance.
-
-    Raises
-    ------
-    ValueError
-        If the requested storage type is unknown.
-    """
-    storage_type = config.kb_storage_type.lower()
-
-    if storage_type not in _STORAGE_BACKENDS:
-        raise ValueError(
-            f"Unknown kb_storage_type={storage_type!r}. " f"Valid options: {', '.join(sorted(_STORAGE_BACKENDS))}"
-        )
-
-    # Lazy-import the concrete class to avoid hard dependencies.
-    fqn = _STORAGE_BACKENDS[storage_type]
-    module_path, class_name = fqn.rsplit(".", 1)
-
-    import importlib
-
-    module = importlib.import_module(module_path)
-    cls = getattr(module, class_name)
-
-    # Construct with backend-specific args
-    if storage_type == "sqlite":
-        return cls(db_path=config.kb_database_path)
-
-    if storage_type == "pgvector":
-        if not config.kb_postgres_url:
-            raise ValueError("kb_storage_type='pgvector' requires BEDROCK_KB_POSTGRES_URL to be set.")
-        return cls(
-            connection_url=config.kb_postgres_url,
-            pool_size=config.kb_postgres_pool_size,
-            embedding_dimensions=config.kb_embedding_dimensions,
-        )
-
-    # Future backends will be handled here.
-    raise ValueError(f"No constructor logic for storage type {storage_type!r}")  # pragma: no cover
