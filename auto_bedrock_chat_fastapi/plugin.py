@@ -1627,7 +1627,7 @@ def create_fastapi_with_bedrock_chat(**kwargs) -> tuple[FastAPI, BedrockChatPlug
         from auto_bedrock_chat_fastapi import create_fastapi_with_bedrock_chat
 
         app, plugin = create_fastapi_with_bedrock_chat(
-            model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
             enable_ui=True
         )
 
