@@ -1,6 +1,6 @@
 # Docker configuration for auto-bedrock-chat-fastapi
 # Multi-stage build for optimal image size
-FROM python:3.14 AS builder
+FROM python:3.14-slim AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -29,7 +29,7 @@ WORKDIR /tmp/src
 RUN pip install ".[postgres]"
 
 # Production stage
-FROM python:3.14
+FROM python:3.14-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
