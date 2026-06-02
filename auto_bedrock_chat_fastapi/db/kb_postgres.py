@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import KBDocumentNotFoundError
@@ -23,6 +24,8 @@ from ..models import KBDocument, KBDocumentListFilters
 from .kb_base import BaseKBStore
 
 logger = logging.getLogger(__name__)
+
+_SQL_DIR = Path(__file__).resolve().parent / "sql"
 
 # ---------------------------------------------------------------------------
 # Lazy-check for the optional ``psycopg`` dependency so that callers get a
@@ -105,7 +108,7 @@ class PgVectorKBStore(BaseKBStore):
 
     def _init_schema(self):
         """Create extensions, tables, and indexes if they don't exist."""
-        dim = self._embedding_dimensions
+        schema_sql = (_SQL_DIR / "kb_schema.sql").read_text().format(embedding_dimensions=self._embedding_dimensions)
 
         with self._get_conn() as conn:
             with conn.cursor() as cur:
@@ -113,62 +116,10 @@ class PgVectorKBStore(BaseKBStore):
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             self._register_on(conn)
             with conn.cursor() as cur:
-                # Documents table
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS documents (
-                        id          TEXT PRIMARY KEY,
-                        content     TEXT NOT NULL,
-                        title       TEXT,
-                        source      TEXT,
-                        source_url  TEXT,
-                        topic       TEXT,
-                        date_published TEXT,
-                        metadata    TEXT,
-                        created_at  TIMESTAMPTZ DEFAULT now()
-                    )
-                    """
-                )
-
-                # Chunks table with embedding column
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS chunks (
-                        id           TEXT PRIMARY KEY,
-                        document_id  TEXT NOT NULL REFERENCES documents(id),
-                        content      TEXT NOT NULL,
-                        chunk_index  INTEGER NOT NULL,
-                        start_char   INTEGER,
-                        end_char     INTEGER,
-                        metadata     TEXT,
-                        embedding    vector({dim}),
-                        content_tsv  tsvector
-                            GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
-                        created_at   TIMESTAMPTZ DEFAULT now()
-                    )
-                    """
-                )
-
-                # Indexes
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_topic ON documents(topic)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_date ON documents(date_published)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)")
-
-                # HNSW index for cosine distance
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_chunks_embedding
-                    ON chunks USING hnsw (embedding vector_cosine_ops)
-                    """
-                )
-
-                # GIN index for full-text search
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_fts ON chunks USING gin(content_tsv)")
-
+                cur.execute(schema_sql)
             conn.commit()
 
-        logger.info("PgVectorKBStore schema initialized (dimensions=%d)", dim)
+        logger.info("PgVectorKBStore schema initialized (dimensions=%d)", self._embedding_dimensions)
 
     # ------------------------------------------------------------------
     # Document operations
