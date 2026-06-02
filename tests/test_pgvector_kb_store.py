@@ -83,7 +83,7 @@ class TestSchemaInit:
 
         # Collect all SQL executed during __init__._init_schema
         executed_sqls = [c.args[0].strip() for c in mock_cursor.execute.call_args_list if c.args]
-        sql_blob = " ".join(executed_sqls).lower()
+        sql_blob = " ".join(" ".join(executed_sqls).lower().split())
 
         assert "create extension if not exists vector" in sql_blob
         assert "create table if not exists documents" in sql_blob
