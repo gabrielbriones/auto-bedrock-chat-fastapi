@@ -108,9 +108,7 @@ class PgVectorKBStore(BaseKBStore):
 
     def _init_schema(self):
         """Create extensions, tables, and indexes if they don't exist."""
-        schema_sql = (_SQL_DIR / "kb_schema.sql").read_text().format(
-            embedding_dimensions=self._embedding_dimensions
-        )
+        schema_sql = (_SQL_DIR / "kb_schema.sql").read_text().format(embedding_dimensions=self._embedding_dimensions)
 
         with self._get_conn() as conn:
             with conn.cursor() as cur:
