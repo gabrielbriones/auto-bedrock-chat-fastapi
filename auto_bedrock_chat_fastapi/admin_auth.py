@@ -32,8 +32,6 @@ from typing import Any, Dict, List, Optional, Protocol
 
 import httpx
 
-from .sso_session_store import extract_user_id_from_sso_session
-
 logger = logging.getLogger(__name__)
 
 
@@ -281,6 +279,9 @@ def resolve_admin_identity_from_sso_session(sso_session: Dict[str, Any]) -> Opti
     """
     if not sso_session:
         return None
+
+    from .sso_session_store import extract_user_id_from_sso_session
+
     user_info = sso_session.get("user_info") or {}
     id_token_claims = sso_session.get("id_token_claims") or {}
 
