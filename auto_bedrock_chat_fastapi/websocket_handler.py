@@ -1,5 +1,7 @@
 """WebSocket handler for real-time chat communication"""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
