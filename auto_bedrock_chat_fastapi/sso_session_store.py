@@ -10,8 +10,7 @@ try:
     from jwt.exceptions import PyJWTError
 except ImportError as _exc:
     raise ImportError(
-        "PyJWT is required for SSO support. "
-        "Install with: pip install auto-bedrock-chat-fastapi[sso]"
+        "PyJWT is required for SSO support. " "Install with: pip install auto-bedrock-chat-fastapi[sso]"
     ) from _exc
 
 logger = logging.getLogger(__name__)

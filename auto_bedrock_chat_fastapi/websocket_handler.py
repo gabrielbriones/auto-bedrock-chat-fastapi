@@ -30,12 +30,14 @@ logger = logging.getLogger(__name__)
 def _get_sso_session_store_class():
     """Lazy import of SSOSessionStore (requires PyJWT)."""
     from .sso_session_store import SSOSessionStore
+
     return SSOSessionStore
 
 
 def _get_extract_user_id():
     """Lazy import of extract_user_id_from_sso_session (requires PyJWT)."""
     from .sso_session_store import extract_user_id_from_sso_session
+
     return extract_user_id_from_sso_session
 
 
@@ -231,7 +233,9 @@ class WebSocketChatHandler:
         if session.credentials and session.credentials.auth_type == AuthType.SSO and self.sso_session_store:
             session_token = session.credentials.session_token
             if session_token:
-                sso_session_id = _get_sso_session_store_class().validate_session_token(session_token, self.config.sso_session_secret)
+                sso_session_id = _get_sso_session_store_class().validate_session_token(
+                    session_token, self.config.sso_session_secret
+                )
                 if not sso_session_id or not self.sso_session_store.get_session(sso_session_id):
                     # SSO session expired — notify client and clear credentials
                     session.credentials = None
@@ -1005,7 +1009,9 @@ class WebSocketChatHandler:
         Returns None if token is invalid or session not found.
         """
         # Validate token signature + expiry
-        sso_session_id = _get_sso_session_store_class().validate_session_token(session_token, self.config.sso_session_secret)
+        sso_session_id = _get_sso_session_store_class().validate_session_token(
+            session_token, self.config.sso_session_secret
+        )
         if not sso_session_id:
             logger.debug("Invalid or expired SSO session token")
             return None

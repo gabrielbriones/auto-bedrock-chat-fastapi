@@ -48,8 +48,7 @@ def _load_sso_imports():
         from .sso_session_store import extract_user_id_from_sso_session as _extract_user_id
     except ImportError as exc:
         raise ImportError(
-            "SSO dependencies are not installed. "
-            "Install with: pip install auto-bedrock-chat-fastapi[sso]"
+            "SSO dependencies are not installed. " "Install with: pip install auto-bedrock-chat-fastapi[sso]"
         ) from exc
     SSOProvider = _SSOProvider
     SSOSessionStore = _SSOSessionStore
@@ -57,6 +56,7 @@ def _load_sso_imports():
     SSOTokenError = _SSOTokenError
     SSOValidationError = _SSOValidationError
     extract_user_id_from_sso_session = _extract_user_id
+
 
 logger = logging.getLogger(__name__)
 
@@ -846,7 +846,9 @@ class BedrockChatPlugin:
             if not session_token:
                 return JSONResponse({"error": "missing_session_token"}, status_code=401)
 
-            session_id = type(self.sso_session_store).validate_session_token(session_token, self.config.sso_session_secret)
+            session_id = type(self.sso_session_store).validate_session_token(
+                session_token, self.config.sso_session_secret
+            )
             if not session_id:
                 return JSONResponse({"error": "invalid_session_token"}, status_code=401)
 
@@ -897,7 +899,9 @@ class BedrockChatPlugin:
                 session_token = request.cookies.get("sso_session_token")
 
             if session_token:
-                session_id = type(self.sso_session_store).validate_session_token(session_token, self.config.sso_session_secret)
+                session_id = type(self.sso_session_store).validate_session_token(
+                    session_token, self.config.sso_session_secret
+                )
                 if session_id:
                     self.sso_session_store.delete_session(session_id)
                     logger.debug("SSO session deleted on logout: %s", session_id)

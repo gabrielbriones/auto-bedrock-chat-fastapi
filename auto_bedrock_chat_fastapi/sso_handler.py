@@ -16,8 +16,7 @@ try:
     from jwt.exceptions import PyJWTError
 except ImportError as _exc:
     raise ImportError(
-        "PyJWT[crypto] is required for SSO support. "
-        "Install with: pip install auto-bedrock-chat-fastapi[sso]"
+        "PyJWT[crypto] is required for SSO support. " "Install with: pip install auto-bedrock-chat-fastapi[sso]"
     ) from _exc
 
 if TYPE_CHECKING:
