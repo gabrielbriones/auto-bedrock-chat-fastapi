@@ -5,8 +5,13 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-import jwt
-from jwt.exceptions import PyJWTError
+try:
+    import jwt
+    from jwt.exceptions import PyJWTError
+except ImportError as _exc:
+    raise ImportError(
+        "PyJWT is required for SSO support. " "Install with: pip install auto-bedrock-chat-fastapi[sso]"
+    ) from _exc
 
 logger = logging.getLogger(__name__)
 

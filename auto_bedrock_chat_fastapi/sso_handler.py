@@ -9,9 +9,15 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urlencode
 
 import httpx
-import jwt
-from jwt import ExpiredSignatureError, PyJWK
-from jwt.exceptions import PyJWTError
+
+try:
+    import jwt
+    from jwt import ExpiredSignatureError, PyJWK
+    from jwt.exceptions import PyJWTError
+except ImportError as _exc:
+    raise ImportError(
+        "PyJWT[crypto] is required for SSO support. " "Install with: pip install auto-bedrock-chat-fastapi[sso]"
+    ) from _exc
 
 if TYPE_CHECKING:
     from .config import ChatConfig

@@ -1,10 +1,12 @@
 """WebSocket handler for real-time chat communication"""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -17,10 +19,26 @@ from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, Fee
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatMessage, ChatSessionManager
-from .sso_session_store import SSOSessionStore, extract_user_id_from_sso_session
 from .tool_manager import AuthInfo
 
+if TYPE_CHECKING:
+    from .sso_session_store import SSOSessionStore
+
 logger = logging.getLogger(__name__)
+
+
+def _get_sso_session_store_class():
+    """Lazy import of SSOSessionStore (requires PyJWT)."""
+    from .sso_session_store import SSOSessionStore
+
+    return SSOSessionStore
+
+
+def _get_extract_user_id():
+    """Lazy import of extract_user_id_from_sso_session (requires PyJWT)."""
+    from .sso_session_store import extract_user_id_from_sso_session
+
+    return extract_user_id_from_sso_session
 
 
 class WebSocketChatHandler:
@@ -215,7 +233,9 @@ class WebSocketChatHandler:
         if session.credentials and session.credentials.auth_type == AuthType.SSO and self.sso_session_store:
             session_token = session.credentials.session_token
             if session_token:
-                sso_session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+                sso_session_id = _get_sso_session_store_class().validate_session_token(
+                    session_token, self.config.sso_session_secret
+                )
                 if not sso_session_id or not self.sso_session_store.get_session(sso_session_id):
                     # SSO session expired — notify client and clear credentials
                     session.credentials = None
@@ -939,7 +959,7 @@ class WebSocketChatHandler:
                 and self.sso_session_store
                 and session.credentials.session_token
             ):
-                sso_session_id = SSOSessionStore.validate_session_token(
+                sso_session_id = _get_sso_session_store_class().validate_session_token(
                     session.credentials.session_token, self.config.sso_session_secret
                 )
                 if sso_session_id:
@@ -989,7 +1009,9 @@ class WebSocketChatHandler:
         Returns None if token is invalid or session not found.
         """
         # Validate token signature + expiry
-        sso_session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+        sso_session_id = _get_sso_session_store_class().validate_session_token(
+            session_token, self.config.sso_session_secret
+        )
         if not sso_session_id:
             logger.debug("Invalid or expired SSO session token")
             return None
@@ -1012,7 +1034,7 @@ class WebSocketChatHandler:
         id_token_claims = sso_session.get("id_token_claims", {})
 
         # Determine user_id using the shared canonical resolution helper.
-        user_id = extract_user_id_from_sso_session(user_info, id_token_claims)
+        user_id = _get_extract_user_id()(user_info, id_token_claims)
 
         display_name = (
             user_info.get("name")

@@ -21,10 +21,42 @@ from .chat_manager import ChatManager
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import BedrockChatError
 from .session_manager import ChatSessionManager
-from .sso_handler import SSODiscoveryError, SSOProvider, SSOTokenError, SSOValidationError
-from .sso_session_store import SSOSessionStore, extract_user_id_from_sso_session
 from .tool_manager import ToolManager
 from .websocket_handler import WebSocketChatHandler
+
+# SSO imports are deferred — only loaded when sso_enabled=True at runtime.
+# Install with the [sso] extra to get PyJWT[crypto] and passlib[bcrypt].
+SSOProvider = None  # type: ignore[assignment]
+SSOSessionStore = None  # type: ignore[assignment]
+SSODiscoveryError = None  # type: ignore[assignment]
+SSOTokenError = None  # type: ignore[assignment]
+SSOValidationError = None  # type: ignore[assignment]
+extract_user_id_from_sso_session = None  # type: ignore[assignment]
+
+
+def _load_sso_imports():
+    """Lazily import SSO modules; raises ImportError with a helpful message."""
+    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session  # noqa: E501
+    if SSOProvider is not None:
+        return  # already loaded
+    try:
+        from .sso_handler import SSODiscoveryError as _SSODiscoveryError
+        from .sso_handler import SSOProvider as _SSOProvider
+        from .sso_handler import SSOTokenError as _SSOTokenError
+        from .sso_handler import SSOValidationError as _SSOValidationError
+        from .sso_session_store import SSOSessionStore as _SSOSessionStore
+        from .sso_session_store import extract_user_id_from_sso_session as _extract_user_id
+    except ImportError as exc:
+        raise ImportError(
+            "SSO dependencies are not installed. " "Install with: pip install auto-bedrock-chat-fastapi[sso]"
+        ) from exc
+    SSOProvider = _SSOProvider
+    SSOSessionStore = _SSOSessionStore
+    SSODiscoveryError = _SSODiscoveryError
+    SSOTokenError = _SSOTokenError
+    SSOValidationError = _SSOValidationError
+    extract_user_id_from_sso_session = _extract_user_id
+
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +215,7 @@ class BedrockChatPlugin:
         self.sso_provider: Optional[SSOProvider] = None
         self.sso_session_store: Optional[SSOSessionStore] = None
         if self.config.sso_enabled:
+            _load_sso_imports()
             self.sso_provider = SSOProvider(self.config)
             self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
 
@@ -363,9 +396,10 @@ class BedrockChatPlugin:
                     sso_user_id: Optional[str] = None
                     sso_authenticated = False
                     if self.config.sso_enabled and self.sso_session_store:
+                        _load_sso_imports()
                         session_token = request.cookies.get("sso_session_token")
                         if session_token:
-                            session_id = SSOSessionStore.validate_session_token(
+                            session_id = type(self.sso_session_store).validate_session_token(
                                 session_token,
                                 self.config.sso_session_secret,
                             )
@@ -621,6 +655,7 @@ class BedrockChatPlugin:
         All four endpoints are registered; an error page is shown for
         callback failures so the browser is never left on a raw 4xx.
         """
+        _load_sso_imports()
         sso_login_url = f"{self.config.chat_endpoint}/auth/sso/login"
 
         @self.app.get(sso_login_url)
@@ -811,7 +846,9 @@ class BedrockChatPlugin:
             if not session_token:
                 return JSONResponse({"error": "missing_session_token"}, status_code=401)
 
-            session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+            session_id = type(self.sso_session_store).validate_session_token(
+                session_token, self.config.sso_session_secret
+            )
             if not session_id:
                 return JSONResponse({"error": "invalid_session_token"}, status_code=401)
 
@@ -862,7 +899,9 @@ class BedrockChatPlugin:
                 session_token = request.cookies.get("sso_session_token")
 
             if session_token:
-                session_id = SSOSessionStore.validate_session_token(session_token, self.config.sso_session_secret)
+                session_id = type(self.sso_session_store).validate_session_token(
+                    session_token, self.config.sso_session_secret
+                )
                 if session_id:
                     self.sso_session_store.delete_session(session_id)
                     logger.debug("SSO session deleted on logout: %s", session_id)
@@ -1131,7 +1170,7 @@ class BedrockChatPlugin:
             if sso_configured:
                 session_token = request.cookies.get("sso_session_token")
                 if session_token:
-                    sso_session_id = SSOSessionStore.validate_session_token(
+                    sso_session_id = type(self.sso_session_store).validate_session_token(
                         session_token, self.config.sso_session_secret
                     )
                     if sso_session_id:
