@@ -69,64 +69,12 @@ class SQLiteKBStore(BaseKBStore):
 
     def _init_schema(self):
         """Create necessary tables and indexes."""
+        schema_sql = (Path(__file__).resolve().parent / "sql" / "kb_schema_sqlite.sql").read_text()
+        self.conn.executescript(schema_sql)
+
+        # Backfill FTS5 index for any chunks not yet indexed.
+        # This must stay in Python because we need the rowcount for logging.
         cursor = self.conn.cursor()
-
-        # Documents table with metadata
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS documents (
-                id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                title TEXT,
-                source TEXT,
-                source_url TEXT,
-                topic TEXT,
-                date_published TEXT,
-                metadata TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """
-        )
-
-        # Chunks table (documents split into smaller pieces)
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chunks (
-                id TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                content TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                start_char INTEGER,
-                end_char INTEGER,
-                metadata TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (document_id) REFERENCES documents(id)
-            )
-        """
-        )
-
-        # Virtual table for vector similarity search
-        cursor.execute(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-                chunk_id TEXT PRIMARY KEY,
-                embedding FLOAT[1536]
-            )
-        """
-        )
-
-        # Virtual table for full-text search (BM25)
-        cursor.execute(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
-                chunk_id UNINDEXED,
-                content,
-                tokenize='porter unicode61'
-            )
-        """
-        )
-
-        # Backfill FTS5 index for any chunks not yet indexed
         cursor.execute(
             """
             INSERT INTO fts_chunks (chunk_id, content)
@@ -142,35 +90,6 @@ class SQLiteKBStore(BaseKBStore):
             import logging
 
             logging.getLogger(__name__).info(f"Backfilled {backfilled} chunks into FTS5 index")
-
-        # Create indexes for faster filtering
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_documents_source
-            ON documents(source)
-        """
-        )
-
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_documents_topic
-            ON documents(topic)
-        """
-        )
-
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_documents_date
-            ON documents(date_published)
-        """
-        )
-
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_chunks_document
-            ON chunks(document_id)
-        """
-        )
 
         self.conn.commit()
 
