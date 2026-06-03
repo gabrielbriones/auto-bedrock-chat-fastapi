@@ -55,6 +55,7 @@ bedrock_chat = add_bedrock_chat(
 | `BEDROCK_WEBSOCKET_ENDPOINT` | `/bedrock-chat/ws` | WebSocket endpoint      |
 | `BEDROCK_UI_ENDPOINT`        | `/bedrock-chat/ui` | Chat UI path            |
 | `BEDROCK_ENABLE_UI`          | `true`             | Enable built-in chat UI |
+| `BEDROCK_UI_LOCK_INPUT_WHILE_RESPONDING` | `true` | Disable chat input while waiting for assistant response |
 
 ### Tool Calling
 

@@ -97,6 +97,20 @@ To customize the UI, override the templates or serve your own frontend using the
 
 ---
 
+## Input Lock While Responding
+
+By default the chat input and Send button are disabled from the moment a user sends a message until the assistant's response is fully received. This prevents queuing additional messages while a reply is in flight.
+
+To allow users to send messages at any time (original behavior):
+
+```
+BEDROCK_UI_LOCK_INPUT_WHILE_RESPONDING=false
+```
+
+When locked, the textarea shows a "Waiting for response..." placeholder and receives the CSS class `input-locked`. The input is automatically re-enabled on `ai_response`, `error`, `auth_expired`, or WebSocket reconnect.
+
+---
+
 ## Disabling the UI
 
 If you only need the WebSocket/REST API (e.g., you have a custom frontend):

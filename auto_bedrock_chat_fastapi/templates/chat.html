@@ -81,6 +81,7 @@
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
             ssoUserDisplay: {{ sso_user_display | tojson }},
             feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }},
+            lockInputWhileResponding: {{ 'true' if lock_input_while_responding else 'false' }},
             adminEnabled: {{ 'true' if admin_enabled else 'false' }},
             adminPrefix: {{ admin_prefix | tojson }},
             dashboardUrl: {{ dashboard_url | tojson }},
