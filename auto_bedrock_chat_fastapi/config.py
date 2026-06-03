@@ -322,6 +322,16 @@ class ChatConfig(BaseSettings):
         description="Welcome message displayed when chat UI first loads",
     )
 
+    ui_lock_input_while_responding: bool = Field(
+        default=True,
+        alias="BEDROCK_UI_LOCK_INPUT_WHILE_RESPONDING",
+        description=(
+            "When enabled, the chat input and Send button are disabled from the moment a user "
+            "sends a message until the assistant's response is fully received. "
+            "Set to false to allow sending additional messages while a response is in flight."
+        ),
+    )
+
     preset_prompts: List[Dict[str, Any]] = Field(
         default_factory=list,
         description=(

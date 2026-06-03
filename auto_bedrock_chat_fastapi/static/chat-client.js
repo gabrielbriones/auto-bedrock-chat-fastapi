@@ -29,6 +29,10 @@ class ChatClient {
         this._feedbackStorageKey = 'feedback.submitted';
         this._submittedFeedback = this._loadSubmittedFeedback();
 
+        // Lock-while-responding state: tracks whether we are waiting for an
+        // assistant response so the input can be disabled mid-turn.
+        this.awaitingResponse = false;
+
         this.setupEventListeners();
         this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
@@ -41,6 +45,7 @@ class ChatClient {
         this.messageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
+                if (this.awaitingResponse) return;
                 this.sendMessage();
             }
         });
@@ -116,7 +121,10 @@ class ChatClient {
             console.log(`WebSocket closed. Intentional: ${this.intentionalClose}`);
             this.connecting = false;
             this.updateConnectionStatus(false);
+            this.awaitingResponse = false;
             this.messageInput.disabled = true;
+            this.messageInput.placeholder = 'Type your message...';
+            this.messageInput.classList.remove('input-locked');
             this.sendButton.disabled = true;
             this._disablePresetButtons();
 
@@ -159,6 +167,9 @@ class ChatClient {
     }
 
     enableInput() {
+        // Don't override the response-lock — it is layered on top of
+        // connection-level enable/disable.
+        if (this.awaitingResponse && window.CONFIG.lockInputWhileResponding) return;
         this.messageInput.disabled = false;
         this.sendButton.disabled = false;
         this._renderPresetButtons();
@@ -167,6 +178,33 @@ class ChatClient {
 
     _disablePresetButtons() {
         document.querySelectorAll('.preset-prompt-btn').forEach(btn => { btn.disabled = true; });
+    }
+
+    _lockInputForResponse() {
+        if (!window.CONFIG.lockInputWhileResponding) return;
+        this.awaitingResponse = true;
+        this.messageInput.disabled = true;
+        this.messageInput.placeholder = 'Waiting for response...';
+        this.messageInput.classList.add('input-locked');
+        this.sendButton.disabled = true;
+        this._disablePresetButtons();
+    }
+
+    _unlockInputAfterResponse() {
+        if (!window.CONFIG.lockInputWhileResponding) return;
+        if (!this.awaitingResponse) return;
+        this.awaitingResponse = false;
+        this.messageInput.placeholder = 'Type your message...';
+        this.messageInput.classList.remove('input-locked');
+
+        // Restore input state using the existing connection/auth gates.
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && (!window.CONFIG.requireAuth || this.authenticated)) {
+            this.enableInput();
+        } else {
+            this.messageInput.disabled = true;
+            this.sendButton.disabled = true;
+            this._disablePresetButtons();
+        }
     }
 
     _renderVariablesSection() {
@@ -279,6 +317,10 @@ class ChatClient {
 
     _updatePresetButtonStates() {
         document.querySelectorAll('.preset-prompt-btn').forEach(btn => {
+            if (this.awaitingResponse && window.CONFIG.lockInputWhileResponding) {
+                btn.disabled = true;
+                return;
+            }
             const required = JSON.parse(btn.dataset.requiredVars || '[]');
             btn.disabled = !required.every(name => this._validateVar(name, this._getVarValue(name)));
         });
@@ -347,6 +389,7 @@ class ChatClient {
         if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.addMessage('user', text);
         this.ws.send(JSON.stringify({ type: 'chat', message: text }));
+        this._lockInputForResponse();
     }
 
     _recoverAuthSubmitButton() {
@@ -420,6 +463,10 @@ class ChatClient {
         if (!message || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
             return;
         }
+        // Respect response lock — prevent sending while awaiting a reply
+        if (this.awaitingResponse && window.CONFIG.lockInputWhileResponding) {
+            return;
+        }
 
         // Auto-detect: run each variable's detect_pattern (or derive from validate)
         // against the sent message and populate the corresponding input if matched.
@@ -461,6 +508,9 @@ class ChatClient {
         this.messageInput.style.height = 'auto';
         this.messageInput.style.height = '48px';  // Reset to min height
         this.messageInput.style.overflowY = 'hidden';
+
+        // Lock input while waiting for the assistant response
+        this._lockInputForResponse();
     }
 
     handleMessage(data) {
@@ -564,6 +614,7 @@ class ChatClient {
             case 'ai_response':
                 this.hideTypingIndicator();
                 this.addMessage('assistant', data.message, data.tool_calls, data.tool_results, data.message_id);
+                this._unlockInputAfterResponse();
                 break;
 
             case 'feedback_ack':
@@ -577,6 +628,7 @@ class ChatClient {
             case 'error':
                 this.hideTypingIndicator();
                 this.addMessage('system', `Error: ${data.message}`);
+                this._unlockInputAfterResponse();
                 break;
 
             case 'auth_expired':
@@ -584,6 +636,7 @@ class ChatClient {
                 this.authenticated = false;
                 this.authPayload = null;
                 this.authSent = false;
+                this._unlockInputAfterResponse();
                 // Clear user display name from header
                 const userDisplayExpired = document.getElementById('ssoUserDisplay');
                 if (userDisplayExpired) {

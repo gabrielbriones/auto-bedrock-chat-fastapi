@@ -486,6 +486,7 @@ class BedrockChatPlugin:
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
                             "feedback_enabled": feedback_enabled,
+                            "lock_input_while_responding": self.config.ui_lock_input_while_responding,
                             # Admin Dashboard button visibility probe.
                             # When admin_enabled=False the button is never
                             # rendered; the capability endpoint is also
