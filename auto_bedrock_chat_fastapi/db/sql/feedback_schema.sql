@@ -67,9 +67,9 @@ CREATE TABLE IF NOT EXISTS feedback (
     reviewed_at         TIMESTAMPTZ,
 
     -- Set by the synthesizer when this entry is incorporated into a KB article.
-    -- ON DELETE SET NULL so that deleting the article returns the row to the
-    -- "approved but not yet integrated" queue automatically.
-    integrated_into_kb_id   TEXT        REFERENCES documents(id) ON DELETE SET NULL,
+    -- Plain TEXT (no FK) so this table can be deployed independently of the
+    -- KB store (e.g. feedback-only deployments or separate Postgres DBs).
+    integrated_into_kb_id   TEXT,
     integrated_at           TIMESTAMPTZ,
 
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -124,7 +124,7 @@ BEGIN
         WHERE table_name = 'feedback' AND column_name = 'integrated_into_kb_id'
     ) THEN
         ALTER TABLE feedback
-            ADD COLUMN integrated_into_kb_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+            ADD COLUMN integrated_into_kb_id TEXT,
             ADD COLUMN integrated_at TIMESTAMPTZ,
             ADD CONSTRAINT feedback_integrated_requires_approved_correction
                 CHECK (
@@ -178,27 +178,3 @@ CREATE INDEX IF NOT EXISTS idx_feedback_user_created
 -- Per-session lookups.
 CREATE INDEX IF NOT EXISTS idx_feedback_session
     ON feedback (session_id);
-
--- ---------------------------------------------------------------------------
--- Trigger: keep integrated_at in sync with integrated_into_kb_id
---
--- The FK column has ON DELETE SET NULL, which only nulls integrated_into_kb_id
--- when the referenced KB document is deleted.  integrated_at would then remain
--- set, violating the feedback_integrated_copresence constraint.  This trigger
--- fires BEFORE UPDATE and clears integrated_at whenever integrated_into_kb_id
--- transitions to NULL.  CREATE OR REPLACE makes it idempotent on every restart.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION feedback_sync_integrated_at()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.integrated_into_kb_id IS NULL AND OLD.integrated_into_kb_id IS NOT NULL THEN
-        NEW.integrated_at := NULL;
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_feedback_sync_integrated_at ON feedback;
-CREATE TRIGGER trg_feedback_sync_integrated_at
-    BEFORE UPDATE ON feedback
-    FOR EACH ROW EXECUTE FUNCTION feedback_sync_integrated_at();

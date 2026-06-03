@@ -296,6 +296,13 @@ def register_admin_synthesis_routes(
                 detail=str(exc),
             ) from exc
 
+        if result.error:
+            raise AdminAPIError(
+                status_code=500,
+                code="synthesis_failed",
+                detail=result.error,
+            )
+
         return SingleEntrySynthesisResponse(
             tag=result.tag,
             action=result.action.value,

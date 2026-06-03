@@ -61,8 +61,8 @@ with multiple tags participates in each group; it is marked integrated
 after the first successful synthesis and skipped in subsequent groups
 within the same run to avoid double-marking.
 
-Entries with **no** `reviewer_tags` are routed to a synthetic internal
-tag (`feedback-<id-prefix>`) so they can still be synthesized. The
+Entries with **no** `reviewer_tags` are routed to a fixed internal
+tag (`"untagged"`) so they can still be synthesized. The
 resulting KB document is tagged with an empty `tags` list and given the
 topic `"Feedback review"` — not the internal routing key — so the
 knowledge base stays clean.

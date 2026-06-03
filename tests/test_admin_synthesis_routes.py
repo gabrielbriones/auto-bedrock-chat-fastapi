@@ -322,6 +322,23 @@ class TestTriggerEntry:
         resp = client.post(f"{_SYNTHESIS_PREFIX}/trigger/{uuid4()}")
         assert resp.status_code == 422
 
+    def test_returns_500_when_synthesis_fails_internally(self, feedback_store, kb_store):
+        synth, entry_id = _make_synthesizer()
+        synth.synthesize_entry = AsyncMock(
+            return_value=TagGroupResult(
+                tag="perf",
+                action=SynthesisAction.SKIP,
+                kb_doc_id=None,
+                feedback_ids_marked=[],
+                error="LLM returned invalid JSON",
+            )
+        )
+        client = _build_app(feedback_store, kb_store, synth)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/trigger/{entry_id}")
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "synthesis_failed"
+        assert "LLM returned invalid JSON" in resp.json()["detail"]
+
     def test_feedback_ids_marked_in_response(self, feedback_store, kb_store):
         synth, entry_id = _make_synthesizer()
         client = _build_app(feedback_store, kb_store, synth)

@@ -463,6 +463,7 @@ class FeedbackSynthesizer:
                     content=doc_content,
                     title=title,
                     metadata={
+                        **(existing_doc.metadata or {}),
                         "tags": merged_tags,
                         "synthesized": True,
                         "source_feedback_ids": merged_ids,
