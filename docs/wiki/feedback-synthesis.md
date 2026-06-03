@@ -63,18 +63,19 @@ within the same run to avoid double-marking.
 
 Entries with **no** `reviewer_tags` are routed to a fixed internal
 tag (`"untagged"`) so they can still be synthesized. The
-resulting KB document is tagged with an empty `tags` list and given the
-topic `"Feedback review"` — not the internal routing key — so the
-knowledge base stays clean.
+resulting KB document is stored with `metadata.tags = ["untagged"]`;
+this ensures the next synthesis run can find and update the document
+(via `KBDocumentListFilters(tags=["untagged"])`) instead of creating
+duplicate articles on every pass.
 
 ### KB article metadata
 
-| Field  | Value                                                                                  |
-| ------ | -------------------------------------------------------------------------------------- |
-| source | `"feedback"`                                                                           |
-| topic  | `"Feedback review"` (admin can change it later via the [KB Management API](admin-api)) |
-| tags   | Union of all `reviewer_tags` across the contributing entries (empty if none set)       |
-| title  | LLM-generated concise title                                                            |
+| Field  | Value                                                                                          |
+| ------ | ---------------------------------------------------------------------------------------------- |
+| source | `"feedback"`                                                                                   |
+| topic  | `"Feedback review"` (admin can change it later via the [KB Management API](admin-api))         |
+| tags   | Union of all `reviewer_tags` across the contributing entries; `["untagged"]` when none are set |
+| title  | LLM-generated concise title                                                                    |
 
 ### LLM action semantics
 
@@ -215,7 +216,7 @@ the `action` rules; copy it as a starting point when writing a custom
 prompt.
 
 > If you deploy from a framework like workload-analyzer that has its own
-> `Settings` class, define `bedrock_synthesis_system_prompt` there and
+> `Settings` class, define `feedback_synthesis_system_prompt` there and
 > pass it to `add_bedrock_chat(...)` — or simply set the env var and
 > `ChatConfig` will pick it up automatically.
 

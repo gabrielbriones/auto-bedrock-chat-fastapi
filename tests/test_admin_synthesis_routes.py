@@ -361,6 +361,24 @@ class TestTriggerEntry:
         assert resp.status_code == 200
         assert resp.json()["action"] == "update"
 
+    def test_returns_409_when_batch_is_running(self, feedback_store, kb_store):
+        """Per-entry trigger must be rejected while a batch run is in progress."""
+        synth, entry_id = _make_synthesizer(action="create")
+        event = asyncio.Event()
+
+        async def _slow_synthesize(*args, **kwargs):
+            await event.wait()  # blocks until the test releases it
+            return SynthesisRunResult(total_integrated=0, errors=[])
+
+        synth.synthesize_all = _slow_synthesize
+        client = _build_app(feedback_store, kb_store, synth)
+        # Start the batch run so state.phase == RUNNING
+        client.post(f"{_SYNTHESIS_PREFIX}/trigger")
+        # Per-entry trigger should now return 409
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/trigger/{entry_id}")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "synthesis_already_running"
+
 
 # ---------------------------------------------------------------------------
 # _run_batch helper

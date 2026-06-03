@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .admin_errors import ADMIN_COMMON_RESPONSES
 from .db.feedback_base import BaseFeedbackStore
@@ -62,7 +62,7 @@ class SynthesisStatus(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     total_integrated: int = 0
-    errors: list[str] = []
+    errors: list[str] = Field(default_factory=list)
     #: ``None`` for batch runs; set to the feedback_id for per-entry runs.
     feedback_id: Optional[str] = None
 
@@ -75,7 +75,7 @@ class SingleEntrySynthesisResponse(BaseModel):
     tag: str
     action: str
     kb_doc_id: Optional[str] = None
-    feedback_ids_marked: list[str] = []
+    feedback_ids_marked: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +264,16 @@ def register_admin_synthesis_routes(
 
         Intended for the per-review "Integrate into KB" button in the
         admin dashboard.  The entry must be ``approved``; returns ``422``
-        otherwise.  Returns ``409`` if the entry is already integrated.
-        Returns ``404`` if the entry does not exist.
+        otherwise.  Returns ``409`` if the entry is already integrated or
+        if a batch run is currently in progress.  Returns ``404`` if the
+        entry does not exist.
         """
+        if state.status.phase == RunPhase.RUNNING:
+            raise AdminAPIError(
+                status_code=409,
+                code="synthesis_already_running",
+                detail="a batch synthesis run is in progress; retry after it completes",
+            )
         try:
             result: TagGroupResult = await synth.synthesize_entry(
                 feedback_id,
