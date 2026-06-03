@@ -194,11 +194,17 @@ class ChatClient {
         if (!window.CONFIG.lockInputWhileResponding) return;
         if (!this.awaitingResponse) return;
         this.awaitingResponse = false;
-        this.messageInput.disabled = false;
         this.messageInput.placeholder = 'Type your message...';
         this.messageInput.classList.remove('input-locked');
-        this.sendButton.disabled = false;
-        this._updatePresetButtonStates();
+
+        // Restore input state using the existing connection/auth gates.
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && (!window.CONFIG.requireAuth || this.authenticated)) {
+            this.enableInput();
+        } else {
+            this.messageInput.disabled = true;
+            this.sendButton.disabled = true;
+            this._disablePresetButtons();
+        }
     }
 
     _renderVariablesSection() {
