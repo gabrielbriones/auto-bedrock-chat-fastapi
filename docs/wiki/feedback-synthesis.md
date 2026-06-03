@@ -136,7 +136,9 @@ same admin authorization as the rest of the admin API. See
 
 ### `GET /admin/synthesis/status`
 
-Returns the in-memory state of the most recent batch run.
+Returns the in-memory state of the most recent **batch** run. Per-entry triggers
+(`POST /admin/synthesis/trigger/{feedback_id}`) return their result synchronously
+and do not update this endpoint's state.
 
 ```json
 {
@@ -152,9 +154,9 @@ Returns the in-memory state of the most recent batch run.
 | Field              | Notes                                                                              |
 | ------------------ | ---------------------------------------------------------------------------------- |
 | `phase`            | `idle` / `running` / `completed` / `failed`                                        |
-| `total_integrated` | Number of feedback entries marked as integrated in the last run.                   |
+| `total_integrated` | Number of feedback entries marked as integrated in the last batch run.             |
 | `errors`           | Per-tag error messages; non-empty means some groups failed while others succeeded. |
-| `feedback_id`      | Set to the UUID when the last run was a per-entry trigger; `null` for batch runs.  |
+| `feedback_id`      | Reserved field; always `null` in the current implementation.                       |
 
 > **State is ephemeral.** The in-memory state resets on every process
 > restart. Entries mid-integration when the process dies are retried on

@@ -438,7 +438,13 @@ class FeedbackSynthesizer:
 
             # Collect the actual reviewer_tags from the entries so the KB
             # article is tagged with domain labels, not the internal routing key.
-            doc_tags: List[str] = list(dict.fromkeys(t for e in entries for t in (e.reviewer_tags or [])))
+            # Fall back to [_UNTAGGED_TAG] when all entries lack reviewer_tags so
+            # that the stored metadata.tags matches the lookup filter used on the
+            # next run (KBDocumentListFilters(tags=[tag])) and avoids creating
+            # duplicate "untagged" documents on every synthesis pass.
+            doc_tags: List[str] = list(dict.fromkeys(t for e in entries for t in (e.reviewer_tags or []))) or [
+                _UNTAGGED_TAG
+            ]
 
             if action == SynthesisAction.SKIP and existing_doc is not None:
                 # LLM confirmed no new information; reuse the existing article.

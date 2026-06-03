@@ -1347,6 +1347,7 @@ class BedrockChatPlugin:
 
             synth = FeedbackSynthesizer(
                 synthesis_system_prompt=self.config.feedback_synthesis_system_prompt or None,
+                embedding_model_id=self.config.kb_embedding_model,
             )
             register_admin_synthesis_routes(
                 self.app,

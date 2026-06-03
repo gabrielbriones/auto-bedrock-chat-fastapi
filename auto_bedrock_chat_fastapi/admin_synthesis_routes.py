@@ -99,8 +99,10 @@ class _RunState:
 
     @property
     def status(self) -> SynthesisStatus:
-        # Return a snapshot so callers cannot mutate our internal copy.
-        return self._status.model_copy()
+        # Return a deep snapshot so callers cannot mutate nested fields
+        # (e.g. the ``errors`` list) on the returned object and affect our
+        # internal state.
+        return self._status.model_copy(deep=True)
 
     def _mark_running(self, feedback_id: Optional[str] = None) -> None:
         self._status = SynthesisStatus(
@@ -181,20 +183,17 @@ def register_admin_synthesis_routes(
     """
     synth = synthesizer or FeedbackSynthesizer()
     state = _RunState()
-    router = APIRouter()
-
-    synthesis_prefix = f"{prefix}/synthesis"
+    router = APIRouter(prefix=f"{prefix}/synthesis", tags=["admin-synthesis"])
 
     # ------------------------------------------------------------------
     # GET /admin/synthesis/status
     # ------------------------------------------------------------------
 
-    @app.get(
-        f"{synthesis_prefix}/status",
+    @router.get(
+        "/status",
         response_model=SynthesisStatus,
         responses={**ADMIN_COMMON_RESPONSES},
         summary="Return current synthesis run state",
-        tags=["admin-synthesis"],
     )
     async def get_synthesis_status(identity=Depends(require_admin)) -> SynthesisStatus:  # noqa: B008
         """Return the in-memory synthesis run state.
@@ -208,8 +207,8 @@ def register_admin_synthesis_routes(
     # POST /admin/synthesis/trigger  (full batch)
     # ------------------------------------------------------------------
 
-    @app.post(
-        f"{synthesis_prefix}/trigger",
+    @router.post(
+        "/trigger",
         response_model=SynthesisStatus,
         status_code=202,
         responses={
@@ -219,7 +218,6 @@ def register_admin_synthesis_routes(
             },
         },
         summary="Trigger a full-batch synthesis run",
-        tags=["admin-synthesis"],
     )
     async def trigger_synthesis(identity=Depends(require_admin)) -> SynthesisStatus:  # noqa: B008
         """Trigger an on-demand full-batch synthesis run.
@@ -246,8 +244,8 @@ def register_admin_synthesis_routes(
     # POST /admin/synthesis/trigger/{feedback_id}  (per-entry)
     # ------------------------------------------------------------------
 
-    @app.post(
-        f"{synthesis_prefix}/trigger/{{feedback_id}}",
+    @router.post(
+        "/trigger/{feedback_id}",
         response_model=SingleEntrySynthesisResponse,
         status_code=200,
         responses={
@@ -257,7 +255,6 @@ def register_admin_synthesis_routes(
             422: {"description": ("Entry is not in 'approved' state or is already integrated")},
         },
         summary="Synthesize a single approved feedback entry on demand",
-        tags=["admin-synthesis"],
     )
     async def trigger_synthesis_for_entry(
         feedback_id: UUID,
