@@ -12,9 +12,9 @@ feature and the knowledge base. It exposes two route groups under
 - **Capability probe** — `GET /admin/_capabilities` — tells the Chat UI
   whether the current caller is an admin; always 200.
 
-The synthesis-control surface (`/admin/synthesis/*`) is **reserved but
-unimplemented** in this release; requests return 404. See
-[docs/plans/feedback-review-api.md](../plans/feedback-review-api.md) §T7.
+The synthesis-control surface (`/admin/synthesis/*`) — status, full-batch
+trigger, and per-entry trigger — is documented on the
+[Feedback Synthesis](feedback-synthesis) page.
 
 > **Security boundary:** hiding admin endpoints behind `admin_enabled` is
 > a configuration switch, not a security boundary. Authorization is
@@ -370,8 +370,7 @@ ergonomic, but it is a foot-gun:
 ## Out of scope (intentional)
 
 - `POST /admin/kb/documents` — creation is owned by the populate
-  pipeline (and, post-Phase 3, the synthesizer).
-- `/admin/synthesis/*` — reserved for Phase 3.
+  pipeline and the synthesizer (see [Feedback Synthesis](feedback-synthesis)).
 - Rate limiting — operationally enforced upstream (Nginx / ALB).
 - Persisting audit logs to a DB table — handled by the host app's log
   shipper.
@@ -382,6 +381,8 @@ ergonomic, but it is a foot-gun:
 
 - [Feedback Collection](feedback-collection) — the user-facing 👍 / 👎
   side; the admin API is the reviewer side of the same loop.
+- [Feedback Synthesis](feedback-synthesis) — the
+  `/admin/synthesis/*` routes that turn approved entries into KB articles.
 - [Authentication](authentication) — `auth_verification_endpoint`
   contract, used here as one of the two admin identity sources.
 - [SSO](sso) — cookie-based identity, used here as the other admin

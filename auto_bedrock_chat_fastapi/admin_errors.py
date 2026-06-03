@@ -1,4 +1,4 @@
-"""Admin API error handlers + OpenAPI metadata (XMGPLAT-10417, T6).
+"""Admin API error handlers + OpenAPI metadata.
 
 Registers a single set of FastAPI exception handlers that map every
 admin-route error into the standardized :class:`ErrorResponse` envelope

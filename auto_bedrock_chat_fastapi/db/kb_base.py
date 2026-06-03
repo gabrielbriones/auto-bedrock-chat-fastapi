@@ -60,7 +60,7 @@ class BaseKBStore(ABC):
         """Return unique topics with document counts."""
 
     # ------------------------------------------------------------------
-    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # Admin operations
     # ------------------------------------------------------------------
 
     @abstractmethod

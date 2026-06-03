@@ -1,4 +1,4 @@
-"""Tests for the XMGPLAT-10417 Phase 2 KB admin extensions.
+"""Tests for KB admin extensions.
 
 Covers the new ``list_documents`` / ``count_documents`` / ``update_document``
 methods on :class:`SQLiteKBStore` (and via the BaseKBStore interface) plus

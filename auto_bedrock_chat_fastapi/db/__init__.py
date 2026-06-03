@@ -8,7 +8,7 @@ plugin:
   knowledge-base vector storage (SQLite + sqlite-vec or PostgreSQL +
   pgvector).
 * :mod:`.feedback_base`, :mod:`.feedback_sqlite`,
-  :mod:`.feedback_postgres` \u2014 user-feedback storage (XMGPLAT-10417).
+  :mod:`.feedback_postgres` \u2014 user-feedback storage.
 
 The two factory functions exported here \u2014 :func:`create_kb_store` and
 :func:`create_feedback_store` \u2014 instantiate the backend selected by the

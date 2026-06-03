@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- XMGPLAT-10417 — Feedback Storage Backend
+-- Feedback Storage Backend
 --
 -- Schema for the `feedback` table that backs FeedbackStore.
 --
@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS feedback (
     reviewer_comment    TEXT,
     reviewed_at         TIMESTAMPTZ,
 
+    -- Set by the synthesizer when this entry is incorporated into a KB article.
+    -- ON DELETE SET NULL so that deleting the article returns the row to the
+    -- "approved but not yet integrated" queue automatically.
+    integrated_into_kb_id   TEXT        REFERENCES documents(id) ON DELETE SET NULL,
+    integrated_at           TIMESTAMPTZ,
+
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- Mirror the Pydantic-side validation (see auto_bedrock_chat_fastapi/models.py):
@@ -87,6 +93,19 @@ CREATE TABLE IF NOT EXISTS feedback (
                 AND length(btrim(reviewer_id)) > 0
                 AND reviewed_at IS NOT NULL
             )
+        ),
+    -- Synthesis provenance invariants:
+    -- Integration requires only that the entry has been approved.
+    -- correction_text is not required (synthesis can use reviewer_comment alone).
+    CONSTRAINT feedback_integrated_requires_approved_correction
+        CHECK (
+            integrated_into_kb_id IS NULL
+            OR review_status = 'approved'
+        ),
+    -- Both integration fields must be set together or both null.
+    CONSTRAINT feedback_integrated_copresence
+        CHECK (
+            (integrated_into_kb_id IS NULL) = (integrated_at IS NULL)
         )
 );
 
@@ -94,7 +113,53 @@ CREATE TABLE IF NOT EXISTS feedback (
 -- Indexes
 -- ---------------------------------------------------------------------------
 
--- Admin queue: list pending entries ordered by submission time.
+-- Add synthesis provenance columns
+-- to existing deployments that predate the DDL.  Both statements are
+-- no-ops on fresh installs where the columns are already present in the
+-- CREATE TABLE above.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback' AND column_name = 'integrated_into_kb_id'
+    ) THEN
+        ALTER TABLE feedback
+            ADD COLUMN integrated_into_kb_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+            ADD COLUMN integrated_at TIMESTAMPTZ,
+            ADD CONSTRAINT feedback_integrated_requires_approved_correction
+                CHECK (
+                    integrated_into_kb_id IS NULL
+                    OR review_status = 'approved'
+                ),
+            ADD CONSTRAINT feedback_integrated_copresence
+                CHECK ((integrated_into_kb_id IS NULL) = (integrated_at IS NULL));
+    END IF;
+END$$;
+
+-- Constraint relaxation migration: drop the old strict constraint that required
+-- correction_text IS NOT NULL and replace it with one that only requires
+-- review_status = 'approved'.  Idempotent — safe to run on every startup.
+DO $$
+DECLARE
+    v_def TEXT;
+BEGIN
+    SELECT pg_get_constraintdef(oid)
+    INTO v_def
+    FROM pg_constraint
+    WHERE conrelid = 'feedback'::regclass
+      AND conname = 'feedback_integrated_requires_approved_correction';
+
+    IF FOUND AND v_def LIKE '%correction_text%' THEN
+        ALTER TABLE feedback
+            DROP CONSTRAINT feedback_integrated_requires_approved_correction,
+            ADD CONSTRAINT feedback_integrated_requires_approved_correction
+                CHECK (
+                    integrated_into_kb_id IS NULL
+                    OR review_status = 'approved'
+                );
+    END IF;
+END$$;
+
 CREATE INDEX IF NOT EXISTS idx_feedback_status_created
     ON feedback (review_status, created_at);
 
@@ -113,3 +178,27 @@ CREATE INDEX IF NOT EXISTS idx_feedback_user_created
 -- Per-session lookups.
 CREATE INDEX IF NOT EXISTS idx_feedback_session
     ON feedback (session_id);
+
+-- ---------------------------------------------------------------------------
+-- Trigger: keep integrated_at in sync with integrated_into_kb_id
+--
+-- The FK column has ON DELETE SET NULL, which only nulls integrated_into_kb_id
+-- when the referenced KB document is deleted.  integrated_at would then remain
+-- set, violating the feedback_integrated_copresence constraint.  This trigger
+-- fires BEFORE UPDATE and clears integrated_at whenever integrated_into_kb_id
+-- transitions to NULL.  CREATE OR REPLACE makes it idempotent on every restart.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION feedback_sync_integrated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.integrated_into_kb_id IS NULL AND OLD.integrated_into_kb_id IS NOT NULL THEN
+        NEW.integrated_at := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_feedback_sync_integrated_at ON feedback;
+CREATE TRIGGER trg_feedback_sync_integrated_at
+    BEFORE UPDATE ON feedback
+    FOR EACH ROW EXECUTE FUNCTION feedback_sync_integrated_at();

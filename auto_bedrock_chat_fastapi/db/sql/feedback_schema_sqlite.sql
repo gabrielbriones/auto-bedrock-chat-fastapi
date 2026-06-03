@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- XMGPLAT-10417 — Feedback Storage Backend (SQLite variant)
+-- Feedback Storage Backend (SQLite variant)
 --
 -- Mirrors auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql for the SQLite
 -- backend used as the zero-config default. Differences vs. the Postgres DDL:
@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS feedback (
     reviewer_comment    TEXT,
     reviewed_at         TEXT,
 
+    -- SQLite does not enforce FK constraints by default; co-presence and
+    -- approval invariants are enforced by CHECK constraints and the
+    -- application layer (Pydantic model validators).
+    integrated_into_kb_id   TEXT,
+    integrated_at           TEXT,
+
     created_at          TEXT NOT NULL,
 
     -- A correction is a proposed fix to the AI's answer; only meaningful
@@ -59,7 +65,14 @@ CREATE TABLE IF NOT EXISTS feedback (
             AND length(trim(reviewer_id)) > 0
             AND reviewed_at IS NOT NULL
         )
-    )
+    ),
+    -- Synthesis provenance invariants:
+    -- Integration requires only that the entry has been approved.
+    CHECK (
+        integrated_into_kb_id IS NULL
+        OR review_status = 'approved'
+    ),
+    CHECK ((integrated_into_kb_id IS NULL) = (integrated_at IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_status_created

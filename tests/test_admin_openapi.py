@@ -1,4 +1,4 @@
-"""Tests for the standardized admin-API OpenAPI schema (XMGPLAT-10417, T6).
+"""Tests for the standardized admin-API OpenAPI schema.
 
 Verifies that ``/openapi.json`` advertises:
 - every admin endpoint (path + verb)

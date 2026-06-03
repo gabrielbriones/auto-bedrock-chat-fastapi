@@ -1,4 +1,4 @@
-"""Tests for the SQLite-backed FeedbackStore (XMGPLAT-10417).
+"""Tests for the SQLite-backed FeedbackStore.
 
 Mirrors the behavior covered by the Postgres-backed test_feedback_store.py
 so the two backends provide functionally equivalent surfaces.
@@ -552,7 +552,7 @@ class TestFeedbackListFilters:
 
 
 class TestLegacyCorrectionMigration:
-    """Pre-Phase-2 schemas allowed ``rating='correction'``. The current
+    """Schemas allowed ``rating='correction'``. The current
     schema forbids it via CHECK, but existing rows in long-lived dev
     DBs must be migrated in place on store init so downstream code that
     re-inserts / updates those rows doesn't fail. The model-layer
@@ -672,3 +672,108 @@ class TestLegacyCorrectionMigration:
         )
         assert entry.rating == Rating.NEGATIVE
         assert entry.correction_text == "fix"
+
+
+# ---------------------------------------------------------------------------
+# Integrated into KB storage layer
+# ---------------------------------------------------------------------------
+
+
+class TestMarkIntegrated:
+    async def test_mark_integrated_sets_fields(self, store):
+        entry = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix"))
+        await store.update_review(entry.id, ReviewStatus.APPROVED, reviewer_id="rev", tags=["perf"], comment=None)
+
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc)
+        updated = await store.mark_integrated(entry.id, kb_id, ts)
+
+        assert updated.integrated_into_kb_id == kb_id
+        assert updated.integrated_at is not None
+        # Confirm the change is persisted (re-fetch from DB)
+        fetched = await store.get(entry.id)
+        assert fetched is not None
+        assert fetched.integrated_into_kb_id == kb_id
+
+    async def test_mark_integrated_raises_for_missing_id(self, store):
+        with pytest.raises(FeedbackNotFoundError):
+            await store.mark_integrated(uuid4(), f"synthesis-test-{uuid4().hex[:8]}", datetime.now(timezone.utc))
+
+    async def test_mark_integrated_idempotent_on_same_kb_id(self, store):
+        entry = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix"))
+        await store.update_review(entry.id, ReviewStatus.APPROVED, reviewer_id="rev", tags=["t"], comment=None)
+
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc)
+        first = await store.mark_integrated(entry.id, kb_id, ts)
+        second = await store.mark_integrated(entry.id, kb_id, ts)
+        assert first.integrated_into_kb_id == second.integrated_into_kb_id
+
+    async def _setup(self, store):
+        """Create 3 entries: 2 approved+integrated, 1 approved+not integrated."""
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc)
+
+        a = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix a"))
+        await store.update_review(a.id, ReviewStatus.APPROVED, "rev", ["t"], None)
+        await store.mark_integrated(a.id, kb_id, ts)
+
+        b = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix b"))
+        await store.update_review(b.id, ReviewStatus.APPROVED, "rev", ["t"], None)
+        await store.mark_integrated(b.id, kb_id, ts)
+
+        c = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix c"))
+        await store.update_review(c.id, ReviewStatus.APPROVED, "rev", ["t"], None)
+
+        return a, b, c
+
+    async def test_has_integrated_true_returns_only_integrated(self, store):
+        a, b, c = await self._setup(store)
+        rows = await store.list_entries(FeedbackListFilters(has_integrated=True))
+        assert {r.id for r in rows} == {a.id, b.id}
+
+    async def test_has_integrated_false_returns_only_not_integrated(self, store):
+        a, b, c = await self._setup(store)
+        rows = await store.list_entries(FeedbackListFilters(has_integrated=False))
+        assert {r.id for r in rows} == {c.id}
+
+    async def test_has_integrated_none_returns_all(self, store):
+        a, b, c = await self._setup(store)
+        rows = await store.list_entries(FeedbackListFilters())
+        assert {r.id for r in rows} == {a.id, b.id, c.id}
+
+    async def test_count_entries_respects_has_integrated(self, store):
+        await self._setup(store)
+        assert await store.count_entries(FeedbackListFilters(has_integrated=True)) == 2
+        assert await store.count_entries(FeedbackListFilters(has_integrated=False)) == 1
+
+
+class TestIntegratedCountStat:
+    async def test_integrated_count_zero_when_none_integrated(self, store):
+        await store.create(_entry())
+        stats = await store.stats()
+        assert stats.integrated_count == 0
+
+    async def test_integrated_count_reflects_integrated_entries(self, store):
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc)
+
+        a = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix a"))
+        await store.update_review(a.id, ReviewStatus.APPROVED, "rev", ["t"], None)
+        await store.mark_integrated(a.id, kb_id, ts)
+
+        b = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix b"))
+        await store.update_review(b.id, ReviewStatus.APPROVED, "rev", ["t"], None)
+        await store.mark_integrated(b.id, kb_id, ts)
+
+        # Pending entry should not be counted
+        await store.create(_entry())
+
+        stats = await store.stats()
+        assert stats.integrated_count == 2
+
+    async def test_integrated_count_included_in_round_trip(self, store):
+        # Verify field is present and non-negative in default stats response.
+        stats = await store.stats()
+        assert hasattr(stats, "integrated_count")
+        assert stats.integrated_count >= 0

@@ -39,7 +39,7 @@ class ChatCompletionResult:
 
 
 # ---------------------------------------------------------------------------
-# Feedback models (XMGPLAT-10417 — Phase 2 Feedback Storage Backend)
+# Feedback models
 # ---------------------------------------------------------------------------
 
 
@@ -121,6 +121,10 @@ class FeedbackEntry(BaseModel):
     reviewer_comment: Optional[str] = None
     reviewed_at: Optional[datetime] = None
 
+    # Set by the synthesizer when this entry is incorporated into a KB article.
+    integrated_into_kb_id: Optional[str] = None
+    integrated_at: Optional[datetime] = None
+
     created_at: datetime = Field(default_factory=_utcnow)
 
     @field_validator("rating", mode="before")
@@ -172,6 +176,20 @@ class FeedbackEntry(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_synthesis_provenance(self) -> "FeedbackEntry":
+        # integrated_into_kb_id and integrated_at must be set together.
+        has_id = self.integrated_into_kb_id is not None
+        has_ts = self.integrated_at is not None
+        if has_id != has_ts:
+            raise ValueError("integrated_into_kb_id and integrated_at must both be set or both be None")
+        # Integration requires an approved entry; correction_text is optional
+        # (synthesis can proceed from reviewer_comment alone).
+        if has_id:
+            if self.review_status != ReviewStatus.APPROVED:
+                raise ValueError("integrated_into_kb_id requires review_status='approved'")
+        return self
+
 
 class TagCount(BaseModel):
     """A single ``(tag, count)`` pair used in :class:`FeedbackStats.top_tags`."""
@@ -186,8 +204,8 @@ class FeedbackStats(BaseModel):
     """Aggregate counts for the feedback table.
 
     ``top_tags``, ``oldest_pending_hours``, and ``with_correction`` are
-    extended fields populated by the admin review API (XMGPLAT-10417,
-    T2.2). They default to safe empty values so existing callers that
+    extended fields populated by the admin review API.
+    They default to safe empty values so existing callers that
     only inspect ``total`` / ``by_status`` / ``by_rating`` continue to
     work.
 
@@ -205,6 +223,7 @@ class FeedbackStats(BaseModel):
     with_correction: int = 0
     top_tags: List[TagCount] = Field(default_factory=list)
     oldest_pending_hours: Optional[float] = None
+    integrated_count: int = 0
 
 
 class FeedbackListFilters(BaseModel):
@@ -221,6 +240,7 @@ class FeedbackListFilters(BaseModel):
     status: Optional[ReviewStatus] = None
     rating: Optional[Rating] = None
     has_correction: Optional[bool] = None
+    has_integrated: Optional[bool] = None
     tags: Optional[List[str]] = None
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
@@ -306,7 +326,7 @@ class ReviewUpdateRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Knowledge-base admin models (XMGPLAT-10417 — Phase 2 KB admin extensions)
+# Knowledge-base admin models
 # ---------------------------------------------------------------------------
 
 
@@ -411,7 +431,7 @@ class KBDocumentListResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Admin API error envelope (XMGPLAT-10417 — Phase 2, T6.2)
+# Admin API error envelope
 # ---------------------------------------------------------------------------
 
 

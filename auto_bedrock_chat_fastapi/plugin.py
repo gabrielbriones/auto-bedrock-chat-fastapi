@@ -199,7 +199,7 @@ class BedrockChatPlugin:
                     exc_info=True,
                 )
 
-        # Feedback store (XMGPLAT-10417). Constructed eagerly so the WebSocket
+        # Feedback store. Constructed eagerly so the WebSocket
         # handler can be wired immediately; the connection pool / SQLite file
         # is opened in the FastAPI startup event below and closed during
         # shutdown. Backend selection (sqlite vs postgres) and configuration
@@ -216,7 +216,7 @@ class BedrockChatPlugin:
             allow_anonymous=getattr(self.config, "feedback_allow_anonymous", False),
         )
 
-        # Admin authorizer (XMGPLAT-10417 Phase 2). Built unconditionally so
+        # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
         from .admin_auth import build_admin_authorizer
@@ -590,8 +590,8 @@ class BedrockChatPlugin:
         if self.config.sso_enabled:
             self._setup_sso_routes()
 
-        # Admin endpoints (XMGPLAT-10417 Phase 2). Reserve the
-        # ``/admin/synthesis/*`` prefix for the Phase 3 plan — no stubs
+        # Admin endpoints. Reserve the
+        # ``/admin/synthesis/*`` prefix for the synthesis provenance endpoint(s).
         # registered here so unknown subpaths get a clean 404.
         if self.config.admin_enabled:
             self._setup_admin_routes()
@@ -1338,7 +1338,29 @@ class BedrockChatPlugin:
                 "(BEDROCK_KB_ENABLED=false or backend init failed)"
             )
 
-        logger.info("Admin dependency registered (prefix=%s); routes will be added by T3/T5", admin_prefix)
+        # Synthesis routes. Requires both a
+        # feedback store and a KB store; without either, synthesis has
+        # nothing to read from or write to.
+        if getattr(self, "_feedback_store", None) is not None and getattr(self, "_kb_store", None) is not None:
+            from .admin_synthesis_routes import register_admin_synthesis_routes
+            from .synthesizer import FeedbackSynthesizer
+
+            synth = FeedbackSynthesizer(
+                synthesis_system_prompt=self.config.feedback_synthesis_system_prompt or None,
+            )
+            register_admin_synthesis_routes(
+                self.app,
+                prefix=admin_prefix,
+                feedback_store=self._feedback_store,
+                kb_store=self._kb_store,
+                require_admin=require_admin,
+                synthesizer=synth,
+                bedrock_client=self.bedrock_client,
+            )
+        else:
+            logger.info("Admin synthesis routes skipped: both feedback_store and kb_store " "must be configured")
+
+        logger.info("Admin routes registered (prefix=%s)", admin_prefix)
 
     def _setup_shutdown(self):
         """Setup shutdown handler and startup event for KB auto-population"""
