@@ -521,14 +521,26 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
                        SET integrated_into_kb_id = ?,
                            integrated_at         = ?
                      WHERE id = ?
+                       AND integrated_into_kb_id IS NULL
                     """,
                     (kb_doc_id, integrated_at_iso, str(feedback_id)),
                 )
                 if cur.rowcount == 0:
+                    # Either not found or already integrated; check the row.
+                    check = self._conn.execute(
+                        "SELECT integrated_into_kb_id FROM feedback WHERE id = ?",
+                        (str(feedback_id),),
+                    ).fetchone()
                     self._conn.rollback()
-                    from ..exceptions import FeedbackNotFoundError
+                    if check is None:
+                        from ..exceptions import FeedbackNotFoundError
 
-                    raise FeedbackNotFoundError(f"feedback {feedback_id} not found")
+                        raise FeedbackNotFoundError(f"feedback {feedback_id} not found")
+                    from ..exceptions import AlreadyIntegratedError
+
+                    raise AlreadyIntegratedError(
+                        f"feedback {feedback_id} is already integrated into KB document '{check[0]}'"
+                    )
                 self._conn.commit()
                 cur = self._conn.execute(
                     f"SELECT {_SELECT_COLS} FROM feedback WHERE id = ?",

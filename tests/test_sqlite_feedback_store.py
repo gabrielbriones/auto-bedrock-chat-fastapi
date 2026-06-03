@@ -15,7 +15,11 @@ import pytest
 
 from auto_bedrock_chat_fastapi.db import BaseFeedbackStore, create_feedback_store
 from auto_bedrock_chat_fastapi.db.feedback_sqlite import SQLiteFeedbackStore
-from auto_bedrock_chat_fastapi.exceptions import FeedbackNotFoundError, InvalidStatusTransitionError
+from auto_bedrock_chat_fastapi.exceptions import (
+    AlreadyIntegratedError,
+    FeedbackNotFoundError,
+    InvalidStatusTransitionError,
+)
 from auto_bedrock_chat_fastapi.models import FeedbackEntry, FeedbackListFilters, Rating, ReviewStatus
 
 
@@ -706,8 +710,10 @@ class TestMarkIntegrated:
         kb_id = f"synthesis-test-{uuid4().hex[:8]}"
         ts = datetime.now(timezone.utc)
         first = await store.mark_integrated(entry.id, kb_id, ts)
-        second = await store.mark_integrated(entry.id, kb_id, ts)
-        assert first.integrated_into_kb_id == second.integrated_into_kb_id
+        assert first.integrated_into_kb_id == kb_id
+        # Second call must raise AlreadyIntegratedError to prevent clobbering
+        with pytest.raises(AlreadyIntegratedError):
+            await store.mark_integrated(entry.id, kb_id, ts)
 
     async def _setup(self, store):
         """Create 3 entries: 2 approved+integrated, 1 approved+not integrated."""

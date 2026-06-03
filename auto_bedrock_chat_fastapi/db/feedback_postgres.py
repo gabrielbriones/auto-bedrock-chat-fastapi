@@ -532,6 +532,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                SET integrated_into_kb_id = %s,
                    integrated_at         = %s
              WHERE id = %s
+               AND integrated_into_kb_id IS NULL
             RETURNING {_SELECT_COLS}
         """
         async with self._pool.connection() as conn:
@@ -540,9 +541,21 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                 row = await cur.fetchone()
             await conn.commit()
         if row is None:
-            from ..exceptions import FeedbackNotFoundError  # local import avoids circular dep
+            # Either not found or already integrated; check which case it is.
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT integrated_into_kb_id FROM feedback WHERE id = %s",
+                        (feedback_id,),
+                    )
+                    check = await cur.fetchone()
+            if check is None:
+                from ..exceptions import FeedbackNotFoundError  # local import avoids circular dep
 
-            raise FeedbackNotFoundError(f"feedback {feedback_id} not found")
+                raise FeedbackNotFoundError(f"feedback {feedback_id} not found")
+            from ..exceptions import AlreadyIntegratedError
+
+            raise AlreadyIntegratedError(f"feedback {feedback_id} is already integrated into KB document '{check[0]}'")
         return self._row_to_entry(row)
 
     # ------------------------------------------------------------------

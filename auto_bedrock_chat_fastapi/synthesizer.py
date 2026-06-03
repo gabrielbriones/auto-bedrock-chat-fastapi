@@ -416,6 +416,7 @@ class FeedbackSynthesizer:
                 messages=messages,
                 model_id=model_id,
                 temperature=0.0,
+                tools_desc=None,  # Synthesis must never trigger tool calls
             )
 
             raw_content = response.get("content", "")

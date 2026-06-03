@@ -34,6 +34,7 @@ from .admin_errors import ADMIN_COMMON_RESPONSES
 from .db.feedback_base import BaseFeedbackStore
 from .db.kb_base import BaseKBStore
 from .exceptions import AdminAPIError, AlreadyIntegratedError, FeedbackNotFoundError
+from .models import ErrorResponse
 from .synthesizer import FeedbackSynthesizer, SynthesisRunResult, TagGroupResult
 
 logger = logging.getLogger(__name__)
@@ -214,6 +215,7 @@ def register_admin_synthesis_routes(
         responses={
             **ADMIN_COMMON_RESPONSES,
             409: {
+                "model": ErrorResponse,
                 "description": "A synthesis run is already in progress",
             },
         },
@@ -250,9 +252,13 @@ def register_admin_synthesis_routes(
         status_code=200,
         responses={
             **ADMIN_COMMON_RESPONSES,
-            404: {"description": "Feedback entry not found"},
-            409: {"description": "Entry is already integrated into the KB"},
-            422: {"description": ("Entry is not in 'approved' state or is already integrated")},
+            404: {"model": ErrorResponse, "description": "Feedback entry not found"},
+            409: {
+                "model": ErrorResponse,
+                "description": "Entry is already integrated into the KB or a batch run is in progress",
+            },
+            422: {"model": ErrorResponse, "description": "Entry is not in 'approved' state"},
+            500: {"model": ErrorResponse, "description": "Synthesis failed internally"},
         },
         summary="Synthesize a single approved feedback entry on demand",
     )
