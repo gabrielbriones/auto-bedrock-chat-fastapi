@@ -1,4 +1,4 @@
-"""Tests for the Expert Review Admin Feedback routes (XMGPLAT-10417, T3)."""
+"""Tests for the Expert Review Admin Feedback routes."""
 
 from __future__ import annotations
 

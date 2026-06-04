@@ -1,5 +1,5 @@
 """
-PostgreSQL-backed feedback store (XMGPLAT-10417).
+PostgreSQL-backed feedback store.
 
 Production backend for :class:`~.feedback_base.BaseFeedbackStore`. Schema:
 ``auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql``.
@@ -69,6 +69,8 @@ _FEEDBACK_COLUMNS: Tuple[str, ...] = (
     "reviewer_tags",
     "reviewer_comment",
     "reviewed_at",
+    "integrated_into_kb_id",
+    "integrated_at",
     "created_at",
 )
 _SELECT_COLS = ", ".join(_FEEDBACK_COLUMNS)
@@ -125,7 +127,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
 
     async def close(self) -> None:
         """Close the connection pool."""
-        await self._pool.close()
+        await self._pool.close(timeout=5)
 
     async def _apply_schema(self) -> None:
         package, filename = self.SCHEMA_RESOURCE
@@ -138,7 +140,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
     async def _migrate_legacy_correction_rows(self) -> None:
         """Rewrite legacy ``rating='correction'`` rows to ``'negative'``.
 
-        Pre-Phase-2 schemas allowed a third ``Rating`` value
+        Schemas allowed a third ``Rating`` value
         ``"correction"`` that was retired in favor of the orthogonal
         ``correction_text`` field. The ``feedback_rating`` enum
         definition uses ``IF NOT EXISTS``, so existing deployments may
@@ -151,6 +153,15 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         try:
             async with self._pool.connection() as conn:
                 async with conn.cursor() as cur:
+                    # Only run if 'correction' still exists in the enum; on
+                    # fresh deployments it was never added, and querying for it
+                    # raises "invalid input value for enum feedback_rating".
+                    await cur.execute(
+                        "SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid"
+                        " WHERE t.typname = 'feedback_rating' AND e.enumlabel = 'correction'"
+                    )
+                    if await cur.fetchone() is None:
+                        return  # enum value doesn't exist; nothing to migrate
                     await cur.execute("UPDATE feedback SET rating = 'negative' WHERE rating = 'correction'")
                     rowcount = cur.rowcount
                 await conn.commit()
@@ -183,13 +194,13 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                 rating, score, correction_text, user_comment,
                 kb_sources_used, model_id,
                 review_status, reviewer_id, reviewer_tags, reviewer_comment,
-                reviewed_at, created_at
+                reviewed_at, integrated_into_kb_id, integrated_at, created_at
             ) VALUES (
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s,
                 %s, %s, %s, %s,
-                %s, %s
+                %s, %s, %s, %s
             )
             RETURNING {_SELECT_COLS}
         """
@@ -210,6 +221,8 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             list(entry.reviewer_tags),
             entry.reviewer_comment,
             entry.reviewed_at,
+            entry.integrated_into_kb_id,
+            entry.integrated_at,
             entry.created_at,
         )
         async with self._pool.connection() as conn:
@@ -324,6 +337,10 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         if filters.tags:
             clauses.append("reviewer_tags && %s::text[]")
             params.append(list(filters.tags))
+        if filters.has_integrated is True:
+            clauses.append("integrated_into_kb_id IS NOT NULL")
+        elif filters.has_integrated is False:
+            clauses.append("integrated_into_kb_id IS NULL")
         return clauses, params
 
     async def list_entries(
@@ -447,6 +464,9 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                 await cur.execute("SELECT count(*) FROM feedback WHERE correction_text IS NOT NULL")
                 with_correction_row = await cur.fetchone()
 
+                await cur.execute("SELECT count(*) FROM feedback WHERE integrated_into_kb_id IS NOT NULL")
+                integrated_count_row = await cur.fetchone()
+
                 # Top 10 reviewer tags via ``unnest`` of the TEXT[] column.
                 # ``trim`` defends against any blank tags that slipped past
                 # the ``_strip_reviewer_tags`` validator.
@@ -478,6 +498,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         by_status = {ReviewStatus(s): int(c) for s, c in by_status_rows}
         by_rating = {Rating(r): int(c) for r, c in by_rating_rows}
         with_correction = int(with_correction_row[0]) if with_correction_row else 0
+        integrated_count = int(integrated_count_row[0]) if integrated_count_row else 0
         top_tags = [TagCount(tag=t, count=int(c)) for t, c in tag_rows]
         if oldest_row and oldest_row[0] is not None:
             # Clamp tiny negative values that can appear if ``now()`` and
@@ -490,9 +511,52 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             by_status=by_status,
             by_rating=by_rating,
             with_correction=with_correction,
+            integrated_count=integrated_count,
             top_tags=top_tags,
             oldest_pending_hours=oldest_pending_hours,
         )
+
+    async def mark_integrated(
+        self,
+        feedback_id: UUID,
+        kb_doc_id: str,
+        integrated_at: datetime,
+    ) -> FeedbackEntry:
+        """Set ``integrated_into_kb_id`` and ``integrated_at`` on the row.
+
+        Raises :exc:`~auto_bedrock_chat_fastapi.exceptions.FeedbackNotFoundError`
+        if ``feedback_id`` does not exist.
+        """
+        sql = f"""
+            UPDATE feedback
+               SET integrated_into_kb_id = %s,
+                   integrated_at         = %s
+             WHERE id = %s
+               AND integrated_into_kb_id IS NULL
+            RETURNING {_SELECT_COLS}
+        """
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (kb_doc_id, integrated_at, feedback_id))
+                row = await cur.fetchone()
+            await conn.commit()
+        if row is None:
+            # Either not found or already integrated; check which case it is.
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT integrated_into_kb_id FROM feedback WHERE id = %s",
+                        (feedback_id,),
+                    )
+                    check = await cur.fetchone()
+            if check is None:
+                from ..exceptions import FeedbackNotFoundError  # local import avoids circular dep
+
+                raise FeedbackNotFoundError(f"feedback {feedback_id} not found")
+            from ..exceptions import AlreadyIntegratedError
+
+            raise AlreadyIntegratedError(f"feedback {feedback_id} is already integrated into KB document '{check[0]}'")
+        return self._row_to_entry(row)
 
     # ------------------------------------------------------------------
     # Internal helpers

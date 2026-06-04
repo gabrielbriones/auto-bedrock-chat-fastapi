@@ -179,6 +179,25 @@ class BaseFeedbackStore(ABC):
         """Apply a reviewer decision; transactional with transition check."""
 
     @abstractmethod
+    async def mark_integrated(
+        self,
+        feedback_id: UUID,
+        kb_doc_id: str,
+        integrated_at: datetime,
+    ) -> FeedbackEntry:
+        """Record that ``feedback_id`` was synthesized into KB document ``kb_doc_id``.
+
+        Sets ``integrated_into_kb_id = kb_doc_id`` and
+        ``integrated_at = integrated_at`` on the row and returns the updated
+        entry.
+
+        Raises
+        ------
+        FeedbackNotFoundError
+            if no entry with ``feedback_id`` exists.
+        """
+
+    @abstractmethod
     async def stats(self) -> FeedbackStats:
         """Return aggregate counts by status and rating."""
 

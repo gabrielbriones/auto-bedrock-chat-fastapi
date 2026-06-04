@@ -1327,7 +1327,12 @@ class WebSocketChatHandler:
             if result.get("title"):
                 context_parts.append(f"Title: {result['title']}")
             if result.get("source"):
-                context_parts.append(f"Source: {result['source']}")
+                source_val = result["source"]
+                if source_val == "feedback":
+                    source_label = "[Learned from validated corrections]"
+                else:
+                    source_label = "[Reference documentation]"
+                context_parts.append(f"Source: {source_label}")
             if result.get("source_url"):
                 context_parts.append(f"URL: {result['source_url']}")
 

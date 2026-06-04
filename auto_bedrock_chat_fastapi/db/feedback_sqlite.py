@@ -1,5 +1,5 @@
 """
-SQLite-backed FeedbackStore (XMGPLAT-10417).
+SQLite-backed FeedbackStore.
 
 Zero-config implementation of the async
 :class:`~.feedback_base.BaseFeedbackStore` interface using SQLite.
@@ -55,6 +55,8 @@ _FEEDBACK_COLUMNS = (
     "reviewer_tags",
     "reviewer_comment",
     "reviewed_at",
+    "integrated_into_kb_id",
+    "integrated_at",
     "created_at",
 )
 _SELECT_COLS = ", ".join(_FEEDBACK_COLUMNS)
@@ -175,7 +177,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             ddl = resources.files(self.SCHEMA_RESOURCE[0]).joinpath(self.SCHEMA_RESOURCE[1]).read_text(encoding="utf-8")
             conn.executescript(ddl)
             conn.commit()
-        # Idempotent legacy-data migration: pre-Phase-2 schemas allowed a
+        # Idempotent legacy-data migration: Schemas allowed a
         # third ``rating`` value ``"correction"`` that was retired in
         # favor of the orthogonal ``correction_text`` field. The new
         # CHECK constraint forbids that value, but existing rows in
@@ -193,6 +195,18 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             # Table doesn't exist yet (init_schema=False on a fresh DB);
             # safe to skip — no legacy rows can exist.
             pass
+        # Column-addition migrations: add synthesis columns to
+        # schemas. ``ALTER TABLE ADD COLUMN`` raises OperationalError if the
+        # column already exists; catch and ignore for idempotency.
+        for col_ddl in (
+            "ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT",
+            "ALTER TABLE feedback ADD COLUMN integrated_at TEXT",
+        ):
+            try:
+                conn.execute(col_ddl)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists or table not yet created
         self._conn = conn
 
     async def close(self) -> None:
@@ -226,6 +240,8 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             json.dumps(list(entry.reviewer_tags)),
             entry.reviewer_comment,
             _dt_to_iso(entry.reviewed_at),
+            entry.integrated_into_kb_id,
+            _dt_to_iso(entry.integrated_at),
             _dt_to_iso(entry.created_at),
         )
         sql = f"""
@@ -348,6 +364,10 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
                 "EXISTS (SELECT 1 FROM json_each(feedback.reviewer_tags) je " f"WHERE je.value IN ({placeholders}))"
             )
             params.extend(filters.tags)
+        if filters.has_integrated is True:
+            clauses.append("integrated_into_kb_id IS NOT NULL")
+        elif filters.has_integrated is False:
+            clauses.append("integrated_into_kb_id IS NULL")
         return clauses, params
 
     async def list_entries(
@@ -466,6 +486,76 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             raise FeedbackError("Updated feedback row vanished after commit")
         return self._row_to_entry(row)
 
+    async def mark_integrated(
+        self,
+        feedback_id: UUID,
+        kb_doc_id: str,
+        integrated_at: datetime,
+    ) -> FeedbackEntry:
+        """Set ``integrated_into_kb_id`` and ``integrated_at`` on the row.
+
+        Raises :exc:`~auto_bedrock_chat_fastapi.exceptions.FeedbackNotFoundError`
+        if ``feedback_id`` does not exist.
+        """
+        return await asyncio.to_thread(
+            self._mark_integrated_sync,
+            feedback_id,
+            kb_doc_id,
+            integrated_at,
+        )
+
+    def _mark_integrated_sync(
+        self,
+        feedback_id: UUID,
+        kb_doc_id: str,
+        integrated_at: datetime,
+    ) -> FeedbackEntry:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        integrated_at_iso = _dt_to_iso(integrated_at)
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    """
+                    UPDATE feedback
+                       SET integrated_into_kb_id = ?,
+                           integrated_at         = ?
+                     WHERE id = ?
+                       AND integrated_into_kb_id IS NULL
+                    """,
+                    (kb_doc_id, integrated_at_iso, str(feedback_id)),
+                )
+                if cur.rowcount == 0:
+                    # Either not found or already integrated; check the row.
+                    check = self._conn.execute(
+                        "SELECT integrated_into_kb_id FROM feedback WHERE id = ?",
+                        (str(feedback_id),),
+                    ).fetchone()
+                    self._conn.rollback()
+                    if check is None:
+                        from ..exceptions import FeedbackNotFoundError
+
+                        raise FeedbackNotFoundError(f"feedback {feedback_id} not found")
+                    from ..exceptions import AlreadyIntegratedError
+
+                    raise AlreadyIntegratedError(
+                        f"feedback {feedback_id} is already integrated into KB document '{check[0]}'"
+                    )
+                self._conn.commit()
+                cur = self._conn.execute(
+                    f"SELECT {_SELECT_COLS} FROM feedback WHERE id = ?",
+                    (str(feedback_id),),
+                )
+                row = cur.fetchone()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if row is None:  # pragma: no cover — defensive
+            from ..exceptions import FeedbackError
+
+            raise FeedbackError("Integrated feedback row vanished after commit")
+        return self._row_to_entry(row)
+
     async def stats(self) -> FeedbackStats:
         return await asyncio.to_thread(self._stats_sync)
 
@@ -485,6 +575,9 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
 
             cur = self._conn.execute("SELECT count(*) FROM feedback WHERE correction_text IS NOT NULL")
             with_correction_row = cur.fetchone()
+
+            cur = self._conn.execute("SELECT count(*) FROM feedback WHERE integrated_into_kb_id IS NOT NULL")
+            integrated_count_row = cur.fetchone()
 
             # Top 10 reviewer tags by frequency. ``json_each`` explodes the
             # JSON-encoded ``reviewer_tags`` array into one row per tag so we
@@ -517,6 +610,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         by_status = {ReviewStatus(s): int(c) for s, c in status_rows}
         by_rating = {Rating(r): int(c) for r, c in rating_rows}
         with_correction = int(with_correction_row[0]) if with_correction_row else 0
+        integrated_count = int(integrated_count_row[0]) if integrated_count_row else 0
         top_tags = [TagCount(tag=t, count=int(c)) for t, c in tag_rows]
         oldest_iso = oldest_row[0] if oldest_row else None
         if oldest_iso:
@@ -535,6 +629,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             by_status=by_status,
             by_rating=by_rating,
             with_correction=with_correction,
+            integrated_count=integrated_count,
             top_tags=top_tags,
             oldest_pending_hours=oldest_pending_hours,
         )
@@ -591,11 +686,11 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
 
         # Convert datetimes from ISO strings.
         data["reviewed_at"] = _iso_to_dt(data["reviewed_at"])
+        data["integrated_at"] = _iso_to_dt(data["integrated_at"])
         data["created_at"] = _iso_to_dt(data["created_at"])
 
-        # Convert id from string back to UUID (Pydantic also accepts strings,
-        # but doing it here keeps the contract symmetric with the Postgres
-        # backend).
+        # Convert id from string to UUID; integrated_into_kb_id stays as str.
         data["id"] = UUID(str(data["id"]))
+        # integrated_into_kb_id is a plain TEXT document ID (not UUID); leave as-is.
 
         return FeedbackEntry.model_validate(data)

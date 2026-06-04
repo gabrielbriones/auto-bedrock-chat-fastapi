@@ -630,7 +630,7 @@ class ChatConfig(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # Feedback Storage Backend (XMGPLAT-10417)
+    # Feedback Storage Backend
     # ------------------------------------------------------------------
 
     feedback_enabled: bool = Field(
@@ -726,7 +726,7 @@ class ChatConfig(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # Admin API (Expert Review) — XMGPLAT-10417 Phase 2
+    # Admin API
     # ------------------------------------------------------------------
 
     admin_enabled: bool = Field(
@@ -778,6 +778,20 @@ class ChatConfig(BaseSettings):
             "Embedding vector dimensions. Must match the output of the embedding model. "
             "Default: 1536 (Amazon Titan Embed Text v1). "
             "Common values: 1536 (Titan/OpenAI), 1024, 384."
+        ),
+    )
+
+    feedback_synthesis_system_prompt: Optional[str] = Field(
+        default=None,
+        alias="BEDROCK_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT",
+        description=(
+            "Override the default system prompt used when synthesizing approved "
+            "feedback entries into KB articles.  When unset, a built-in generic "
+            "prompt is used.  Set this to tailor the synthesizer to your domain "
+            "(e.g. add domain-specific terminology, output constraints, or tone "
+            "requirements).  The prompt must instruct the LLM to respond with the "
+            "same JSON schema expected by the synthesizer: title, problem, "
+            "correct_methodology, key_terms, examples, source_feedback_ids, action."
         ),
     )
 

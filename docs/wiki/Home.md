@@ -22,6 +22,7 @@ Welcome to the **auto-bedrock-chat-fastapi** documentation wiki. This library le
 | [Token Management](token-management)         | Input token limits, AI summarization, text truncation                |
 | [Feedback Collection](feedback-collection)   | 👍 / 👎 ratings, corrections, FeedbackStore backends                 |
 | [Admin API](admin-api)                       | Reviewer HTTP surface for feedback + KB management                   |
+| [Feedback Synthesis](feedback-synthesis)     | Synthesizing approved feedback into KB articles via LLM              |
 | [CI Pipelines](ci-pipelines)                 | GitHub Actions for tests, linting, and code quality                  |
 | [CD Pipelines](cd-pipelines)                 | GitHub Actions for builds, Docker, staging, and production           |
 
@@ -38,5 +39,7 @@ Welcome to the **auto-bedrock-chat-fastapi** documentation wiki. This library le
 **Adding authentication?** See [Authentication](authentication) for manual auth methods, or [SSO](sso) for Single Sign-On.
 
 **Working with AI knowledge bases?** See [RAG Feature](rag-feature).
+
+**Synthesizing approved feedback into KB articles?** See [Feedback Synthesis](feedback-synthesis).
 
 **Running in CI/CD?** See [CI Pipelines](ci-pipelines) and [CD Pipelines](cd-pipelines).

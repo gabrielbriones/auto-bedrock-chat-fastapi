@@ -1,9 +1,8 @@
 # Feedback Collection
 
-> **Phase 2 of the Continuous Learning Loop.** This phase _collects_ feedback
-> on AI responses; it does **not** improve responses on its own. Quality
-> improvements become visible in Phase 3 once approved feedback is synthesized
-> back into the knowledge base.
+> This feature _collects_ feedback on AI responses; it does **not** improve
+> responses on its own. Quality improvements become visible once approved
+> feedback is synthesized back into the knowledge base.
 
 The feedback collection backend lets authorized users submit ratings,
 comments, and corrections on AI responses through the existing chat
@@ -14,8 +13,6 @@ approve, reject, and tag them.
 When the built-in chat UI is enabled, users see thumbs-up / thumbs-down
 buttons under each assistant message; 👎 opens an inline correction form
 (optional correction text + comment).
-
-Tracked under [XMGPLAT-10417](https://jira.devtools.intel.com/browse/XMGPLAT-10417).
 
 ---
 
@@ -215,11 +212,10 @@ handler = WebSocketChatHandler(
 > review surface — list pending feedback, approve / reject with tags,
 > view stats — is documented on the [Admin API](admin-api) page. The
 > `FeedbackStore` API below is the underlying async data-access layer,
-> primarily of interest to plugin embedders and the upcoming Phase 3
-> synthesizer.
+> primarily of interest to plugin embedders and the synthesizer.
 
-The async data-access classes are exposed for the upcoming admin-API and
-Phase 3 synthesizer tasks. Both backends implement the same
+The async data-access classes are exposed for the admin-API and
+synthesizer. Both backends implement the same
 [`BaseFeedbackStore`](../../auto_bedrock_chat_fastapi/db/feedback_base.py)
 interface; pick one via the factory:
 
@@ -350,6 +346,7 @@ poetry run pytest tests/test_feedback_store_integration.py -v
 
 ## Scope reminder
 
-Phase 2 deliberately does not change AI behavior. Stored feedback feeds
-Phase 3, where an LLM synthesizer turns approved entries into KB articles
-that the RAG retriever then uses on subsequent queries.
+This feature deliberately does not change AI behavior. Stored feedback feeds
+the synthesizer, which turns approved entries into KB articles that the RAG
+retriever then uses on subsequent queries. See
+[Feedback Synthesis](feedback-synthesis) for details.
