@@ -239,6 +239,21 @@ class TestEmbedAndAddChunks:
         bedrock_client.generate_embeddings_batch.assert_not_called()
         kb_store.add_chunk.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_raises_when_embeddings_count_mismatches_chunks(self):
+        """A partial embedding response must raise rather than silently drop chunks."""
+        synth = FeedbackSynthesizer(model_id=_MODEL_ID)
+        kb_store = _make_kb_store()
+        bedrock_client = _make_bedrock_client(_article_json())
+        # Return fewer embeddings than there are chunks
+        bedrock_client.generate_embeddings_batch = AsyncMock(return_value=[])
+        long_content = " ".join(f"word{i}" for i in range(60))
+
+        with pytest.raises(RuntimeError, match="expected.*embeddings.*got"):
+            await synth._embed_and_add_chunks("doc-1", long_content, kb_store, bedrock_client)
+
+        kb_store.add_chunk.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # FeedbackSynthesizer.synthesize_all — no entries

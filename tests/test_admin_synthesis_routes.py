@@ -201,6 +201,29 @@ class TestRunState:
         assert s1.phase == RunPhase.IDLE
         assert s2.phase == RunPhase.RUNNING
 
+    @pytest.mark.asyncio
+    async def test_try_claim_entry_run_succeeds_when_idle(self):
+        state = _RunState()
+        claimed = await state.try_claim_entry_run()
+        assert claimed is True
+        assert state._entry_in_progress == 1
+        state.release_entry_run()
+        assert state._entry_in_progress == 0
+
+    @pytest.mark.asyncio
+    async def test_try_claim_entry_run_fails_when_batch_running(self):
+        state = _RunState()
+        await state.try_claim_run()  # batch running
+        claimed = await state.try_claim_entry_run()
+        assert claimed is False
+
+    @pytest.mark.asyncio
+    async def test_try_claim_run_fails_when_entry_in_progress(self):
+        state = _RunState()
+        await state.try_claim_entry_run()
+        claimed = await state.try_claim_run()
+        assert claimed is False
+
 
 # ---------------------------------------------------------------------------
 # GET /admin/synthesis/status

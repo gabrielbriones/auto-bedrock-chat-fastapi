@@ -97,6 +97,7 @@ class _RunState:
     def __init__(self) -> None:
         self._status = SynthesisStatus()
         self._lock = asyncio.Lock()
+        self._entry_in_progress: int = 0  # count of in-flight per-entry runs
 
     @property
     def status(self) -> SynthesisStatus:
@@ -133,14 +134,33 @@ class _RunState:
         """Atomically transition to RUNNING if not already in progress.
 
         Returns ``True`` if the claim succeeded; ``False`` if a run was
-        already in progress.  Owning the lock internally keeps callers from
-        needing to access ``_lock`` directly.
+        already in progress or a per-entry run is in flight.  Owning the
+        lock internally keeps callers from needing to access ``_lock``
+        directly.
+        """
+        async with self._lock:
+            if self._status.phase == RunPhase.RUNNING or self._entry_in_progress > 0:
+                return False
+            self._mark_running(feedback_id=feedback_id)
+            return True
+
+    async def try_claim_entry_run(self) -> bool:
+        """Atomically check no batch is running and increment the in-flight counter.
+
+        Returns ``True`` if the entry run was claimed; ``False`` if a batch
+        run is currently in progress.  Callers **must** call
+        :meth:`release_entry_run` in a ``finally`` block after the work
+        completes to keep the counter accurate.
         """
         async with self._lock:
             if self._status.phase == RunPhase.RUNNING:
                 return False
-            self._mark_running(feedback_id=feedback_id)
+            self._entry_in_progress += 1
             return True
+
+    def release_entry_run(self) -> None:
+        """Decrement the in-flight per-entry counter."""
+        self._entry_in_progress -= 1
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +294,7 @@ def register_admin_synthesis_routes(
         if a batch run is currently in progress.  Returns ``404`` if the
         entry does not exist.
         """
-        if state.status.phase == RunPhase.RUNNING:
+        if not await state.try_claim_entry_run():
             raise AdminAPIError(
                 status_code=409,
                 code="synthesis_already_running",
@@ -305,6 +325,8 @@ def register_admin_synthesis_routes(
                 code="synthesis_precondition_failed",
                 detail=str(exc),
             ) from exc
+        finally:
+            state.release_entry_run()
 
         if result.error:
             raise AdminAPIError(

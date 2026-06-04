@@ -550,6 +550,13 @@ class FeedbackSynthesizer:
         texts = [c["text"] for c in chunks]
         embeddings = await bedrock_client.generate_embeddings_batch(texts, model_id=self.embedding_model_id)
 
+        if len(embeddings) != len(chunks):
+            raise RuntimeError(
+                f"_embed_and_add_chunks: expected {len(chunks)} embeddings for "
+                f"doc_id='{doc_id}' but got {len(embeddings)}; "
+                "aborting to avoid persisting an incomplete chunk set"
+            )
+
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
             await asyncio.to_thread(
                 kb_store.add_chunk,
