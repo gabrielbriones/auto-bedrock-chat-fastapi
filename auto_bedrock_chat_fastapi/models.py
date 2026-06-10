@@ -109,6 +109,7 @@ class FeedbackEntry(BaseModel):
     score: Optional[int] = Field(default=None, ge=1, le=5)
     correction_text: Optional[str] = None
     user_comment: Optional[str] = None
+    conversation_history: List[Dict[str, Any]] = []
 
     # Provenance
     kb_sources_used: List[Dict[str, Any]] = Field(default_factory=list)

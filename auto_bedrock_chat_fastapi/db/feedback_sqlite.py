@@ -53,6 +53,7 @@ _FEEDBACK_COLUMNS = (
     "review_status",
     "reviewer_id",
     "reviewer_tags",
+    "conversation_history",
     "reviewer_comment",
     "reviewed_at",
     "created_at",
@@ -193,6 +194,15 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             # Table doesn't exist yet (init_schema=False on a fresh DB);
             # safe to skip — no legacy rows can exist.
             pass
+        # Idempotent migration: add conversation_history column for
+        # databases created before XMGPLAT-10683. SQLite lacks
+        # ADD COLUMN IF NOT EXISTS; catch the "duplicate column" error.
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN conversation_history TEXT NOT NULL DEFAULT '[]'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists (normal case) or table doesn't exist.
+            pass
         self._conn = conn
 
     async def close(self) -> None:
@@ -224,6 +234,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             entry.review_status.value,
             entry.reviewer_id,
             json.dumps(list(entry.reviewer_tags)),
+            json.dumps(entry.conversation_history),
             entry.reviewer_comment,
             _dt_to_iso(entry.reviewed_at),
             _dt_to_iso(entry.created_at),
@@ -588,6 +599,8 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         data["kb_sources_used"] = json.loads(kb_raw) if kb_raw else []
         tags_raw = data["reviewer_tags"]
         data["reviewer_tags"] = json.loads(tags_raw) if tags_raw else []
+        history_raw = data.get("conversation_history")
+        data["conversation_history"] = json.loads(history_raw) if history_raw else []
 
         # Convert datetimes from ISO strings.
         data["reviewed_at"] = _iso_to_dt(data["reviewed_at"])

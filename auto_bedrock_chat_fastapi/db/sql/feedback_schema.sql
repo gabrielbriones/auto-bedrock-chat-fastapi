@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS feedback (
         )
 );
 
+-- Migration: add conversation_history column (idempotent)
+ALTER TABLE feedback
+ADD COLUMN IF NOT EXISTS conversation_history JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 -- ---------------------------------------------------------------------------
 -- Indexes
 -- ---------------------------------------------------------------------------

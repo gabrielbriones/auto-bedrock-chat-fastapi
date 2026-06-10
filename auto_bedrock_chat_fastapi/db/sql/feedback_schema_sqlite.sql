@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS feedback (
                         CHECK (review_status IN ('pending_review', 'approved', 'rejected')),
     reviewer_id         TEXT,
     reviewer_tags       TEXT NOT NULL DEFAULT '[]',
+    conversation_history TEXT NOT NULL DEFAULT '[]',
     reviewer_comment    TEXT,
     reviewed_at         TEXT,
 
