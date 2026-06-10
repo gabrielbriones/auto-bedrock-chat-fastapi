@@ -570,7 +570,6 @@ class WebSocketChatHandler:
             )
             return
 
-
         # Slice the preceding conversation context window for feedback
         max_context = self.config.feedback_max_history_context
         conversation_history: List[Dict[str, str]] = []
@@ -578,9 +577,7 @@ class WebSocketChatHandler:
         if max_context > 0:
             ai_idx = next(i for i, m in enumerate(history) if getattr(m, "message_id", None) == message_id)
             preceding = [
-                {"role": m.role, "content": m.content}
-                for m in history[:ai_idx]
-                if m.role in ("user", "assistant")
+                {"role": m.role, "content": m.content} for m in history[:ai_idx] if m.role in ("user", "assistant")
             ]
             conversation_history = preceding[-max_context:]
 
@@ -608,7 +605,7 @@ class WebSocketChatHandler:
                 user_comment=data.get("user_comment"),
                 kb_sources_used=meta.get("kb_sources", []) or [],
                 model_id=meta.get("model_id") or self.config.model_id,
-                conversation_history=conversation_history
+                conversation_history=conversation_history,
             )
         except ValidationError as exc:
             # Pydantic v2 ValidationError is NOT a ValueError subclass; surface

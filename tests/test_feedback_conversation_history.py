@@ -89,14 +89,16 @@ async def test_history_trimmed_to_max_context(handler):
     handler.config.feedback_max_history_context = 3
 
     # Build 6 user/assistant messages + the rated assistant message
-    history_msgs = _build_history([
-        ("user", "msg1"),
-        ("assistant", "reply1"),
-        ("user", "msg2"),
-        ("assistant", "reply2"),
-        ("user", "msg3"),
-        ("assistant", "reply3"),
-    ])
+    history_msgs = _build_history(
+        [
+            ("user", "msg1"),
+            ("assistant", "reply1"),
+            ("user", "msg2"),
+            ("assistant", "reply2"),
+            ("user", "msg3"),
+            ("assistant", "reply3"),
+        ]
+    )
     # The rated message is the last assistant
     rated_ai = ChatMessage(
         role="assistant",

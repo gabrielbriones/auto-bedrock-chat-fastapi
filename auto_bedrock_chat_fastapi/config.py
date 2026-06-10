@@ -724,7 +724,7 @@ class ChatConfig(BaseSettings):
             "database-provisioning task owns the schema lifecycle."
         ),
     )
-    
+
     feedback_max_history_context: int = Field(
         default=5,
         ge=0,
@@ -1324,7 +1324,7 @@ def validate_config(config: ChatConfig) -> None:
     # Raise errors for critical misconfigurations
     if config.feedback_max_history_context < 0:
         raise ConfigurationError(f"Feedback max history context cannot be negative")
-        
+
     endpoints = [config.chat_endpoint, config.websocket_endpoint, config.ui_endpoint]
     # Validate endpoint paths don't conflict
     if len(set(endpoints)) != len(endpoints):
