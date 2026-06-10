@@ -1,4 +1,4 @@
-"""Admin Feedback Review HTTP routes (XMGPLAT-10417, T3).
+"""Admin Feedback Review HTTP routes.
 
 Registered by :meth:`BedrockChatPlugin._setup_admin_routes` when
 ``admin_enabled=True``. Every route is gated by the ``require_admin``

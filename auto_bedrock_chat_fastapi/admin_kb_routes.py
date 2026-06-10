@@ -1,4 +1,4 @@
-"""Admin Knowledge-Base management HTTP routes (XMGPLAT-10417, T5).
+"""Admin Knowledge-Base management HTTP routes.
 
 Registered by :meth:`BedrockChatPlugin._setup_admin_routes` when
 ``admin_enabled=True`` **and** a KB store is wired. Every route is gated

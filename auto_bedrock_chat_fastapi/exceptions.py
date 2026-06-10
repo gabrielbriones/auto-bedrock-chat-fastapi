@@ -88,7 +88,7 @@ class WebSocketError(BedrockChatError):
 
 
 # ---------------------------------------------------------------------------
-# Feedback (XMGPLAT-10417 — Feedback Storage Backend)
+# Feedback
 # ---------------------------------------------------------------------------
 
 
@@ -110,6 +110,12 @@ class InvalidStatusTransitionError(FeedbackError):
     pass
 
 
+class AlreadyIntegratedError(FeedbackError):
+    """Raised when synthesis is attempted on an entry already linked to a KB document."""
+
+    pass
+
+
 class UnauthorizedFeedbackError(FeedbackError):
     """Raised when a user is not permitted to submit or modify feedback."""
 
@@ -117,7 +123,7 @@ class UnauthorizedFeedbackError(FeedbackError):
 
 
 # ---------------------------------------------------------------------------
-# Knowledge-base store (XMGPLAT-10417 — Phase 2 KB admin extensions)
+# Knowledge-base store
 # ---------------------------------------------------------------------------
 
 
@@ -134,7 +140,7 @@ class KBDocumentNotFoundError(KBStoreError):
 
 
 # ---------------------------------------------------------------------------
-# Admin API (XMGPLAT-10417 — Phase 2 Expert Review Admin API, T6)
+# Admin API
 # ---------------------------------------------------------------------------
 
 

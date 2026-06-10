@@ -1,4 +1,4 @@
-"""Tests for the Admin KB Management routes (XMGPLAT-10417, T5)."""
+"""Tests for the Admin KB Management routes."""
 
 from __future__ import annotations
 

@@ -610,7 +610,7 @@ class SQLiteKBStore(BaseKBStore):
         self.conn.commit()
 
     # ------------------------------------------------------------------
-    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # Admin operations
     # ------------------------------------------------------------------
 
     @staticmethod

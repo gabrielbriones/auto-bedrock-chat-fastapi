@@ -88,7 +88,17 @@ class PgVectorKBStore(BaseKBStore):
         # Register pgvector types on every new connection inside the pool.
         self._register_vector = register_vector
 
-        self._init_schema()
+        try:
+            self._init_schema()
+        except Exception:
+            # Close the pool so its background reconnect thread does not
+            # outlive this failed __init__ and block process shutdown.
+            try:
+                self._pool.close(timeout=2)
+            except Exception:
+                pass
+            self._pool = None
+            raise
 
     # ------------------------------------------------------------------
     # helpers
@@ -463,7 +473,7 @@ class PgVectorKBStore(BaseKBStore):
         return hybrid[:limit]
 
     # ------------------------------------------------------------------
-    # Admin operations (XMGPLAT-10417 — Phase 2)
+    # Admin operations
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -694,5 +704,5 @@ class PgVectorKBStore(BaseKBStore):
     def close(self) -> None:
         """Close the connection pool."""
         if self._pool is not None:
-            self._pool.close()
+            self._pool.close(timeout=5)
             self._pool = None

@@ -1,4 +1,4 @@
-"""Unit tests for the feedback storage backend (XMGPLAT-10417).
+"""Unit tests for the feedback storage backend.
 
 These tests do **not** require a real database. They cover:
 

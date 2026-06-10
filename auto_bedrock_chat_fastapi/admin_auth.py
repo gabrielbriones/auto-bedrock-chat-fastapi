@@ -1,4 +1,4 @@
-"""Admin authorization for the Expert Review Admin API (XMGPLAT-10417 / Phase 2).
+"""Admin authorization for the Expert Review Admin API.
 
 This module is intentionally narrow: it answers the question "is this caller
 allowed to use the ``/admin/*`` endpoints?" and **nothing else**.

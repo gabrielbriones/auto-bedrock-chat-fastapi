@@ -83,6 +83,7 @@
     }
 
     function apiGet(path)          { return apiRequest('GET',    path); }
+    function apiPost(path, body)   { return apiRequest('POST',   path, body); }
     function apiPatch(path, body)  { return apiRequest('PATCH',  path, body); }
     function apiDelete(path)       { return apiRequest('DELETE', path); }
 
@@ -651,11 +652,67 @@
             frag.appendChild(prevSec);
         }
 
+        // Synthesis section — only for approved entries
+        if (entry.review_status === 'approved') {
+            frag.appendChild(buildSynthesisSection(entry));
+        }
+
         // Review form
         var form = buildReviewForm(entry);
         frag.appendChild(form);
 
         return frag;
+    }
+
+    function buildSynthesisSection(entry) {
+        var sec = el('div', 'drawer-section');
+        sec.appendChild(el('h4', null, 'KB Synthesis'));
+
+        if (entry.integrated_into_kb_id) {
+            // Already synthesized — show status only
+            var row = el('div', 'meta-row');
+            row.appendChild(metaItem('Status', 'Synthesized ✓'));
+            if (entry.integrated_at) row.appendChild(metaItem('At', fmtDate(entry.integrated_at)));
+            row.appendChild(metaItem('KB Doc', trunc(String(entry.integrated_into_kb_id), 36)));
+            sec.appendChild(row);
+        } else {
+            var hint = el('p', 'text-muted text-small',
+                'This approved entry has not yet been synthesized into the knowledge base. ' +
+                'Click below to synthesize it immediately.');
+            sec.appendChild(hint);
+
+            var synthErr = el('div', 'inline-error'); synthErr.id = 'synth-err';
+            sec.appendChild(synthErr);
+
+            var synthBtn = el('button', 'btn-success', 'Synthesize into KB');
+            synthBtn.addEventListener('click', function () {
+                synthBtn.disabled = true;
+                synthBtn.textContent = 'Synthesizing…';
+                synthErr.classList.remove('visible');
+
+                apiPost('/synthesis/trigger/' + encodeURIComponent(entry.id), {})
+                    .then(function () {
+                        showToast('Entry synthesized into KB.', 'success');
+                        hide('reviewDrawer');
+                        if (currentView === 'feedback-reviewed') loadFeedbackReviewed(_frState);
+                    })
+                    .catch(function (e) {
+                        if (e.status === 409) {
+                            synthErr.textContent = 'Already synthesized — reload to refresh the entry.';
+                        } else if (e.status === 422) {
+                            synthErr.textContent = (e.data && e.data.detail) || 'Validation error: entry is not eligible for synthesis.';
+                        } else {
+                            synthErr.textContent = 'Synthesis failed: ' + String(e);
+                        }
+                        synthErr.classList.add('visible');
+                        synthBtn.disabled = false;
+                        synthBtn.textContent = 'Synthesize into KB';
+                    });
+            });
+            sec.appendChild(synthBtn);
+        }
+
+        return sec;
     }
 
     function buildReviewForm(entry) {

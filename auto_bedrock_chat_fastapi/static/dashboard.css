@@ -784,8 +784,23 @@ body {
     transition: background 0.15s;
 }
 
-.btn-danger:hover  { background: #c53030; }
-.btn-danger:disabled, .btn-primary:disabled, .btn-secondary:disabled {
+.btn-success {
+    display: inline-block;
+    padding: 9px 18px;
+    background: #38a169;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+
+.btn-danger:hover   { background: #c53030; }
+.btn-success:hover  { background: #276749; }
+.btn-danger:disabled, .btn-success:disabled, .btn-primary:disabled, .btn-secondary:disabled {
     opacity: 0.55;
     cursor: not-allowed;
 }
