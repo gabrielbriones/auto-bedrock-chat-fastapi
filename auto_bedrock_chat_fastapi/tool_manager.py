@@ -17,6 +17,7 @@ tool-call loop.  ``websocket_handler.py`` no longer owns tool execution.
 import base64
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -724,7 +725,11 @@ class ToolManager:
         self._http_client = httpx.AsyncClient(timeout=self._config.timeout)
 
         # Generate and cache tools_desc once at init
+        _t0 = time.perf_counter()
         self._tools_desc: Optional[Dict[str, Any]] = self._generator.generate_tools_desc()
+        _compile_ms = (time.perf_counter() - _t0) * 1000
+        _n_tools = len((self._tools_desc or {}).get("functions", []))
+        logger.info(f"Tool schema compiled: {_n_tools} tools in {_compile_ms:.1f} ms")
 
         # Statistics
         self._total_tool_calls_executed: int = 0
