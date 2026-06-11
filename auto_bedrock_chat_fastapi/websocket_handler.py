@@ -351,19 +351,19 @@ class WebSocketChatHandler:
                 **llm_params,
             )
             _turn_latency_ms = (time.perf_counter() - _turn_start) * 1000
-            logging.getLogger("bedrock.audit").info(
-                json.dumps(
-                    {
-                        "event": "chat_turn",
-                        "turn_latency_ms": round(_turn_latency_ms, 1),
-                        "tool_call_rounds": result.metadata.get("tool_call_rounds", 0),
-                        "total_tool_calls": result.metadata.get("total_tool_calls", 0),
-                        "preprocessing_applied": result.metadata.get("preprocessing_applied", False),
-                        "kb_chunks": len(kb_results) if kb_results else 0,
-                        "model_id": self.config.model_id,
-                        "ts": datetime.now().isoformat(),
-                    }
-                )
+            audit_logger = logging.getLogger("bedrock.audit")
+            audit_logger.info(
+                "chat.turn",
+                extra={
+                    "action": "chat.turn",
+                    "turn_latency_ms": round(_turn_latency_ms, 1),
+                    "tool_call_rounds": result.metadata.get("tool_call_rounds", 0),
+                    "total_tool_calls": result.metadata.get("total_tool_calls", 0),
+                    "preprocessing_applied": result.metadata.get("preprocessing_applied", False),
+                    "kb_chunks": len(kb_results) if kb_results else 0,
+                    "model_id": self.config.model_id,
+                    "ts": datetime.now().astimezone().isoformat(),
+                },
             )
 
             final_response = result.response
