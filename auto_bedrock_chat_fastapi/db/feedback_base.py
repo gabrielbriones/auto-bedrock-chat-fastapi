@@ -198,6 +198,26 @@ class BaseFeedbackStore(ABC):
         """
 
     @abstractmethod
+    async def revert_integrated(
+        self,
+        kb_doc_id: str,
+        rolled_back_by: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Clear synthesis provenance for all entries linked to ``kb_doc_id``.
+
+        For every row where ``integrated_into_kb_id = kb_doc_id``, sets:
+        * ``integrated_into_kb_id = NULL``
+        * ``integrated_at = NULL``
+        * ``rolled_back_at = now()``
+        * ``rolled_back_by = rolled_back_by``
+        * ``rollback_reason = reason``
+
+        Returns the number of rows updated (may be 0 if no entries were
+        linked to the given document).
+        """
+
+    @abstractmethod
     async def stats(self) -> FeedbackStats:
         """Return aggregate counts by status and rating."""
 

@@ -126,6 +126,11 @@ class FeedbackEntry(BaseModel):
     integrated_into_kb_id: Optional[str] = None
     integrated_at: Optional[datetime] = None
 
+    # Set by the rollback endpoint when a synthesized article is removed.
+    rolled_back_at: Optional[datetime] = None
+    rolled_back_by: Optional[str] = None
+    rollback_reason: Optional[str] = None
+
     created_at: datetime = Field(default_factory=_utcnow)
 
     @field_validator("rating", mode="before")

@@ -348,9 +348,13 @@
 
                 var tdUser   = el('td'); tdUser.textContent = trunc(entry.user_id, 28);
                 var tdRating = el('td'); tdRating.appendChild(makeChip(entry.rating, 'chip-' + entry.rating));
-                var tdStatus = el('td'); tdStatus.appendChild(makeChip(
+                var tdStatus = el('td');
+                tdStatus.appendChild(makeChip(
                     entry.review_status.replace('_', ' '),
                     'chip-' + entry.review_status.replace('_review', '')));
+                if (entry.rolled_back_at) {
+                    tdStatus.appendChild(makeChip('rolled back', 'chip-rolled-back'));
+                }
                 var tdQuery  = el('td', 'truncate'); tdQuery.textContent = trunc(entry.query, 60);
                 var tdDate   = el('td'); tdDate.textContent = fmtDate(entry.created_at);
                 var tdTags   = el('td'); tdTags.appendChild(makeTagList(entry.reviewer_tags || []));
@@ -657,6 +661,22 @@
             frag.appendChild(buildSynthesisSection(entry));
         }
 
+        // Rollback info for non-approved entries (approved entries show it inside the synthesis section)
+        if (entry.rolled_back_at && entry.review_status !== 'approved') {
+            var rbSec = el('div', 'drawer-section');
+            rbSec.appendChild(el('h4', null, 'Rollback History'));
+            var rbRow = el('div', 'meta-row');
+            rbRow.appendChild(metaItem('Rolled Back At', fmtDate(entry.rolled_back_at)));
+            if (entry.rolled_back_by) rbRow.appendChild(metaItem('By', entry.rolled_back_by));
+            rbSec.appendChild(rbRow);
+            if (entry.rollback_reason) {
+                var rbReasonRow = el('div', 'meta-row');
+                rbReasonRow.appendChild(metaItem('Reason', entry.rollback_reason));
+                rbSec.appendChild(rbReasonRow);
+            }
+            frag.appendChild(rbSec);
+        }
+
         // Review form
         var form = buildReviewForm(entry);
         frag.appendChild(form);
@@ -669,12 +689,93 @@
         sec.appendChild(el('h4', null, 'KB Synthesis'));
 
         if (entry.integrated_into_kb_id) {
-            // Already synthesized — show status only
+            // Currently synthesized — show status + rollback option
             var row = el('div', 'meta-row');
             row.appendChild(metaItem('Status', 'Synthesized ✓'));
             if (entry.integrated_at) row.appendChild(metaItem('At', fmtDate(entry.integrated_at)));
             row.appendChild(metaItem('KB Doc', trunc(String(entry.integrated_into_kb_id), 36)));
             sec.appendChild(row);
+
+            var rbErr = el('div', 'inline-error'); rbErr.id = 'rb-err';
+            sec.appendChild(rbErr);
+
+            var rbBtn = el('button', 'btn-danger', 'Roll Back');
+            rbBtn.title = 'Remove this synthesized KB article and revert feedback entries for re-synthesis';
+            rbBtn.addEventListener('click', function () {
+                var reason = window.prompt('Reason for rollback (optional):') || null;
+                if (reason === null && !window.confirm('Roll back this article without a reason?')) return;
+                rbBtn.disabled = true;
+                rbBtn.textContent = 'Rolling back…';
+                rbErr.classList.remove('visible');
+
+                apiPost('/synthesis/rollback/' + encodeURIComponent(entry.integrated_into_kb_id),
+                    reason !== null ? { reason: reason } : {})
+                    .then(function (data) {
+                        var count = (data && data.feedback_entries_reverted) || 0;
+                        showToast('Article rolled back. ' + count + ' feedback entr' + (count === 1 ? 'y' : 'ies') + ' reverted.', 'success');
+                        hide('reviewDrawer');
+                        if (currentView === 'feedback-reviewed') loadFeedbackReviewed(_frState);
+                    })
+                    .catch(function (e) {
+                        if (e.status === 422) {
+                            rbErr.textContent = (e.data && e.data.detail) || 'This document is not a synthesized article.';
+                        } else if (e.status === 500) {
+                            rbErr.textContent = 'KB article was removed but feedback revert failed — check server logs.';
+                        } else {
+                            rbErr.textContent = 'Rollback failed: ' + String(e);
+                        }
+                        rbErr.classList.add('visible');
+                        rbBtn.disabled = false;
+                        rbBtn.textContent = 'Roll Back';
+                    });
+            });
+            sec.appendChild(rbBtn);
+        } else if (entry.rolled_back_at) {
+            // Previously synthesized but rolled back — re-synthesis is available
+            var rbInfoRow = el('div', 'meta-row');
+            rbInfoRow.appendChild(metaItem('Status', 'Rolled Back ↩'));
+            rbInfoRow.appendChild(metaItem('On', fmtDate(entry.rolled_back_at)));
+            if (entry.rolled_back_by) rbInfoRow.appendChild(metaItem('By', entry.rolled_back_by));
+            sec.appendChild(rbInfoRow);
+            if (entry.rollback_reason) {
+                var rbReasonRow = el('div', 'meta-row');
+                rbReasonRow.appendChild(metaItem('Reason', entry.rollback_reason));
+                sec.appendChild(rbReasonRow);
+            }
+            var rehint = el('p', 'text-muted text-small',
+                'This entry was rolled back and is eligible for re-synthesis. ' +
+                'Click below to synthesize it again.');
+            sec.appendChild(rehint);
+
+            var synthErr = el('div', 'inline-error'); synthErr.id = 'synth-err';
+            sec.appendChild(synthErr);
+
+            var resynthBtn = el('button', 'btn-success', 'Re-synthesize into KB');
+            resynthBtn.addEventListener('click', function () {
+                resynthBtn.disabled = true;
+                resynthBtn.textContent = 'Synthesizing…';
+                synthErr.classList.remove('visible');
+
+                apiPost('/synthesis/trigger/' + encodeURIComponent(entry.id), {})
+                    .then(function () {
+                        showToast('Entry re-synthesized into KB.', 'success');
+                        hide('reviewDrawer');
+                        if (currentView === 'feedback-reviewed') loadFeedbackReviewed(_frState);
+                    })
+                    .catch(function (e) {
+                        if (e.status === 409) {
+                            synthErr.textContent = 'Already synthesized — reload to refresh.';
+                        } else if (e.status === 422) {
+                            synthErr.textContent = (e.data && e.data.detail) || 'Validation error.';
+                        } else {
+                            synthErr.textContent = 'Synthesis failed: ' + String(e);
+                        }
+                        synthErr.classList.add('visible');
+                        resynthBtn.disabled = false;
+                        resynthBtn.textContent = 'Re-synthesize into KB';
+                    });
+            });
+            sec.appendChild(resynthBtn);
         } else {
             var hint = el('p', 'text-muted text-small',
                 'This approved entry has not yet been synthesized into the knowledge base. ' +
@@ -948,7 +1049,7 @@
 
         frag.appendChild(editSec);
 
-        // Save / Delete footer
+        // Save / Delete / Rollback footer
         var footer = el('div', 'drawer-footer');
         var deleteBtn = el('button', 'btn-danger', 'Delete Document');
         var saveBtn = el('button', 'btn-primary', 'Save Changes');
@@ -957,7 +1058,47 @@
 
         var footerRight = el('div', 'drawer-footer-right');
         footerRight.appendChild(cancelBtn); footerRight.appendChild(saveBtn);
-        footer.appendChild(deleteBtn); footer.appendChild(footerRight);
+        footer.appendChild(deleteBtn);
+
+        // Roll Back button — only for synthesized articles
+        if (doc.source === 'feedback') {
+            var rbFooterErr = el('div', 'inline-error'); rbFooterErr.id = 'kb-rb-err';
+            frag.appendChild(rbFooterErr);
+
+            var rollbackBtn = el('button', 'btn-warning', 'Roll Back Article');
+            rollbackBtn.title = 'Remove this synthesized KB article and revert its source feedback entries for re-synthesis';
+            rollbackBtn.addEventListener('click', function () {
+                var reason = window.prompt('Reason for rollback (optional):') || null;
+                if (reason === null && !window.confirm('Roll back this article without a reason?')) return;
+                rollbackBtn.disabled = true;
+                rollbackBtn.textContent = 'Rolling back…';
+                rbFooterErr.classList.remove('visible');
+
+                apiPost('/synthesis/rollback/' + encodeURIComponent(doc.id),
+                    reason !== null ? { reason: reason } : {})
+                    .then(function (data) {
+                        var count = (data && data.feedback_entries_reverted) || 0;
+                        showToast('Article rolled back. ' + count + ' feedback entr' + (count === 1 ? 'y' : 'ies') + ' reverted.', 'success');
+                        hide('kbEditor');
+                        loadKBBrowser(_kbState);
+                    })
+                    .catch(function (e) {
+                        if (e.status === 422) {
+                            rbFooterErr.textContent = (e.data && e.data.detail) || 'This document is not a synthesized article.';
+                        } else if (e.status === 500) {
+                            rbFooterErr.textContent = 'KB article was removed but feedback revert failed — check server logs.';
+                        } else {
+                            rbFooterErr.textContent = 'Rollback failed: ' + String(e);
+                        }
+                        rbFooterErr.classList.add('visible');
+                        rollbackBtn.disabled = false;
+                        rollbackBtn.textContent = 'Roll Back Article';
+                    });
+            });
+            footer.appendChild(rollbackBtn);
+        }
+
+        footer.appendChild(footerRight);
         frag.appendChild(footer);
 
         // Save handler

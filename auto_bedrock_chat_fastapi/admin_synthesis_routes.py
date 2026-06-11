@@ -11,6 +11,8 @@ Endpoints
 * ``POST /admin/synthesis/trigger``             — manual full-batch run.
 * ``POST /admin/synthesis/trigger/{feedback_id}``
                                                 — per-review on-demand synthesis.
+* ``POST /admin/synthesis/rollback/{article_id}``
+                                                — roll back a synthesized KB article.
 
 Run state is purely in-memory; it is reset on each process restart.
 Feedback entries that were mid-integration when the process died will
@@ -77,6 +79,26 @@ class SingleEntrySynthesisResponse(BaseModel):
     action: str
     kb_doc_id: Optional[str] = None
     feedback_ids_marked: list[str] = Field(default_factory=list)
+
+
+class RollbackRequest(BaseModel):
+    """Optional request body for ``POST /admin/synthesis/rollback/{article_id}``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    reason: Optional[str] = None
+
+
+class RollbackResponse(BaseModel):
+    """Wire shape for a successful rollback response."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    article_id: str
+    rolled_back_at: datetime
+    rolled_back_by: str
+    reason: Optional[str] = None
+    feedback_entries_reverted: int
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +362,106 @@ def register_admin_synthesis_routes(
             action=result.action.value,
             kb_doc_id=result.kb_doc_id,
             feedback_ids_marked=[str(fid) for fid in result.feedback_ids_marked],
+        )
+
+    # ------------------------------------------------------------------
+    # POST /admin/synthesis/rollback/{article_id}
+    # ------------------------------------------------------------------
+
+    @router.post(
+        "/rollback/{article_id}",
+        response_model=RollbackResponse,
+        status_code=200,
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            404: {"model": ErrorResponse, "description": "Article not found"},
+            422: {"model": ErrorResponse, "description": "Article is not a synthesized (source='feedback') document"},
+            500: {"model": ErrorResponse, "description": "KB document deleted but feedback revert failed"},
+        },
+        summary="Roll back a synthesized KB article",
+    )
+    async def rollback_article(
+        article_id: str,
+        request: RollbackRequest = RollbackRequest(),  # noqa: B008
+        identity=Depends(require_admin),  # noqa: B008
+    ) -> RollbackResponse:
+        """Remove a synthesized KB article and revert its source feedback entries.
+
+        Feedback entries are reverted first, then the KB document is deleted.
+        This ordering avoids a Postgres FK cascade (``ON DELETE SET NULL``) that
+        would null out ``integrated_into_kb_id`` before the revert UPDATE can
+        match it.
+
+        If the feedback revert step fails, HTTP 500 is returned, the KB
+        document is left intact, and an ERROR is logged so the state can be
+        manually corrected.
+
+        Returns 404 if the article does not exist.
+        Returns 422 if the article was not created by the synthesizer
+        (``source != 'feedback'``).
+        """
+        doc = kb_store.get_document(article_id)
+        if doc is None:
+            raise AdminAPIError(
+                status_code=404,
+                code="not_found",
+                detail=f"KB article '{article_id}' not found",
+            )
+
+        if doc.get("source") != "feedback":
+            raise AdminAPIError(
+                status_code=422,
+                code="not_synthesized",
+                detail=(
+                    f"KB article '{article_id}' has source='{doc.get('source')}'; "
+                    "only synthesized articles (source='feedback') can be rolled back"
+                ),
+            )
+
+        rolled_back_by: str = getattr(identity, "sub", None) or getattr(identity, "user_id", None) or str(identity)
+        rolled_back_at = datetime.now(timezone.utc)
+
+        # Revert feedback entries BEFORE deleting the KB document.
+        # On PostgreSQL the documents table has a FK constraint
+        # ``integrated_into_kb_id REFERENCES documents(id) ON DELETE SET NULL``
+        # which fires when delete_document runs and nulls out
+        # ``integrated_into_kb_id`` before revert_integrated can match it.
+        try:
+            count = await feedback_store.revert_integrated(
+                article_id,
+                rolled_back_by=rolled_back_by,
+                reason=request.reason,
+            )
+        except Exception as exc:
+            logger.error(
+                "Rollback: feedback revert failed for KB doc '%s' — "
+                "source_feedback_ids=%s error=%s (KB doc NOT deleted)",
+                article_id,
+                (doc.get("metadata") or {}).get("source_feedback_ids", []),
+                exc,
+            )
+            raise AdminAPIError(
+                status_code=500,
+                code="rollback_revert_failed",
+                detail="Feedback entries could not be reverted; KB article was NOT removed. See server logs.",
+            ) from exc
+
+        kb_store.delete_document(article_id)
+
+        logger.info(
+            "Rollback complete: article_id=%s rolled_back_by=%s reason=%r feedback_entries_reverted=%d",
+            article_id,
+            rolled_back_by,
+            request.reason,
+            count,
+        )
+
+        return RollbackResponse(
+            article_id=article_id,
+            rolled_back_at=rolled_back_at,
+            rolled_back_by=rolled_back_by,
+            reason=request.reason,
+            feedback_entries_reverted=count,
         )
 
     app.include_router(router)

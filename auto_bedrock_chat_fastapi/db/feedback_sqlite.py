@@ -58,6 +58,9 @@ _FEEDBACK_COLUMNS = (
     "reviewed_at",
     "integrated_into_kb_id",
     "integrated_at",
+    "rolled_back_at",
+    "rolled_back_by",
+    "rollback_reason",
     "created_at",
 )
 _SELECT_COLS = ", ".join(_FEEDBACK_COLUMNS)
@@ -196,29 +199,22 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             # Table doesn't exist yet (init_schema=False on a fresh DB);
             # safe to skip — no legacy rows can exist.
             pass
-        # Idempotent migration: add conversation_history column for
-        # databases created before XMGPLAT-10683. SQLite lacks
-        # ADD COLUMN IF NOT EXISTS; catch the "duplicate column" error.
-        try:
-            conn.execute("ALTER TABLE feedback ADD COLUMN conversation_history TEXT NOT NULL DEFAULT '[]'")
-            conn.commit()
-        except sqlite3.OperationalError:
-            # Column already exists (normal case) or table doesn't exist.
-            pass
-        # Idempotent migration: add integrated_into_kb_id and integrated_at
-        # columns for databases created before synthesis support was added.
-        try:
-            conn.execute("ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT")
-            conn.commit()
-        except sqlite3.OperationalError:
-            # Column already exists (normal case) or table doesn't exist.
-            pass
-        try:
-            conn.execute("ALTER TABLE feedback ADD COLUMN integrated_at TEXT")
-            conn.commit()
-        except sqlite3.OperationalError:
-            # Column already exists (normal case) or table doesn't exist.
-            pass
+        # Column-addition migrations: add columns for databases created before
+        # the relevant feature was added. SQLite lacks ADD COLUMN IF NOT EXISTS;
+        # catch the "duplicate column" error for idempotency.
+        for col_ddl in (
+            "ALTER TABLE feedback ADD COLUMN conversation_history TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT",
+            "ALTER TABLE feedback ADD COLUMN integrated_at TEXT",
+            "ALTER TABLE feedback ADD COLUMN rolled_back_at TEXT",
+            "ALTER TABLE feedback ADD COLUMN rolled_back_by TEXT",
+            "ALTER TABLE feedback ADD COLUMN rollback_reason TEXT",
+        ):
+            try:
+                conn.execute(col_ddl)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists or table not yet created
         self._conn = conn
 
     async def close(self) -> None:
@@ -255,6 +251,9 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             _dt_to_iso(entry.reviewed_at),
             entry.integrated_into_kb_id,
             _dt_to_iso(entry.integrated_at),
+            _dt_to_iso(entry.rolled_back_at),
+            entry.rolled_back_by,
+            entry.rollback_reason,
             _dt_to_iso(entry.created_at),
         )
         sql = f"""
@@ -569,6 +568,53 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             raise FeedbackError("Integrated feedback row vanished after commit")
         return self._row_to_entry(row)
 
+    async def revert_integrated(
+        self,
+        kb_doc_id: str,
+        rolled_back_by: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Clear synthesis provenance for entries linked to ``kb_doc_id``.
+
+        Returns the count of rows updated.
+        """
+        return await asyncio.to_thread(
+            self._revert_integrated_sync,
+            kb_doc_id,
+            rolled_back_by,
+            reason,
+        )
+
+    def _revert_integrated_sync(
+        self,
+        kb_doc_id: str,
+        rolled_back_by: str,
+        reason: Optional[str],
+    ) -> int:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        rolled_back_at_iso = _dt_to_iso(datetime.now(timezone.utc))
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    """
+                    UPDATE feedback
+                       SET integrated_into_kb_id = NULL,
+                           integrated_at         = NULL,
+                           rolled_back_at        = ?,
+                           rolled_back_by        = ?,
+                           rollback_reason       = ?
+                     WHERE integrated_into_kb_id = ?
+                    """,
+                    (rolled_back_at_iso, rolled_back_by, reason, kb_doc_id),
+                )
+                count = cur.rowcount
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return count
+
     async def stats(self) -> FeedbackStats:
         return await asyncio.to_thread(self._stats_sync)
 
@@ -702,6 +748,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         # Convert datetimes from ISO strings.
         data["reviewed_at"] = _iso_to_dt(data["reviewed_at"])
         data["integrated_at"] = _iso_to_dt(data["integrated_at"])
+        data["rolled_back_at"] = _iso_to_dt(data["rolled_back_at"])
         data["created_at"] = _iso_to_dt(data["created_at"])
 
         # Convert id from string to UUID; integrated_into_kb_id stays as str.

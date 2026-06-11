@@ -180,6 +180,45 @@ when synthesis completes (typically a few seconds for one entry).
 | 409  | `already_integrated`            | Entry is already linked to a KB document. |
 | 422  | `synthesis_precondition_failed` | Entry is not in `approved` state.         |
 
+### `POST /admin/synthesis/rollback/{article_id}`
+
+Remove a synthesized KB article and revert its source feedback entries
+so they can be corrected and re-synthesized.
+
+```bash
+curl -sS -b cookies.txt -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"reason": "Article had inverted formula for cache miss rate"}' \
+  'https://app.example.com/admin/synthesis/rollback/synthesis-ipc-computation-a1b2c3d4'
+```
+
+Response:
+
+```json
+{
+  "article_id": "synthesis-ipc-computation-a1b2c3d4",
+  "rolled_back_at": "2026-06-11T14:00:00Z",
+  "rolled_back_by": "reviewer@company.com",
+  "reason": "Article had inverted formula for cache miss rate",
+  "feedback_entries_reverted": 3
+}
+```
+
+| HTTP | `code`                   | When                                                                        |
+| ---- | ------------------------ | --------------------------------------------------------------------------- |
+| 200  | —                        | Rollback complete.                                                          |
+| 404  | `not_found`              | No KB document with that ID.                                                |
+| 422  | `not_synthesized`        | Document exists but `source != 'feedback'` — not a synthesized article.     |
+| 500  | `rollback_revert_failed` | KB doc was deleted but feedback revert failed; see server logs for details. |
+
+**What happens on rollback:**
+
+1. The KB document and all its chunks are permanently deleted from the KB store.
+2. Every `FeedbackEntry` whose `integrated_into_kb_id` matches the article ID has its synthesis provenance cleared (`integrated_into_kb_id = NULL`, `integrated_at = NULL`) and rollback metadata stamped (`rolled_back_at`, `rolled_back_by`, `rollback_reason`).
+3. Those entries become eligible for re-synthesis on the next batch run or via a new per-entry trigger.
+
+**Atomicity:** The operation is best-effort ordered — the KB document is deleted first. If the feedback revert step fails, HTTP 500 is returned and an `ERROR` is logged with the article ID and the `source_feedback_ids` list so state can be corrected manually. No compensating re-insertion of the KB document is attempted.
+
 ---
 
 ## Customizing the synthesis prompt
