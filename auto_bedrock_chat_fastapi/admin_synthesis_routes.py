@@ -376,7 +376,7 @@ def register_admin_synthesis_routes(
             **ADMIN_COMMON_RESPONSES,
             404: {"model": ErrorResponse, "description": "Article not found"},
             422: {"model": ErrorResponse, "description": "Article is not a synthesized (source='feedback') document"},
-            500: {"model": ErrorResponse, "description": "Feedback revert failed; KB document was NOT deleted"},
+            500: {"model": ErrorResponse, "description": "Revert or delete failed; see `code` for which step failed"},
         },
         summary="Roll back a synthesized KB article",
     )
@@ -388,13 +388,14 @@ def register_admin_synthesis_routes(
         """Remove a synthesized KB article and revert its source feedback entries.
 
         Feedback entries are reverted first, then the KB document is deleted.
-        This ordering avoids a Postgres FK cascade (``ON DELETE SET NULL``) that
-        would null out ``integrated_into_kb_id`` before the revert UPDATE can
-        match it.
+        This ordering ensures that if the revert step fails the system remains
+        in a consistent state (KB document still present, feedback unchanged)
+        rather than leaving feedback entries reverted with the KB doc intact.
 
-        If the feedback revert step fails, HTTP 500 is returned, the KB
-        document is left intact, and an ERROR is logged so the state can be
-        manually corrected.
+        If the feedback revert step fails, HTTP 500 (`rollback_revert_failed`)
+        is returned, the KB document is left intact, and an ERROR is logged.
+        If the KB delete step fails after a successful revert, HTTP 500
+        (`rollback_delete_failed`) is returned and an ERROR is logged.
 
         Returns 404 if the article does not exist.
         Returns 422 if the article was not created by the synthesizer
@@ -424,11 +425,9 @@ def register_admin_synthesis_routes(
         rolled_back_by: str = getattr(identity, "sub", None) or getattr(identity, "user_id", None) or str(identity)
         rolled_back_at = datetime.now(timezone.utc)
 
-        # Revert feedback entries BEFORE deleting the KB document.
-        # On PostgreSQL the documents table has a FK constraint
-        # ``integrated_into_kb_id REFERENCES documents(id) ON DELETE SET NULL``
-        # which fires when delete_document runs and nulls out
-        # ``integrated_into_kb_id`` before revert_integrated can match it.
+        # Revert feedback entries BEFORE deleting the KB document so that a
+        # revert failure leaves the system in a consistent state (KB doc still
+        # present, feedback entries unchanged) instead of partially rolled back.
         try:
             count = await feedback_store.revert_integrated(
                 article_id,

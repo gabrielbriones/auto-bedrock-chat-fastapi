@@ -204,12 +204,13 @@ Response:
 }
 ```
 
-| HTTP | `code`                   | When                                                                             |
-| ---- | ------------------------ | -------------------------------------------------------------------------------- |
-| 200  | —                        | Rollback complete.                                                               |
-| 404  | `not_found`              | No KB document with that ID.                                                     |
-| 422  | `not_synthesized`        | Document exists but `source != 'feedback'` — not a synthesized article.          |
-| 500  | `rollback_revert_failed` | Feedback revert failed; KB article was NOT removed; see server logs for details. |
+| HTTP | `code`                   | When                                                                                    |
+| ---- | ------------------------ | --------------------------------------------------------------------------------------- |
+| 200  | —                        | Rollback complete.                                                                      |
+| 404  | `not_found`              | No KB document with that ID.                                                            |
+| 422  | `not_synthesized`        | Document exists but `source != 'feedback'` — not a synthesized article.                 |
+| 500  | `rollback_revert_failed` | Feedback revert failed; KB article was NOT removed; see server logs for details.        |
+| 500  | `rollback_delete_failed` | Feedback was reverted but KB article could not be deleted; see server logs for details. |
 
 **What happens on rollback:**
 
