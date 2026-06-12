@@ -303,6 +303,9 @@ async def test_postgres_row_to_entry_preserves_conversation_history():
         "reviewed_at": None,
         "integrated_into_kb_id": None,
         "integrated_at": None,
+        "rolled_back_at": None,
+        "rolled_back_by": None,
+        "rollback_reason": None,
         "created_at": datetime.now(timezone.utc),
     }
     row = tuple(row_data[col] for col in _FEEDBACK_COLUMNS)
@@ -340,6 +343,9 @@ async def test_postgres_row_to_entry_null_conversation_history():
         "reviewed_at": None,
         "integrated_into_kb_id": None,
         "integrated_at": None,
+        "rolled_back_at": None,
+        "rolled_back_by": None,
+        "rollback_reason": None,
         "created_at": datetime.now(timezone.utc),
     }
     row = tuple(row_data[col] for col in _FEEDBACK_COLUMNS)

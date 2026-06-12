@@ -298,9 +298,10 @@ body {
     white-space: nowrap;
 }
 
-.chip-pending  { background: #ebf4ff; color: #2b6cb0; }
-.chip-approved { background: #c6f6d5; color: #276749; }
-.chip-rejected { background: #fed7d7; color: #9b2c2c; }
+.chip-pending      { background: #ebf4ff; color: #2b6cb0; }
+.chip-approved     { background: #c6f6d5; color: #276749; }
+.chip-rejected     { background: #fed7d7; color: #9b2c2c; }
+.chip-rolled-back  { background: #feebc8; color: #7b341e; }
 .chip-positive { background: #fefcbf; color: #744210; }
 .chip-negative { background: #fed7d7; color: #9b2c2c; }
 
@@ -800,7 +801,21 @@ body {
 
 .btn-danger:hover   { background: #c53030; }
 .btn-success:hover  { background: #276749; }
-.btn-danger:disabled, .btn-success:disabled, .btn-primary:disabled, .btn-secondary:disabled {
+.btn-warning {
+    display: inline-block;
+    padding: 9px 18px;
+    background: #dd6b20;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+.btn-warning:hover  { background: #c05621; }
+.btn-danger:disabled, .btn-success:disabled, .btn-primary:disabled, .btn-secondary:disabled, .btn-warning:disabled {
     opacity: 0.55;
     cursor: not-allowed;
 }

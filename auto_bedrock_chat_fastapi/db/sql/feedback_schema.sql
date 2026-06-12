@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS feedback (
     integrated_into_kb_id   TEXT,
     integrated_at           TIMESTAMPTZ,
 
+    -- Set by the rollback endpoint when a synthesized article is removed.
+    rolled_back_at          TIMESTAMPTZ,
+    rolled_back_by          TEXT,
+    rollback_reason         TEXT,
+
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- Mirror the Pydantic-side validation (see auto_bedrock_chat_fastapi/models.py):
@@ -161,6 +166,32 @@ BEGIN
                     integrated_into_kb_id IS NULL
                     OR review_status = 'approved'
                 );
+    END IF;
+END$$;
+
+-- Add rollback audit columns to existing deployments.  Idempotent.
+-- Each column is checked independently to handle partially-migrated deployments.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback' AND column_name = 'rolled_back_at'
+    ) THEN
+        ALTER TABLE feedback ADD COLUMN rolled_back_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback' AND column_name = 'rolled_back_by'
+    ) THEN
+        ALTER TABLE feedback ADD COLUMN rolled_back_by TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback' AND column_name = 'rollback_reason'
+    ) THEN
+        ALTER TABLE feedback ADD COLUMN rollback_reason TEXT;
     END IF;
 END$$;
 

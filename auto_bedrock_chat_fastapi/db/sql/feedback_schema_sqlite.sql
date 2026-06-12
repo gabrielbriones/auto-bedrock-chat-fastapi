@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS feedback (
     integrated_into_kb_id   TEXT,
     integrated_at           TEXT,
 
+    -- Set by the rollback endpoint when a synthesized article is removed.
+    rolled_back_at          TEXT,
+    rolled_back_by          TEXT,
+    rollback_reason         TEXT,
+
     created_at          TEXT NOT NULL,
 
     -- A correction is a proposed fix to the AI's answer; only meaningful

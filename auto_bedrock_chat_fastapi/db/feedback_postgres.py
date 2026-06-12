@@ -72,6 +72,9 @@ _FEEDBACK_COLUMNS: Tuple[str, ...] = (
     "reviewed_at",
     "integrated_into_kb_id",
     "integrated_at",
+    "rolled_back_at",
+    "rolled_back_by",
+    "rollback_reason",
     "created_at",
 )
 _SELECT_COLS = ", ".join(_FEEDBACK_COLUMNS)
@@ -196,14 +199,18 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                 kb_sources_used, model_id,
                 review_status, reviewer_id, reviewer_tags,
                 conversation_history, reviewer_comment,
-                reviewed_at, created_at
+                reviewed_at, integrated_into_kb_id, integrated_at,
+                rolled_back_at, rolled_back_by, rollback_reason,
+                created_at
             ) VALUES (
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s,
                 %s, %s, %s,
                 %s, %s,
-                %s, %s
+                %s, %s, %s,
+                %s, %s, %s,
+                %s
             )
             RETURNING {_SELECT_COLS}
         """
@@ -227,6 +234,9 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             entry.reviewed_at,
             entry.integrated_into_kb_id,
             entry.integrated_at,
+            entry.rolled_back_at,
+            entry.rolled_back_by,
+            entry.rollback_reason,
             entry.created_at,
         )
         async with self._pool.connection() as conn:
@@ -561,6 +571,33 @@ class PostgresFeedbackStore(BaseFeedbackStore):
 
             raise AlreadyIntegratedError(f"feedback {feedback_id} is already integrated into KB document '{check[0]}'")
         return self._row_to_entry(row)
+
+    async def revert_integrated(
+        self,
+        kb_doc_id: str,
+        rolled_back_at: datetime,
+        rolled_back_by: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Clear synthesis provenance for entries linked to ``kb_doc_id``.
+
+        Returns the count of rows updated.
+        """
+        sql = """
+            UPDATE feedback
+               SET integrated_into_kb_id = NULL,
+                   integrated_at         = NULL,
+                   rolled_back_at        = %s,
+                   rolled_back_by        = %s,
+                   rollback_reason       = %s
+             WHERE integrated_into_kb_id = %s
+        """
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (rolled_back_at, rolled_back_by, reason, kb_doc_id))
+                count = cur.rowcount
+            await conn.commit()
+        return count
 
     # ------------------------------------------------------------------
     # Internal helpers

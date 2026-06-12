@@ -11,6 +11,8 @@ Endpoints
 * ``POST /admin/synthesis/trigger``             — manual full-batch run.
 * ``POST /admin/synthesis/trigger/{feedback_id}``
                                                 — per-review on-demand synthesis.
+* ``POST /admin/synthesis/rollback/{article_id}``
+                                                — roll back a synthesized KB article.
 
 Run state is purely in-memory; it is reset on each process restart.
 Feedback entries that were mid-integration when the process died will
@@ -77,6 +79,26 @@ class SingleEntrySynthesisResponse(BaseModel):
     action: str
     kb_doc_id: Optional[str] = None
     feedback_ids_marked: list[str] = Field(default_factory=list)
+
+
+class RollbackRequest(BaseModel):
+    """Optional request body for ``POST /admin/synthesis/rollback/{article_id}``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    reason: Optional[str] = None
+
+
+class RollbackResponse(BaseModel):
+    """Wire shape for a successful rollback response."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    article_id: str
+    rolled_back_at: datetime
+    rolled_back_by: str
+    reason: Optional[str] = None
+    feedback_entries_reverted: int
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +362,119 @@ def register_admin_synthesis_routes(
             action=result.action.value,
             kb_doc_id=result.kb_doc_id,
             feedback_ids_marked=[str(fid) for fid in result.feedback_ids_marked],
+        )
+
+    # ------------------------------------------------------------------
+    # POST /admin/synthesis/rollback/{article_id}
+    # ------------------------------------------------------------------
+
+    @router.post(
+        "/rollback/{article_id}",
+        response_model=RollbackResponse,
+        status_code=200,
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            404: {"model": ErrorResponse, "description": "Article not found"},
+            422: {"model": ErrorResponse, "description": "Article is not a synthesized (source='feedback') document"},
+            500: {"model": ErrorResponse, "description": "Revert or delete failed; see `code` for which step failed"},
+        },
+        summary="Roll back a synthesized KB article",
+    )
+    async def rollback_article(
+        article_id: str,
+        request: Optional[RollbackRequest] = None,
+        identity=Depends(require_admin),  # noqa: B008
+    ) -> RollbackResponse:
+        """Remove a synthesized KB article and revert its source feedback entries.
+
+        Feedback entries are reverted first, then the KB document is deleted.
+        This ordering ensures that if the revert step fails the KB document
+        remains intact and feedback entries are unchanged (no partial rollback).
+        If the order were reversed, a delete failure would leave the KB doc gone
+        while feedback entries were still marked as integrated.
+
+        If the feedback revert step fails, HTTP 500 (`rollback_revert_failed`)
+        is returned, the KB document is left intact, and an ERROR is logged.
+        If the KB delete step fails after a successful revert, HTTP 500
+        (`rollback_delete_failed`) is returned and an ERROR is logged.
+
+        Returns 404 if the article does not exist.
+        Returns 422 if the article was not created by the synthesizer
+        (``source != 'feedback'``).
+        """
+        if request is None:
+            request = RollbackRequest()
+
+        doc = await asyncio.to_thread(kb_store.get_document, article_id)
+        if doc is None:
+            raise AdminAPIError(
+                status_code=404,
+                code="not_found",
+                detail=f"KB article '{article_id}' not found",
+            )
+
+        if doc.get("source") != "feedback":
+            raise AdminAPIError(
+                status_code=422,
+                code="not_synthesized",
+                detail=(
+                    f"KB article '{article_id}' has source='{doc.get('source')}'; "
+                    "only synthesized articles (source='feedback') can be rolled back"
+                ),
+            )
+
+        rolled_back_by: str = getattr(identity, "sub", None) or getattr(identity, "user_id", None) or str(identity)
+        rolled_back_at = datetime.now(timezone.utc)
+
+        # Revert feedback entries BEFORE deleting the KB document so that a
+        # revert failure leaves the system in a consistent state (KB doc still
+        # present, feedback entries unchanged) instead of partially rolled back.
+        try:
+            count = await feedback_store.revert_integrated(
+                article_id,
+                rolled_back_at=rolled_back_at,
+                rolled_back_by=rolled_back_by,
+                reason=request.reason,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Rollback: feedback revert failed for KB doc '%s' — " "source_feedback_ids=%s (KB doc NOT deleted)",
+                article_id,
+                (doc.get("metadata") or {}).get("source_feedback_ids", []),
+            )
+            raise AdminAPIError(
+                status_code=500,
+                code="rollback_revert_failed",
+                detail="Feedback entries could not be reverted; KB article was NOT removed. See server logs.",
+            ) from exc
+
+        try:
+            await asyncio.to_thread(kb_store.delete_document, article_id)
+        except Exception as exc:
+            logger.exception(
+                "Rollback: feedback reverted for KB doc '%s' but delete failed",
+                article_id,
+            )
+            raise AdminAPIError(
+                status_code=500,
+                code="rollback_delete_failed",
+                detail="Feedback entries were reverted but KB article could not be deleted. See server logs.",
+            ) from exc
+
+        logger.info(
+            "Rollback complete: article_id=%s rolled_back_by=%s reason=%r feedback_entries_reverted=%d",
+            article_id,
+            rolled_back_by,
+            request.reason,
+            count,
+        )
+
+        return RollbackResponse(
+            article_id=article_id,
+            rolled_back_at=rolled_back_at,
+            rolled_back_by=rolled_back_by,
+            reason=request.reason,
+            feedback_entries_reverted=count,
         )
 
     app.include_router(router)

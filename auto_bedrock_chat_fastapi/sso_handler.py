@@ -395,6 +395,11 @@ class SSOProvider:
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [alg],
             "audience": self._config.sso_client_id,
+            # Allow up to 30 seconds of clock skew between this server and the
+            # IdP.  PyJWT applies the leeway symmetrically to iat, nbf, and
+            # exp, which prevents spurious "token not yet valid" failures when
+            # the IdP clock is slightly ahead of the server clock.
+            "leeway": 30,
         }
         if self._issuer:
             decode_kwargs["issuer"] = self._issuer

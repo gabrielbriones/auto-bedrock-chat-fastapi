@@ -783,3 +783,82 @@ class TestIntegratedCountStat:
         stats = await store.stats()
         assert hasattr(stats, "integrated_count")
         assert stats.integrated_count >= 0
+
+
+class TestRevertIntegrated:
+    async def test_revert_clears_integration_fields_and_stamps_rollback(self, store):
+        """revert_integrated clears integration provenance and sets rollback audit columns."""
+        entry = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix"))
+        await store.update_review(entry.id, ReviewStatus.APPROVED, reviewer_id="rev", tags=[], comment=None)
+
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc)
+        await store.mark_integrated(entry.id, kb_id, ts)
+
+        rolled_back_at = datetime.now(timezone.utc)
+        count = await store.revert_integrated(
+            kb_id,
+            rolled_back_at=rolled_back_at,
+            rolled_back_by="admin@example.com",
+            reason="bad article",
+        )
+
+        assert count == 1
+        fetched = await store.get(entry.id)
+        assert fetched is not None
+        assert fetched.integrated_into_kb_id is None
+        assert fetched.integrated_at is None
+        assert fetched.rolled_back_at is not None
+        assert fetched.rolled_back_by == "admin@example.com"
+        assert fetched.rollback_reason == "bad article"
+
+    async def test_revert_returns_zero_when_no_matching_entries(self, store):
+        """Returns 0 when no entries have the given integrated_into_kb_id."""
+        count = await store.revert_integrated(
+            "nonexistent-doc-id",
+            rolled_back_at=datetime.now(timezone.utc),
+            rolled_back_by="admin",
+        )
+        assert count == 0
+
+    async def test_revert_updates_all_entries_for_kb_doc(self, store):
+        """All entries linked to the same KB doc ID are reverted in one call."""
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc)
+
+        a = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix a"))
+        await store.update_review(a.id, ReviewStatus.APPROVED, "rev", [], None)
+        await store.mark_integrated(a.id, kb_id, ts)
+
+        b = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix b"))
+        await store.update_review(b.id, ReviewStatus.APPROVED, "rev", [], None)
+        await store.mark_integrated(b.id, kb_id, ts)
+
+        count = await store.revert_integrated(
+            kb_id,
+            rolled_back_at=datetime.now(timezone.utc),
+            rolled_back_by="admin",
+        )
+        assert count == 2
+
+        for eid in (a.id, b.id):
+            fetched = await store.get(eid)
+            assert fetched is not None
+            assert fetched.integrated_into_kb_id is None
+
+    async def test_revert_without_reason_leaves_rollback_reason_none(self, store):
+        entry = await store.create(_entry(rating=Rating.NEGATIVE, correction_text="fix"))
+        await store.update_review(entry.id, ReviewStatus.APPROVED, "rev", [], None)
+        kb_id = f"synthesis-test-{uuid4().hex[:8]}"
+        await store.mark_integrated(entry.id, kb_id, datetime.now(timezone.utc))
+
+        await store.revert_integrated(
+            kb_id,
+            rolled_back_at=datetime.now(timezone.utc),
+            rolled_back_by="admin",
+            reason=None,
+        )
+
+        fetched = await store.get(entry.id)
+        assert fetched is not None
+        assert fetched.rollback_reason is None

@@ -161,6 +161,58 @@ and all its chunks. This cannot be undone."). Confirmed → `DELETE
 
 ---
 
+## KB Synthesis section (Review Drawer)
+
+Displayed for every `approved` feedback entry inside the Review Drawer.
+
+### Not yet synthesized
+
+- A hint text explains the entry has not been integrated into the KB.
+- **Synthesize into KB** button calls `POST /admin/synthesis/trigger/{entry_id}`.
+  - On success: toast + drawer closes.
+  - On 409: inline error "Already synthesized — reload to refresh the entry."
+  - On 422: inline error from the API `detail`.
+  - On other errors: inline "Synthesis failed: …" message.
+
+### Already synthesized
+
+When `integrated_into_kb_id` is set, the section shows:
+
+| Field  | Value                               |
+| ------ | ----------------------------------- |
+| Status | "Synthesized ✓"                     |
+| At     | `integrated_at` formatted timestamp |
+| KB Doc | Truncated document ID (36 chars)    |
+
+A **Roll Back** button is also shown. Clicking it opens a `window.prompt` to
+collect an optional reason. If the prompt is cancelled the action aborts; if
+an empty reason is submitted a `window.confirm` asks for confirmation. Confirmed →
+`POST /admin/synthesis/rollback/{article_id}` with `{"reason": "…"}` (or `{}`
+when no reason is provided).
+
+- On success: toast showing the count of reverted entries + drawer closes + table reloads.
+- On 422: inline error (article is not a synthesized document).
+- On 500: inline error with a note to check server logs.
+- On other errors: inline error message.
+
+---
+
+## KB Document Editor — Roll Back button
+
+When the KB Document Editor is opened on a document with `source = "feedback"`
+(i.e. a synthesized article), a **Roll Back Article** button appears in the
+footer alongside Delete and Save.
+
+This is the primary way to roll back a synthesized article: navigate to the
+**KB Browser**, find the article, open it, and click **Roll Back Article**.
+
+The button prompts for an optional reason, then calls
+`POST /admin/synthesis/rollback/{article_id}`. On success: toast with the count
+of reverted feedback entries, drawer closes, KB table reloads. Error handling is
+the same as the Review Drawer rollback button above.
+
+---
+
 ## Dev-mode banner
 
 When the anonymous-admin escape hatch is active

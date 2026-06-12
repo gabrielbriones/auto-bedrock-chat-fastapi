@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -473,3 +473,197 @@ class TestPluginWiring:
         client = TestClient(app)
         resp = client.get(f"{_SYNTHESIS_PREFIX}/status")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/synthesis/rollback/{article_id}
+# ---------------------------------------------------------------------------
+
+
+def _make_synthesized_doc(article_id: str, feedback_ids: list | None = None) -> dict:
+    """Return a minimal KB document dict as returned by kb_store.get_document."""
+    return {
+        "id": article_id,
+        "source": "feedback",
+        "title": "Synthesized article",
+        "content": "Some content.",
+        "metadata": {
+            "synthesized": True,
+            "source_feedback_ids": feedback_ids or ["fb-uuid-1", "fb-uuid-2"],
+        },
+    }
+
+
+class TestRollbackArticle:
+    def _build_rollback_app(self, feedback_store, kb_store_mock):
+        """Build app with a mock kb_store for rollback tests."""
+        app = FastAPI()
+        from auto_bedrock_chat_fastapi.admin_errors import register_admin_error_handlers
+
+        register_admin_error_handlers(app)
+
+        async def require_admin():
+            return AdminIdentity(user_id="admin", claims={})
+
+        synth, _ = _make_synthesizer()
+        register_admin_synthesis_routes(
+            app,
+            prefix=_ADMIN_PREFIX,
+            feedback_store=feedback_store,
+            kb_store=kb_store_mock,
+            require_admin=require_admin,
+            synthesizer=synth,
+            bedrock_client=_make_bedrock_client(),
+        )
+        return TestClient(app)
+
+    def test_successful_rollback_returns_200(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.return_value = None
+
+        feedback_store.revert_integrated = AsyncMock(return_value=2)
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(
+            f"{_SYNTHESIS_PREFIX}/rollback/{article_id}",
+            json={"reason": "Article had inverted formula"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["article_id"] == article_id
+        assert data["rolled_back_by"] == "admin"
+        assert data["reason"] == "Article had inverted formula"
+        assert data["feedback_entries_reverted"] == 2
+        assert "rolled_back_at" in data
+
+    def test_delete_and_revert_called_with_correct_args(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.return_value = None
+
+        feedback_store.revert_integrated = AsyncMock(return_value=2)
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        client.post(
+            f"{_SYNTHESIS_PREFIX}/rollback/{article_id}",
+            json={"reason": "bad article"},
+        )
+
+        kb_mock.delete_document.assert_called_once_with(article_id)
+        feedback_store.revert_integrated.assert_awaited_once_with(
+            article_id,
+            rolled_back_at=ANY,
+            rolled_back_by="admin",
+            reason="bad article",
+        )
+
+    def test_rollback_without_reason_succeeds(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.return_value = None
+        feedback_store.revert_integrated = AsyncMock(return_value=0)
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
+        assert resp.status_code == 200
+        assert resp.json()["reason"] is None
+
+    def test_returns_404_when_article_not_found(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        kb_mock.get_document.return_value = None
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/nonexistent-id")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "not_found"
+
+    def test_returns_422_for_non_synthesized_source(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        kb_mock.get_document.return_value = {
+            "id": "static-doc-1",
+            "source": "static",
+            "title": "A static doc",
+            "content": "...",
+            "metadata": {},
+        }
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/static-doc-1")
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "not_synthesized"
+
+    def test_returns_422_for_crawled_source(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        kb_mock.get_document.return_value = {
+            "id": "crawled-doc-1",
+            "source": "https://example.com/docs/page",
+            "title": "Crawled doc",
+            "content": "...",
+            "metadata": {},
+        }
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/crawled-doc-1")
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "not_synthesized"
+
+    def test_returns_500_when_revert_raises(self, feedback_store, kb_store):
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.return_value = None
+        feedback_store.revert_integrated = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "rollback_revert_failed"
+
+    def test_revert_called_before_delete(self, feedback_store, kb_store):
+        """Feedback revert must run before KB doc deletion so a revert failure leaves the KB doc intact (no partial rollback)."""
+        call_order: list = []
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.side_effect = lambda _: call_order.append("delete")
+
+        async def _revert(kb_doc_id, rolled_back_at, rolled_back_by, reason=None):
+            call_order.append("revert")
+            return 1
+
+        feedback_store.revert_integrated = _revert
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
+        assert resp.status_code == 200
+        assert call_order == ["revert", "delete"], f"Expected revert before delete, got: {call_order}"
+
+    def test_delete_not_called_when_revert_raises(self, feedback_store, kb_store):
+        """KB doc must NOT be deleted when feedback revert fails (new safe order)."""
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.return_value = None
+        feedback_store.revert_integrated = AsyncMock(side_effect=RuntimeError("boom"))
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
+        assert resp.status_code == 500
+        kb_mock.delete_document.assert_not_called()
+
+    def test_returns_500_when_delete_raises(self, feedback_store, kb_store):
+        """Returns rollback_delete_failed when kb_store.delete_document raises after a successful revert."""
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.side_effect = RuntimeError("disk full")
+        feedback_store.revert_integrated = AsyncMock(return_value=1)
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "rollback_delete_failed"

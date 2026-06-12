@@ -1318,6 +1318,10 @@ class BedrockChatPlugin:
         if self.config.enable_ui and getattr(self, "templates", None) is not None:
             dashboard_url = f"{self.config.chat_endpoint}/dashboard"
 
+            import time as _time
+
+            _static_ver = str(int(_time.time()))
+
             @self.app.get(dashboard_url, response_class=HTMLResponse, include_in_schema=False)
             async def admin_dashboard_page(request: Request):
                 """Serve the Admin Dashboard shell page."""
@@ -1328,6 +1332,7 @@ class BedrockChatPlugin:
                         "app_title": self.app.title or "API",
                         "admin_prefix": admin_prefix,
                         "chat_url": self.config.ui_endpoint,
+                        "static_ver": _static_ver,
                     },
                 )
 
