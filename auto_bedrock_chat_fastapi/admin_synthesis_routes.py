@@ -388,9 +388,10 @@ def register_admin_synthesis_routes(
         """Remove a synthesized KB article and revert its source feedback entries.
 
         Feedback entries are reverted first, then the KB document is deleted.
-        This ordering ensures that if the revert step fails the system remains
-        in a consistent state (KB document still present, feedback unchanged)
-        rather than leaving feedback entries reverted with the KB doc intact.
+        This ordering ensures that if the revert step fails the KB document
+        remains intact and feedback entries are unchanged (no partial rollback).
+        If the order were reversed, a delete failure would leave the KB doc gone
+        while feedback entries were still marked as integrated.
 
         If the feedback revert step fails, HTTP 500 (`rollback_revert_failed`)
         is returned, the KB document is left intact, and an ERROR is logged.

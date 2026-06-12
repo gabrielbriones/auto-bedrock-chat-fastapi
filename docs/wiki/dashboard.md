@@ -184,9 +184,11 @@ When `integrated_into_kb_id` is set, the section shows:
 | At     | `integrated_at` formatted timestamp |
 | KB Doc | Truncated document ID (36 chars)    |
 
-A **Roll Back** button is also shown. Clicking it opens a confirmation
-modal that prompts for an optional reason. Confirmed →
-`POST /admin/synthesis/rollback/{article_id}` with `{"reason": "…"}`.
+A **Roll Back** button is also shown. Clicking it opens a `window.prompt` to
+collect an optional reason. If the prompt is cancelled the action aborts; if
+an empty reason is submitted a `window.confirm` asks for confirmation. Confirmed →
+`POST /admin/synthesis/rollback/{article_id}` with `{"reason": "…"}` (or `{}`
+when no reason is provided).
 
 - On success: toast showing the count of reverted entries + drawer closes + table reloads.
 - On 422: inline error (article is not a synthesized document).

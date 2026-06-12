@@ -699,7 +699,7 @@
             var rbErr = el('div', 'inline-error'); rbErr.id = 'rb-err';
             sec.appendChild(rbErr);
 
-            var rbBtn = el('button', 'btn-danger', 'Roll Back');
+            var rbBtn = el('button', 'btn-warning', 'Roll Back');
             rbBtn.title = 'Remove this synthesized KB article and revert feedback entries for re-synthesis';
             rbBtn.addEventListener('click', function () {
                 var promptResult = window.prompt('Reason for rollback (optional):');
