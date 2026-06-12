@@ -24,7 +24,6 @@ from auto_bedrock_chat_fastapi.models import FeedbackEntry, Rating
 from auto_bedrock_chat_fastapi.session_manager import ChatMessage, ChatSession
 from auto_bedrock_chat_fastapi.websocket_handler import WebSocketChatHandler
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -275,7 +274,7 @@ async def test_postgres_row_to_entry_preserves_conversation_history():
     """_row_to_entry correctly maps conversation_history from a Postgres row."""
     from datetime import datetime, timezone
 
-    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore, _FEEDBACK_COLUMNS
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import _FEEDBACK_COLUMNS, PostgresFeedbackStore
 
     store = PostgresFeedbackStore.__new__(PostgresFeedbackStore)
 
@@ -303,6 +302,8 @@ async def test_postgres_row_to_entry_preserves_conversation_history():
         "conversation_history": history,
         "reviewer_comment": None,
         "reviewed_at": None,
+        "integrated_into_kb_id": None,
+        "integrated_at": None,
         "created_at": datetime.now(timezone.utc),
     }
     row = tuple(row_data[col] for col in _FEEDBACK_COLUMNS)
@@ -316,7 +317,7 @@ async def test_postgres_row_to_entry_null_conversation_history():
     """NULL conversation_history from Postgres is normalized to []."""
     from datetime import datetime, timezone
 
-    from auto_bedrock_chat_fastapi.db.feedback_postgres import PostgresFeedbackStore, _FEEDBACK_COLUMNS
+    from auto_bedrock_chat_fastapi.db.feedback_postgres import _FEEDBACK_COLUMNS, PostgresFeedbackStore
 
     store = PostgresFeedbackStore.__new__(PostgresFeedbackStore)
 
@@ -338,6 +339,8 @@ async def test_postgres_row_to_entry_null_conversation_history():
         "conversation_history": None,  # NULL from DB
         "reviewer_comment": None,
         "reviewed_at": None,
+        "integrated_into_kb_id": None,
+        "integrated_at": None,
         "created_at": datetime.now(timezone.utc),
     }
     row = tuple(row_data[col] for col in _FEEDBACK_COLUMNS)

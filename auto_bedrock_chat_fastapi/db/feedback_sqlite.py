@@ -205,6 +205,20 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         except sqlite3.OperationalError:
             # Column already exists (normal case) or table doesn't exist.
             pass
+        # Idempotent migration: add integrated_into_kb_id and integrated_at
+        # columns for databases created before synthesis support was added.
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists (normal case) or table doesn't exist.
+            pass
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN integrated_at TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists (normal case) or table doesn't exist.
+            pass
         self._conn = conn
 
     async def close(self) -> None:
