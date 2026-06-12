@@ -1575,6 +1575,7 @@ def add_bedrock_chat(
     allowed_paths: Optional[list] = None,
     excluded_paths: Optional[list] = None,
     max_tool_calls: Optional[int] = None,
+    feedback_max_history_context: Optional[int] = None,
     timeout: Optional[int] = None,
     auth_dependency: Optional[Callable] = None,
     openapi_spec_file: Optional[str] = None,
@@ -1599,6 +1600,8 @@ def add_bedrock_chat(
         allowed_paths: List of API paths to expose as tools
         excluded_paths: List of API paths to exclude from tools
         max_tool_calls: Maximum tool calls per conversation
+        feedback_max_history_context: Number of previous user/assistant messages
+                      to attach to feedback submissions (0 disables)
         timeout: Timeout for API calls in seconds
         auth_dependency: Authentication dependency function
         openapi_spec_file: Path to OpenAPI spec file for framework-agnostic tool generation
@@ -1646,6 +1649,8 @@ def add_bedrock_chat(
             config_overrides["excluded_paths"] = excluded_paths
         if max_tool_calls is not None:
             config_overrides["max_tool_calls"] = max_tool_calls
+        if feedback_max_history_context is not None:
+            config_overrides["feedback_max_history_context"] = feedback_max_history_context
         if timeout is not None:
             config_overrides["timeout"] = timeout
         if auth_dependency is not None:

@@ -301,7 +301,7 @@ def handler_factory():
     def _make(*, with_store: bool = True, authorizer=None):
         h = WebSocketChatHandler.__new__(WebSocketChatHandler)
         h._total_errors = 0
-        h.config = MagicMock(model_id="anthropic.claude-test")
+        h.config = MagicMock(model_id="anthropic.claude-test", feedback_max_history_context=5)
         h.feedback_authorizer = authorizer or AuthenticatedUserAuthorizer()
 
         if with_store:

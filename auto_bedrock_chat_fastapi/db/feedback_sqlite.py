@@ -53,6 +53,7 @@ _FEEDBACK_COLUMNS = (
     "review_status",
     "reviewer_id",
     "reviewer_tags",
+    "conversation_history",
     "reviewer_comment",
     "reviewed_at",
     "integrated_into_kb_id",
@@ -195,18 +196,29 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             # Table doesn't exist yet (init_schema=False on a fresh DB);
             # safe to skip — no legacy rows can exist.
             pass
-        # Column-addition migrations: add synthesis columns to
-        # schemas. ``ALTER TABLE ADD COLUMN`` raises OperationalError if the
-        # column already exists; catch and ignore for idempotency.
-        for col_ddl in (
-            "ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT",
-            "ALTER TABLE feedback ADD COLUMN integrated_at TEXT",
-        ):
-            try:
-                conn.execute(col_ddl)
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass  # column already exists or table not yet created
+        # Idempotent migration: add conversation_history column for
+        # databases created before XMGPLAT-10683. SQLite lacks
+        # ADD COLUMN IF NOT EXISTS; catch the "duplicate column" error.
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN conversation_history TEXT NOT NULL DEFAULT '[]'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists (normal case) or table doesn't exist.
+            pass
+        # Idempotent migration: add integrated_into_kb_id and integrated_at
+        # columns for databases created before synthesis support was added.
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists (normal case) or table doesn't exist.
+            pass
+        try:
+            conn.execute("ALTER TABLE feedback ADD COLUMN integrated_at TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists (normal case) or table doesn't exist.
+            pass
         self._conn = conn
 
     async def close(self) -> None:
@@ -238,6 +250,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             entry.review_status.value,
             entry.reviewer_id,
             json.dumps(list(entry.reviewer_tags)),
+            json.dumps(entry.conversation_history),
             entry.reviewer_comment,
             _dt_to_iso(entry.reviewed_at),
             entry.integrated_into_kb_id,
@@ -683,6 +696,8 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         data["kb_sources_used"] = json.loads(kb_raw) if kb_raw else []
         tags_raw = data["reviewer_tags"]
         data["reviewer_tags"] = json.loads(tags_raw) if tags_raw else []
+        history_raw = data.get("conversation_history")
+        data["conversation_history"] = json.loads(history_raw) if history_raw else []
 
         # Convert datetimes from ISO strings.
         data["reviewed_at"] = _iso_to_dt(data["reviewed_at"])

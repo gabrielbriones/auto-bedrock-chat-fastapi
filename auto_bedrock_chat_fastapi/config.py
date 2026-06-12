@@ -725,6 +725,17 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    feedback_max_history_context: int = Field(
+        default=5,
+        ge=0,
+        alias="BEDROCK_FEEDBACK_MAX_HISTORY_CONTEXT",
+        description=(
+            "Number of preceding user/assistant messages to capture alongside "
+            "the rated response when feedback is submitted. Gives reviewers "
+            "conversational context. Set to 0 to disable history capture."
+        ),
+    )
+
     # ------------------------------------------------------------------
     # Admin API
     # ------------------------------------------------------------------
@@ -1310,8 +1321,12 @@ def validate_config(config: ChatConfig) -> None:
         except Exception as e:
             raise ConfigurationError(f"AWS configuration error: {str(e)}")
 
-    # Validate endpoint paths don't conflict
+    # Raise errors for critical misconfigurations
+    if config.feedback_max_history_context < 0:
+        raise ConfigurationError("Feedback max history context cannot be negative")
+
     endpoints = [config.chat_endpoint, config.websocket_endpoint, config.ui_endpoint]
+    # Validate endpoint paths don't conflict
     if len(set(endpoints)) != len(endpoints):
         raise ConfigurationError("Chat endpoints cannot have duplicate paths")
 

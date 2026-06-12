@@ -67,6 +67,7 @@ _FEEDBACK_COLUMNS: Tuple[str, ...] = (
     "review_status",
     "reviewer_id",
     "reviewer_tags",
+    "conversation_history",
     "reviewer_comment",
     "reviewed_at",
     "integrated_into_kb_id",
@@ -193,14 +194,16 @@ class PostgresFeedbackStore(BaseFeedbackStore):
                 id, session_id, user_id, query, ai_response,
                 rating, score, correction_text, user_comment,
                 kb_sources_used, model_id,
-                review_status, reviewer_id, reviewer_tags, reviewer_comment,
-                reviewed_at, integrated_into_kb_id, integrated_at, created_at
+                review_status, reviewer_id, reviewer_tags,
+                conversation_history, reviewer_comment,
+                reviewed_at, created_at
             ) VALUES (
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s
+                %s, %s, %s,
+                %s, %s,
+                %s, %s
             )
             RETURNING {_SELECT_COLS}
         """
@@ -219,6 +222,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             entry.review_status.value,
             entry.reviewer_id,
             list(entry.reviewer_tags),
+            self._Jsonb(entry.conversation_history),
             entry.reviewer_comment,
             entry.reviewed_at,
             entry.integrated_into_kb_id,
@@ -584,4 +588,6 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             data["kb_sources_used"] = []
         if data["reviewer_tags"] is None:
             data["reviewer_tags"] = []
+        if data.get("conversation_history") is None:
+            data["conversation_history"] = []
         return FeedbackEntry.model_validate(data)

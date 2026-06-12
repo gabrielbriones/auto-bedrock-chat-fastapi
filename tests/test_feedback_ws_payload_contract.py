@@ -41,7 +41,7 @@ def _entry(**overrides) -> FeedbackEntry:
 def handler():
     h = WebSocketChatHandler.__new__(WebSocketChatHandler)
     h._total_errors = 0
-    h.config = MagicMock(model_id="anthropic.claude-test")
+    h.config = MagicMock(model_id="anthropic.claude-test", feedback_max_history_context=5)
     h.feedback_authorizer = AuthenticatedUserAuthorizer()
 
     store = MagicMock()
