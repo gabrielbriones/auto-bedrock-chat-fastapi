@@ -284,3 +284,86 @@ class TestDelegationErrorHandling:
         ]
         assert len(ai_responses) == 1
         assert "error" in ai_responses[0]["message"].lower() or "LLM" in ai_responses[0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: response_metadata fields from result.metadata (benchmark commit)
+# ---------------------------------------------------------------------------
+
+
+class TestResponseMetadataContract:
+    """Pin the websocket payload contract for benchmark metadata fields.
+
+    Verifies that tool_call_rounds, total_tool_calls, and
+    preprocessing_applied are always injected into the ai_response
+    metadata, with values sourced from ChatCompletionResult.metadata.
+    """
+
+    def _ai_response(self, mock_websocket):
+        """Extract the single ai_response message from send_json calls."""
+        responses = [
+            call.args[0]
+            for call in mock_websocket.send_json.call_args_list
+            if call.args[0].get("type") == "ai_response"
+        ]
+        assert len(responses) == 1, "Expected exactly one ai_response"
+        return responses[0]
+
+    async def test_benchmark_fields_present_with_defaults(self, handler, mock_chat_manager, mock_websocket):
+        """When result.metadata omits benchmark fields the defaults (0, 0, False)
+        must still appear in the websocket payload."""
+        mock_chat_manager.chat_completion.return_value = ChatCompletionResult(
+            messages=[{"role": "user", "content": "hello"}],
+            response={"content": "Hi!", "role": "assistant", "tool_calls": [], "metadata": {}},
+            tool_results=[],
+            metadata={},  # no benchmark keys
+        )
+
+        await handler._handle_chat_message(mock_websocket, {"message": "hello"})
+
+        meta = self._ai_response(mock_websocket)["metadata"]
+        assert meta["tool_call_rounds"] == 0
+        assert meta["total_tool_calls"] == 0
+        assert meta["preprocessing_applied"] is False
+
+    async def test_benchmark_fields_derived_from_result_metadata(self, handler, mock_chat_manager, mock_websocket):
+        """Values from ChatCompletionResult.metadata are forwarded verbatim."""
+        mock_chat_manager.chat_completion.return_value = ChatCompletionResult(
+            messages=[{"role": "user", "content": "hello"}],
+            response={"content": "Done.", "role": "assistant", "tool_calls": [], "metadata": {}},
+            tool_results=[],
+            metadata={
+                "tool_call_rounds": 3,
+                "total_tool_calls": 7,
+                "preprocessing_applied": True,
+            },
+        )
+
+        await handler._handle_chat_message(mock_websocket, {"message": "hello"})
+
+        meta = self._ai_response(mock_websocket)["metadata"]
+        assert meta["tool_call_rounds"] == 3
+        assert meta["total_tool_calls"] == 7
+        assert meta["preprocessing_applied"] is True
+
+    async def test_benchmark_fields_present_in_persisted_assistant_message(
+        self, handler, mock_chat_manager, mock_session_manager, mock_websocket
+    ):
+        """The same fields must be persisted on the ChatMessage added to session
+        history, so feedback handlers can access them later."""
+        mock_chat_manager.chat_completion.return_value = ChatCompletionResult(
+            messages=[{"role": "user", "content": "hello"}],
+            response={"content": "Hi!", "role": "assistant", "tool_calls": [], "metadata": {}},
+            tool_results=[],
+            metadata={"tool_call_rounds": 1, "total_tool_calls": 2, "preprocessing_applied": False},
+        )
+
+        await handler._handle_chat_message(mock_websocket, {"message": "hello"})
+
+        add_calls = mock_session_manager.add_message.call_args_list
+        # Last add_message is the final assistant ChatMessage
+        persisted_msg = add_calls[-1].args[1]
+        assert persisted_msg.role == "assistant"
+        assert persisted_msg.metadata["tool_call_rounds"] == 1
+        assert persisted_msg.metadata["total_tool_calls"] == 2
+        assert persisted_msg.metadata["preprocessing_applied"] is False

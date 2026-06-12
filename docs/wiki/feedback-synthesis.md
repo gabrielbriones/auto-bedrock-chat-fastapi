@@ -204,20 +204,20 @@ Response:
 }
 ```
 
-| HTTP | `code`                   | When                                                                        |
-| ---- | ------------------------ | --------------------------------------------------------------------------- |
-| 200  | —                        | Rollback complete.                                                          |
-| 404  | `not_found`              | No KB document with that ID.                                                |
-| 422  | `not_synthesized`        | Document exists but `source != 'feedback'` — not a synthesized article.     |
-| 500  | `rollback_revert_failed` | KB doc was deleted but feedback revert failed; see server logs for details. |
+| HTTP | `code`                   | When                                                                             |
+| ---- | ------------------------ | -------------------------------------------------------------------------------- |
+| 200  | —                        | Rollback complete.                                                               |
+| 404  | `not_found`              | No KB document with that ID.                                                     |
+| 422  | `not_synthesized`        | Document exists but `source != 'feedback'` — not a synthesized article.          |
+| 500  | `rollback_revert_failed` | Feedback revert failed; KB article was NOT removed; see server logs for details. |
 
 **What happens on rollback:**
 
-1. The KB document and all its chunks are permanently deleted from the KB store.
-2. Every `FeedbackEntry` whose `integrated_into_kb_id` matches the article ID has its synthesis provenance cleared (`integrated_into_kb_id = NULL`, `integrated_at = NULL`) and rollback metadata stamped (`rolled_back_at`, `rolled_back_by`, `rollback_reason`).
+1. Every `FeedbackEntry` whose `integrated_into_kb_id` matches the article ID has its synthesis provenance cleared (`integrated_into_kb_id = NULL`, `integrated_at = NULL`) and rollback metadata stamped (`rolled_back_at`, `rolled_back_by`, `rollback_reason`).
+2. The KB document and all its chunks are permanently deleted from the KB store.
 3. Those entries become eligible for re-synthesis on the next batch run or via a new per-entry trigger.
 
-**Atomicity:** The operation is best-effort ordered — the KB document is deleted first. If the feedback revert step fails, HTTP 500 is returned and an `ERROR` is logged with the article ID and the `source_feedback_ids` list so state can be corrected manually. No compensating re-insertion of the KB document is attempted.
+**Atomicity:** The operation is best-effort ordered — feedback entries are reverted first, then the KB document is deleted. If the feedback revert step fails, HTTP 500 is returned and an `ERROR` is logged; the KB document is left intact. No compensating re-insertion of the KB document is attempted if the delete step fails.
 
 ---
 

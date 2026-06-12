@@ -720,7 +720,7 @@
                         if (e.status === 422) {
                             rbErr.textContent = (e.data && e.data.detail) || 'This document is not a synthesized article.';
                         } else if (e.status === 500) {
-                            rbErr.textContent = 'KB article was removed but feedback revert failed — check server logs.';
+                            rbErr.textContent = (e.data && e.data.detail) || 'Rollback failed — check server logs.';
                         } else {
                             rbErr.textContent = 'Rollback failed: ' + String(e);
                         }
@@ -1086,7 +1086,7 @@
                         if (e.status === 422) {
                             rbFooterErr.textContent = (e.data && e.data.detail) || 'This document is not a synthesized article.';
                         } else if (e.status === 500) {
-                            rbFooterErr.textContent = 'KB article was removed but feedback revert failed — check server logs.';
+                            rbFooterErr.textContent = (e.data && e.data.detail) || 'Rollback failed — check server logs.';
                         } else {
                             rbFooterErr.textContent = 'Rollback failed: ' + String(e);
                         }

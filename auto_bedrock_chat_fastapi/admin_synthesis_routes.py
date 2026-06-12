@@ -376,13 +376,13 @@ def register_admin_synthesis_routes(
             **ADMIN_COMMON_RESPONSES,
             404: {"model": ErrorResponse, "description": "Article not found"},
             422: {"model": ErrorResponse, "description": "Article is not a synthesized (source='feedback') document"},
-            500: {"model": ErrorResponse, "description": "KB document deleted but feedback revert failed"},
+            500: {"model": ErrorResponse, "description": "Feedback revert failed; KB document was NOT deleted"},
         },
         summary="Roll back a synthesized KB article",
     )
     async def rollback_article(
         article_id: str,
-        request: RollbackRequest = RollbackRequest(),  # noqa: B008
+        request: Optional[RollbackRequest] = None,
         identity=Depends(require_admin),  # noqa: B008
     ) -> RollbackResponse:
         """Remove a synthesized KB article and revert its source feedback entries.
@@ -400,7 +400,10 @@ def register_admin_synthesis_routes(
         Returns 422 if the article was not created by the synthesizer
         (``source != 'feedback'``).
         """
-        doc = kb_store.get_document(article_id)
+        if request is None:
+            request = RollbackRequest()
+
+        doc = await asyncio.to_thread(kb_store.get_document, article_id)
         if doc is None:
             raise AdminAPIError(
                 status_code=404,
@@ -446,7 +449,19 @@ def register_admin_synthesis_routes(
                 detail="Feedback entries could not be reverted; KB article was NOT removed. See server logs.",
             ) from exc
 
-        kb_store.delete_document(article_id)
+        try:
+            await asyncio.to_thread(kb_store.delete_document, article_id)
+        except Exception as exc:
+            logger.error(
+                "Rollback: feedback reverted for KB doc '%s' but delete failed — error=%s",
+                article_id,
+                exc,
+            )
+            raise AdminAPIError(
+                status_code=500,
+                code="rollback_delete_failed",
+                detail="Feedback entries were reverted but KB article could not be deleted. See server logs.",
+            ) from exc
 
         logger.info(
             "Rollback complete: article_id=%s rolled_back_by=%s reason=%r feedback_entries_reverted=%d",
