@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -555,6 +555,7 @@ class TestRollbackArticle:
         kb_mock.delete_document.assert_called_once_with(article_id)
         feedback_store.revert_integrated.assert_awaited_once_with(
             article_id,
+            rolled_back_at=ANY,
             rolled_back_by="admin",
             reason="bad article",
         )
@@ -623,14 +624,14 @@ class TestRollbackArticle:
         assert resp.json()["code"] == "rollback_revert_failed"
 
     def test_revert_called_before_delete(self, feedback_store, kb_store):
-        """Feedback revert must run before KB doc deletion to avoid FK cascade nulling integrated_into_kb_id."""
+        """Feedback revert must run before KB doc deletion so a revert failure leaves the KB doc intact (no partial rollback)."""
         call_order: list = []
         kb_mock = MagicMock()
         article_id = "synthesis-perf-abc12345"
         kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
         kb_mock.delete_document.side_effect = lambda _: call_order.append("delete")
 
-        async def _revert(kb_doc_id, rolled_back_by, reason=None):
+        async def _revert(kb_doc_id, rolled_back_at, rolled_back_by, reason=None):
             call_order.append("revert")
             return 1
 

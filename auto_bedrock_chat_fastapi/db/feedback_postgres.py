@@ -575,6 +575,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
     async def revert_integrated(
         self,
         kb_doc_id: str,
+        rolled_back_at: datetime,
         rolled_back_by: str,
         reason: Optional[str] = None,
     ) -> int:
@@ -586,14 +587,14 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             UPDATE feedback
                SET integrated_into_kb_id = NULL,
                    integrated_at         = NULL,
-                   rolled_back_at        = now(),
+                   rolled_back_at        = %s,
                    rolled_back_by        = %s,
                    rollback_reason       = %s
              WHERE integrated_into_kb_id = %s
         """
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql, (rolled_back_by, reason, kb_doc_id))
+                await cur.execute(sql, (rolled_back_at, rolled_back_by, reason, kb_doc_id))
                 count = cur.rowcount
             await conn.commit()
         return count

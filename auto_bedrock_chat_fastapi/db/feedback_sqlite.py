@@ -571,6 +571,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
     async def revert_integrated(
         self,
         kb_doc_id: str,
+        rolled_back_at: datetime,
         rolled_back_by: str,
         reason: Optional[str] = None,
     ) -> int:
@@ -581,6 +582,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         return await asyncio.to_thread(
             self._revert_integrated_sync,
             kb_doc_id,
+            rolled_back_at,
             rolled_back_by,
             reason,
         )
@@ -588,12 +590,13 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
     def _revert_integrated_sync(
         self,
         kb_doc_id: str,
+        rolled_back_at: datetime,
         rolled_back_by: str,
         reason: Optional[str],
     ) -> int:
         self._ensure_open_sync()
         assert self._conn is not None
-        rolled_back_at_iso = _dt_to_iso(datetime.now(timezone.utc))
+        rolled_back_at_iso = _dt_to_iso(rolled_back_at)
         with self._lock:
             try:
                 cur = self._conn.execute(

@@ -431,6 +431,7 @@ def register_admin_synthesis_routes(
         try:
             count = await feedback_store.revert_integrated(
                 article_id,
+                rolled_back_at=rolled_back_at,
                 rolled_back_by=rolled_back_by,
                 reason=request.reason,
             )

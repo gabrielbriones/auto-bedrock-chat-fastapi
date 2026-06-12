@@ -170,16 +170,28 @@ BEGIN
 END$$;
 
 -- Add rollback audit columns to existing deployments.  Idempotent.
+-- Each column is checked independently to handle partially-migrated deployments.
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'feedback' AND column_name = 'rolled_back_at'
     ) THEN
-        ALTER TABLE feedback
-            ADD COLUMN rolled_back_at   TIMESTAMPTZ,
-            ADD COLUMN rolled_back_by   TEXT,
-            ADD COLUMN rollback_reason  TEXT;
+        ALTER TABLE feedback ADD COLUMN rolled_back_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback' AND column_name = 'rolled_back_by'
+    ) THEN
+        ALTER TABLE feedback ADD COLUMN rolled_back_by TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'feedback' AND column_name = 'rollback_reason'
+    ) THEN
+        ALTER TABLE feedback ADD COLUMN rollback_reason TEXT;
     END IF;
 END$$;
 

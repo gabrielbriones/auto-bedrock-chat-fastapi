@@ -201,6 +201,7 @@ class BaseFeedbackStore(ABC):
     async def revert_integrated(
         self,
         kb_doc_id: str,
+        rolled_back_at: datetime,
         rolled_back_by: str,
         reason: Optional[str] = None,
     ) -> int:
@@ -209,7 +210,7 @@ class BaseFeedbackStore(ABC):
         For every row where ``integrated_into_kb_id = kb_doc_id``, sets:
         * ``integrated_into_kb_id = NULL``
         * ``integrated_at = NULL``
-        * ``rolled_back_at = now()``
+        * ``rolled_back_at`` set from the ``rolled_back_at`` argument
         * ``rolled_back_by`` set from the ``rolled_back_by`` argument
         * ``rollback_reason`` set from the ``reason`` argument
 
