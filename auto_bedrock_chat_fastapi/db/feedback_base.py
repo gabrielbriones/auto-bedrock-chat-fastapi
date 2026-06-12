@@ -210,8 +210,8 @@ class BaseFeedbackStore(ABC):
         * ``integrated_into_kb_id = NULL``
         * ``integrated_at = NULL``
         * ``rolled_back_at = now()``
-        * ``rolled_back_by = rolled_back_by``
-        * ``rollback_reason = reason``
+        * ``rolled_back_by`` set from the ``rolled_back_by`` argument
+        * ``rollback_reason`` set from the ``reason`` argument
 
         Returns the number of rows updated (may be 0 if no entries were
         linked to the given document).

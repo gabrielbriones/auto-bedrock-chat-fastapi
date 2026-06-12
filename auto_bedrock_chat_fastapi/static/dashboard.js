@@ -352,7 +352,7 @@
                 tdStatus.appendChild(makeChip(
                     entry.review_status.replace('_', ' '),
                     'chip-' + entry.review_status.replace('_review', '')));
-                if (entry.rolled_back_at) {
+                if (entry.rolled_back_at && !entry.integrated_into_kb_id) {
                     tdStatus.appendChild(makeChip('rolled back', 'chip-rolled-back'));
                 }
                 var tdQuery  = el('td', 'truncate'); tdQuery.textContent = trunc(entry.query, 60);
@@ -702,7 +702,9 @@
             var rbBtn = el('button', 'btn-danger', 'Roll Back');
             rbBtn.title = 'Remove this synthesized KB article and revert feedback entries for re-synthesis';
             rbBtn.addEventListener('click', function () {
-                var reason = window.prompt('Reason for rollback (optional):') || null;
+                var promptResult = window.prompt('Reason for rollback (optional):');
+                if (promptResult === null) return; // Cancel aborts
+                var reason = promptResult.trim() || null;
                 if (reason === null && !window.confirm('Roll back this article without a reason?')) return;
                 rbBtn.disabled = true;
                 rbBtn.textContent = 'Rolling back…';
@@ -1068,7 +1070,9 @@
             var rollbackBtn = el('button', 'btn-warning', 'Roll Back Article');
             rollbackBtn.title = 'Remove this synthesized KB article and revert its source feedback entries for re-synthesis';
             rollbackBtn.addEventListener('click', function () {
-                var reason = window.prompt('Reason for rollback (optional):') || null;
+                var promptResult = window.prompt('Reason for rollback (optional):');
+                if (promptResult === null) return; // Cancel aborts
+                var reason = promptResult.trim() || null;
                 if (reason === null && !window.confirm('Roll back this article without a reason?')) return;
                 rollbackBtn.disabled = true;
                 rollbackBtn.textContent = 'Rolling back…';

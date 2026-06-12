@@ -435,12 +435,10 @@ def register_admin_synthesis_routes(
                 reason=request.reason,
             )
         except Exception as exc:
-            logger.error(
-                "Rollback: feedback revert failed for KB doc '%s' — "
-                "source_feedback_ids=%s error=%s (KB doc NOT deleted)",
+            logger.exception(
+                "Rollback: feedback revert failed for KB doc '%s' — " "source_feedback_ids=%s (KB doc NOT deleted)",
                 article_id,
                 (doc.get("metadata") or {}).get("source_feedback_ids", []),
-                exc,
             )
             raise AdminAPIError(
                 status_code=500,
@@ -451,10 +449,9 @@ def register_admin_synthesis_routes(
         try:
             await asyncio.to_thread(kb_store.delete_document, article_id)
         except Exception as exc:
-            logger.error(
-                "Rollback: feedback reverted for KB doc '%s' but delete failed — error=%s",
+            logger.exception(
+                "Rollback: feedback reverted for KB doc '%s' but delete failed",
                 article_id,
-                exc,
             )
             raise AdminAPIError(
                 status_code=500,
