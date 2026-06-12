@@ -653,3 +653,16 @@ class TestRollbackArticle:
         resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
         assert resp.status_code == 500
         kb_mock.delete_document.assert_not_called()
+
+    def test_returns_500_when_delete_raises(self, feedback_store, kb_store):
+        """Returns rollback_delete_failed when kb_store.delete_document raises after a successful revert."""
+        kb_mock = MagicMock()
+        article_id = "synthesis-perf-abc12345"
+        kb_mock.get_document.return_value = _make_synthesized_doc(article_id)
+        kb_mock.delete_document.side_effect = RuntimeError("disk full")
+        feedback_store.revert_integrated = AsyncMock(return_value=1)
+
+        client = self._build_rollback_app(feedback_store, kb_mock)
+        resp = client.post(f"{_SYNTHESIS_PREFIX}/rollback/{article_id}")
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "rollback_delete_failed"
