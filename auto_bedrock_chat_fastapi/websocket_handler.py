@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -362,11 +363,27 @@ class WebSocketChatHandler:
             async def _on_progress(msg_dict: Dict[str, Any]) -> None:
                 await self._send_message(websocket, msg_dict)
 
+            _turn_start = time.perf_counter()
             result = await self.chat_manager.chat_completion(
                 messages=message_dicts,
                 auth_info=auth_info,
                 on_progress=_on_progress,
                 **llm_params,
+            )
+            _turn_latency_ms = (time.perf_counter() - _turn_start) * 1000
+            audit_logger = logging.getLogger("bedrock.audit")
+            audit_logger.info(
+                "chat.turn",
+                extra={
+                    "action": "chat.turn",
+                    "turn_latency_ms": round(_turn_latency_ms, 1),
+                    "tool_call_rounds": result.metadata.get("tool_call_rounds", 0),
+                    "total_tool_calls": result.metadata.get("total_tool_calls", 0),
+                    "preprocessing_applied": result.metadata.get("preprocessing_applied", False),
+                    "kb_chunks": len(kb_results) if kb_results else 0,
+                    "model_id": self.config.model_id,
+                    "ts": datetime.now().astimezone().isoformat(),
+                },
             )
 
             final_response = result.response
@@ -403,6 +420,9 @@ class WebSocketChatHandler:
             # constructing a FeedbackEntry.
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata.setdefault("model_id", self.config.model_id)
+            response_metadata["tool_call_rounds"] = result.metadata.get("tool_call_rounds", 0)
+            response_metadata["total_tool_calls"] = result.metadata.get("total_tool_calls", 0)
+            response_metadata["preprocessing_applied"] = result.metadata.get("preprocessing_applied", False)
             if kb_results:
                 response_metadata["kb_used"] = True
                 response_metadata["kb_chunks"] = len(kb_results)
