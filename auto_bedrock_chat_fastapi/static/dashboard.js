@@ -631,12 +631,12 @@
                 var roleLabel = el('span', 'history-msg-role', msg.role === 'assistant' ? 'Assistant' : 'User');
                 var content = el('div', 'history-msg-content');
                 var raw = msg.content || '';
-                if (window.marked) {
-                    var html = marked.parse(raw);
-                    content.innerHTML = window.DOMPurify ? DOMPurify.sanitize(html) : html;
-                } else {
-                    content.textContent = raw;
-                }
+if (window.marked && window.DOMPurify) {
+    var html = marked.parse(raw);
+    content.innerHTML = DOMPurify.sanitize(html);
+} else {
+    content.textContent = raw;
+}
                 bubble.appendChild(roleLabel);
                 bubble.appendChild(content);
                 histList.appendChild(bubble);
