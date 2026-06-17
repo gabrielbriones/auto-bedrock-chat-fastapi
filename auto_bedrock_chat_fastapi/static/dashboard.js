@@ -611,35 +611,60 @@
         }
         frag.appendChild(metaSec);
 
-        // Content grid: query | AI response | correction (if present)
-        var contentSec = el('div', 'drawer-section');
-        contentSec.appendChild(el('h4', null, 'Content'));
-        var grid = el('div', 'content-grid');
+        // Full conversation: history context + rated AI response
+        var allMessages = (entry.conversation_history || []).slice();
+        // Only add query if history is empty (it's already the last user msg in history)
+        if (!allMessages.length && entry.query) allMessages.push({role: 'user', content: entry.query});
+        if (entry.ai_response) allMessages.push({role: 'assistant', content: entry.ai_response});
 
-        var qLbl = el('div', 'content-panel-label', 'Query');
-        var qPanel = el('pre', 'content-panel'); qPanel.textContent = entry.query || '';
-        var qWrap = document.createElement('div'); qWrap.appendChild(qLbl); qWrap.appendChild(qPanel);
-        grid.appendChild(qWrap);
-
-        var aLbl = el('div', 'content-panel-label', 'AI Response');
-        var aPanel = el('pre', 'content-panel'); aPanel.textContent = entry.ai_response || '';
-        var aWrap = document.createElement('div'); aWrap.appendChild(aLbl); aWrap.appendChild(aPanel);
-        grid.appendChild(aWrap);
-
-        contentSec.appendChild(grid);
-
-        if (entry.correction_text) {
-            var cLbl = el('div', 'content-panel-label', 'User Correction');
-            var cPanel = el('pre', 'content-panel correction'); cPanel.textContent = entry.correction_text;
-            contentSec.appendChild(cLbl); contentSec.appendChild(cPanel);
+        if (allMessages.length > 0) {
+            var histDetails = document.createElement('details');
+            histDetails.className = 'drawer-section';
+            histDetails.setAttribute('open', '');
+            var histSummary = document.createElement('summary');
+            histSummary.textContent = 'Message History';
+            histSummary.className = 'drawer-section-summary';
+            histDetails.appendChild(histSummary);
+            var histList = el('div', 'history-messages');
+            allMessages.forEach(function (msg) {
+                var bubble = el('div', 'history-msg history-msg--' + (msg.role || 'user'));
+                var roleLabel = el('span', 'history-msg-role', msg.role === 'assistant' ? 'Assistant' : 'User');
+                var content = el('div', 'history-msg-content');
+                var raw = msg.content || '';
+                if (window.marked) {
+                    var html = marked.parse(raw);
+                    content.innerHTML = window.DOMPurify ? DOMPurify.sanitize(html) : html;
+                } else {
+                    content.textContent = raw;
+                }
+                bubble.appendChild(roleLabel);
+                bubble.appendChild(content);
+                histList.appendChild(bubble);
+            });
+            histDetails.appendChild(histList);
+            frag.appendChild(histDetails);
+            // Scroll to bottom after DOM renders
+            setTimeout(function () { histList.scrollTop = histList.scrollHeight; }, 0);
         }
 
-        if (entry.user_comment) {
-            var ucLbl = el('div', 'content-panel-label mt-2', 'User Comment');
-            var ucVal = el('p', 'text-small'); ucVal.textContent = entry.user_comment;
-            contentSec.appendChild(ucLbl); contentSec.appendChild(ucVal);
+        // Content section: correction / user comment
+        if (entry.correction_text || entry.user_comment) {
+            var contentSec = el('div', 'drawer-section');
+            contentSec.appendChild(el('h4', null, 'Content'));
+
+            if (entry.correction_text) {
+                var cLbl = el('div', 'content-panel-label', 'User Correction');
+                var cPanel = el('pre', 'content-panel correction'); cPanel.textContent = entry.correction_text;
+                contentSec.appendChild(cLbl); contentSec.appendChild(cPanel);
+            }
+
+            if (entry.user_comment) {
+                var ucLbl = el('div', 'content-panel-label mt-2', 'User Comment');
+                var ucVal = el('p', 'text-small'); ucVal.textContent = entry.user_comment;
+                contentSec.appendChild(ucLbl); contentSec.appendChild(ucVal);
+            }
+            frag.appendChild(contentSec);
         }
-        frag.appendChild(contentSec);
 
         // If already reviewed, show who reviewed and when (tags/comment are pre-filled in the form below)
         if (entry.review_status !== 'pending_review' && entry.reviewer_id) {
