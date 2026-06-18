@@ -1,4 +1,4 @@
-"""Example FastAPI application with Azure AD SSO and auto-bedrock-chat-fastapi
+"""Example FastAPI application with Azure AD SSO and autolangchat
 
 This example demonstrates:
 1. SSO authentication via Microsoft Entra ID (formerly Azure AD)
@@ -20,13 +20,13 @@ Azure AD Setup:
 7. Copy Application (client) ID and Directory (tenant) ID
 
 Environment variables (.env):
-    BEDROCK_SSO_ENABLED=true
-    BEDROCK_SSO_PROVIDER=azure_ad
-    BEDROCK_SSO_CLIENT_ID=<your-application-client-id>
-    BEDROCK_SSO_CLIENT_SECRET=<your-client-secret>
-    BEDROCK_SSO_DISCOVERY_URL=https://login.microsoftonline.com/<your-tenant-id>/v2.0/.well-known/openid-configuration
-    BEDROCK_SSO_SESSION_SECRET=<random-secret-at-least-32-chars>
-    BEDROCK_SSO_SCOPES=openid profile email
+    AUTOCHAT_SSO_ENABLED=true
+    AUTOCHAT_SSO_PROVIDER=azure_ad
+    AUTOCHAT_SSO_CLIENT_ID=<your-application-client-id>
+    AUTOCHAT_SSO_CLIENT_SECRET=<your-client-secret>
+    AUTOCHAT_SSO_DISCOVERY_URL=https://login.microsoftonline.com/<your-tenant-id>/v2.0/.well-known/openid-configuration
+    AUTOCHAT_SSO_SESSION_SECRET=<random-secret-at-least-32-chars>
+    AUTOCHAT_SSO_SCOPES=openid profile email
     AWS_REGION=us-east-1
 """
 
@@ -37,7 +37,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 app = FastAPI(
     title="SSO Example API (Azure AD)",
@@ -134,7 +134,7 @@ async def health_check():
 # Plugin Setup — SSO via Azure AD
 # ============================================================================
 
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     # SSO Configuration
     sso_enabled=True,

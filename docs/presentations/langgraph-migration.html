@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modernizing the AI Orchestration Layer — LangGraph Migration</title>
+<style>
+  :root {
+    --bg: #0a0e27;
+    --card: #1a1f3a;
+    --border: #2d3454;
+    --text: #e8edf4;
+    --muted: #8b93a7;
+    --accent: #667eea;
+    --accent-light: #818cf8;
+    --secondary: #f093fb;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --info: #38bdf8;
+    --lg: #10b981;       /* LangGraph green */
+    --lg-light: #34d399;
+    --custom: #f59e0b;   /* current custom code amber */
+    --synth: #a78bfa;
+    --user: #60a5fa;
+    --llm: #ec4899;
+    --kb: #06b6d4;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0a0e27 100%);
+    color: var(--text);
+    overflow-x: hidden;
+  }
+
+  /* ── Slide Layout ── */
+  .slide {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 80px 100px;
+    position: relative;
+    border-bottom: 2px solid var(--border);
+    page-break-after: always;
+  }
+
+  .slide-number {
+    position: absolute;
+    top: 40px;
+    right: 60px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    opacity: 0.5;
+  }
+
+  .slide-tag {
+    position: absolute;
+    top: 40px;
+    left: 60px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 4px 14px;
+    border-radius: 6px;
+  }
+
+  .tag-problem  { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .tag-why      { background: rgba(16,185,129,0.15); color: var(--lg-light); }
+  .tag-proposal { background: rgba(102,126,234,0.15); color: var(--accent-light); }
+  .tag-caps     { background: rgba(167,139,250,0.15); color: var(--synth); }
+  .tag-plan     { background: rgba(56,189,248,0.15); color: var(--info); }
+  .tag-risk     { background: rgba(251,191,36,0.15); color: var(--warning); }
+  .tag-alts     { background: rgba(139,147,167,0.1); color: var(--muted); }
+  .tag-close    { background: rgba(74,222,128,0.15); color: var(--success); }
+
+  /* ── Title Slide ── */
+  .title-slide {
+    text-align: center;
+    align-items: center;
+    background: radial-gradient(circle at 50% 50%, rgba(102,126,234,0.06) 0%, transparent 70%);
+  }
+
+  .title-slide h1 {
+    font-size: 4.8rem;
+    font-weight: 900;
+    line-height: 1.1;
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, var(--accent-light), var(--secondary), var(--lg-light));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .title-slide .subtitle {
+    font-size: 1.8rem;
+    color: var(--muted);
+    margin-bottom: 60px;
+  }
+
+  .title-chips {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+
+  .title-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 28px 32px;
+    background: rgba(102,126,234,0.07);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    min-width: 160px;
+    transition: all 0.3s ease;
+  }
+
+  .title-chip:hover { transform: translateY(-8px); box-shadow: 0 20px 60px rgba(102,126,234,0.25); }
+
+  .chip-icon {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.2rem;
+  }
+  .chip-label { font-size: 1.5rem; font-weight: 700; color: var(--text); }
+  .chip-sub   { font-size: 1.25rem; color: var(--muted); text-align: center; }
+
+  .ic-lg    { background: linear-gradient(135deg, var(--lg), var(--lg-light)); }
+  .ic-obs   { background: linear-gradient(135deg, #6366f1, var(--synth)); }
+  .ic-dur   { background: linear-gradient(135deg, var(--info), var(--user)); }
+  .ic-hitl  { background: linear-gradient(135deg, var(--custom), #f59e0b); }
+  .ic-token { background: linear-gradient(135deg, var(--llm), var(--secondary)); }
+
+  /* ── Section headings ── */
+  h2 {
+    font-size: 3.2rem;
+    font-weight: 800;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, var(--accent-light), white);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    line-height: 1.15;
+  }
+
+  h3 { font-size: 1.8rem; font-weight: 700; color: var(--text); margin-bottom: 20px; }
+
+  .slide-subtitle {
+    font-size: 1.65rem;
+    color: var(--muted);
+    margin-top: -10px;
+    margin-bottom: 44px;
+    max-width: 75%;
+  }
+
+  /* ── Generic card ── */
+  .card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 32px;
+    transition: all 0.3s ease;
+  }
+  .card:hover { transform: translateY(-6px); box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+
+  /* ── Outcome bullets (exec summary) ── */
+  .outcome-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+    margin-top: 36px;
+  }
+
+  .outcome-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 24px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    transition: all 0.3s ease;
+  }
+  .outcome-card:hover { transform: translateY(-6px); box-shadow: 0 16px 48px rgba(102,126,234,0.2); border-color: var(--accent); }
+
+  .outcome-icon {
+    font-size: 2rem;
+    width: 52px; height: 52px;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    background: rgba(102,126,234,0.12);
+    border: 1.5px solid var(--border);
+  }
+
+  .outcome-text { flex: 1; }
+  .outcome-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
+  .outcome-desc  { font-size: 1.3rem; color: var(--muted); line-height: 1.5; }
+
+  /* ── Component table ── */
+  .comp-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 32px;
+  }
+
+  .comp-row {
+    display: grid;
+    grid-template-columns: 260px 1fr 120px;
+    gap: 20px;
+    align-items: center;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 24px;
+    transition: all 0.3s ease;
+  }
+  .comp-row:hover { border-color: var(--accent); transform: translateX(4px); }
+
+  .comp-name { font-size: 1.45rem; font-weight: 700; font-family: monospace; color: var(--accent-light); }
+  .comp-role { font-size: 1.4rem; color: var(--muted); }
+  .comp-owner {
+    font-size: 1.2rem; font-weight: 700; text-align: center;
+    padding: 6px 12px; border-radius: 8px;
+    background: rgba(248,113,113,0.12); color: var(--danger);
+    border: 1px solid rgba(248,113,113,0.3);
+  }
+
+  /* ── Capability comparison table ── */
+  .cap-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-top: 32px;
+    font-size: 1.35rem;
+  }
+  .cap-table th {
+    padding: 16px 20px;
+    text-align: left;
+    font-size: 1.2rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: rgba(255,255,255,0.03);
+    border-bottom: 2px solid var(--border);
+  }
+  .cap-table th:first-child { border-radius: 12px 0 0 0; }
+  .cap-table th:last-child  { border-radius: 0 12px 0 0; }
+  .cap-table td {
+    padding: 14px 20px;
+    border-bottom: 1px solid rgba(45,52,84,0.6);
+    vertical-align: middle;
+    color: var(--text);
+  }
+  .cap-table tr:hover td { background: rgba(102,126,234,0.04); }
+  .cap-table tr:last-child td { border-bottom: none; }
+  .cap-table td:first-child { font-weight: 600; }
+  .cap-table td:nth-child(2) { color: var(--muted); }
+
+  .ct-yes  { color: var(--success); font-weight: 700; }
+  .ct-no   { color: var(--danger);  font-weight: 700; }
+  .ct-warn { color: var(--warning); font-weight: 700; }
+
+  /* ── Batch failure story ── */
+  .story-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    margin-top: 40px;
+  }
+
+  .story-card {
+    border-radius: 24px;
+    padding: 36px;
+    position: relative;
+    overflow: hidden;
+  }
+  .story-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 5px;
+  }
+  .story-card.before { background: rgba(248,113,113,0.05); border: 2px solid var(--danger); }
+  .story-card.before::before { background: linear-gradient(90deg, var(--danger), #fb923c); }
+  .story-card.after  { background: rgba(16,185,129,0.05); border: 2px solid var(--lg); }
+  .story-card.after::before  { background: linear-gradient(90deg, var(--lg), var(--lg-light)); }
+
+  .story-label {
+    font-size: 1.1rem; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; margin-bottom: 20px;
+  }
+  .story-card.before .story-label { color: var(--danger); }
+  .story-card.after  .story-label { color: var(--lg-light); }
+
+  .story-flow { display: flex; flex-direction: column; gap: 10px; }
+  .story-step {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px; border-radius: 12px;
+    font-size: 1.4rem;
+  }
+  .story-step.bad  { background: rgba(248,113,113,0.07); border-left: 3px solid var(--danger); }
+  .story-step.good { background: rgba(16,185,129,0.07);  border-left: 3px solid var(--lg); }
+  .story-step-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem; font-weight: 800; flex-shrink: 0;
+  }
+  .bad  .story-step-num { background: rgba(248,113,113,0.2); color: var(--danger); }
+  .good .story-step-num { background: rgba(16,185,129,0.2);  color: var(--lg); }
+
+  /* ── Why LangGraph criteria ── */
+  .why-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-top: 36px;
+  }
+
+  .why-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+  .why-card:hover { transform: translateY(-6px); box-shadow: 0 16px 48px rgba(16,185,129,0.2); border-color: var(--lg); }
+  .why-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--lg), var(--lg-light));
+  }
+
+  .why-num {
+    font-size: 1.05rem; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--lg-light);
+    margin-bottom: 10px;
+  }
+  .why-title { font-size: 1.6rem; font-weight: 800; margin-bottom: 12px; color: var(--text); }
+  .why-desc  { font-size: 1.3rem; color: var(--muted); line-height: 1.6; }
+
+  /* ── Proposal change table ── */
+  .change-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+    margin-top: 24px;
+    font-size: 1.35rem;
+  }
+  .change-table th {
+    padding: 14px 20px;
+    text-align: left;
+    font-size: 1.1rem; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 16px;
+  }
+  .change-table td {
+    padding: 14px 20px;
+    background: var(--card);
+    vertical-align: middle;
+  }
+  .change-table td:first-child { border-radius: 12px 0 0 12px; }
+  .change-table td:last-child  { border-radius: 0 12px 12px 0; }
+  .change-table tr:hover td { background: rgba(102,126,234,0.06); }
+  .change-table code { font-family: monospace; color: var(--accent-light); font-size: 1.25rem; }
+  .change-table .to-code { font-family: monospace; color: var(--lg-light); font-size: 1.25rem; font-weight: 700; }
+  .change-table .why-cell { color: var(--muted); }
+
+  /* ── Unchanged table ── */
+  .unchanged-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 32px;
+  }
+  .unchanged-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .unchanged-icon { font-size: 1.6rem; flex-shrink: 0; }
+  .unchanged-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+  .unchanged-desc  { font-size: 1.2rem; color: var(--muted); line-height: 1.4; }
+
+  /* ── Websocket flow ── */
+  .ws-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    margin-top: 40px;
+    align-items: start;
+  }
+
+  .ws-label {
+    font-size: 1.1rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; margin-bottom: 20px;
+  }
+
+  .flow-chain {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .flow-box {
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 1.35rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .fb-user   { background: rgba(96,165,250,0.15);  border: 1.5px solid var(--user);  color: var(--user); }
+  .fb-ws     { background: rgba(102,126,234,0.15); border: 1.5px solid var(--accent); color: var(--accent-light); }
+  .fb-old    { background: rgba(248,113,113,0.12); border: 1.5px solid var(--danger); color: var(--danger); }
+  .fb-new    { background: rgba(16,185,129,0.12);  border: 1.5px solid var(--lg);     color: var(--lg-light); }
+  .fb-llm    { background: rgba(236,72,153,0.12);  border: 1.5px solid var(--llm);    color: var(--llm); }
+  .fb-client { background: rgba(6,182,212,0.12);   border: 1.5px solid var(--kb);     color: var(--kb); }
+
+  .flow-arrow { font-size: 1.4rem; color: var(--accent); flex-shrink: 0; }
+
+  .ws-note {
+    margin-top: 24px;
+    padding: 16px 22px;
+    background: rgba(74,222,128,0.06);
+    border: 1.5px solid rgba(74,222,128,0.25);
+    border-radius: 12px;
+    font-size: 1.4rem;
+    color: var(--success);
+    font-weight: 600;
+  }
+
+  /* ── Capabilities ── */
+  .cap-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-top: 36px;
+  }
+
+  .cap-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+  .cap-card:hover { transform: translateY(-6px); box-shadow: 0 16px 48px rgba(0,0,0,0.5); }
+
+  .cap-card.cc-dur   { border-color: rgba(56,189,248,0.4); }
+  .cap-card.cc-dur::before   { content:''; position:absolute; top:0;left:0;right:0;height:4px; background: linear-gradient(90deg,var(--info),var(--user)); }
+  .cap-card.cc-hitl  { border-color: rgba(245,158,11,0.4); }
+  .cap-card.cc-hitl::before  { content:''; position:absolute; top:0;left:0;right:0;height:4px; background: linear-gradient(90deg,var(--custom),#fb923c); }
+  .cap-card.cc-par   { border-color: rgba(16,185,129,0.4); }
+  .cap-card.cc-par::before   { content:''; position:absolute; top:0;left:0;right:0;height:4px; background: linear-gradient(90deg,var(--lg),var(--lg-light)); }
+  .cap-card.cc-obs   { border-color: rgba(167,139,250,0.4); }
+  .cap-card.cc-obs::before   { content:''; position:absolute; top:0;left:0;right:0;height:4px; background: linear-gradient(90deg,var(--synth),var(--secondary)); }
+  .cap-card.cc-tok   { border-color: rgba(236,72,153,0.4); }
+  .cap-card.cc-tok::before   { content:''; position:absolute; top:0;left:0;right:0;height:4px; background: linear-gradient(90deg,var(--llm),var(--secondary)); }
+
+  .cap-emoji { font-size: 2.8rem; margin-bottom: 14px; display: block; }
+  .cap-title { font-size: 1.7rem; font-weight: 800; margin-bottom: 12px; }
+  .cap-card.cc-dur  .cap-title { color: var(--info); }
+  .cap-card.cc-hitl .cap-title { color: var(--custom); }
+  .cap-card.cc-par  .cap-title { color: var(--lg-light); }
+  .cap-card.cc-obs  .cap-title { color: var(--synth); }
+  .cap-card.cc-tok  .cap-title { color: var(--llm); }
+
+  .cap-desc { font-size: 1.35rem; color: var(--muted); line-height: 1.6; }
+
+  .cap-card.cc-tok { grid-column: span 2; }
+
+  .tok-bullets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .tok-bullet {
+    display: flex; gap: 10px; align-items: center;
+    font-size: 1.35rem; color: var(--text);
+  }
+  .tok-bullet::before { content: '›'; color: var(--llm); font-weight: 700; font-size: 1.5rem; flex-shrink: 0; }
+
+  /* ── Phase timeline ── */
+  .phase-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-top: 40px;
+    position: relative;
+  }
+
+  .phase-row::before {
+    content: '';
+    position: absolute;
+    top: 38px;
+    left: 10%;
+    right: 10%;
+    height: 4px;
+    background: linear-gradient(90deg, var(--info), var(--lg), var(--synth), var(--custom));
+    border-radius: 2px;
+    opacity: 0.3;
+    z-index: 0;
+  }
+
+  .phase-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 22px;
+    position: relative;
+    z-index: 1;
+    transition: all 0.3s ease;
+    overflow: hidden;
+  }
+  .phase-card:hover { transform: translateY(-8px); box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+
+  .phase-card.p1 { border-color: var(--info); }
+  .phase-card.p1::before { content:''; position:absolute; top:0;left:0;right:0;height:5px; background: linear-gradient(90deg,var(--info),var(--user)); border-radius:20px 20px 0 0; }
+  .phase-card.p2 { border-color: var(--lg); }
+  .phase-card.p2::before { content:''; position:absolute; top:0;left:0;right:0;height:5px; background: linear-gradient(90deg,var(--lg),var(--lg-light)); border-radius:20px 20px 0 0; }
+  .phase-card.p3 { border-color: var(--synth); }
+  .phase-card.p3::before { content:''; position:absolute; top:0;left:0;right:0;height:5px; background: linear-gradient(90deg,var(--synth),var(--secondary)); border-radius:20px 20px 0 0; }
+  .phase-card.p4 { border-color: var(--custom); }
+  .phase-card.p4::before { content:''; position:absolute; top:0;left:0;right:0;height:5px; background: linear-gradient(90deg,var(--custom),#fb923c); border-radius:20px 20px 0 0; }
+
+  .phase-num  { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 6px; margin-top: 4px; }
+  .p1 .phase-num { color: var(--info); }
+  .p2 .phase-num { color: var(--lg-light); }
+  .p3 .phase-num { color: var(--synth); }
+  .p4 .phase-num { color: var(--custom); }
+
+  .phase-title    { font-size: 1.75rem; font-weight: 800; margin-bottom: 4px; }
+  .phase-duration { font-size: 1.35rem; color: var(--muted); margin-bottom: 16px; }
+
+  .phase-items { display: flex; flex-direction: column; gap: 8px; }
+  .phase-item  { display: flex; gap: 10px; align-items: flex-start; font-size: 1.3rem; color: var(--text); }
+  .phase-item::before { content: '›'; font-weight: 700; font-size: 1.4rem; flex-shrink: 0; margin-top: -1px; }
+  .p1 .phase-item::before { color: var(--info); }
+  .p2 .phase-item::before { color: var(--lg-light); }
+  .p3 .phase-item::before { color: var(--synth); }
+  .p4 .phase-item::before { color: var(--custom); }
+
+  .phase-outcome {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 1.3rem;
+    font-weight: 600;
+    text-align: center;
+  }
+  .p1 .phase-outcome { background: rgba(56,189,248,0.1);  color: var(--info); }
+  .p2 .phase-outcome { background: rgba(16,185,129,0.1);  color: var(--lg-light); }
+  .p3 .phase-outcome { background: rgba(167,139,250,0.1); color: var(--synth); }
+  .p4 .phase-outcome { background: rgba(245,158,11,0.1);  color: var(--custom); }
+
+  /* ── Timeline summary table ── */
+  .tl-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+    margin-top: 24px;
+    font-size: 1.4rem;
+  }
+  .tl-table th {
+    padding: 14px 20px;
+    text-align: left;
+    font-size: 1.15rem; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 2px solid var(--border);
+  }
+  .tl-table td {
+    padding: 16px 20px;
+    background: var(--card);
+    vertical-align: middle;
+    color: var(--text);
+  }
+  .tl-table td:first-child { border-radius: 12px 0 0 12px; font-weight: 700; }
+  .tl-table td:last-child  { border-radius: 0 12px 12px 0; }
+  .tl-table tr:hover td { background: rgba(102,126,234,0.06); }
+  .tl-table .dur { color: var(--info); font-weight: 700; }
+  .tl-table .impact-none { color: var(--muted); font-style: italic; }
+  .tl-table .impact-pos  { color: var(--success); font-weight: 600; }
+
+  .tl-total {
+    margin-top: 24px;
+    text-align: center;
+    font-size: 2.2rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent-light), var(--lg-light));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* ── Risks ── */
+  .risk-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 36px;
+  }
+
+  .risk-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 22px;
+    transition: all 0.3s ease;
+  }
+  .risk-row:hover { border-color: var(--accent); transform: translateX(4px); }
+
+  .risk-emoji { font-size: 1.8rem; flex-shrink: 0; }
+  .risk-content { flex: 1; }
+  .risk-name { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+  .risk-mit  { font-size: 1.25rem; color: var(--muted); line-height: 1.4; }
+  .risk-level {
+    padding: 6px 14px; border-radius: 8px;
+    font-size: 1.2rem; font-weight: 700; flex-shrink: 0;
+  }
+  .rl-low { background: rgba(74,222,128,0.15); color: var(--success); }
+  .rl-med { background: rgba(251,191,36,0.15);  color: var(--warning); }
+
+  /* ── Not doing ── */
+  .nolist {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-top: 40px;
+  }
+
+  .no-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 16px;
+    padding: 22px 28px;
+    transition: all 0.3s ease;
+  }
+  .no-item:hover { border-color: var(--success); }
+  .no-icon { font-size: 2rem; flex-shrink: 0; }
+  .no-title { font-size: 1.6rem; font-weight: 800; margin-bottom: 4px; color: var(--danger); }
+  .no-desc  { font-size: 1.4rem; color: var(--muted); }
+
+  /* ── Alternatives ── */
+  .alt-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 32px;
+  }
+
+  .alt-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    transition: all 0.3s ease;
+  }
+  .alt-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.4); }
+
+  .alt-emoji {
+    font-size: 2rem; flex-shrink: 0;
+    width: 52px; height: 52px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .alt-content { flex: 1; }
+  .alt-name { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; }
+  .alt-reason { font-size: 1.3rem; color: var(--muted); line-height: 1.5; }
+  .verdict {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 5px 14px;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    font-weight: 700;
+  }
+  .v-no     { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .v-burden { background: rgba(251,191,36,0.15);  color: var(--warning); }
+
+  /* ── Recommendation ── */
+  .rec-sprint {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 36px;
+    margin-top: 40px;
+  }
+
+  .sprint-card {
+    border-radius: 24px;
+    padding: 36px;
+    position: relative;
+    overflow: hidden;
+  }
+  .sprint-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 5px;
+  }
+  .sprint-card.s1 { background: rgba(102,126,234,0.06); border: 2px solid var(--accent); }
+  .sprint-card.s1::before { background: linear-gradient(90deg, var(--accent), var(--accent-light)); }
+  .sprint-card.s2 { background: rgba(16,185,129,0.06); border: 2px solid var(--lg); }
+  .sprint-card.s2::before { background: linear-gradient(90deg, var(--lg), var(--lg-light)); }
+
+  .sprint-label {
+    font-size: 1.1rem; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+  .s1 .sprint-label { color: var(--accent-light); }
+  .s2 .sprint-label { color: var(--lg-light); }
+
+  .sprint-phases { font-size: 1.9rem; font-weight: 800; margin-bottom: 8px; }
+  .sprint-dur    { font-size: 1.5rem; color: var(--muted); margin-bottom: 16px; }
+  .sprint-desc   { font-size: 1.4rem; color: var(--text); line-height: 1.6; }
+
+  .success-box {
+    margin-top: 36px;
+    background: rgba(74,222,128,0.06);
+    border: 2px solid rgba(74,222,128,0.25);
+    border-radius: 20px;
+    padding: 28px 32px;
+  }
+  .success-title { font-size: 1.5rem; font-weight: 700; color: var(--success); margin-bottom: 14px; }
+  .success-criteria { display: flex; flex-direction: column; gap: 10px; }
+  .sc-item { display: flex; gap: 12px; align-items: flex-start; font-size: 1.4rem; color: var(--text); }
+  .sc-badge {
+    font-size: 1.1rem; font-weight: 700; padding: 3px 10px;
+    border-radius: 6px; flex-shrink: 0; margin-top: 1px;
+  }
+  .sc-badge.b-p1 { background: rgba(56,189,248,0.15);  color: var(--info); }
+  .sc-badge.b-p4 { background: rgba(245,158,11,0.15);  color: var(--custom); }
+
+  /* ── CTA / final slide ── */
+  .cta-slide {
+    text-align: center;
+    align-items: center;
+    background: radial-gradient(circle at 50% 50%, rgba(16,185,129,0.06) 0%, transparent 70%);
+  }
+
+  .cta-title {
+    font-size: 4rem;
+    font-weight: 900;
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, var(--lg-light), var(--accent-light), white);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .cta-sub {
+    font-size: 1.8rem;
+    color: var(--muted);
+    margin-bottom: 50px;
+    max-width: 600px;
+  }
+
+  .cta-chips {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .cta-chip {
+    padding: 16px 28px;
+    border-radius: 50px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    border: 2px solid;
+  }
+  .cta-chip.c1 { background: rgba(102,126,234,0.1); border-color: var(--accent); color: var(--accent-light); }
+  .cta-chip.c2 { background: rgba(16,185,129,0.1);  border-color: var(--lg);     color: var(--lg-light); }
+  .cta-chip.c3 { background: rgba(167,139,250,0.1); border-color: var(--synth);  color: var(--synth); }
+  .cta-chip.c4 { background: rgba(245,158,11,0.1);  border-color: var(--custom); color: var(--custom); }
+
+  .total-badge {
+    display: inline-block;
+    margin-top: 40px;
+    padding: 18px 40px;
+    border-radius: 60px;
+    background: rgba(16,185,129,0.1);
+    border: 2px solid var(--lg);
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--lg-light);
+  }
+
+  /* ── Generic utils ── */
+  code { font-family: monospace; color: var(--accent-light); font-size: 0.9em; }
+  .highlight { color: var(--accent-light); font-weight: 700; }
+  .hl-green  { color: var(--lg-light); font-weight: 700; }
+  .hl-red    { color: var(--danger); font-weight: 700; }
+  .hl-amber  { color: var(--custom); font-weight: 700; }
+
+  .divider { height: 2px; background: var(--border); margin: 32px 0; border-radius: 1px; }
+
+  blockquote {
+    border-left: 4px solid var(--accent);
+    padding: 16px 24px;
+    background: rgba(102,126,234,0.07);
+    border-radius: 0 12px 12px 0;
+    font-size: 1.5rem;
+    color: var(--text);
+    font-style: italic;
+    margin: 20px 0;
+    line-height: 1.6;
+  }
+
+  .quote-speaker {
+    font-size: 1.3rem;
+    color: var(--muted);
+    margin-top: 10px;
+    font-style: normal;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 1 — TITLE
+     ════════════════════════════════════════════════════ -->
+<section class="slide title-slide">
+  <div class="slide-number">1 / 15</div>
+  <h1>Modernizing the AI Orchestration Layer</h1>
+  <p class="subtitle">Replacing a custom engine with an industry-standard framework — zero user-visible disruption</p>
+
+  <div class="title-chips">
+    <div class="title-chip">
+      <div class="chip-icon ic-lg">🔀</div>
+      <div class="chip-label">LangGraph</div>
+      <div class="chip-sub">Industry-standard agent framework</div>
+    </div>
+    <div class="title-chip">
+      <div class="chip-icon ic-dur">🔄</div>
+      <div class="chip-label">Durable Execution</div>
+      <div class="chip-sub">Resume from failure, not restart</div>
+    </div>
+    <div class="title-chip">
+      <div class="chip-icon ic-hitl">🧑‍💼</div>
+      <div class="chip-label">Human-in-the-Loop</div>
+      <div class="chip-sub">AI confirms before acting</div>
+    </div>
+    <div class="title-chip">
+      <div class="chip-icon ic-obs">🔭</div>
+      <div class="chip-label">LangSmith</div>
+      <div class="chip-sub">Full step-by-step observability</div>
+    </div>
+    <div class="title-chip">
+      <div class="chip-icon ic-token">📊</div>
+      <div class="chip-label">Token Tracking</div>
+      <div class="chip-sub">Per-user cost attribution</div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 2 — EXECUTIVE SUMMARY
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">2 / 15</div>
+  <h2>Executive Summary</h2>
+  <p class="slide-subtitle">A surgical swap of the AI orchestration engine — everything else stays exactly as-is</p>
+
+  <div class="outcome-grid">
+    <div class="outcome-card">
+      <div class="outcome-icon">🔧</div>
+      <div class="outcome-text">
+        <div class="outcome-title">Eliminate maintenance burden</div>
+        <div class="outcome-desc">Stop maintaining custom AI plumbing — let LangChain Inc maintain it instead</div>
+      </div>
+    </div>
+    <div class="outcome-card">
+      <div class="outcome-icon">💾</div>
+      <div class="outcome-text">
+        <div class="outcome-title">Persistent sessions</div>
+        <div class="outcome-desc">Conversation history survives restarts — zero new infrastructure</div>
+      </div>
+    </div>
+    <div class="outcome-card">
+      <div class="outcome-icon">🔄</div>
+      <div class="outcome-text">
+        <div class="outcome-title">Durable batch execution</div>
+        <div class="outcome-desc">Failed analyses resume from the point of failure, not job 1</div>
+      </div>
+    </div>
+    <div class="outcome-card">
+      <div class="outcome-icon">🧑‍💼</div>
+      <div class="outcome-text">
+        <div class="outcome-title">Human-in-the-loop</div>
+        <div class="outcome-desc">AI can pause, ask for confirmation, then continue — new class of interaction</div>
+      </div>
+    </div>
+    <div class="outcome-card">
+      <div class="outcome-icon">🔭</div>
+      <div class="outcome-text">
+        <div class="outcome-title">Full observability</div>
+        <div class="outcome-desc">Every AI decision, tool call, and reasoning step is traceable via LangSmith</div>
+      </div>
+    </div>
+    <div class="outcome-card">
+      <div class="outcome-icon">🌐</div>
+      <div class="outcome-text">
+        <div class="outcome-title">Multi-model ready</div>
+        <div class="outcome-desc">All LLM providers supported via LangChain abstraction — no new parsers to write</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 3 — CURRENT STATE
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">3 / 15</div>
+  <h2>Current State — What We Built</h2>
+  <p class="slide-subtitle">A fully custom AI stack — every component written and maintained by the team</p>
+
+  <div class="comp-grid">
+    <div class="comp-row">
+      <div class="comp-name">ChatManager</div>
+      <div class="comp-role">Orchestrates the conversation loop — calls the LLM, manages tool call rounds, handles errors</div>
+      <div class="comp-owner">Us</div>
+    </div>
+    <div class="comp-row">
+      <div class="comp-name">BedrockClient</div>
+      <div class="comp-role">LLM transport layer — formats messages, sends to AWS Bedrock, parses responses per model</div>
+      <div class="comp-owner">Us</div>
+    </div>
+    <div class="comp-row">
+      <div class="comp-name">ToolManager</div>
+      <div class="comp-role">Generates tool definitions from the FastAPI OpenAPI spec; executes HTTP tool calls with auth</div>
+      <div class="comp-owner">Us</div>
+    </div>
+    <div class="comp-row">
+      <div class="comp-name">MessagePreprocessor</div>
+      <div class="comp-role">4-stage pipeline that prevents conversation history from overflowing the model's context window</div>
+      <div class="comp-owner">Us</div>
+    </div>
+    <div class="comp-row">
+      <div class="comp-name">SessionManager</div>
+      <div class="comp-role">Tracks active chat sessions and conversation history — in-memory, lost on process restart</div>
+      <div class="comp-owner">Us</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 24px; padding: 18px 24px; background: rgba(102,126,234,0.06); border: 1.5px solid var(--border); border-radius: 14px; font-size: 1.4rem; color: var(--muted);">
+    This architecture was intentionally designed to be modular and self-contained. It has served its purpose well. The natural next step is to replace these custom internals with a mature, maintained framework.
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 4 — THE PROBLEM
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-problem">The Problem</div>
+  <div class="slide-number">4 / 15</div>
+  <h2>Why Change Now</h2>
+  <p class="slide-subtitle">Every new AI capability requires rebuilding infrastructure that is not our core product</p>
+
+  <table class="cap-table">
+    <thead>
+      <tr>
+        <th>Capability</th>
+        <th>Today (custom stack)</th>
+        <th>LangGraph</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Multi-step tool calling</td>
+        <td class="ct-warn">✅ Up to 10 rounds</td>
+        <td class="ct-yes">✅ Unlimited graph loops</td>
+      </tr>
+      <tr>
+        <td>Session persistence</td>
+        <td class="ct-no">❌ In-memory, lost on restart</td>
+        <td class="ct-yes">✅ Postgres-backed, durable</td>
+      </tr>
+      <tr>
+        <td>Parallel sub-tasks</td>
+        <td class="ct-no">❌ Not possible</td>
+        <td class="ct-yes">✅ Native subgraphs</td>
+      </tr>
+      <tr>
+        <td>Durable execution (resume on failure)</td>
+        <td class="ct-no">❌ Not possible</td>
+        <td class="ct-yes">✅ Core primitive</td>
+      </tr>
+      <tr>
+        <td>Human-in-the-loop</td>
+        <td class="ct-no">❌ Not possible</td>
+        <td class="ct-yes">✅ Core primitive</td>
+      </tr>
+      <tr>
+        <td>Tracing &amp; observability</td>
+        <td class="ct-no">❌ Basic Python logging</td>
+        <td class="ct-yes">✅ LangSmith — full step traces</td>
+      </tr>
+      <tr>
+        <td>Multi-model support</td>
+        <td class="ct-warn">⚠️ Requires new parser per model</td>
+        <td class="ct-yes">✅ All models via LangChain abstraction</td>
+      </tr>
+      <tr>
+        <td>Active maintenance</td>
+        <td class="ct-warn">⚠️ Internal team only — all fixes require our time</td>
+        <td class="ct-yes">✅ LangChain Inc + open-source community</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 5 — BATCH FAILURE CASE
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-problem">The Problem</div>
+  <div class="slide-number">5 / 15</div>
+  <h2>The Batch Analysis Failure Case</h2>
+  <p class="slide-subtitle">The most concrete, near-term impact of the current architecture's limitations</p>
+
+  <div class="story-grid">
+    <div class="story-card before">
+      <div class="story-label">❌ Today — Custom Stack</div>
+      <div class="story-flow">
+        <div class="story-step bad"><div class="story-step-num">1</div>AI begins 10-child-job batch analysis</div>
+        <div class="story-step bad"><div class="story-step-num">2</div>Jobs 1–6 complete successfully</div>
+        <div class="story-step bad"><div class="story-step-num">3</div>Job 7 fails — network timeout / rate limit</div>
+        <div class="story-step bad"><div class="story-step-num">4</div>Entire analysis discarded</div>
+        <div class="story-step bad"><div class="story-step-num">5</div>Restart from Job 1 — all progress lost</div>
+      </div>
+    </div>
+    <div class="story-card after">
+      <div class="story-label">✅ After — LangGraph</div>
+      <div class="story-flow">
+        <div class="story-step good"><div class="story-step-num">1</div>AI begins 10-child-job batch analysis</div>
+        <div class="story-step good"><div class="story-step-num">2</div>Graph checkpoints state after each job</div>
+        <div class="story-step good"><div class="story-step-num">3</div>Job 7 fails — checkpoint saved at Job 6</div>
+        <div class="story-step good"><div class="story-step-num">4</div>System resumes from Job 7 automatically</div>
+        <div class="story-step good"><div class="story-step-num">5</div>Analysis completes — zero progress lost</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 6 — WHY LANGGRAPH
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-why">Why LangGraph</div>
+  <div class="slide-number">6 / 15</div>
+  <h2>Why LangGraph</h2>
+  <p class="slide-subtitle">Five concrete criteria evaluated — LangGraph satisfies all five simultaneously</p>
+
+  <div class="why-grid">
+    <div class="why-card">
+      <div class="why-num">Criterion 1</div>
+      <div class="why-title">Zero new infrastructure</div>
+      <div class="why-desc">Same AWS Bedrock endpoint, same Claude model, same Postgres instance. LangGraph slots in as an async Python library — no new service, no new database, no new credentials.</div>
+    </div>
+    <div class="why-card">
+      <div class="why-num">Criterion 2</div>
+      <div class="why-title">Direct component migration path</div>
+      <div class="why-desc">Each of the 5 custom components maps one-to-one to a LangGraph primitive. No forced redesign — each is replaced in isolation per phase.</div>
+    </div>
+    <div class="why-card">
+      <div class="why-num">Criterion 3</div>
+      <div class="why-title">Capabilities as core primitives</div>
+      <div class="why-desc">Durable execution, HITL, and parallel subgraphs are first-class graph concepts — not workarounds. Every alternative requires custom scaffolding to approximate them.</div>
+    </div>
+    <div class="why-card">
+      <div class="why-num">Criterion 4</div>
+      <div class="why-title">Observability &amp; token tracking included</div>
+      <div class="why-desc">LangSmith provides full step traces, token usage, and latency per node with zero custom instrumentation — directly addresses two standing requirements.</div>
+    </div>
+    <div class="why-card">
+      <div class="why-num">Criterion 5</div>
+      <div class="why-title">Production maturity &amp; commercial backing</div>
+      <div class="why-desc">Maintained by LangChain Inc. Largest production deployment base of any Python agentic framework as of 2026. Open-source with commercial support. Not a research prototype.</div>
+    </div>
+    <div class="why-card" style="background: rgba(16,185,129,0.05); border-color: var(--lg);">
+      <div class="why-num" style="color: var(--lg-light);">Verdict</div>
+      <div class="why-title" style="color: var(--lg-light);">No other option qualifies</div>
+      <div class="why-desc">Amazon Bedrock Agents: no HITL, no durable execution. AutoGen/CrewAI: no Postgres checkpointer. Semantic Kernel: Azure-centric, weaker Bedrock integration. Full rewrite: maximum risk, zero continuity.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 7 — THE PROPOSAL (WHAT CHANGES)
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-proposal">The Proposal</div>
+  <div class="slide-number">7 / 15</div>
+  <h2>Surgical Replacement — What Changes</h2>
+  <p class="slide-subtitle">Five components replaced. One config rename. Everything else untouched.</p>
+
+  <table class="change-table">
+    <thead>
+      <tr>
+        <th>Current Component</th>
+        <th>Replaced With</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>ChatManager</code> (conversation loop)</td>
+        <td><span class="to-code">LangGraph StateGraph</span></td>
+        <td class="why-cell">Branching, parallel steps, checkpointing, HITL</td>
+      </tr>
+      <tr>
+        <td><code>BedrockClient</code> (LLM transport)</td>
+        <td><span class="to-code">ChatBedrockConverse</span> via <code>langchain-aws</code></td>
+        <td class="why-cell">Same Claude model, no new AWS costs, vendor-maintained</td>
+      </tr>
+      <tr>
+        <td><code>ToolManager</code> (tool execution)</td>
+        <td><span class="to-code">ToolNode</span> + explicit tool definitions</td>
+        <td class="why-cell">Testable, composable, full control over tool behavior</td>
+      </tr>
+      <tr>
+        <td><code>MessagePreprocessor</code> (context budget)</td>
+        <td><span class="to-code">Custom preprocessing node</span></td>
+        <td class="why-cell">Preserves existing 4-stage logic, moved into the graph</td>
+      </tr>
+      <tr>
+        <td><code>SessionManager</code> (session lifecycle)</td>
+        <td><span class="to-code">langgraph-checkpoint-postgres</span></td>
+        <td class="why-cell">Durable, persistent, uses existing Postgres instance</td>
+      </tr>
+      <tr>
+        <td><code>BEDROCK_*</code> env vars (81 total)</td>
+        <td><span class="to-code">AUTOCHAT_*</span> prefix</td>
+        <td class="why-cell">Removes false AWS coupling; clean rename, no legacy aliases</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 8 — WHAT DOES NOT CHANGE
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-proposal">The Proposal</div>
+  <div class="slide-number">8 / 15</div>
+  <h2>What Does NOT Change</h2>
+  <p class="slide-subtitle">Everything users see and interact with remains exactly as-is</p>
+
+  <div class="unchanged-grid">
+    <div class="unchanged-card">
+      <div class="unchanged-icon">💬</div>
+      <div>
+        <div class="unchanged-title">Chat UI</div>
+        <div class="unchanged-desc">chat.html, chat-client.js, styles.css — untouched. Talks to a WebSocket endpoint, not to AI directly.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">🔌</div>
+      <div>
+        <div class="unchanged-title">WebSocket Transport</div>
+        <div class="unchanged-desc">Minimal adapter change only — calls the LangGraph graph instead of ChatManager.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">🔐</div>
+      <div>
+        <div class="unchanged-title">SSO / OAuth2 PKCE</div>
+        <div class="unchanged-desc">Completely independent of the AI layer — unaffected.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">👍</div>
+      <div>
+        <div class="unchanged-title">Feedback &amp; Learning Loop</div>
+        <div class="unchanged-desc">Continuous learning pipeline is completely independent of the orchestration layer.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">🛡️</div>
+      <div>
+        <div class="unchanged-title">Admin API &amp; Dashboard</div>
+        <div class="unchanged-desc">Admin routes, feedback review, KB management — all independent.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">📋</div>
+      <div>
+        <div class="unchanged-title">Preset Prompts</div>
+        <div class="unchanged-desc">UI concern — YAML loading and button rendering unchanged.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">🧠</div>
+      <div>
+        <div class="unchanged-title">Knowledge Base (RAG)</div>
+        <div class="unchanged-desc">pgvector retrieval injected into the LangGraph graph as a retrieval node.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">☁️</div>
+      <div>
+        <div class="unchanged-title">AWS Bedrock Infrastructure</div>
+        <div class="unchanged-desc">Same endpoint, same model (claude-sonnet-4-6), same region, same costs.</div>
+      </div>
+    </div>
+    <div class="unchanged-card">
+      <div class="unchanged-icon">🗄️</div>
+      <div>
+        <div class="unchanged-title">Existing Postgres Database</div>
+        <div class="unchanged-desc">Now also used for conversation checkpointing — no new DB, no schema conflicts.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ws-note" style="margin-top: 24px;">
+    🔌 WebSocket message protocol (<code>ai_response</code>, <code>typing</code>, <code>tool_call</code>, <code>error</code>, …) stays identical — the client JavaScript does not change.
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 9 — NEW CAPABILITIES
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-caps">New Capabilities</div>
+  <div class="slide-number">9 / 15</div>
+  <h2>New Capabilities Unlocked</h2>
+  <p class="slide-subtitle">Capabilities that are impossible in the current linear loop — first-class primitives in LangGraph</p>
+
+  <div class="cap-grid">
+    <div class="cap-card cc-dur">
+      <span class="cap-emoji">🔄</span>
+      <div class="cap-title">Durable Batch Execution</div>
+      <div class="cap-desc">Graph checkpoints after every job. Failure on job 7 → resume from job 7 on retry. Zero lost work, fully transparent to the user.</div>
+    </div>
+    <div class="cap-card cc-hitl">
+      <span class="cap-emoji">🧑‍💼</span>
+      <div class="cap-title">Human-in-the-Loop</div>
+      <div class="cap-desc">AI pauses at defined checkpoints, waits for confirmation, then continues. "I found 3 bottlenecks — should I generate the full report?" Not possible today.</div>
+    </div>
+    <div class="cap-card cc-par">
+      <span class="cap-emoji">⚡</span>
+      <div class="cap-title">Parallel Sub-Analysis</div>
+      <div class="cap-desc">Multi-job workloads analyzed concurrently via LangGraph subgraphs, eliminating the sequential bottleneck where each job waits for the prior one to complete.</div>
+    </div>
+    <div class="cap-card cc-obs">
+      <span class="cap-emoji">🔭</span>
+      <div class="cap-title">Full Observability — LangSmith</div>
+      <div class="cap-desc">Every AI response is inspectable: which tools were called, in what order, what data was passed, how long each step took, where errors occurred. From "read logs and guess" to "click the trace."</div>
+    </div>
+    <div class="cap-card cc-tok">
+      <span class="cap-emoji">📊</span>
+      <div class="cap-title">Token Consumption Tracking</div>
+      <div class="cap-desc">A standing request with no clean solution today. Token counts are parsed per-response but never aggregated or reported. With <code>ChatBedrockConverse</code>, <code>usage_metadata</code> is available on every call — LangSmith aggregates it automatically.</div>
+      <div class="tok-bullets">
+        <div class="tok-bullet">Per-user and per-session dashboards</div>
+        <div class="tok-bullet">Cost attribution per job analysis or batch run</div>
+        <div class="tok-bullet">Alerting when a session exceeds a budget</div>
+        <div class="tok-bullet">Historical trend data for capacity planning</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 10 — MIGRATION STRATEGY
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-plan">Migration Plan</div>
+  <div class="slide-number">10 / 15</div>
+  <h2>Migration Strategy — Phased and Low-Risk</h2>
+  <p class="slide-subtitle">Each phase is independently deployable and independently testable</p>
+
+  <div class="phase-row">
+    <div class="phase-card p1">
+      <div class="phase-num">Phase 1</div>
+      <div class="phase-title">Foundation</div>
+      <div class="phase-duration">2–3 weeks</div>
+      <div class="phase-items">
+        <div class="phase-item">Define core StateGraph, wire WebSocket adapter</div>
+        <div class="phase-item">Implement preprocessing node (preserve existing 4-stage logic)</div>
+        <div class="phase-item">Rename 81 BEDROCK_* vars to AUTOCHAT_*</div>
+      </div>
+      <div class="phase-outcome">No visible change to users</div>
+    </div>
+    <div class="phase-card p2">
+      <div class="phase-num">Phase 2</div>
+      <div class="phase-title">Tool Migration</div>
+      <div class="phase-duration">1–2 weeks</div>
+      <div class="phase-items">
+        <div class="phase-item">Replace ToolManager with explicit ToolNode definitions</div>
+        <div class="phase-item">Preserve OpenAPI auto-generation as a utility</div>
+        <div class="phase-item">Full tool regression test run</div>
+      </div>
+      <div class="phase-outcome">No visible change to users</div>
+    </div>
+    <div class="phase-card p3">
+      <div class="phase-num">Phase 3</div>
+      <div class="phase-title">Persistence</div>
+      <div class="phase-duration">1 week</div>
+      <div class="phase-items">
+        <div class="phase-item">Replace in-memory SessionManager with langgraph-checkpoint-postgres</div>
+        <div class="phase-item">Uses existing Postgres, dedicated langgraph_* schema</div>
+      </div>
+      <div class="phase-outcome">Sessions persist across restarts</div>
+    </div>
+    <div class="phase-card p4">
+      <div class="phase-num">Phase 4</div>
+      <div class="phase-title">Batch Durability</div>
+      <div class="phase-duration">2–3 weeks</div>
+      <div class="phase-items">
+        <div class="phase-item">Wrap batch_processor in a LangGraph graph with per-job checkpointing</div>
+        <div class="phase-item">Add HITL confirmation before report generation</div>
+      </div>
+      <div class="phase-outcome">Batch analyses no longer lose progress</div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 11 — TIMELINE SUMMARY
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-plan">Migration Plan</div>
+  <div class="slide-number">11 / 15</div>
+  <h2>Timeline Summary</h2>
+  <p class="slide-subtitle">Two sprints — both independently shippable, each delivering real value</p>
+
+  <table class="tl-table">
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Scope</th>
+        <th>Duration</th>
+        <th>User-Visible Impact</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="color:var(--info)">Phase 1: Foundation</td>
+        <td>Graph wiring, preprocessing node, WebSocket adapter, AUTOCHAT_* rename</td>
+        <td class="dur">2–3 weeks</td>
+        <td class="impact-none">None</td>
+      </tr>
+      <tr>
+        <td style="color:var(--lg-light)">Phase 2: Tools</td>
+        <td>LangGraph ToolNode definitions, preserve OpenAPI auto-generation utility</td>
+        <td class="dur">1–2 weeks</td>
+        <td class="impact-none">None</td>
+      </tr>
+      <tr>
+        <td style="color:var(--synth)">Phase 3: Persistence</td>
+        <td>Postgres checkpointer, durable conversation sessions</td>
+        <td class="dur">1 week</td>
+        <td class="impact-pos">Sessions persist across restarts</td>
+      </tr>
+      <tr>
+        <td style="color:var(--custom)">Phase 4: Batch Durability</td>
+        <td>Durable batch execution, human-in-the-loop checkpoints</td>
+        <td class="dur">2–3 weeks</td>
+        <td class="impact-pos">Batch analyses no longer lose progress</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="tl-total">Total: 6–9 weeks for a fully migrated, durability-enabled AI layer</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 12 — RISKS
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-risk">Risk Assessment</div>
+  <div class="slide-number">12 / 15</div>
+  <h2>Risks and Mitigations</h2>
+  <p class="slide-subtitle">All risks assessed as Low except one Medium — fully mitigated before it becomes an issue</p>
+
+  <div class="risk-grid">
+    <div class="risk-row">
+      <div class="risk-emoji">📌</div>
+      <div class="risk-content">
+        <div class="risk-name">LangGraph API changes break our graph</div>
+        <div class="risk-mit">Pin to a stable release; LangChain Inc maintains backward compatibility</div>
+      </div>
+      <div class="risk-level rl-low">Low</div>
+    </div>
+    <div class="risk-row">
+      <div class="risk-emoji">🧩</div>
+      <div class="risk-content">
+        <div class="risk-name">MessagePreprocessor too complex to port</div>
+        <div class="risk-mit">Becomes a standalone graph node — existing 4-stage logic unchanged, new location</div>
+      </div>
+      <div class="risk-level rl-low">Low</div>
+    </div>
+    <div class="risk-row">
+      <div class="risk-emoji">📡</div>
+      <div class="risk-content">
+        <div class="risk-name">Streaming behavior differs from current</div>
+        <div class="risk-mit">LangGraph streaming is richer than current; WebSocket message protocol unchanged</div>
+      </div>
+      <div class="risk-level rl-low">Low</div>
+    </div>
+    <div class="risk-row">
+      <div class="risk-emoji">🔨</div>
+      <div class="risk-content">
+        <div class="risk-name">Tool behavior regression</div>
+        <div class="risk-mit">Existing integration tests cover this; Phase 2 includes a full regression run</div>
+      </div>
+      <div class="risk-level rl-low">Low</div>
+    </div>
+    <div class="risk-row">
+      <div class="risk-emoji">🗄️</div>
+      <div class="risk-content">
+        <div class="risk-name">Checkpointer schema conflicts with existing tables</div>
+        <div class="risk-mit">Uses dedicated <code>langgraph_*</code> schema prefix — no conflicts with existing tables</div>
+      </div>
+      <div class="risk-level rl-low">Low</div>
+    </div>
+    <div class="risk-row">
+      <div class="risk-emoji">⚡</div>
+      <div class="risk-content">
+        <div class="risk-name">Framework overhead adds per-response latency</div>
+        <div class="risk-mit">Negligible for I/O-bound workloads; async graph execution matches current async design</div>
+      </div>
+      <div class="risk-level rl-low">Low</div>
+    </div>
+    <div class="risk-row" style="grid-column: span 2;">
+      <div class="risk-emoji">🔭</div>
+      <div class="risk-content">
+        <div class="risk-name">LangSmith data privacy (traces sent externally)</div>
+        <div class="risk-mit">LangSmith is fully opt-in — can run in offline mode with local trace logging; no data leaves the environment unless explicitly configured</div>
+      </div>
+      <div class="risk-level rl-med">Medium</div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 13 — WHAT WE ARE NOT DOING
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-risk">Scope Boundary</div>
+  <div class="slide-number">13 / 15</div>
+  <h2>What We Are Not Doing</h2>
+  <p class="slide-subtitle">Explicit scope boundaries — to prevent scope creep and set clear expectations</p>
+
+  <div class="nolist">
+    <div class="no-item">
+      <div class="no-icon">🚫</div>
+      <div>
+        <div class="no-title">No UI changes</div>
+        <div class="no-desc">The chat interface, admin dashboard, and preset prompts are not touched</div>
+      </div>
+    </div>
+    <div class="no-item">
+      <div class="no-icon">🚫</div>
+      <div>
+        <div class="no-title">No auth changes</div>
+        <div class="no-desc">SSO, OAuth2 PKCE, and bearer token flows are completely unaffected</div>
+      </div>
+    </div>
+    <div class="no-item">
+      <div class="no-icon">🚫</div>
+      <div>
+        <div class="no-title">No new AWS infrastructure</div>
+        <div class="no-desc">Same Bedrock endpoint, same Claude model, same region — no new costs</div>
+      </div>
+    </div>
+    <div class="no-item">
+      <div class="no-icon">🚫</div>
+      <div>
+        <div class="no-title">No new database</div>
+        <div class="no-desc">Postgres checkpointer uses the existing database instance with a dedicated schema prefix</div>
+      </div>
+    </div>
+    <div class="no-item">
+      <div class="no-icon">🚫</div>
+      <div>
+        <div class="no-title">No big-bang rewrite</div>
+        <div class="no-desc">Each of the four phases is independently deployable, independently testable, and independently rollback-able</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 14 — ALTERNATIVES
+     ════════════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-tag tag-alts">Alternatives</div>
+  <div class="slide-number">14 / 15</div>
+  <h2>Alternatives Considered</h2>
+  <p class="slide-subtitle">LangGraph is the only option satisfying all five criteria simultaneously</p>
+
+  <div class="alt-grid">
+    <div class="alt-card">
+      <div class="alt-emoji">🏛️</div>
+      <div class="alt-content">
+        <div class="alt-name">Keep current architecture</div>
+        <div class="alt-reason">Each new capability requires significant custom development. Maintenance burden grows with every feature. Durable execution and HITL are structurally impossible.</div>
+        <span class="verdict v-burden">Growing burden</span>
+      </div>
+    </div>
+    <div class="alt-card">
+      <div class="alt-emoji">☁️</div>
+      <div class="alt-content">
+        <div class="alt-name">Amazon Bedrock Agents</div>
+        <div class="alt-reason">No portable graph definition. No HITL primitives. No durable execution or resume capability. Harder to debug. Requires vendor lock-in to AWS-specific execution model.</div>
+        <span class="verdict v-no">Not selected</span>
+      </div>
+    </div>
+    <div class="alt-card">
+      <div class="alt-emoji">🤖</div>
+      <div class="alt-content">
+        <div class="alt-name">AutoGen / CrewAI</div>
+        <div class="alt-reason">Less production-proven at scale. No Postgres checkpointer equivalent. HITL and durability require custom scaffolding — the exact problem we are trying to avoid.</div>
+        <span class="verdict v-no">Not selected</span>
+      </div>
+    </div>
+    <div class="alt-card">
+      <div class="alt-emoji">🪟</div>
+      <div class="alt-content">
+        <div class="alt-name">Semantic Kernel</div>
+        <div class="alt-reason">Microsoft/Azure-centric design. Weaker AWS Bedrock integration. No production-grade Postgres checkpointer. Smaller Python community than LangChain.</div>
+        <span class="verdict v-no">Not selected</span>
+      </div>
+    </div>
+    <div class="alt-card" style="grid-column: span 2;">
+      <div class="alt-emoji">🔥</div>
+      <div class="alt-content">
+        <div class="alt-name">Full rewrite from scratch</div>
+        <div class="alt-reason">Maximum risk with zero continuity. Team has already built expertise in the LangChain ecosystem. No component from the current architecture could be preserved. Months of re-implementation before any new capability is delivered.</div>
+        <span class="verdict v-no">Not selected</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     SLIDE 15 — RECOMMENDATION
+     ════════════════════════════════════════════════════ -->
+<section class="slide cta-slide">
+  <div class="slide-tag tag-close">Recommendation</div>
+  <div class="slide-number">15 / 15</div>
+
+  <h2 style="font-size:3.8rem; margin-bottom: 16px;">Recommendation</h2>
+  <p class="cta-sub">Approve Phase 1 + 2 as a single sprint. Phase 3 + 4 follow once validated in production.</p>
+
+  <div class="rec-sprint" style="width: 100%; max-width: 1000px;">
+    <div class="sprint-card s1">
+      <div class="sprint-label">Sprint 1</div>
+      <div class="sprint-phases">Phases 1 &amp; 2</div>
+      <div class="sprint-dur">3–5 weeks · Zero user-visible risk</div>
+      <div class="sprint-desc">Foundation graph, preprocessing node, WebSocket adapter, AUTOCHAT_* rename, explicit tool definitions. Full regression test suite validates no behavioral change.</div>
+    </div>
+    <div class="sprint-card s2">
+      <div class="sprint-label">Sprint 2</div>
+      <div class="sprint-phases">Phases 3 &amp; 4</div>
+      <div class="sprint-dur">3–4 weeks · Highest business value</div>
+      <div class="sprint-desc">Postgres checkpointer for persistent sessions. Durable batch execution with per-job checkpointing. Phase 4 directly resolves the production failure mode where batch analyses lose all progress on error.</div>
+    </div>
+  </div>
+
+  <div class="success-box" style="width: 100%; max-width: 1000px;">
+    <div class="success-title">✅ Success Criteria</div>
+    <div class="success-criteria">
+      <div class="sc-item">
+        <span class="sc-badge b-p1">Phase 1</span>
+        Existing test suite passes on the new graph with no regression in response quality; <code>.env</code> updated on deployment; chat functionality is user-transparent.
+      </div>
+      <div class="sc-item">
+        <span class="sc-badge b-p4">Phase 4</span>
+        A batch analysis that previously failed mid-run completes via resume from the checkpoint rather than restarting from scratch.
+      </div>
+    </div>
+  </div>
+
+  <div class="total-badge" style="margin-top: 28px;">
+    6–9 weeks · Eliminate maintenance burden · Gain observability · Unlock durable execution + HITL
+  </div>
+</section>
+
+</body>
+</html>

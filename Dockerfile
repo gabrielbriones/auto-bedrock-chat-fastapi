@@ -69,5 +69,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command - equivalent to: poetry run uvicorn auto_bedrock_chat_fastapi.app:app --reload --host 0.0.0.0
-CMD ["uvicorn", "auto_bedrock_chat_fastapi.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command - equivalent to: poetry run uvicorn autolangchat.app:app --reload --host 0.0.0.0
+CMD ["uvicorn", "autolangchat.app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -61,7 +61,7 @@ jobs:
         run: poetry install --all-extras
 
       - name: Run pytest
-        run: poetry run pytest tests/ -v --cov=auto_bedrock_chat_fastapi --cov-report=xml --cov-report=term-missing
+        run: poetry run pytest tests/ -v --cov=autolangchat --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v7

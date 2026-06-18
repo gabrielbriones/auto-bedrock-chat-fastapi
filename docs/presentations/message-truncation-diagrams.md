@@ -107,13 +107,13 @@ For a 600K character tool response (illustrative):
 
 ```bash
 # .env
-BEDROCK_ENABLE_AI_SUMMARIZATION=true   # opt-in
-BEDROCK_SINGLE_MSG_LENGTH_THRESHOLD=500000
-BEDROCK_SINGLE_MSG_TRUNCATION_TARGET=425000
-BEDROCK_HISTORY_TOTAL_LENGTH_THRESHOLD=650000
-BEDROCK_HISTORY_MSG_LENGTH_THRESHOLD=100000
-BEDROCK_HISTORY_MSG_TRUNCATION_TARGET=85000
-BEDROCK_MAX_TRUNCATION_RECURSION=3
+AUTOCHAT_ENABLE_AI_SUMMARIZATION=true   # opt-in
+AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD=500000
+AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET=425000
+AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD=650000
+AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD=100000
+AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET=85000
+AUTOCHAT_MAX_TRUNCATION_RECURSION=3
 ```
 
 ---
@@ -131,6 +131,6 @@ BEDROCK_MAX_TRUNCATION_RECURSION=3
 ## See Also
 
 - [Token Management wiki page](wiki/token-management.md) — full configuration reference
-- [Configuration](wiki/configuration.md) — all `BEDROCK_*` threshold settings
-- `auto_bedrock_chat_fastapi/message_preprocessor.py` — implementation
-- `auto_bedrock_chat_fastapi/defaults.py` — default values
+- [Configuration](wiki/configuration.md) — all `AUTOCHAT_*` threshold settings
+- `autolangchat/message_preprocessor.py` — implementation
+- `autolangchat/defaults.py` — default values

@@ -1,6 +1,6 @@
 # FastAPI Plugin Integration
 
-`add_bedrock_chat()` is the primary way to add AI chat to an existing FastAPI application. It registers WebSocket, REST, and (optionally) UI endpoints on your app.
+`add_autolangchat()` is the primary way to add AI chat to an existing FastAPI application. It registers WebSocket, utility REST endpoints, and (optionally) UI endpoints on your app.
 
 ---
 
@@ -24,7 +24,7 @@ pip install -e .
 
 ```python
 from fastapi import FastAPI
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 app = FastAPI(title="My API")
 
@@ -34,7 +34,7 @@ async def list_products():
     return [{"id": 1, "name": "Widget", "price": 9.99}]
 
 # Add AI chat — reads settings from .env
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     allowed_paths=["/products"],
     excluded_paths=["/docs"]
@@ -43,23 +43,24 @@ bedrock_chat = add_bedrock_chat(
 
 That's it. The plugin registers:
 
-| Endpoint                             | Description                      |
-| ------------------------------------ | -------------------------------- |
-| `GET /bedrock-chat/health`           | Health check                     |
-| `POST /bedrock-chat/chat`            | REST chat endpoint               |
-| `WS /bedrock-chat/ws`                | WebSocket chat                   |
-| `GET /bedrock-chat/ui`               | Built-in Chat UI (if enabled)    |
-| `POST /bedrock-chat/semantic-search` | RAG semantic search (if enabled) |
-| `POST /bedrock-chat/verify-auth`     | Auth verification endpoint       |
+| Endpoint                      | Description                                   |
+| ----------------------------- | --------------------------------------------- |
+| `GET /chat/health`            | Health check                                  |
+| `GET /chat/stats`             | Chat statistics                               |
+| `GET /chat/tools`             | Exposed tool metadata                         |
+| `WS /chat/ws`                 | WebSocket chat                                |
+| `GET /chat/ui`                | Built-in Chat UI (if enabled)                 |
+| `POST /chat/knowledge/search` | Hybrid knowledge-base search (if RAG enabled) |
+| `GET /chat/auth/sso/login`    | SSO login redirect (if SSO enabled)           |
 
 ---
 
 ## Modern Lifespan Approach (Recommended for New Projects)
 
 ```python
-from auto_bedrock_chat_fastapi import create_fastapi_with_bedrock_chat
+from autolangchat import create_fastapi_with_autolangchat
 
-app, plugin = create_fastapi_with_bedrock_chat(
+app, plugin = create_fastapi_with_autolangchat(
     title="My API",
     description="An API with AI chat",
     version="1.0.0",
@@ -77,7 +78,7 @@ async def list_products():
 ## Full Configuration Example
 
 ```python
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     # Model
     model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -86,9 +87,9 @@ bedrock_chat = add_bedrock_chat(
     system_prompt="You are a helpful customer support assistant.",
 
     # Endpoints
-    chat_endpoint="/bedrock-chat",
-    websocket_endpoint="/bedrock-chat/ws",
-    ui_endpoint="/bedrock-chat/ui",
+    chat_endpoint="/chat",
+    websocket_endpoint="/chat/ws",
+    ui_endpoint="/chat/ui",
     enable_ui=True,
 
     # Tool access control
@@ -123,7 +124,7 @@ bedrock_chat = add_bedrock_chat(
 ```python
 from fastapi import FastAPI, Depends
 from fastapi.security import HTTPBearer
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 security = HTTPBearer()
 app = FastAPI()
@@ -133,7 +134,7 @@ async def get_data(token = Depends(security)):
     return {"data": "sensitive value"}
 
 # Enable tool auth so the AI passes credentials when calling your endpoints
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     enable_tool_auth=True,
     allowed_paths=["/secure-data"]
@@ -154,16 +155,14 @@ All subsequent AI tool calls to `/secure-data` will include `Authorization: Bear
 
 ```python
 from fastapi import FastAPI
-from auto_bedrock_chat_fastapi import add_bedrock_chat
-from auto_bedrock_chat_fastapi.vector_db import VectorDB
-from auto_bedrock_chat_fastapi.embedding_pipeline import EmbeddingPipeline
+from autolangchat import add_autolangchat
 
 app = FastAPI()
-db = VectorDB("knowledge_base.db")
 
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
-    vector_db=db,           # enables RAG retrieval on every message
+    enable_rag=True,
+    kb_database_path="data/knowledge_base.db",
     allowed_paths=["/api"]
 )
 ```

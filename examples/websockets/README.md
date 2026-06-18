@@ -1,10 +1,10 @@
 # WebSocket Chat Client Examples
 
-This directory contains examples for interacting with the auto-bedrock-chat-fastapi WebSocket endpoint.
+This directory contains examples for interacting with the `autolangchat` WebSocket endpoint.
 
 ## Overview
 
-The `interactive.py` script provides an interactive real-time chat interface with the Bedrock AI assistant. It handles:
+The `interactive.py` script provides an interactive real-time chat interface with the assistant. It handles:
 
 - Interactive chat with live message display
 - Connection management
@@ -27,7 +27,7 @@ pip install websockets
 python interactive.py
 ```
 
-This connects to the default WebSocket endpoint (`ws://localhost:8000/bedrock-chat/ws`) and starts an interactive chat.
+This connects to the default WebSocket endpoint (`ws://localhost:8000/chat/ws`) and starts an interactive chat.
 
 ### Interactive Chat (Bearer Token)
 
@@ -148,7 +148,7 @@ def handle_connected(session_id):
     print(f"Connected: {session_id}")
 
 config = WebSocketConfig(
-    endpoint="ws://localhost:8000/ws/chat",
+    endpoint="ws://localhost:8000/chat/ws",
     auth_type=AuthType.BEARER_TOKEN,
     token="your-token"
 )
@@ -166,7 +166,7 @@ client = WebSocketChatClient(
 ```python
 async def conversation():
     config = WebSocketConfig(
-        endpoint="ws://localhost:8000/ws/chat",
+        endpoint="ws://localhost:8000/chat/ws",
         auth_type=AuthType.API_KEY,
         api_key="your-api-key"
     )
@@ -318,12 +318,12 @@ You can set default values using environment variables:
 
 ```bash
 # WebSocket endpoint
-export BEDROCK_WS_ENDPOINT="ws://localhost:8000/ws/chat"
+export AUTOCHAT_WS_ENDPOINT="ws://localhost:8000/chat/ws"
 
 # Authentication
-export BEDROCK_AUTH_TYPE="bearer_token"
-export BEDROCK_AUTH_TOKEN="your-token"
-export BEDROCK_API_KEY="your-api-key"
+export AUTOCHAT_AUTH_TYPE="bearer_token"
+export AUTOCHAT_AUTH_TOKEN="your-token"
+export AUTOCHAT_API_KEY="your-api-key"
 ```
 
 ## Debugging
@@ -337,7 +337,7 @@ python interactive.py --auth bearer --token YOUR_TOKEN
 Check logs to see WebSocket communication:
 
 ```
-2024-12-03 10:00:00,123 - __main__ - INFO - Connecting to ws://localhost:8000/ws/chat...
+2024-12-03 10:00:00,123 - __main__ - INFO - Connecting to ws://localhost:8000/chat/ws...
 2024-12-03 10:00:00,456 - __main__ - INFO - WebSocket connected
 2024-12-03 10:00:00,789 - __main__ - DEBUG - Message sent: {"type": "chat", "message": "..."}
 ```

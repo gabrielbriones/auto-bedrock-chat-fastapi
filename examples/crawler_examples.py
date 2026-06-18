@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from auto_bedrock_chat_fastapi.content_crawler import ContentCrawler, LocalContentLoader
+from autolangchat.content_crawler import ContentCrawler, LocalContentLoader
 
 # Configure logging
 logging.basicConfig(
@@ -69,7 +69,7 @@ def example_load_local_files():
 
 async def example_populate_knowledge_base():
     """Example: Crawl content and add to vector database."""
-    from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
+    from autolangchat.db.kb_sqlite import SQLiteKBStore
 
     # Initialize database
     db = SQLiteKBStore("knowledge_base.db")

@@ -7,22 +7,22 @@ kubernetes_deployment = """
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bedrock-chat-api
+  name: autolangchat
   labels:
-    app: bedrock-chat-api
+    app: autolangchat
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: bedrock-chat-api
+      app: autolangchat
   template:
     metadata:
       labels:
-        app: bedrock-chat-api
+        app: autolangchat
     spec:
       containers:
       - name: api
-        image: bedrock-chat-api:latest
+        image: autolangchat:latest
         ports:
         - containerPort: 8000
         env:
@@ -55,10 +55,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: bedrock-chat-api-service
+  name: autolangchat-service
 spec:
   selector:
-    app: bedrock-chat-api
+    app: autolangchat
   ports:
   - protocol: TCP
     port: 80
@@ -71,7 +71,7 @@ docker_compose = """
 version: '3.8'
 
 services:
-  bedrock-chat-api:
+  autolangchat:
     build: .
     ports:
       - "8000:8000"
@@ -104,5 +104,5 @@ volumes:
   redis_data:
 """
 
-print(f"Auto Bedrock Chat FastAPI v{version}")
+print(f"autolangchat v{version}")
 print("Development utilities loaded")

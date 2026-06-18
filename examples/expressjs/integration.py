@@ -2,7 +2,7 @@
 """
 Example: Framework-Agnostic Integration with Express.js API
 
-This example demonstrates how to use auto-bedrock-chat-fastapi with an Express.js API
+This example demonstrates how to use autolangchat with an Express.js API
 by using OpenAPI specifications instead of requiring a FastAPI application.
 
 Usage:
@@ -15,14 +15,14 @@ Prerequisites:
 - Node.js and npm installed
 - Express server running (generates OpenAPI spec automatically)
 - AWS credentials configured
-- auto-bedrock-chat-fastapi installed
+- autolangchat installed
 """
 
 import asyncio
 import json
 from pathlib import Path
 
-from auto_bedrock_chat_fastapi import create_tools_generator_from_spec
+from autolangchat import create_tools_generator_from_spec
 
 
 def check_for_express_server_spec():
@@ -175,7 +175,7 @@ def create_sample_express_openapi_spec():
 async def demonstrate_framework_agnostic_usage():
     """Demonstrate framework-agnostic usage with Express.js OpenAPI spec"""
 
-    print("🚀 Framework-Agnostic auto-bedrock-chat-fastapi Demo")
+    print("🚀 Framework-Agnostic autolangchat Demo")
     print("=" * 50)
 
     # Step 1: Check for OpenAPI spec from Express server or create sample
@@ -270,18 +270,18 @@ async def demonstrate_framework_agnostic_usage():
     # Step 6: Show configuration options
     print("\n6. Configuration Options:")
     print("   🔧 Environment variables (.env file):")
-    print("   BEDROCK_OPENAPI_SPEC_FILE=./api_spec.json")
-    print("   BEDROCK_API_BASE_URL=http://localhost:3000  # Auto-detected from spec if not set")
-    print("   BEDROCK_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders")
-    print("   BEDROCK_EXCLUDED_PATHS=/internal,/admin")
-    print("   BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0")
+    print("   AUTOCHAT_OPENAPI_SPEC_FILE=./api_spec.json")
+    print("   AUTOCHAT_API_BASE_URL=http://localhost:3000  # Auto-detected from spec if not set")
+    print("   AUTOCHAT_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders")
+    print("   AUTOCHAT_EXCLUDED_PATHS=/internal,/admin")
+    print("   AUTOCHAT_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0")
     print("   AWS_REGION=us-east-1")
 
     print("\n✅ Demo completed successfully!")
     print("\n🌐 API URL Configuration Priority:")
     print("   1. Explicit api_base_url parameter (highest priority)")
     print("   2. OpenAPI spec servers[0].url (auto-detected)")
-    print("   3. Environment variable BEDROCK_API_BASE_URL")
+    print("   3. Environment variable AUTOCHAT_API_BASE_URL")
     print("   4. Default http://localhost:8000 (fallback)")
 
     print("\n📚 Next Steps:")

@@ -477,13 +477,13 @@ async def demo_conversation(client: WebSocketChatClient) -> None:
 
 async def main():
     """Main entry point"""
-    parser = ArgumentParser(description="Interactive WebSocket Chat Client for auto-bedrock-chat-fastapi")
+    parser = ArgumentParser(description="Interactive WebSocket Chat Client for autolangchat")
 
     # Connection settings
     parser.add_argument(
         "--url",
-        default="ws://localhost:8000/bedrock-chat/ws",
-        help="WebSocket endpoint URL (default: ws://localhost:8000/bedrock-chat/ws)",
+        default="ws://localhost:8000/chat/ws",
+        help="WebSocket endpoint URL (default: ws://localhost:8000/chat/ws)",
     )
 
     # Authentication settings

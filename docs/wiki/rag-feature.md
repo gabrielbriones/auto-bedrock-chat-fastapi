@@ -1,6 +1,6 @@
 # RAG Feature
 
-The plugin includes a full **Retrieval-Augmented Generation (RAG)** pipeline. You can build a knowledge base from websites or local files, store it in a vector database, and have the AI automatically search it before answering user questions.
+The plugin includes a full **Retrieval-Augmented Generation (RAG)** pipeline. You can build a knowledge base from websites or local files, store it in a knowledge-base backend, and have the AI automatically search it before answering user questions.
 
 Two storage backends are supported:
 
@@ -56,18 +56,18 @@ poetry install --extras postgres
 
 ```python
 import asyncio
-from auto_bedrock_chat_fastapi.content_crawler import ContentCrawler
-from auto_bedrock_chat_fastapi.embedding_pipeline import EmbeddingPipeline
-from auto_bedrock_chat_fastapi.kb_store_base import create_kb_store
-from auto_bedrock_chat_fastapi.bedrock_client import BedrockClient
-from auto_bedrock_chat_fastapi.config import ChatConfig
+from autolangchat.rag.content_crawler import ContentCrawler
+from autolangchat.rag.embedding_pipeline import EmbeddingPipeline
+from autolangchat.db import create_kb_store
+from autolangchat.rag.bedrock_embeddings import BedrockEmbeddingClient
+from autolangchat.config import ChatConfig
 
 async def build_kb():
     config = ChatConfig()
-    client = BedrockClient(config)
+    client = BedrockEmbeddingClient(aws_region=config.aws_region)
     db = create_kb_store(config)  # uses kb_storage_type from config
     crawler = ContentCrawler()
-    pipeline = EmbeddingPipeline(bedrock_client=client, vector_db=db)
+    pipeline = EmbeddingPipeline(embedding_client=client, kb_store=db, config=config)
 
     # Crawl a website
     documents = await crawler.crawl_url(
@@ -88,14 +88,14 @@ asyncio.run(build_kb())
 
 ```python
 from fastapi import FastAPI
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 app = FastAPI()
 
 # The plugin creates the appropriate KB store based on config:
-#   BEDROCK_KB_STORAGE_TYPE=sqlite   → uses SQLite (default)
-#   BEDROCK_KB_STORAGE_TYPE=pgvector → uses PostgreSQL+pgvector
-bedrock_chat = add_bedrock_chat(app)
+#   AUTOCHAT_KB_STORAGE_TYPE=sqlite   → uses SQLite (default)
+#   AUTOCHAT_KB_STORAGE_TYPE=pgvector → uses PostgreSQL+pgvector
+autolangchat_plugin = add_autolangchat(app, enable_rag=True)
 ```
 
 ---
@@ -105,7 +105,7 @@ bedrock_chat = add_bedrock_chat(app)
 Fetches and parses web pages or local Markdown files.
 
 ```python
-from auto_bedrock_chat_fastapi.content_crawler import ContentCrawler
+from autolangchat.rag.content_crawler import ContentCrawler
 
 crawler = ContentCrawler(
     max_concurrent=5,      # concurrent requests
@@ -143,7 +143,7 @@ docs = crawler.load_local_files(
 Chunks documents and generates vector embeddings via AWS Bedrock Titan.
 
 ```python
-from auto_bedrock_chat_fastapi.embedding_pipeline import EmbeddingPipeline, TextChunker
+from autolangchat.rag.embedding_pipeline import EmbeddingPipeline, TextChunker
 
 chunker = TextChunker(
     chunk_size=512,    # tokens per chunk
@@ -152,10 +152,10 @@ chunker = TextChunker(
 )
 
 pipeline = EmbeddingPipeline(
-    bedrock_client=client,
-    vector_db=db,
+  embedding_client=client,
+  kb_store=db,
     chunker=chunker,
-    model="amazon.titan-embed-text-v1",  # 1536 dimensions
+  config=config,
     batch_size=25,
     cache_dir=".embedding_cache"  # avoids re-embedding unchanged content
 )
@@ -175,7 +175,7 @@ await pipeline.process_documents(documents)
 
 ## Storage Backends
 
-The KB storage layer is abstracted behind `BaseKBStore`. A factory function `create_kb_store(config)` creates the right implementation based on the `BEDROCK_KB_STORAGE_TYPE` setting.
+The KB storage layer is abstracted behind `BaseKBStore`. A factory function `create_kb_store(config)` creates the right implementation based on the `AUTOCHAT_KB_STORAGE_TYPE` setting.
 
 ### Backend Comparison
 
@@ -196,7 +196,7 @@ No configuration needed — works out of the box.
 
 ```bash
 # .env
-BEDROCK_KB_STORAGE_TYPE=sqlite    # default
+AUTOCHAT_KB_STORAGE_TYPE=sqlite    # default
 KB_DATABASE_PATH=data/knowledge_base.db
 ```
 
@@ -208,16 +208,16 @@ Requires PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) ex
 
 ```bash
 # .env
-BEDROCK_KB_STORAGE_TYPE=pgvector
-BEDROCK_KB_POSTGRES_URL=postgresql://kb_user:kb_password@localhost:5432/knowledge_base
-BEDROCK_KB_POSTGRES_POOL_SIZE=5
-BEDROCK_KB_EMBEDDING_DIMENSIONS=1536
+AUTOCHAT_KB_STORAGE_TYPE=pgvector
+AUTOCHAT_KB_POSTGRES_URL=postgresql://kb_user:kb_password@localhost:5432/knowledge_base
+AUTOCHAT_KB_POSTGRES_POOL_SIZE=5
+AUTOCHAT_KB_EMBEDDING_DIMENSIONS=1536
 ```
 
 Install the optional dependency:
 
 ```bash
-pip install "auto-bedrock-chat-fastapi[postgres]"
+pip install "autolangchat[postgres]"
 # or: poetry install --extras postgres
 ```
 
@@ -230,8 +230,8 @@ The default `docker-compose.yml` runs both the app and PostgreSQL+pgvector:
 docker compose up --build
 
 # Populate the knowledge base
-docker compose exec bedrock-chat-api \
-  python -m auto_bedrock_chat_fastapi.commands.kb populate
+docker compose exec autolangchat \
+  python -m autolangchat.commands.kb populate
 ```
 
 For SQLite-only mode (no PostgreSQL container):
@@ -255,11 +255,11 @@ The `VectorDB` class in `vector_db.py` is a backward-compatible alias for `SQLit
 
 ```python
 # Legacy (deprecated)
-from auto_bedrock_chat_fastapi.vector_db import VectorDB
+from autolangchat.db.kb_sqlite import SQLiteKBStore as VectorDB
 db = VectorDB("knowledge_base.db")
 
 # Preferred
-from auto_bedrock_chat_fastapi.kb_store_base import create_kb_store
+from autolangchat.db import create_kb_store
 db = create_kb_store(config)
 ```
 
@@ -316,7 +316,7 @@ See `examples/fastAPI/app_rag.py` for a complete hybrid search example.
 When RAG is enabled (`ENABLE_RAG=true`), the plugin exposes:
 
 ```http
-POST /bedrock-chat/semantic-search
+POST /chat/knowledge/search
 Content-Type: application/json
 
 {

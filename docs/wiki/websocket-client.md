@@ -39,7 +39,7 @@ python examples/websockets/interactive.py --demo --auth bearer --token YOUR_TOKE
 ### Bearer Token
 
 ```bash
-python interactive.py --url ws://localhost:8000/bedrock-chat/ws \
+python interactive.py --url ws://localhost:8000/chat/ws \
   --auth bearer --token "sk-1234567890"
 ```
 
@@ -97,7 +97,7 @@ from interactive import WebSocketConfig, WebSocketChatClient, AuthType
 
 async def main():
     config = WebSocketConfig(
-        endpoint="ws://localhost:8000/bedrock-chat/ws",
+        endpoint="ws://localhost:8000/chat/ws",
         auth_type=AuthType.BEARER_TOKEN,
         token="your-token"
     )
@@ -128,7 +128,7 @@ def on_connected(session_id):
     print(f"Connected with session: {session_id}")
 
 config = WebSocketConfig(
-    endpoint="ws://localhost:8000/bedrock-chat/ws",
+    endpoint="ws://localhost:8000/chat/ws",
     auth_type=AuthType.BEARER_TOKEN,
     token="your-token"
 )
@@ -218,20 +218,20 @@ client = WebSocketChatClient(
 
 ## Connection Options
 
-| Option   | Default                               | Description                                               |
-| -------- | ------------------------------------- | --------------------------------------------------------- |
-| `--url`  | `ws://localhost:8000/bedrock-chat/ws` | WebSocket endpoint                                        |
-| `--auth` | `none`                                | Auth type: `none`, `bearer`, `api_key`, `basic`, `oauth2` |
-| `--demo` | `false`                               | Run demo mode (non-interactive)                           |
+| Option   | Default                       | Description                                               |
+| -------- | ----------------------------- | --------------------------------------------------------- |
+| `--url`  | `ws://localhost:8000/chat/ws` | WebSocket endpoint                                        |
+| `--auth` | `none`                        | Auth type: `none`, `bearer`, `api_key`, `basic`, `oauth2` |
+| `--demo` | `false`                       | Run demo mode (non-interactive)                           |
 
 ---
 
 ## Environment Variables
 
 ```bash
-export BEDROCK_WS_ENDPOINT="ws://localhost:8000/bedrock-chat/ws"
-export BEDROCK_AUTH_TYPE="bearer_token"
-export BEDROCK_AUTH_TOKEN="your-token"
+export AUTOCHAT_WS_ENDPOINT="ws://localhost:8000/chat/ws"
+export AUTOCHAT_AUTH_TYPE="bearer_token"
+export AUTOCHAT_AUTH_TOKEN="your-token"
 ```
 
 ---

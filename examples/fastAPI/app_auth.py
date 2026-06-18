@@ -1,4 +1,4 @@
-"""Example FastAPI application with multiple authentication methods and auto-bedrock-chat-fastapi
+"""Example FastAPI application with multiple authentication methods and autolangchat
 
 This example demonstrates:
 1. Bearer Token authentication (JWT-style tokens)
@@ -7,7 +7,7 @@ This example demonstrates:
 4. OAuth2 Client Credentials flow (token exchange)
 5. Protected order endpoints (orders only accessible to logged-in users)
 6. User isolation (users can only see/create their own orders)
-7. Integration with auto-bedrock-chat-fastapi authentication system
+7. Integration with autolangchat authentication system
 8. Public product endpoints and protected order endpoints
 
 The authentication system supports multiple methods that can be tested via the UI.
@@ -26,7 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicC
 from pydantic import BaseModel, Field
 
 # Import the plugin
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 # Create FastAPI app
 app = FastAPI(
@@ -985,7 +985,7 @@ async def my_orders_analytics(user: CurrentUser = Depends(get_current_user)):
 # ============================================================================
 
 # Add Bedrock chat capabilities with authentication enabled
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     # Enable authentication for tool calls
     enable_tool_auth=True,
@@ -1006,7 +1006,7 @@ bedrock_chat = add_bedrock_chat(
         "/search",
         "/health",
     ],
-    excluded_paths=["/docs", "/redoc", "/openapi.json", "/chat", "/ws"],
+    excluded_paths=["/docs", "/redoc", "/openapi.json", "/chat", "/chat/ws", "/chat/ui"],
 )
 
 
@@ -1048,7 +1048,9 @@ if __name__ == "__main__":
     print("Try the AI chat via the UI and test different auth methods!")
     print("")
 
-    uvicorn.run("app_auth:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    # Pass app object directly (not as string) to avoid re-importing the module.
+    # reload=False is required when launching from an app object.
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False, log_level="info")
 
 
 # Custom OpenAPI schema to include security definitions and requirements

@@ -27,25 +27,25 @@ trigger, and per-entry trigger — is documented on the
 
 ## Enabling
 
-Set `BEDROCK_ADMIN_ENABLED=true` to register the `/admin/*` routes.
+Set `AUTOCHAT_ADMIN_ENABLED=true` to register the `/admin/*` routes.
 When disabled (the default), the routes are not mounted and clients get
 a clean 404 — exactly the same shape as the SSO routes when SSO is off.
 
 ```bash
-BEDROCK_ADMIN_ENABLED=true
+AUTOCHAT_ADMIN_ENABLED=true
 # pick one authorizer (see below); without one, every request is 403
-BEDROCK_ADMIN_VERIFICATION_ENDPOINT=https://identity.internal/api/v1/admin/check
+AUTOCHAT_ADMIN_VERIFICATION_ENDPOINT=https://identity.internal/api/v1/admin/check
 # or
-BEDROCK_ADMIN_REQUIRED_GROUPS=kb-admins,bedrock-reviewers
+AUTOCHAT_ADMIN_REQUIRED_GROUPS=kb-admins,bedrock-reviewers
 ```
 
 ### Configuration reference
 
-| Setting                       | Env var                               | Default | Description                                                                                                             |
-| ----------------------------- | ------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `admin_enabled`               | `BEDROCK_ADMIN_ENABLED`               | `False` | Master switch for the `/admin/*` route block.                                                                           |
-| `admin_verification_endpoint` | `BEDROCK_ADMIN_VERIFICATION_ENDPOINT` | `None`  | URL the plugin POSTs identity to on every admin request. Relative paths resolve against `app_base_url`.                 |
-| `admin_required_groups`       | `BEDROCK_ADMIN_REQUIRED_GROUPS`       | `[]`    | CSV of group names; user is admin if any of these appears in the SSO `groups` claim. Used only when no endpoint is set. |
+| Setting                       | Env var                                | Default | Description                                                                                                             |
+| ----------------------------- | -------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `admin_enabled`               | `AUTOCHAT_ADMIN_ENABLED`               | `False` | Master switch for the `/admin/*` route block.                                                                           |
+| `admin_verification_endpoint` | `AUTOCHAT_ADMIN_VERIFICATION_ENDPOINT` | `None`  | URL the plugin POSTs identity to on every admin request. Relative paths resolve against `app_base_url`.                 |
+| `admin_required_groups`       | `AUTOCHAT_ADMIN_REQUIRED_GROUPS`       | `[]`    | CSV of group names; user is admin if any of these appears in the SSO `groups` claim. Used only when no endpoint is set. |
 
 ---
 
@@ -360,8 +360,8 @@ in production
 This makes local development without SSO / verification-endpoint
 ergonomic, but it is a foot-gun:
 
-> ⚠️ **Production:** set `BEDROCK_REQUIRE_TOOL_AUTH=true` whenever
-> `BEDROCK_ADMIN_ENABLED=true`. Otherwise any request to `/admin/*`
+> ⚠️ **Production:** set `AUTOCHAT_REQUIRE_TOOL_AUTH=true` whenever
+> `AUTOCHAT_ADMIN_ENABLED=true`. Otherwise any request to `/admin/*`
 > with no identity becomes an unauthenticated admin. Hook the
 > `"accepted as anonymous"` log line into your alerting.
 
