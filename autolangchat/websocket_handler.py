@@ -18,9 +18,9 @@ from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .config import ChatConfig
 from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, FeedbackAuthorizer
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
+from .graph.tools.manager import AuthInfo
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSessionManager
-from .tool_manager import AuthInfo
 
 if TYPE_CHECKING:
     from .sso.sso_session_store import SSOSessionStore
@@ -57,7 +57,6 @@ class WebSocketChatHandler:
         config: ChatConfig,
         chat_graph: Any,
         app_base_url: str = "http://localhost:8000",
-        batch_graph: Optional[Any] = None,
         embedding_client: Optional[Any] = None,
         sso_session_store: Optional[SSOSessionStore] = None,
         kb_store: Optional[BaseKBStore] = None,
@@ -68,7 +67,6 @@ class WebSocketChatHandler:
         self.config = config
         self.app_base_url = app_base_url.rstrip("/")
         self.chat_graph = chat_graph
-        self.batch_graph = batch_graph
         self.embedding_client = embedding_client
         self.sso_session_store = sso_session_store
         self.kb_store = kb_store
@@ -229,10 +227,6 @@ class WebSocketChatHandler:
                     await self._handle_logout(websocket, message_data)
                 elif message_type == "feedback":
                     await self._handle_feedback_message(websocket, message_data)
-                elif message_type == "batch_start":
-                    await self._handle_batch_start(websocket, message_data)
-                elif message_type == "confirm":
-                    await self._handle_batch_confirm(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -324,23 +318,15 @@ class WebSocketChatHandler:
 
             # ------------------------------------------------------------------
             # Delegate entirely to LangGraph.
-            # Build the input message list from checkpointed history + new
-            # user message. With the current graph state contract, nodes return
-            # full message lists (not deltas), so we pass full history here.
+            # Pass only ``user_message`` — the ``init_turn`` node prepends it
+            # to the checkpointed conversation history inside the graph.
+            # Because ``messages`` is absent from the input, LangGraph carries
+            # it forward from the checkpoint automatically (total=False
+            # TypedDict pass-through), so no manual aget_state is needed.
             # ------------------------------------------------------------------
-            cfg: Dict[str, Any] = {"configurable": {"thread_id": session.session_id}}
-            checkpoint_state = await self.chat_graph.aget_state(cfg)
-            checkpoint_messages: List[Dict[str, Any]] = (
-                (checkpoint_state.values or {}).get("messages", []) if checkpoint_state else []
-            )
-            graph_input_messages = list(checkpoint_messages) + [{"role": "user", "content": user_message}]
-
             _turn_start = time.perf_counter()
             graph_state = await self.chat_graph.ainvoke(
-                {
-                    "messages": graph_input_messages,
-                    "metadata": {},
-                },
+                {"user_message": user_message},
                 config={
                     "configurable": {
                         "thread_id": session.session_id,
@@ -752,182 +738,6 @@ class WebSocketChatHandler:
                 "timestamp": datetime.now().isoformat(),
             },
         )
-
-    async def _handle_batch_start(self, websocket: WebSocket, data: Dict[str, Any]):
-        """Handle a ``batch_start`` message — kick off a new batch analysis run.
-
-        Expected payload::
-
-            {
-                "type": "batch_start",
-                "batch_id": "<uuid>",       # optional; generated if absent
-                "job_ids": ["j1", "j2", …]
-            }
-
-        The batch graph runs asynchronously.  Progress events are forwarded to
-        the client via the ``on_progress`` callback.  When the graph reaches the
-        HITL interrupt, a ``confirmation_required`` message is sent and execution
-        pauses until a ``confirm`` message arrives.
-        """
-        if self.batch_graph is None:
-            await self._send_error(websocket, "Batch processing is not configured")
-            return
-
-        session = await self.session_manager.get_session(websocket)
-        if not session:
-            await self._send_error(websocket, "Session not found")
-            return
-
-        job_ids: List[str] = data.get("job_ids") or []
-        if not job_ids:
-            await self._send_error(websocket, "batch_start requires a non-empty 'job_ids' list")
-            return
-
-        batch_id: str = data.get("batch_id") or str(uuid.uuid4())
-        logger.info("batch_start: batch_id=%s jobs=%s (session=%s)", batch_id, job_ids, session.session_id)
-
-        async def _on_progress(msg: Dict[str, Any]) -> None:
-            await self._send_message(websocket, msg)
-
-        invoke_cfg = {
-            "configurable": {
-                "thread_id": batch_id,
-                "chat_config": self.config,
-                "on_progress": _on_progress,
-            }
-        }
-        initial_state = {
-            "job_ids": job_ids,
-            "completed_jobs": [],
-            "job_results": {},
-            "failed_jobs": [],
-            "report": None,
-            "cancelled": False,
-            "metadata": {},
-        }
-
-        # Store mapping so confirm handler can find the batch graph thread
-        session.metadata[f"batch:{batch_id}"] = batch_id
-
-        await self._send_message(
-            websocket,
-            {
-                "type": "batch_started",
-                "batch_id": batch_id,
-                "job_count": len(job_ids),
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
-
-        try:
-            state = await self.batch_graph.ainvoke(initial_state, config=invoke_cfg)
-        except Exception as exc:
-            logger.error("batch_start failed batch_id=%s: %s", batch_id, exc)
-            await self._send_error(websocket, f"Batch failed: {exc}")
-            return
-
-        # Check if the graph is waiting at a HITL interrupt
-        interrupts = state.get("__interrupt__")
-        if interrupts:
-            payload = interrupts[0] if isinstance(interrupts, list) else interrupts
-            intr_value = payload.value if hasattr(payload, "value") else payload
-            await self._send_message(
-                websocket,
-                {
-                    "type": "confirmation_required",
-                    "batch_id": batch_id,
-                    **intr_value,
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-        else:
-            # Graph completed without interrupt (e.g. all jobs failed before confirm node)
-            await self._send_message(
-                websocket,
-                {
-                    "type": "batch_finished",
-                    "batch_id": batch_id,
-                    "completed_jobs": state.get("completed_jobs", []),
-                    "failed_jobs": state.get("failed_jobs", []),
-                    "cancelled": state.get("cancelled", False),
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-
-    async def _handle_batch_confirm(self, websocket: WebSocket, data: Dict[str, Any]):
-        """Handle a ``confirm`` message — resume a HITL-paused batch run.
-
-        Expected payload::
-
-            {
-                "type": "confirm",
-                "batch_id": "<uuid>",
-                "proceed": true   # or false to cancel
-            }
-        """
-        from langgraph.types import Command as _Command
-
-        if self.batch_graph is None:
-            await self._send_error(websocket, "Batch processing is not configured")
-            return
-
-        session = await self.session_manager.get_session(websocket)
-        if not session:
-            await self._send_error(websocket, "Session not found")
-            return
-
-        batch_id: str = data.get("batch_id", "")
-        proceed: bool = bool(data.get("proceed", False))
-
-        if not batch_id:
-            await self._send_error(websocket, "confirm requires 'batch_id'")
-            return
-
-        logger.info("batch_confirm: batch_id=%s proceed=%s (session=%s)", batch_id, proceed, session.session_id)
-
-        async def _on_progress(msg: Dict[str, Any]) -> None:
-            await self._send_message(websocket, msg)
-
-        invoke_cfg = {
-            "configurable": {
-                "thread_id": batch_id,
-                "chat_config": self.config,
-                "on_progress": _on_progress,
-            }
-        }
-
-        try:
-            state = await self.batch_graph.ainvoke(
-                _Command(resume={"proceed": proceed}),
-                config=invoke_cfg,
-            )
-        except Exception as exc:
-            logger.error("batch_confirm failed batch_id=%s: %s", batch_id, exc)
-            await self._send_error(websocket, f"Batch confirmation failed: {exc}")
-            return
-
-        if state.get("cancelled"):
-            await self._send_message(
-                websocket,
-                {
-                    "type": "batch_cancelled",
-                    "batch_id": batch_id,
-                    "message": "Batch report cancelled.",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-        else:
-            await self._send_message(
-                websocket,
-                {
-                    "type": "batch_finished",
-                    "batch_id": batch_id,
-                    "completed_jobs": state.get("completed_jobs", []),
-                    "failed_jobs": state.get("failed_jobs", []),
-                    "report": state.get("report"),
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
 
     async def _handle_auth_message(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle authentication message from client"""

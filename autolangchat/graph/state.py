@@ -1,8 +1,23 @@
 """Chat graph state definition."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from typing_extensions import TypedDict
+
+
+class InputState(TypedDict, total=False):
+    """Input-only schema for ``ainvoke``.  Only ``user_message`` lives here;
+    it is consumed by ``init_turn_node`` and never returned to the caller."""
+
+    user_message: str
+
+
+class OutputState(TypedDict, total=False):
+    """Output schema returned by ``ainvoke``.  Excludes ``user_message``."""
+
+    messages: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+    kb_results: List[Dict[str, Any]]
 
 
 class ChatState(TypedDict, total=False):
@@ -13,6 +28,14 @@ class ChatState(TypedDict, total=False):
 
     Fields
     ------
+    user_message:
+        The raw user message for the current turn.  The websocket handler
+        passes only this field (plus ``metadata: {}``) to ``ainvoke``; the
+        ``init_turn`` node consumes it, appends it to ``messages``, and
+        clears this field.  Because it is not present in the ``ainvoke``
+        input for subsequent graph calls, ``messages`` passes through from
+        the LangGraph checkpoint automatically — no manual ``aget_state``
+        needed in the handler.
     messages:
         Full conversation as a list of plain dicts (``{"role": ..., "content":
         ...}``) — the same format used by MessagePreprocessor and ToolManager,
@@ -34,6 +57,7 @@ class ChatState(TypedDict, total=False):
     can serialise the state without errors.
     """
 
+    user_message: Optional[str]  # input-only; cleared by init_turn_node
     messages: List[Dict[str, Any]]
     metadata: Dict[str, Any]
     kb_results: List[Dict[str, Any]]

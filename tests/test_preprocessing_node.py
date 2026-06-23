@@ -186,10 +186,7 @@ class TestPreprocessThroughGraph:
 
             graph = build_chat_graph(tight_config)
             await graph.ainvoke(
-                {
-                    "messages": [{"role": "user", "content": long_content}],
-                    "metadata": {},
-                },
+                {"user_message": long_content},
                 config={"configurable": {"thread_id": "preprocess-graph-test"}},
             )
 
@@ -209,20 +206,14 @@ class TestPreprocessThroughGraph:
 
             # Short message → no preprocessing
             result_short = await graph.ainvoke(
-                {
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "metadata": {},
-                },
+                {"user_message": "hi"},
                 config={"configurable": {"thread_id": "flag-test-short"}},
             )
             assert result_short["metadata"]["preprocessing_applied"] is False
 
             # Long message → preprocessing fires
             result_long = await graph.ainvoke(
-                {
-                    "messages": [{"role": "user", "content": "C" * 200}],
-                    "metadata": {},
-                },
+                {"user_message": "C" * 200},
                 config={"configurable": {"thread_id": "flag-test-long"}},
             )
             assert result_long["metadata"]["preprocessing_applied"] is True

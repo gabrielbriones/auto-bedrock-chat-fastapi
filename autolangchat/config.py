@@ -86,6 +86,9 @@ class ChatConfig(BaseSettings):
 
     # API Tools Configuration
     tools_desc: Optional[Dict] = Field(default_factory=dict, description="Auto-generated tools from FastAPI routes")
+    langchain_tools: Optional[List] = Field(
+        default=None, description="Pre-built LangChain StructuredTool list for LLM binding"
+    )
 
     openapi_spec_file: Optional[str] = Field(
         default=None,

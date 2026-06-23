@@ -18,11 +18,11 @@ from pydantic import BaseModel, Field
 
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import AutoLangChatError
-from .graph.batch_graph import build_batch_graph
 from .graph.graph import build_chat_graph
+from .graph.tools.generator import ToolsGenerator
+from .graph.tools.manager import ToolManager
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
-from .tool_manager import ToolManager
 from .websocket_handler import WebSocketChatHandler
 
 # SSO imports are deferred — only loaded when sso_enabled=True at runtime.
@@ -196,18 +196,19 @@ class AutoLangChatPlugin:
         self.session_manager = ChatSessionManager(self.config)
         self.embedding_client = BedrockEmbeddingClient(self.config)
 
-        # ToolManager owns ToolsGenerator internally and resolves base_url
-        self.tool_manager = ToolManager(app=self.app, config=self.config)
+        # Build tool manager: generator parses the OpenAPI spec and produces
+        # execution metadata; manager uses that metadata for HTTP dispatch only.
+        tools_generator = ToolsGenerator(app=self.app, config=self.config)
+        self._tools_generator = tools_generator  # retained for update_tools()
+        self.tool_manager = ToolManager(
+            generated_tools=tools_generator._generated_tools,
+            config=self.config,
+            base_url=tools_generator.get_api_base_url(),
+        )
         self.app_base_url = self.tool_manager.base_url
 
-        # Sync config.tools_desc so get_system_prompt() sees the correct tool count
-        self.config.tools_desc = self.tool_manager.tools_desc
-
         # Build the LangGraph StateGraph that drives chat orchestration
-        self.chat_graph = build_chat_graph(self.config, self.tool_manager)
-
-        # Build the batch analysis graph (Phase 4)
-        self.batch_graph = build_batch_graph(self.config)
+        self.chat_graph = build_chat_graph(self.config, tool_manager=self.tool_manager)
 
         # SSO components (only when SSO is enabled)
         self.sso_provider: Optional[SSOProvider] = None
@@ -266,7 +267,6 @@ class AutoLangChatPlugin:
             config=self.config,
             app_base_url=self.app_base_url,
             chat_graph=self.chat_graph,
-            batch_graph=self.batch_graph,
             embedding_client=self.embedding_client,
             sso_session_store=self.sso_session_store,
             kb_store=self._kb_store,
@@ -557,46 +557,15 @@ class AutoLangChatPlugin:
                 logger.error(f"Failed to get statistics: {str(e)}")
                 return JSONResponse({"error": str(e)}, status_code=500)
 
-        # ── Batch retry endpoint ────────────────────────────────────────────
-        @self.app.post(f"{self.config.chat_endpoint}/batch/{{batch_id}}/retry")
-        async def batch_retry(batch_id: str):
-            """Resume a batch run that was interrupted (e.g. after a process restart).
-
-            Calling this endpoint is equivalent to calling
-            ``graph.ainvoke(None, config={"configurable": {"thread_id": batch_id}})``.
-            LangGraph resumes from the last checkpoint; ``route_jobs`` will skip
-            already-completed jobs and dispatch only the remaining ones.
-
-            Returns the current batch state after the run completes (or after the
-            HITL interrupt fires again).
-            """
-            cfg = {"configurable": {"thread_id": batch_id, "chat_config": self.config}}
-            try:
-                state = await self.batch_graph.ainvoke(None, config=cfg)
-                interrupted = "__interrupt__" in state
-                return JSONResponse(
-                    {
-                        "batch_id": batch_id,
-                        "status": "awaiting_confirmation" if interrupted else "running",
-                        "completed_jobs": state.get("completed_jobs", []),
-                        "failed_jobs": state.get("failed_jobs", []),
-                        "interrupted": interrupted,
-                        "interrupt_payload": state.get("__interrupt__", [{}])[0] if interrupted else None,
-                    }
-                )
-            except Exception as exc:
-                logger.error("batch retry failed for batch_id=%s: %s", batch_id, exc)
-                return JSONResponse({"error": str(exc)}, status_code=500)
-
         # Tools information endpoint
         @self.app.get(f"{self.config.chat_endpoint}/tools")
         async def chat_tools():
             """Get available tools information"""
 
             try:
-                tools_desc = self.tool_manager.generator.generate_tools_desc()
-                tools_metadata = self.tool_manager.generator.get_all_tools_metadata()
-                tools_stats = self.tool_manager.generator.get_tool_statistics()
+                tools_desc = self._tools_generator.generate_tools_desc()
+                tools_metadata = self._tools_generator.get_all_tools_metadata()
+                tools_stats = self.tool_manager.get_statistics()
 
                 return JSONResponse(
                     {
@@ -1497,7 +1466,6 @@ class AutoLangChatPlugin:
             from .graph.checkpointer import open_checkpointer as _open_cp
 
             await _open_cp(self.chat_graph.checkpointer)
-            await _open_cp(self.batch_graph.checkpointer)
 
         @self.app.on_event("startup")
         async def startup_schedule_checkpoint_expiry():
@@ -1561,6 +1529,80 @@ class AutoLangChatPlugin:
             async def startup_open_feedback_store():
                 await self._startup_open_feedback_store()
 
+    async def startup(self) -> None:
+        """Open all async resources required before the first request.
+
+        Call this from your FastAPI ``lifespan`` startup phase **instead of**
+        relying on ``@app.on_event("startup")``.  FastAPI silently skips
+        ``on_event`` handlers when a ``lifespan`` context manager is present,
+        so any app that defines its own lifespan **must** call this method.
+
+        Example::
+
+            @asynccontextmanager
+            async def lifespan(app):
+                plugin = getattr(app.state, "autolangchat_plugin", None)
+                if plugin:
+                    await plugin.startup()
+                yield
+                if plugin:
+                    await plugin.shutdown()
+
+        What this does:
+        - Opens the LangGraph checkpointer connection pool and initialises the schema.
+        - Schedules the background checkpoint-expiry sweep task.
+        - Auto-populates the knowledge base (if configured).
+        - Opens the feedback-store connection pool.
+        """
+        # 1. Open the LangGraph checkpointer pool + schema
+        from .graph.checkpointer import open_checkpointer as _open_cp
+
+        await _open_cp(self.chat_graph.checkpointer)
+
+        # 2. Schedule the background checkpoint-expiry sweep
+        from .graph.checkpointer import purge_expired_checkpoints as _purge
+
+        ttl = self.config.checkpoint_ttl_seconds
+        _PURGE_INTERVAL = 6 * 3600  # every 6 hours
+
+        async def _expiry_loop():
+            while True:
+                await asyncio.sleep(_PURGE_INTERVAL)
+                try:
+                    purged = await _purge(self.chat_graph.checkpointer, ttl)
+                    if purged:
+                        logger.info("Checkpoint TTL sweep: purged %d thread(s)", purged)
+                except Exception:
+                    logger.exception("Checkpoint TTL sweep failed")
+
+        asyncio.create_task(_expiry_loop())
+
+        # 3. Auto-populate KB if needed
+        if getattr(self, "_kb_needs_population", False):
+            try:
+                from .commands.kb import kb_populate
+
+                logger.info("Starting knowledge base auto-population...")
+                success = await kb_populate(
+                    config_path=self.config.kb_sources_config,
+                    db_path=self.config.kb_database_path,
+                    force=True,
+                    config=self.config,
+                )
+                if success:
+                    logger.info("✅ Knowledge base auto-population complete")
+                else:
+                    logger.error("❌ Knowledge base auto-population failed")
+                    if not self.config.kb_allow_empty:
+                        raise AutoLangChatError("RAG is enabled but KB auto-population failed. Check logs for details.")
+            except Exception as e:
+                logger.error(f"Failed to auto-populate KB: {e}")
+                if not self.config.kb_allow_empty:
+                    raise
+
+        # 4. Open the feedback-store connection pool
+        await self._startup_open_feedback_store()
+
     async def _startup_open_feedback_store(self) -> None:
         """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
 
@@ -1602,7 +1644,6 @@ class AutoLangChatPlugin:
             from .graph.checkpointer import close_checkpointer as _close_cp
 
             await _close_cp(self.chat_graph.checkpointer)
-            await _close_cp(self.batch_graph.checkpointer)
             logger.info("Bedrock chat plugin shutdown complete")
         except Exception as e:
             logger.error(f"Error during shutdown: {str(e)}")
@@ -1657,11 +1698,12 @@ class AutoLangChatPlugin:
         """Update tools description from current FastAPI routes"""
 
         try:
-            # Refresh ToolManager's cached tools and keep config in sync
-            self.tool_manager.refresh_tools()
-            new_tools_desc = self.tool_manager.tools_desc
-            self.config.tools_desc = new_tools_desc
-            logger.info(f"Updated tools: {len(new_tools_desc.get('functions', []))} functions")
+            # Rebuild generator cache, sync manager dict and config
+            self._tools_generator.invalidate_cache()
+            self.tool_manager._generated_tools = self._tools_generator._generated_tools
+            self.tool_manager._langchain_tools = None  # clear cache
+            self.tool_manager._sync_config()
+            logger.info(f"Updated tools: {len(self.config.tools_desc.get('functions', []))} functions")
         except Exception as e:
             logger.error(f"Failed to update tools: {str(e)}")
             raise AutoLangChatError(f"Tools update failed: {str(e)}")

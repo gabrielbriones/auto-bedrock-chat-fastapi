@@ -152,6 +152,10 @@ users_db: Dict[int, Dict] = {
 }
 
 
+# Initialize autolangchat plugin at module level so it works when run via uvicorn
+autolangchat_plugin = add_autolangchat(app)
+
+
 # Pydantic models
 class Product(BaseModel):
     id: int
@@ -555,9 +559,6 @@ async def analytics_summary():
 
 if __name__ == "__main__":
     import uvicorn
-
-    # Initialize plugin now (not at module level to avoid re-initialization on reload)
-    autolangchat_plugin = add_autolangchat(app)
 
     print("🚀 Starting Example E-commerce API with AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")

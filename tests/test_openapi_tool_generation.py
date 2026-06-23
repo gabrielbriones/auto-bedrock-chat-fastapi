@@ -1,8 +1,9 @@
-"""Phase 2 — OpenAPI → LangChain tool generation tests.
+"""Phase 2 — OpenAPI → tool generation tests.
 
-Verifies that ``ToolsGenerator.generate_langchain_tools()`` and
-``ToolManager.generate_langchain_tools()`` produce valid LangChain
-``StructuredTool`` objects from an inline OpenAPI spec.
+Verifies that ``ToolsGenerator.generate_tools_desc()`` produces the correct
+OpenAI-style schema dict at construction time, and that
+``ToolManager.generate_langchain_tools()`` wraps the cached metadata into valid
+LangChain ``StructuredTool`` objects for use in agent loops.
 
 No real HTTP calls are made; the HTTP execution path is also smoke-tested
 via a mock httpx client.
@@ -14,8 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from autolangchat.graph.tools.generator import make_graph_tools
-from autolangchat.tool_manager import ToolManager, ToolsGenerator
+from autolangchat.graph.tools.generator import ToolsGenerator
+from autolangchat.graph.tools.manager import ToolManager
 
 # ---------------------------------------------------------------------------
 # Minimal inline OpenAPI spec for testing
@@ -94,90 +95,95 @@ def _make_generator(spec: Dict) -> ToolsGenerator:
     from autolangchat.config import ChatConfig
 
     config = ChatConfig(model_id="test-model", excluded_paths=[])
-    gen = ToolsGenerator(openapi_spec=spec, config=config)
-    gen.generate_tools_desc()  # populate _generated_tools
-    return gen
+    # generate_tools_desc() is called eagerly inside __init__
+    return ToolsGenerator(openapi_spec=spec, config=config)
 
 
 def _make_manager(spec: Dict) -> ToolManager:
     from autolangchat.config import ChatConfig
 
     config = ChatConfig(model_id="test-model", excluded_paths=[])
-    return ToolManager(openapi_spec=spec, config=config, base_url="http://test-api")
+    generator = ToolsGenerator(openapi_spec=spec, config=config)
+    return ToolManager(
+        generated_tools=generator._generated_tools,
+        config=config,
+        base_url="http://test-api",
+    )
 
 
 # ---------------------------------------------------------------------------
-# ToolsGenerator.generate_langchain_tools tests
+# ToolsGenerator.generate_tools_desc — schema dict tests
 # ---------------------------------------------------------------------------
 
 
-class TestGenerateLangchainTools:
-    def test_returns_list_of_tools(self):
+class TestGenerateToolsDesc:
+    def test_returns_function_schema_dict(self):
         gen = _make_generator(_GET_SPEC)
-        tools = gen.generate_langchain_tools()
-        assert isinstance(tools, list)
-        assert len(tools) == 2
+        desc = gen.tools_desc
+        assert isinstance(desc, dict)
+        assert desc["type"] == "function"
+        assert isinstance(desc["functions"], list)
+        assert len(desc["functions"]) == 2
 
-    def test_tool_names_match_operation_ids(self):
+    def test_function_names_match_operation_ids(self):
         gen = _make_generator(_GET_SPEC)
-        tools = gen.generate_langchain_tools()
-        names = {t.name for t in tools}
+        names = {f["name"] for f in gen.tools_desc["functions"]}
         assert "list_jobs" in names
         assert "get_job" in names
 
-    def test_tool_descriptions_from_summary(self):
+    def test_function_descriptions_from_summary(self):
         gen = _make_generator(_GET_SPEC)
-        tools = gen.generate_langchain_tools()
-        tool_map = {t.name: t for t in tools}
-        assert "List all jobs" in tool_map["list_jobs"].description
-        assert "Get a single job" in tool_map["get_job"].description
+        fn_map = {f["name"]: f for f in gen.tools_desc["functions"]}
+        assert "List all jobs" in fn_map["list_jobs"]["description"]
+        assert "Get a single job" in fn_map["get_job"]["description"]
 
     def test_optional_param_in_schema(self):
         gen = _make_generator(_GET_SPEC)
-        tools = gen.generate_langchain_tools()
-        tool_map = {t.name: t for t in tools}
-        # list_jobs has optional 'status' param
-        schema = tool_map["list_jobs"].args_schema.model_json_schema()
-        assert "status" in schema.get("properties", {})
-        # 'status' should not be required
-        required = schema.get("required") or []
+        fn_map = {f["name"]: f for f in gen.tools_desc["functions"]}
+        props = fn_map["list_jobs"]["parameters"]["properties"]
+        required = fn_map["list_jobs"]["parameters"].get("required", [])
+        assert "status" in props
         assert "status" not in required
 
     def test_required_param_in_schema(self):
         gen = _make_generator(_GET_SPEC)
-        tools = gen.generate_langchain_tools()
-        tool_map = {t.name: t for t in tools}
-        # get_job has required 'job_id' param
-        schema = tool_map["get_job"].args_schema.model_json_schema()
-        assert "job_id" in schema.get("properties", {})
-        required = schema.get("required") or []
+        fn_map = {f["name"]: f for f in gen.tools_desc["functions"]}
+        props = fn_map["get_job"]["parameters"]["properties"]
+        required = fn_map["get_job"]["parameters"].get("required", [])
+        assert "job_id" in props
         assert "job_id" in required
 
     def test_post_body_params_in_schema(self):
         gen = _make_generator(_POST_SPEC)
-        tools = gen.generate_langchain_tools()
-        assert len(tools) == 1
-        schema = tools[0].args_schema.model_json_schema()
-        props = schema.get("properties", {})
+        assert len(gen.tools_desc["functions"]) == 1
+        fn = gen.tools_desc["functions"][0]
+        props = fn["parameters"]["properties"]
+        required = fn["parameters"].get("required", [])
         assert "name" in props
         assert "priority" in props
-        required = schema.get("required") or []
         assert "name" in required
         assert "priority" not in required
 
-    def test_no_tool_manager_returns_error_on_invoke(self):
-        """Without tool_manager, invoking a tool returns an error (not raises)."""
+    def test_schema_cached_after_init(self):
         gen = _make_generator(_GET_SPEC)
-        tools = gen.generate_langchain_tools(tool_manager=None)
-        import asyncio
+        first = gen.tools_desc
+        second = gen.tools_desc
+        # Computed from same _generated_tools cache — same content
+        assert first == second
+        assert len(first["functions"]) > 0
 
-        result = asyncio.run(tools[0].ainvoke({"status": "running"}))
-        data = json.loads(result)
-        assert "error" in data
+    def test_invalidate_cache_rebuilds_schema(self):
+        gen = _make_generator(_GET_SPEC)
+        original = gen.tools_desc
+        gen.invalidate_cache()
+        rebuilt = gen.tools_desc
+        # Different object, same content
+        assert rebuilt is not original
+        assert len(rebuilt["functions"]) == len(original["functions"])
 
 
 # ---------------------------------------------------------------------------
-# ToolManager.generate_langchain_tools (convenience wrapper)
+# ToolManager.generate_langchain_tools
 # ---------------------------------------------------------------------------
 
 
@@ -205,25 +211,9 @@ class TestToolManagerGenerateLangchainTools:
         fake_response.json.return_value = {"jobs": [{"id": 1}]}
         fake_response.text = json.dumps({"jobs": [{"id": 1}]})
 
-        # Patch the HTTP client on the manager
-        manager._http_client.get = AsyncMock(return_value=fake_response)
+        # Patch the HTTP client request method on the manager
+        manager._http_client.request = AsyncMock(return_value=fake_response)
 
         result = await tool_map["list_jobs"].ainvoke({"status": "running"})
         data = json.loads(result)
         assert data == {"jobs": [{"id": 1}]}
-
-
-# ---------------------------------------------------------------------------
-# make_graph_tools utility (graph/tools/generator.py)
-# ---------------------------------------------------------------------------
-
-
-class TestMakeGraphTools:
-    def test_returns_same_as_manager_method(self):
-        manager = _make_manager(_GET_SPEC)
-        from_helper = make_graph_tools(manager)
-        from_manager = manager.generate_langchain_tools()
-        assert len(from_helper) == len(from_manager)
-        helper_names = {t.name for t in from_helper}
-        manager_names = {t.name for t in from_manager}
-        assert helper_names == manager_names

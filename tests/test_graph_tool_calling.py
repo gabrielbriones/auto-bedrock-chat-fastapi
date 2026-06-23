@@ -249,7 +249,7 @@ class TestGraphToolLoop:
         with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse", side_effect=llm_factory):
             graph = build_chat_graph(fake_config, tool_manager=tm)
             result = await graph.ainvoke(
-                {"messages": [{"role": "user", "content": "list running jobs"}], "metadata": {}},
+                {"user_message": "list running jobs"},
                 config={"configurable": {"thread_id": "test-tool-round-1"}},
             )
 
@@ -300,7 +300,7 @@ class TestGraphToolLoop:
         with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse", side_effect=llm_factory):
             graph = build_chat_graph(fake_config, tool_manager=tm)
             result = await graph.ainvoke(
-                {"messages": [{"role": "user", "content": "what is job 5?"}], "metadata": {}},
+                {"user_message": "what is job 5?"},
                 config={"configurable": {"thread_id": "test-multi-round"}},
             )
 

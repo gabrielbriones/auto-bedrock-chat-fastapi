@@ -115,22 +115,23 @@ def _from_langchain_message(ai_msg: Any) -> Dict:
         "tool_calls": tool_calls,
         "metadata": {
             "message_id": str(uuid.uuid4()),
-            "model_id": getattr(ai_msg, "response_metadata", {}).get("model_id"),
+            "model_id": getattr(ai_msg, "response_metadata", {}).get("modelId")
+            or getattr(ai_msg, "response_metadata", {}).get("model_id"),
             "usage": usage,
             "timestamp": datetime.now().isoformat(),
         },
     }
 
 
-def _build_llm(model_id: str, chat_config: Any, tool_manager: Optional[Any] = None):
+def _build_llm(model_id: str, chat_config: Any):
     """Construct a ChatBedrockConverse instance for the given model_id.
 
     Claude via Bedrock Converse API rejects requests that specify both
     ``temperature`` and ``top_p`` simultaneously.  We only pass ``top_p``
     when ``temperature`` is not explicitly configured (i.e., is None).
 
-    When ``tool_manager`` is supplied, the LLM is bound with the tools
-    generated from the OpenAPI spec so the model can request tool calls.
+    When ``chat_config.langchain_tools`` is populated, the LLM is bound
+    with those tools so the model can request tool calls.
     """
     if ChatBedrockConverse is None:
         raise ImportError("langchain-aws is required. Install with: pip install langchain-aws")
@@ -154,15 +155,27 @@ def _build_llm(model_id: str, chat_config: Any, tool_manager: Optional[Any] = No
     elif top_p is not None:
         kwargs["top_p"] = top_p
 
+    # Set a generous read timeout on the underlying boto3 client so that
+    # large-output requests (e.g. max_tokens=8192) don't hit the default 60s
+    # botocore limit.  The floor of 300s covers even the slowest generation
+    # runs; chat_config.timeout (default 30s) is intentionally ignored here
+    # because it governs tool-call HTTP timeouts, not Bedrock generation time.
+    try:
+        from botocore.config import Config as BotocoreConfig
+
+        _read_timeout = max(300, getattr(chat_config, "timeout", 300))
+        kwargs["config"] = BotocoreConfig(read_timeout=_read_timeout, retries={"max_attempts": 1})
+    except ImportError:
+        pass  # botocore not available (shouldn't happen with langchain-aws)
+
     llm = ChatBedrockConverse(**kwargs)
 
-    # Bind tools if a ToolManager is available (enables tool-call requests)
-    if tool_manager is not None:
+    # Bind tools from config if available (enables tool-call requests)
+    lc_tools = getattr(chat_config, "langchain_tools", None)
+    if lc_tools:
         try:
-            lc_tools = tool_manager.generate_langchain_tools()
-            if lc_tools:
-                llm = llm.bind_tools(lc_tools)
-                logger.debug("LLM bound with %d tool(s)", len(lc_tools))
+            llm = llm.bind_tools(lc_tools)
+            logger.debug("LLM bound with %d tool(s)", len(lc_tools))
         except Exception as exc:
             logger.warning("Could not bind tools to LLM: %s", exc)
 
@@ -234,7 +247,6 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     metadata: Dict = dict(state.get("metadata") or {})
     on_progress = (config.get("configurable") or {}).get("on_progress")
     chat_config = config.get("configurable", {}).get("chat_config")
-    tool_manager = (config.get("configurable") or {}).get("tool_manager")
 
     if chat_config is None:
         raise RuntimeError("llm_call_node: chat_config not found in configurable")
@@ -245,7 +257,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
 
     # --- Primary call ---
     try:
-        llm = _build_llm(primary_model, chat_config, tool_manager=tool_manager)
+        llm = _build_llm(primary_model, chat_config)
         ai_msg = await _invoke_with_streaming(llm, lc_messages, on_progress)
         metadata["fallback_model_used"] = False
     except Exception as exc:
@@ -256,7 +268,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 fallback_model,
             )
             try:
-                llm_fb = _build_llm(fallback_model, chat_config, tool_manager=tool_manager)
+                llm_fb = _build_llm(fallback_model, chat_config)
                 ai_msg = await _invoke_with_streaming(llm_fb, lc_messages, on_progress)
                 metadata["fallback_model_used"] = True
                 metadata["fallback_model"] = fallback_model
@@ -269,10 +281,19 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
 
     response_dict = _from_langchain_message(ai_msg)
 
-    # Bubble up token usage into top-level metadata for easy access
+    # Fill in model_id from config if Bedrock didn't return it in response_metadata
+    if not response_dict.get("metadata", {}).get("model_id"):
+        response_dict["metadata"]["model_id"] = (
+            metadata.get("fallback_model") if metadata.get("fallback_model_used") else primary_model
+        )
+
+    # Accumulate token usage into top-level metadata across tool-call rounds
     usage = response_dict.get("metadata", {}).get("usage", {})
     if usage:
-        metadata["input_tokens"] = usage.get("input_tokens")
-        metadata["output_tokens"] = usage.get("output_tokens")
+        metadata["input_tokens"] = (metadata.get("input_tokens") or 0) + (usage.get("input_tokens") or 0)
+        metadata["output_tokens"] = (metadata.get("output_tokens") or 0) + (usage.get("output_tokens") or 0)
+
+    # Update model_id with the actual model used (may differ if fallback was triggered)
+    metadata["model_id"] = response_dict.get("metadata", {}).get("model_id") or primary_model
 
     return {"messages": list(messages) + [response_dict], "metadata": metadata}

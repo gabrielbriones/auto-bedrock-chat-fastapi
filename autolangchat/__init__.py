@@ -20,10 +20,11 @@ from .exceptions import (
     ToolError,
 )
 from .graph.graph import build_chat_graph
+from .graph.tools.generator import ToolsGenerator, create_tools_generator_from_spec
+from .graph.tools.manager import AuthInfo, ToolManager
 from .message_preprocessor import MessagePreprocessor
 from .plugin import AutoLangChatPlugin, add_autolangchat, create_fastapi_with_autolangchat
 from .session_manager import ChatSession, ChatSessionManager
-from .tool_manager import AuthInfo, ToolManager, ToolsGenerator, create_tools_generator_from_spec
 from .websocket_handler import WebSocketChatHandler
 
 __all__ = [
