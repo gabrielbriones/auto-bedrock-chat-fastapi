@@ -47,20 +47,20 @@ preprocess_messages(history)
 
 All thresholds are configurable via `.env` or code:
 
-| Env Variable                             | Default  | Description                                       |
-| ---------------------------------------- | -------- | ------------------------------------------------- |
-| `BEDROCK_SINGLE_MSG_LENGTH_THRESHOLD`    | `500000` | Chars that trigger Stage 1 per-message truncation |
-| `BEDROCK_SINGLE_MSG_TRUNCATION_TARGET`   | `425000` | Target chars after Stage 1                        |
-| `BEDROCK_HISTORY_TOTAL_LENGTH_THRESHOLD` | `650000` | Total history chars that trigger Stage 2          |
-| `BEDROCK_HISTORY_MSG_LENGTH_THRESHOLD`   | `100000` | Per-message threshold during Stage 2              |
-| `BEDROCK_HISTORY_MSG_TRUNCATION_TARGET`  | `85000`  | Per-message target during Stage 2                 |
-| `BEDROCK_MAX_TRUNCATION_RECURSION`       | `3`      | Max recursion depth for safety-net halving        |
-| `BEDROCK_ENABLE_AI_SUMMARIZATION`        | `false`  | Use AI summarization instead of plain truncation  |
+| Env Variable                              | Default  | Description                                       |
+| ----------------------------------------- | -------- | ------------------------------------------------- |
+| `AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD`    | `500000` | Chars that trigger Stage 1 per-message truncation |
+| `AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET`   | `425000` | Target chars after Stage 1                        |
+| `AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD` | `650000` | Total history chars that trigger Stage 2          |
+| `AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD`   | `100000` | Per-message threshold during Stage 2              |
+| `AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET`  | `85000`  | Per-message target during Stage 2                 |
+| `AUTOCHAT_MAX_TRUNCATION_RECURSION`       | `3`      | Max recursion depth for safety-net halving        |
+| `AUTOCHAT_ENABLE_AI_SUMMARIZATION`        | `false`  | Use AI summarization instead of plain truncation  |
 
 ### Example: Tighter Limits for Smaller Models
 
 ```python
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     single_msg_length_threshold=200_000,
     single_msg_truncation_target=170_000,
@@ -91,10 +91,10 @@ This preserves both the structure at the beginning and recent/summary informatio
 
 ## AI Summarization (Opt-In)
 
-When `BEDROCK_ENABLE_AI_SUMMARIZATION=true`, the plugin uses the LLM to compress oversized messages instead of cutting them:
+When `AUTOCHAT_ENABLE_AI_SUMMARIZATION=true`, the plugin uses the LLM to compress oversized messages instead of cutting them:
 
 ```python
-add_bedrock_chat(
+add_autolangchat(
     app,
     enable_ai_summarization=True,
     system_prompt="You are a helpful engineering assistant."
@@ -103,8 +103,8 @@ add_bedrock_chat(
 
 ```bash
 # .env
-BEDROCK_ENABLE_AI_SUMMARIZATION=true
-BEDROCK_SYSTEM_PROMPT="You are a helpful engineering assistant."
+AUTOCHAT_ENABLE_AI_SUMMARIZATION=true
+AUTOCHAT_SYSTEM_PROMPT="You are a helpful engineering assistant."
 ```
 
 **How it works:**
@@ -129,7 +129,7 @@ BEDROCK_SYSTEM_PROMPT="You are a helpful engineering assistant."
 In addition to character-based truncation, the plugin trims old messages by count:
 
 ```python
-add_bedrock_chat(app, max_conversation_messages=20)  # default: 20
+add_autolangchat(app, max_conversation_messages=20)  # default: 20
 ```
 
 This removes the oldest messages (preserving the system message) when the history exceeds the count limit. It runs before the character-based truncation pipeline.
@@ -192,5 +192,5 @@ DEBUG - Stage 2.1: message at index 1 truncated: 120000 → 85000 chars
 - [Configuration](configuration.md) — full settings reference
 - [Architecture](architecture.md) — where `MessagePreprocessor` fits
 - `docs/message-truncation-diagrams.html` — visual diagrams of the truncation pipeline
-- `auto_bedrock_chat_fastapi/message_preprocessor.py` — implementation
-- `auto_bedrock_chat_fastapi/defaults.py` — all default values
+- `autolangchat/message_preprocessor.py` — implementation
+- `autolangchat/defaults.py` — all default values

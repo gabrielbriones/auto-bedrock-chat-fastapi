@@ -90,7 +90,7 @@ User: "Order 2 Wireless Headphones for user john@example.com"
 Configurable via:
 
 ```python
-add_bedrock_chat(app, max_tool_call_rounds=10, max_tool_calls=10)
+add_autolangchat(app, max_tool_calls=10)
 ```
 
 ---
@@ -100,7 +100,7 @@ add_bedrock_chat(app, max_tool_call_rounds=10, max_tool_calls=10)
 Control which endpoints the AI can call:
 
 ```python
-add_bedrock_chat(
+add_autolangchat(
     app,
     # Only expose these paths as tools
     allowed_paths=["/products", "/users", "/orders"],
@@ -132,7 +132,7 @@ async def create_order(order: CreateOrder):
 When your API requires auth, pass credentials once via WebSocket. The `ToolManager` applies them automatically to all outbound tool call requests:
 
 ```python
-add_bedrock_chat(app, enable_tool_auth=True)
+add_autolangchat(app, enable_tool_auth=True)
 ```
 
 Client sends:

@@ -1,6 +1,6 @@
-# auto-bedrock-chat-fastapi Examples
+# autolangchat Examples
 
-This directory contains comprehensive examples demonstrating how to integrate `auto-bedrock-chat-fastapi` with different web frameworks.
+This directory contains examples showing how to integrate `autolangchat` with different web frameworks.
 
 ## Directory Structure
 
@@ -132,11 +132,11 @@ generator = create_tools_generator_from_spec(
 
 ```bash
 # .env file configuration
-BEDROCK_OPENAPI_SPEC_FILE=./expressjs/api_spec.json
-BEDROCK_API_BASE_URL=http://localhost:3000
-BEDROCK_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders
-BEDROCK_EXCLUDED_PATHS=/internal,/admin
-BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+AUTOCHAT_OPENAPI_SPEC_FILE=./expressjs/api_spec.json
+AUTOCHAT_API_BASE_URL=http://localhost:3000
+AUTOCHAT_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders
+AUTOCHAT_EXCLUDED_PATHS=/internal,/admin
+AUTOCHAT_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
 AWS_REGION=us-east-1
 ```
 
@@ -146,7 +146,7 @@ AWS_REGION=us-east-1
 2. **Test the Integration**: Run `express_integration_example.py` to see tool generation
 3. **Try SSO**: Run `sso_okta_example.py` or `sso_azure_ad_example.py` with your IdP
 4. **Add Your Framework**: Use the same patterns with Django, Flask, Next.js, etc.
-5. **Integrate with Bedrock**: Set up AWS credentials for AI chat capabilities
+5. **Integrate with AWS Bedrock**: Set up AWS credentials for AI chat capabilities
 6. **Production Deployment**: Configure for your production environment
 
 ## SSO Authentication Examples
@@ -156,10 +156,10 @@ The `sso_okta_example.py` and `sso_azure_ad_example.py` files demonstrate SSO in
 ```bash
 # 1. Configure your IdP (see file headers for setup instructions)
 # 2. Set environment variables
-export BEDROCK_SSO_ENABLED=true
-export BEDROCK_SSO_CLIENT_ID=<your-client-id>
-export BEDROCK_SSO_DISCOVERY_URL=<your-oidc-discovery-url>
-export BEDROCK_SSO_SESSION_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+export AUTOCHAT_SSO_ENABLED=true
+export AUTOCHAT_SSO_CLIENT_ID=<your-client-id>
+export AUTOCHAT_SSO_DISCOVERY_URL=<your-oidc-discovery-url>
+export AUTOCHAT_SSO_SESSION_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
 # 3. Run the example
 python examples/sso_okta_example.py

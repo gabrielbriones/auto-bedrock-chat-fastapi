@@ -1,6 +1,6 @@
 # Architecture
 
-**auto-bedrock-chat-fastapi** is a FastAPI plugin that wires together an Amazon Bedrock LLM, a WebSocket transport layer, automatic tool generation from your OpenAPI spec, session management, and optional RAG (knowledge base) capabilities.
+**autolangchat** is a FastAPI plugin that wires together an Amazon Bedrock LLM, a WebSocket transport layer, automatic tool generation from your OpenAPI spec, LangGraph-based state management, and optional RAG (knowledge base) capabilities.
 
 ---
 
@@ -10,7 +10,7 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         Your FastAPI App                            │
 │                                                                     │
-│  add_bedrock_chat(app) ──► registers routes & mounts static UI      │
+│  add_autolangchat(app) ──► registers routes & mounts static UI      │
 └──────────────────────────────────────┬──────────────────────────────┘
                                        │
                                        ▼
@@ -19,37 +19,19 @@
 │                       (Transport Layer)                             │
 │  • Accept WebSocket connections                                     │
 │  • Route message types (chat, auth, ping, history)                  │
-│  • Inject auth credentials + RAG context into ChatManager          │
+│  • Restore checkpointed conversation state                          │
+│  • Inject auth context + runtime callbacks into LangGraph           │
 │  • Stream AI responses back to client                               │
 └──────────────────────┬───────────────────────────────────────────────┘
-                       │ chat_completion()
+                       │ ainvoke()
                        ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        chat_manager.py                              │
-│                      (Orchestration Layer)                          │
-│  • Drives the LLM conversation loop                                 │
-│  • Calls MessagePreprocessor before each LLM call                  │
-│  • Handles recursive tool call rounds                               │
-│  • Returns full updated history                                     │
-└───────────┬──────────────────────────────────┬──────────────────────┘
-            │                                  │
-            ▼                                  ▼
-┌───────────────────────┐         ┌────────────────────────────────────┐
-│   bedrock_client.py   │         │      message_preprocessor.py       │
-│   (LLM Transport)    │         │     (Token Budget Management)      │
-│                       │         │                                    │
-│ • Calls Bedrock API   │         │ • Stage 1: per-message truncation  │
-│ • Parses responses    │         │ • Stage 2: history total truncation│
-│ • Retries + backoff   │         │ • AI summarization (opt-in)        │
-│ • Generates embeddings│         └────────────────────────────────────┘
-└───────────────────────┘
-            │
-            ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                         tool_manager.py                             │
-│  • ToolsGenerator: OpenAPI spec → AI tool descriptions             │
-│  • Executes tool calls (HTTP requests to your API)                 │
-│  • Applies auth credentials to outbound requests                   │
+│                        LangGraph StateGraph                         │
+│                     (Orchestration Layer)                           │
+│  • rag node        → optional KB retrieval + system prompt update   │
+│  • preprocess node → token budget enforcement                       │
+│  • llm node        → ChatBedrockConverse call + streaming           │
+│  • tools node      → OpenAPI-backed tool execution loop             │
 └──────────────────────────────────────────────────────────────────────┘
 
 Optional RAG Components:
@@ -65,32 +47,30 @@ Optional RAG Components:
 
 | Module                    | Role                                                                        |
 | ------------------------- | --------------------------------------------------------------------------- |
-| `plugin.py`               | Entry point — `add_bedrock_chat()` and `create_fastapi_with_bedrock_chat()` |
+| `plugin.py`               | Entry point — `add_autolangchat()` and `create_fastapi_with_autolangchat()` |
 | `config.py`               | `ChatConfig` — all settings via Pydantic + `.env`                           |
 | `defaults.py`             | Centralized default values (thresholds, timeouts, ratios)                   |
 | `websocket_handler.py`    | WebSocket connection management, message routing                            |
-| `chat_manager.py`         | LLM conversation orchestration loop                                         |
-| `bedrock_client.py`       | Amazon Bedrock API client with retries and model parsers                    |
+| `graph/`                  | LangGraph state machine, nodes, routing, and checkpointing                  |
 | `tool_manager.py`         | Converts OpenAPI spec to AI tools; executes tool calls                      |
 | `auth_handler.py`         | Authentication types and credential management                              |
 | `session_manager.py`      | In-memory session lifecycle management                                      |
 | `message_preprocessor.py` | Two-stage token budget management (truncation + summarization)              |
-| `content_crawler.py`      | Web and local file crawler for RAG knowledge base                           |
-| `embedding_pipeline.py`   | Text chunking and Bedrock Titan embedding generation                        |
-| `vector_db.py`            | SQLite-vec vector store for semantic search                                 |
-| `parsers/`                | Per-model request/response parsers (Claude, GPT, Llama)                     |
+| `rag/`                    | Web and local file crawler, chunking, and embedding generation              |
+| `db/`                     | SQLite / Postgres stores for KB + feedback                                  |
 
 ---
 
 ## Request Flow
 
-1. **Client** opens a WebSocket to `/bedrock-chat/ws` (or configured path).
+1. **Client** opens a WebSocket to `/chat/ws` (or configured path).
 2. **WebSocket Handler** authenticates the session (optional) and awaits messages.
-3. **User sends** a chat message → handler optionally performs RAG retrieval and enriches context.
-4. **ChatManager** calls `MessagePreprocessor` to ensure the message history fits within token budget.
-5. **ChatManager** calls **BedrockClient** with messages + tools.
-6. **If the model returns tool calls** → `ToolManager` executes HTTP requests to your API, results are appended, and the loop repeats (up to `MAX_TOOL_CALL_ROUNDS`).
-7. **Final response** is streamed back to the client via WebSocket.
+3. **User sends** a chat message → handler restores checkpointed history and appends the current user turn.
+4. **LangGraph** optionally performs RAG retrieval and enriches the system prompt.
+5. **preprocess node** ensures the message history fits within token budget.
+6. **llm node** calls `ChatBedrockConverse` with messages + tools.
+7. **If the model returns tool calls** → `ToolManager` executes HTTP requests to your API, results are appended, and the loop repeats (up to `max_tool_calls` / `max_tool_call_rounds`).
+8. **Final response** is streamed back to the client via WebSocket.
 
 ---
 

@@ -1,6 +1,6 @@
 # OpenAPI Spec Integration
 
-`auto-bedrock-chat-fastapi` works with **any framework** — not just FastAPI. By providing an OpenAPI 3.x specification file, the plugin can generate AI tools and forward calls to any HTTP server (Express.js, Flask, Django, Spring Boot, etc.).
+`autolangchat` works with **any framework** — not just FastAPI. By providing an OpenAPI 3.x specification file, the plugin can generate AI tools and forward calls to any HTTP server (Express.js, Flask, Django, Spring Boot, etc.).
 
 ---
 
@@ -17,7 +17,7 @@
 By default the plugin reads from `app.openapi()`. To use an external spec instead:
 
 ```python
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     openapi_spec_file="path/to/api_spec.json"
 )
@@ -64,11 +64,11 @@ node examples/expressjs/generate-spec.js
 ```python
 # standalone_chat.py
 from fastapi import FastAPI
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 app = FastAPI(title="Chat Proxy")
 
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     openapi_spec_file="examples/expressjs/api_spec.json",
     system_prompt="You are a helpful assistant for our e-commerce store.",
@@ -96,7 +96,7 @@ The same pattern applies for any framework with OpenAPI support:
 
 ```python
 # Generate spec with your framework, then:
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     openapi_spec_file="my_flask_api_spec.json"
 )
@@ -115,7 +115,7 @@ Popular spec generators:
 For advanced scenarios, use `ToolsGenerator` directly:
 
 ```python
-from auto_bedrock_chat_fastapi.tool_manager import ToolsGenerator
+from autolangchat.tool_manager import ToolsGenerator
 
 # From a spec file
 generator = ToolsGenerator(openapi_spec="path/to/spec.json")

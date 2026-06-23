@@ -1,6 +1,8 @@
-# auto-bedrock-chat-fastapi Wiki
+# autolangchat Wiki
 
-Welcome to the **auto-bedrock-chat-fastapi** documentation wiki. This library lets you add AI chat capabilities powered by Amazon Bedrock to any FastAPI application — or any framework via an OpenAPI spec — with minimal setup.
+Welcome to the **autolangchat** documentation wiki. This library lets you add AI chat capabilities powered by Amazon Bedrock to any FastAPI application — or any framework via an OpenAPI spec — with minimal setup.
+
+The repository name is still `auto-bedrock-chat-fastapi`, but the actively developed Python package and public API are `autolangchat` and `add_autolangchat(...)`.
 
 ---
 

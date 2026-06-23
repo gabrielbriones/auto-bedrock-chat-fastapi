@@ -1,15 +1,15 @@
-"""Example FastAPI application demonstrating auto-bedrock-chat-fastapi
+"""Example FastAPI application demonstrating autolangchat
 
 This example shows two ways to use the plugin:
 
 1. Adding to existing FastAPI app (current approach):
-   from auto_bedrock_chat_fastapi import add_bedrock_chat
+   from autolangchat import add_autolangchat
    app = FastAPI()
-   add_bedrock_chat(app)
+   add_autolangchat(app)
 
 2. Creating new app with modern lifespan (recommended for new projects):
-   from auto_bedrock_chat_fastapi import create_fastapi_with_bedrock_chat
-   app, plugin = create_fastapi_with_bedrock_chat()
+   from autolangchat import create_fastapi_with_autolangchat
+   app, plugin = create_fastapi_with_autolangchat()
 """
 
 import random
@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 # Import the plugin
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 # Create FastAPI app (existing app approach)
 app = FastAPI(
@@ -31,9 +31,9 @@ app = FastAPI(
 )
 
 # Alternative: Create app with modern lifespan (uncomment to use)
-# from auto_bedrock_chat_fastapi import create_fastapi_with_bedrock_chat
-# app, plugin = create_fastapi_with_bedrock_chat(
-#     title="Example E-commerce API",
+# from autolangchat import create_fastapi_with_autolangchat
+# app, plugin = create_fastapi_with_autolangchat(
+# Note: Plugin initialization moved to if __name__ == "__main__" to avoid repeated setup on module import#     title="Example E-commerce API",
 #     description="A sample e-commerce API with AI chat assistance",
 #     version="1.0.0"
 # )
@@ -558,7 +558,7 @@ async def analytics_summary():
 # Most configuration comes from .env file
 # We override the list fields here due to Pydantic v2 limitations with
 # .env list parsing
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     # These list fields need to be set in code (Pydantic v2 limitation)
     allowed_paths=[
@@ -569,7 +569,7 @@ bedrock_chat = add_bedrock_chat(
         "/analytics",
         "/health",
     ],
-    excluded_paths=["/docs", "/redoc", "/openapi.json", "/chat", "/ws", "/api/chat"],
+    excluded_paths=["/docs", "/redoc", "/openapi.json", "/chat", "/chat/ws", "/chat/ui"],
     # All other settings (model_id, temperature, endpoints, etc.) come from
     # .env
 )
@@ -577,10 +577,14 @@ bedrock_chat = add_bedrock_chat(
 if __name__ == "__main__":
     import uvicorn
 
+    # Initialize plugin now (not at module level to avoid re-initialization on reload)
+    autolangchat_plugin = add_autolangchat(app)
+
     print("🚀 Starting Example E-commerce API with AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")
     print("💬 AI Chat Interface: http://localhost:8000/chat")
-    print("🔗 WebSocket Chat: ws://localhost:8000/ws/chat")
-    print("📊 Chat Health: http://localhost:8000/api/chat/health")
+    print("🔗 WebSocket Chat: ws://localhost:8000/chat/ws")
+    print("📊 Chat Health: http://localhost:8000/chat/health")
 
-    uvicorn.run("example_app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    # Pass app object directly (not as string) to avoid re-importing the module
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True, log_level="info")

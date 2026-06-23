@@ -17,8 +17,8 @@ contributing entry is then marked as integrated.
 Synthesis requires all three of the following to be enabled and
 configured:
 
-- `BEDROCK_FEEDBACK_ENABLED=true` — feedback collection backend
-- `BEDROCK_ADMIN_ENABLED=true` — admin API (synthesis routes live here)
+- `AUTOCHAT_FEEDBACK_ENABLED=true` — feedback collection backend
+- `AUTOCHAT_ADMIN_ENABLED=true` — admin API (synthesis routes live here)
 - A wired KB store (`KB_STORAGE_TYPE` / `KB_POSTGRES_URL` etc.) — see
   [RAG Feature](rag-feature)
 
@@ -26,9 +26,9 @@ configured:
 
 ## Configuration reference
 
-| Setting                            | Env var                                    | Default | Description                                                                                                                                                  |
-| ---------------------------------- | ------------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `feedback_synthesis_system_prompt` | `BEDROCK_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT` | `None`  | Override the default LLM system prompt used when synthesizing KB articles (see [Customizing the synthesis prompt](#customizing-the-synthesis-prompt) below). |
+| Setting                            | Env var                                     | Default | Description                                                                                                                                                  |
+| ---------------------------------- | ------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `feedback_synthesis_system_prompt` | `AUTOCHAT_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT` | `None`  | Override the default LLM system prompt used when synthesizing KB articles (see [Customizing the synthesis prompt](#customizing-the-synthesis-prompt) below). |
 
 All other synthesis behaviour (model, embedding model, chunk size, etc.)
 is inherited from the existing KB and Bedrock settings — no extra
@@ -228,11 +228,11 @@ By default the synthesizer uses a generic system prompt that instructs
 the LLM to produce a structured KB article in a fixed JSON schema.
 
 To tailor it to your domain — add domain terminology, tone requirements,
-or output constraints — set `BEDROCK_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT`
+or output constraints — set `AUTOCHAT_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT`
 in your `.env`:
 
 ```bash
-BEDROCK_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT="You are an expert knowledge-base curator for a cloud infrastructure platform. ..."
+AUTOCHAT_FEEDBACK_SYNTHESIS_SYSTEM_PROMPT="You are an expert knowledge-base curator for a cloud infrastructure platform. ..."
 ```
 
 The prompt **must** instruct the LLM to respond with a single JSON object
@@ -249,7 +249,7 @@ containing exactly these fields (the synthesizer parses them directly):
 | `action`              | string           | One of `"create"`, `"update"`, `"skip"`         |
 
 The default prompt is defined as `_SYNTHESIS_SYSTEM_PROMPT` in
-[`auto_bedrock_chat_fastapi/synthesizer.py`](../../auto_bedrock_chat_fastapi/synthesizer.py).
+[`autolangchat/admin/synthesizer.py`](../../autolangchat/admin/synthesizer.py).
 It describes the three-level content hierarchy
 (`reviewer_comment` → `correction_text` → `ai_response + rating`) and
 the `action` rules; copy it as a starting point when writing a custom
@@ -257,7 +257,7 @@ prompt.
 
 > If you deploy from a framework like workload-analyzer that has its own
 > `Settings` class, define `feedback_synthesis_system_prompt` there and
-> pass it to `add_bedrock_chat(...)` — or simply set the env var and
+> pass it to `add_autolangchat(...)` — or simply set the env var and
 > `ChatConfig` will pick it up automatically.
 
 ---

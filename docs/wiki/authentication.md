@@ -23,7 +23,7 @@ Client ──auth message──► WebSocket Handler ──stores──► Crede
 ## Enabling Authentication
 
 ```python
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     enable_tool_auth=True,
     # Optionally restrict which auth types are accepted:
@@ -119,18 +119,8 @@ Adds any custom headers to all requests. Useful for proprietary authentication s
 
 Test credentials without starting a chat:
 
-```http
-POST /bedrock-chat/verify-auth
-Content-Type: application/json
-
-{
-  "auth_type": "bearer_token",
-  "token": "your-token",
-  "test_url": "https://your-api.com/protected-endpoint"
-}
-```
-
-The endpoint will attempt a test request and return success/failure, making it easy to validate credentials before a session starts.
+````http
+The current `autolangchat` plugin does not expose a standalone REST `verify-auth` endpoint. Credentials are validated on the first tool call or via your own protected API routes.
 
 ---
 
@@ -142,7 +132,7 @@ import websockets
 import json
 
 async def chat_with_auth():
-    uri = "ws://localhost:8000/bedrock-chat/ws"
+    uri = "ws://localhost:8000/chat/ws"
 
     async with websockets.connect(uri) as ws:
         # Step 1: Authenticate
@@ -169,14 +159,14 @@ async def chat_with_auth():
                 print("...")
 
 asyncio.run(chat_with_auth())
-```
+````
 
 ---
 
 ## JavaScript WebSocket Example
 
 ```javascript
-const ws = new WebSocket("ws://localhost:8000/bedrock-chat/ws");
+const ws = new WebSocket("ws://localhost:8000/chat/ws");
 
 ws.onopen = () => {
   // Authenticate first
@@ -262,9 +252,9 @@ When authenticating, the plugin can capture user-specific metadata (tenant ID, p
 ### Configuring the Verification Endpoint
 
 ```python
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
-add_bedrock_chat(
+add_autolangchat(
     app,
     enable_tool_auth=True,
     auth_verification_endpoint="/api/v1/auth/verify",  # Your verification endpoint
@@ -362,7 +352,7 @@ async def list_workloads(
 When using SSO authentication, the verification endpoint is **also called automatically** after successful SSO login. This ensures SSO users get the same metadata enrichment as OAuth2/API key users.
 
 ```python
-add_bedrock_chat(
+add_autolangchat(
     app,
     enable_sso=True,
     sso_client_id="...",
@@ -405,7 +395,7 @@ You can optionally include authenticated user metadata in the system prompt, all
 ### Configuration
 
 ```python
-add_bedrock_chat(
+add_autolangchat(
     app,
     enable_tool_auth=True,
     auth_verification_endpoint="/api/v1/auth/verify",
@@ -416,9 +406,9 @@ add_bedrock_chat(
 Or via environment variable:
 
 ```bash
-BEDROCK_ENABLE_TOOL_AUTH=true
-BEDROCK_AUTH_VERIFICATION_ENDPOINT=http://localhost:8000/api/v1/auth/verify
-BEDROCK_INCLUDE_AUTH_INFO_IN_PROMPTS=true
+AUTOCHAT_ENABLE_TOOL_AUTH=true
+AUTOCHAT_AUTH_VERIFICATION_ENDPOINT=http://localhost:8000/api/v1/auth/verify
+AUTOCHAT_INCLUDE_AUTH_INFO_IN_PROMPTS=true
 ```
 
 ### How It Works
@@ -509,7 +499,7 @@ This ensures the prompt stays clean and readable for the LLM.
 Auth info works seamlessly alongside RAG (Retrieval-Augmented Generation):
 
 ```python
-add_bedrock_chat(
+add_autolangchat(
     app,
     enable_rag=True,  # Knowledge base context
     include_auth_info_in_prompts=True,  # User context

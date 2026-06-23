@@ -37,12 +37,12 @@ The plugin supports SSO authentication via the **OAuth2 Authorization Code flow 
 
 ## Quick Start
 
-### 1. Enable SSO in `add_bedrock_chat()`
+### 1. Enable SSO in `add_autolangchat()`
 
 ```python
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     # ... other params ...
     enable_tool_auth=True,
@@ -72,44 +72,44 @@ For example: `https://your-app.example.com/chat/auth/callback`
 
 ### 3. Access the chat UI
 
-Navigate to `/bedrock-chat/ui`. Click **"Login with SSO"**. After authenticating with the IdP, you'll be redirected back and the chat session will be authenticated automatically.
+Navigate to `/chat/ui`. Click **"Login with SSO"**. After authenticating with the IdP, you'll be redirected back and the chat session will be authenticated automatically.
 
 ---
 
 ## Configuration Reference
 
-All SSO settings can be passed as keyword arguments to `add_bedrock_chat()` or set via environment variables.
+All SSO settings can be passed as keyword arguments to `add_autolangchat()` or set via environment variables.
 
 ### Required Settings
 
-| Parameter / Env Var                                 | Description                                                                                                   |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `sso_enabled` / `BEDROCK_SSO_ENABLED`               | Master switch, set to `True`                                                                                  |
-| `sso_client_id` / `BEDROCK_SSO_CLIENT_ID`           | OAuth2 app client ID registered with the IdP                                                                  |
-| `sso_session_secret` / `BEDROCK_SSO_SESSION_SECRET` | Secret for signing session tokens (generate with `python3 -c "import secrets; print(secrets.token_hex(32))"`) |
+| Parameter / Env Var                                  | Description                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `sso_enabled` / `AUTOCHAT_SSO_ENABLED`               | Master switch, set to `True`                                                                                  |
+| `sso_client_id` / `AUTOCHAT_SSO_CLIENT_ID`           | OAuth2 app client ID registered with the IdP                                                                  |
+| `sso_session_secret` / `AUTOCHAT_SSO_SESSION_SECRET` | Secret for signing session tokens (generate with `python3 -c "import secrets; print(secrets.token_hex(32))"`) |
 
 ### Endpoint Discovery
 
 Provide **either** a discovery URL (recommended) **or** individual endpoint URLs:
 
-| Parameter / Env Var                                       | Description                                                                                        |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `sso_discovery_url` / `BEDROCK_SSO_DISCOVERY_URL`         | OIDC discovery endpoint (`.well-known/openid-configuration`). Auto-configures all other endpoints. |
-| `sso_authorization_url` / `BEDROCK_SSO_AUTHORIZATION_URL` | Manual override for the authorization endpoint                                                     |
-| `sso_token_url` / `BEDROCK_SSO_TOKEN_URL`                 | Manual override for the token endpoint                                                             |
-| `sso_userinfo_url` / `BEDROCK_SSO_USERINFO_URL`           | Manual override for the userinfo endpoint                                                          |
-| `sso_jwks_url` / `BEDROCK_SSO_JWKS_URL`                   | JWKS endpoint for ID token signature validation                                                    |
+| Parameter / Env Var                                        | Description                                                                                        |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `sso_discovery_url` / `AUTOCHAT_SSO_DISCOVERY_URL`         | OIDC discovery endpoint (`.well-known/openid-configuration`). Auto-configures all other endpoints. |
+| `sso_authorization_url` / `AUTOCHAT_SSO_AUTHORIZATION_URL` | Manual override for the authorization endpoint                                                     |
+| `sso_token_url` / `AUTOCHAT_SSO_TOKEN_URL`                 | Manual override for the token endpoint                                                             |
+| `sso_userinfo_url` / `AUTOCHAT_SSO_USERINFO_URL`           | Manual override for the userinfo endpoint                                                          |
+| `sso_jwks_url` / `AUTOCHAT_SSO_JWKS_URL`                   | JWKS endpoint for ID token signature validation                                                    |
 
 ### Optional Settings
 
-| Parameter / Env Var                                   | Default                  | Description                                                                                           |
-| ----------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `sso_provider` / `BEDROCK_SSO_PROVIDER`               | `None`                   | Provider hint for preset defaults: `cognito`, `okta`, `azure_ad`, `auth0`, `keycloak`, `generic`      |
-| `sso_client_secret` / `BEDROCK_SSO_CLIENT_SECRET`     | `None`                   | Client secret for confidential clients (public clients with PKCE don't need this)                     |
-| `sso_scopes` / `BEDROCK_SSO_SCOPES`                   | `"openid profile email"` | Space-separated OAuth2 scopes to request                                                              |
-| `sso_callback_path` / `BEDROCK_SSO_CALLBACK_PATH`     | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                              |
-| `sso_public_base_url` / `BEDROCK_SSO_PUBLIC_BASE_URL` | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url)) |
-| `sso_session_ttl` / `BEDROCK_SSO_SESSION_TTL`         | `3600`                   | SSO session lifetime in seconds                                                                       |
+| Parameter / Env Var                                    | Default                  | Description                                                                                           |
+| ------------------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `sso_provider` / `AUTOCHAT_SSO_PROVIDER`               | `None`                   | Provider hint for preset defaults: `cognito`, `okta`, `azure_ad`, `auth0`, `keycloak`, `generic`      |
+| `sso_client_secret` / `AUTOCHAT_SSO_CLIENT_SECRET`     | `None`                   | Client secret for confidential clients (public clients with PKCE don't need this)                     |
+| `sso_scopes` / `AUTOCHAT_SSO_SCOPES`                   | `"openid profile email"` | Space-separated OAuth2 scopes to request                                                              |
+| `sso_callback_path` / `AUTOCHAT_SSO_CALLBACK_PATH`     | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                              |
+| `sso_public_base_url` / `AUTOCHAT_SSO_PUBLIC_BASE_URL` | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url)) |
+| `sso_session_ttl` / `AUTOCHAT_SSO_SESSION_TTL`         | `3600`                   | SSO session lifetime in seconds                                                                       |
 
 ---
 
@@ -117,7 +117,7 @@ Provide **either** a discovery URL (recommended) **or** individual endpoint URLs
 
 ### Login Flow
 
-1. User visits `/bedrock-chat/ui` and clicks **"Login with SSO"**
+1. User visits `/chat/ui` and clicks **"Login with SSO"**
 2. Plugin generates a PKCE `code_verifier` + `code_challenge`, stores them server-side keyed by a random `state` parameter
 3. User is redirected to the IdP's authorization endpoint
 4. User authenticates with the IdP (e.g., corporate credentials via Azure AD)
@@ -179,7 +179,7 @@ If not set, it defaults to `api_base_url` (auto-detected from the running server
 ### AWS Cognito
 
 ```python
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     sso_enabled=True,
     sso_provider="cognito",
@@ -201,7 +201,7 @@ plugin = add_bedrock_chat(
 ### Okta
 
 ```python
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     sso_enabled=True,
     sso_provider="okta",
@@ -216,7 +216,7 @@ plugin = add_bedrock_chat(
 ### Azure AD
 
 ```python
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     sso_enabled=True,
     sso_provider="azure_ad",
@@ -231,7 +231,7 @@ plugin = add_bedrock_chat(
 ### Generic OIDC Provider
 
 ```python
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     sso_enabled=True,
     sso_provider="generic",
@@ -246,7 +246,7 @@ plugin = add_bedrock_chat(
 Or without OIDC discovery (manual endpoints):
 
 ```python
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     sso_enabled=True,
     sso_authorization_url="https://idp.example.com/authorize",
@@ -269,7 +269,7 @@ SSO can coexist with manual auth methods. When `supported_auth_types` includes b
 - Send a manual auth message over WebSocket (bearer_token, api_key, etc.)
 
 ```python
-plugin = add_bedrock_chat(
+plugin = add_autolangchat(
     app,
     enable_tool_auth=True,
     supported_auth_types=["sso", "bearer_token", "api_key"],
@@ -341,4 +341,4 @@ SSO sessions expire after `sso_session_ttl` seconds (default 3600). Users need t
 
 - [Authentication](authentication.md) — manual auth methods (bearer token, API key, etc.)
 - [Configuration](configuration.md) — full settings reference
-- [FastAPI Plugin Integration](fastapi-plugin.md) — `add_bedrock_chat()` setup
+- [FastAPI Plugin Integration](fastapi-plugin.md) — `add_autolangchat()` setup

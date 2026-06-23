@@ -1,4 +1,4 @@
-"""Example FastAPI application with Okta SSO and auto-bedrock-chat-fastapi
+"""Example FastAPI application with Okta SSO and autolangchat
 
 This example demonstrates:
 1. SSO authentication via Okta (OAuth2 Authorization Code + PKCE)
@@ -19,12 +19,12 @@ Okta Setup:
 5. Copy Client ID and Okta domain
 
 Environment variables (.env):
-    BEDROCK_SSO_ENABLED=true
-    BEDROCK_SSO_PROVIDER=okta
-    BEDROCK_SSO_CLIENT_ID=<your-okta-client-id>
-    BEDROCK_SSO_DISCOVERY_URL=https://<your-okta-domain>/oauth2/default/.well-known/openid-configuration
-    BEDROCK_SSO_SESSION_SECRET=<random-secret-at-least-32-chars>
-    BEDROCK_SSO_SCOPES=openid profile email
+    AUTOCHAT_SSO_ENABLED=true
+    AUTOCHAT_SSO_PROVIDER=okta
+    AUTOCHAT_SSO_CLIENT_ID=<your-okta-client-id>
+    AUTOCHAT_SSO_DISCOVERY_URL=https://<your-okta-domain>/oauth2/default/.well-known/openid-configuration
+    AUTOCHAT_SSO_SESSION_SECRET=<random-secret-at-least-32-chars>
+    AUTOCHAT_SSO_SCOPES=openid profile email
     AWS_REGION=us-east-1
 """
 
@@ -35,7 +35,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from auto_bedrock_chat_fastapi import add_bedrock_chat
+from autolangchat import add_autolangchat
 
 app = FastAPI(
     title="SSO Example API (Okta)",
@@ -117,7 +117,7 @@ async def health_check():
 # Plugin Setup — SSO via Okta
 # ============================================================================
 
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     # SSO Configuration
     sso_enabled=True,

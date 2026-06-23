@@ -3,11 +3,11 @@
 import asyncio
 import logging
 
-from auto_bedrock_chat_fastapi.bedrock_client import BedrockClient
-from auto_bedrock_chat_fastapi.config import ChatConfig
-from auto_bedrock_chat_fastapi.content_crawler import LocalContentLoader
-from auto_bedrock_chat_fastapi.db.kb_sqlite import SQLiteKBStore
-from auto_bedrock_chat_fastapi.embedding_pipeline import EmbeddingGenerator, EmbeddingPipeline, TextChunker
+from autolangchat.bedrock_client import BedrockClient
+from autolangchat.config import ChatConfig
+from autolangchat.content_crawler import LocalContentLoader
+from autolangchat.db.kb_sqlite import SQLiteKBStore
+from autolangchat.embedding_pipeline import EmbeddingGenerator, EmbeddingPipeline, TextChunker
 
 # Configure logging
 logging.basicConfig(

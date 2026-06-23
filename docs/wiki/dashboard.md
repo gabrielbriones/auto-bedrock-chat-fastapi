@@ -2,7 +2,7 @@
 
 The Admin Dashboard is a browser-based control surface for expert
 reviewers and KB administrators. It is served at
-`{chat_endpoint}/dashboard` (default: `/bedrock-chat/dashboard`) when
+`{chat_endpoint}/dashboard` (default: `/chat/dashboard`) when
 both `admin_enabled=True` and `enable_ui=True` are set.
 
 The dashboard is a pure client-side application: the HTML shell is
@@ -17,10 +17,10 @@ in the Chat UI header.
 ## Enabling the Dashboard
 
 ```bash
-BEDROCK_ADMIN_ENABLED=true
-BEDROCK_ENABLE_UI=true
+AUTOCHAT_ADMIN_ENABLED=true
+AUTOCHAT_ENABLE_UI=true
 # pick one authorizer (see admin-api.md)
-BEDROCK_ADMIN_REQUIRED_GROUPS=kb-admins
+AUTOCHAT_ADMIN_REQUIRED_GROUPS=kb-admins
 ```
 
 The Chat UI automatically displays a **Dashboard** button in the header
@@ -29,7 +29,7 @@ when both conditions are met:
 1. `admin_enabled=True` (the button element is rendered in the HTML).
 2. `GET /admin/_capabilities` returns `{"is_admin": true, ...}`.
 
-Non-admin users never see the button. Visiting `/bedrock-chat/dashboard`
+Non-admin users never see the button. Visiting `/chat/dashboard`
 directly without admin access renders an "Access Denied" empty state —
 the page itself loads no data until capability is confirmed.
 
@@ -249,7 +249,7 @@ the Chat UI grants admin access.
 - The Dashboard button is **hidden** (not disabled) for non-admins and
   for unauthenticated users. Hiding is a UX courtesy only; server-side
   authorization is the enforced boundary.
-- Manually visiting `/bedrock-chat/dashboard` without admin access
+- Manually visiting `/chat/dashboard` without admin access
   renders the "Access Denied" empty state. No data is leaked because
   every XHR call is gated by `require_admin`.
 - All user-supplied strings (feedback content, KB content, user IDs) are

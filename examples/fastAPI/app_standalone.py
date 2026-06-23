@@ -1,15 +1,15 @@
-"""Example FastAPI application demonstrating auto-bedrock-chat-fastapi
+"""Example FastAPI application demonstrating autolangchat
 
 This example shows two ways to use the plugin:
 
 1. Adding to existing FastAPI app (current approach):
-   from auto_bedrock_chat_fastapi import add_bedrock_chat
+   from autolangchat import add_autolangchat
    app = FastAPI()
-   add_bedrock_chat(app)
+   add_autolangchat(app)
 
 2. Creating new app with modern lifespan (recommended for new projects):
-   from auto_bedrock_chat_fastapi import create_fastapi_with_bedrock_chat
-   app, plugin = create_fastapi_with_bedrock_chat()
+   from autolangchat import create_fastapi_with_autolangchat
+   app, plugin = create_fastapi_with_autolangchat()
 """
 
 import random
@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from autolangchat import add_autolangchat
+
 # Create FastAPI app (existing app approach)
 app = FastAPI(
     title="Example E-commerce API",
@@ -28,9 +30,9 @@ app = FastAPI(
 )
 
 # Alternative: Create app with modern lifespan (uncomment to use)
-# from auto_bedrock_chat_fastapi import create_fastapi_with_bedrock_chat
-# app, plugin = create_fastapi_with_bedrock_chat(
-#     title="Example E-commerce API",
+# from autolangchat import create_fastapi_with_autolangchat
+# app, plugin = create_fastapi_with_autolangchat(
+# Note: Plugin initialization moved to if __name__ == "__main__" to avoid repeated setup on module import#     title="Example E-commerce API",
 #     description="A sample e-commerce API with AI chat assistance",
 #     version="1.0.0"
 # )
@@ -148,6 +150,10 @@ users_db: Dict[int, Dict] = {
         "address": "456 Oak Ave",
     },
 }
+
+
+# Initialize autolangchat plugin at module level so it works when run via uvicorn
+autolangchat_plugin = add_autolangchat(app)
 
 
 # Pydantic models
@@ -557,7 +563,8 @@ if __name__ == "__main__":
     print("🚀 Starting Example E-commerce API with AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")
     print("💬 AI Chat Interface: http://localhost:8000/chat")
-    print("🔗 WebSocket Chat: ws://localhost:8000/ws/chat")
-    print("📊 Chat Health: http://localhost:8000/api/chat/health")
+    print("🔗 WebSocket Chat: ws://localhost:8000/chat/ws")
+    print("📊 Chat Health: http://localhost:8000/chat/health")
 
-    uvicorn.run("app_standalone:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    # Pass app object directly (not as string) to avoid re-importing the module
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True, log_level="info")

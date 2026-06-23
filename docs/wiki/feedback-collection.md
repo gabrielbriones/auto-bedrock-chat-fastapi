@@ -21,27 +21,27 @@ buttons under each assistant message; 👎 opens an inline correction form
 Feedback collection is **off by default**. Enable it by setting:
 
 ```bash
-BEDROCK_FEEDBACK_ENABLED=true
+AUTOCHAT_FEEDBACK_ENABLED=true
 ```
 
 The storage backend defaults to **SQLite** so no database setup is
 required for local development. To use Postgres in production, set:
 
 ```bash
-BEDROCK_FEEDBACK_STORAGE_TYPE=postgres
-BEDROCK_FEEDBACK_POSTGRES_URL=postgresql://feedback:secret@db:5432/feedback
+AUTOCHAT_FEEDBACK_STORAGE_TYPE=postgres
+AUTOCHAT_FEEDBACK_POSTGRES_URL=postgresql://feedback:secret@db:5432/feedback
 ```
 
-If `BEDROCK_FEEDBACK_POSTGRES_URL` is not set, the store falls back to
-`BEDROCK_KB_POSTGRES_URL` so a single Postgres instance can host both
+If `AUTOCHAT_FEEDBACK_POSTGRES_URL` is not set, the store falls back to
+`AUTOCHAT_KB_POSTGRES_URL` so a single Postgres instance can host both
 schemas. Likewise, when `feedback_storage_type=sqlite` and
-`BEDROCK_FEEDBACK_DATABASE_PATH` is unset, the SQLite backend reuses
+`AUTOCHAT_FEEDBACK_DATABASE_PATH` is unset, the SQLite backend reuses
 `KB_DATABASE_PATH`.
 
 The optional [postgres] extra is required for the Postgres backend:
 
 ```bash
-pip install "auto-bedrock-chat-fastapi[postgres]"
+pip install "autolangchat[postgres]"
 ```
 
 When enabled, the FastAPI plugin opens the backend on startup and closes
@@ -54,15 +54,15 @@ a `feedback_unavailable` error rather than a crash.
 
 ### Configuration reference
 
-| Setting                       | Env var                               | Default  | Notes                                                                     |
-| ----------------------------- | ------------------------------------- | -------- | ------------------------------------------------------------------------- |
-| `feedback_enabled`            | `BEDROCK_FEEDBACK_ENABLED`            | `false`  | Master switch                                                             |
-| `feedback_allow_anonymous`    | `BEDROCK_FEEDBACK_ALLOW_ANONYMOUS`    | `false`  | Render the UI and accept submissions even without a `user_id` (dev/local) |
-| `feedback_storage_type`       | `BEDROCK_FEEDBACK_STORAGE_TYPE`       | `sqlite` | `sqlite` (zero-config) or `postgres`                                      |
-| `feedback_database_path`      | `BEDROCK_FEEDBACK_DATABASE_PATH`      | `None`   | SQLite file path; falls back to `KB_DATABASE_PATH`                        |
-| `feedback_postgres_url`       | `BEDROCK_FEEDBACK_POSTGRES_URL`       | `None`   | Falls back to `BEDROCK_KB_POSTGRES_URL`                                   |
-| `feedback_postgres_pool_size` | `BEDROCK_FEEDBACK_POSTGRES_POOL_SIZE` | `5`      | Async pool max size (Postgres only)                                       |
-| `feedback_init_schema`        | `BEDROCK_FEEDBACK_INIT_SCHEMA`        | `true`   | Set `false` if a separate provisioning task owns the DDL lifecycle        |
+| Setting                       | Env var                                | Default  | Notes                                                                     |
+| ----------------------------- | -------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `feedback_enabled`            | `AUTOCHAT_FEEDBACK_ENABLED`            | `false`  | Master switch                                                             |
+| `feedback_allow_anonymous`    | `AUTOCHAT_FEEDBACK_ALLOW_ANONYMOUS`    | `false`  | Render the UI and accept submissions even without a `user_id` (dev/local) |
+| `feedback_storage_type`       | `AUTOCHAT_FEEDBACK_STORAGE_TYPE`       | `sqlite` | `sqlite` (zero-config) or `postgres`                                      |
+| `feedback_database_path`      | `AUTOCHAT_FEEDBACK_DATABASE_PATH`      | `None`   | SQLite file path; falls back to `KB_DATABASE_PATH`                        |
+| `feedback_postgres_url`       | `AUTOCHAT_FEEDBACK_POSTGRES_URL`       | `None`   | Falls back to `AUTOCHAT_KB_POSTGRES_URL`                                  |
+| `feedback_postgres_pool_size` | `AUTOCHAT_FEEDBACK_POSTGRES_POOL_SIZE` | `5`      | Async pool max size (Postgres only)                                       |
+| `feedback_init_schema`        | `AUTOCHAT_FEEDBACK_INIT_SCHEMA`        | `true`   | Set `false` if a separate provisioning task owns the DDL lifecycle        |
 
 ---
 
@@ -70,7 +70,7 @@ a `feedback_unavailable` error rather than a crash.
 
 The built-in chat template renders rating controls only when the server
 injects `window.CONFIG.feedbackEnabled = true`. The gate is computed in
-[`plugin.py`](../../auto_bedrock_chat_fastapi/plugin.py) at every chat-UI
+[`plugin.py`](../../autolangchat/plugin.py) at every chat-UI
 request and is **feature-only** — it answers "could this deployment
 accept a feedback submission?", not "is _this user_ allowed to submit?":
 
@@ -185,7 +185,7 @@ class FeedbackAuthorizer(Protocol):
 ```
 
 The default `AuthenticatedUserAuthorizer` accepts any non-empty `user_id`.
-When `BEDROCK_FEEDBACK_ALLOW_ANONYMOUS=true`, the plugin constructs the
+When `AUTOCHAT_FEEDBACK_ALLOW_ANONYMOUS=true`, the plugin constructs the
 authorizer with `allow_anonymous=True` so submissions without a resolved
 user identity are accepted (intended for local development and
 standalone deployments without SSO / auth-verification). Anonymous rows
@@ -216,11 +216,11 @@ handler = WebSocketChatHandler(
 
 The async data-access classes are exposed for the admin-API and
 synthesizer. Both backends implement the same
-[`BaseFeedbackStore`](../../auto_bedrock_chat_fastapi/db/feedback_base.py)
+[`BaseFeedbackStore`](../../autolangchat/db/feedback_base.py)
 interface; pick one via the factory:
 
 ```python
-from auto_bedrock_chat_fastapi.db import create_feedback_store
+from autolangchat.db import create_feedback_store
 
 store = create_feedback_store(config)  # returns SQLite or Postgres impl
 async with store:
@@ -238,7 +238,7 @@ async with store:
 Direct instantiation is also available:
 
 ```python
-from auto_bedrock_chat_fastapi.db import SQLiteFeedbackStore, PostgresFeedbackStore
+from autolangchat.db import SQLiteFeedbackStore, PostgresFeedbackStore
 
 sqlite_store = SQLiteFeedbackStore(db_path="data/feedback.db")
 pg_store = PostgresFeedbackStore(connection_url="postgresql://…", pool_max_size=5)
@@ -276,8 +276,8 @@ updates until that KB linkage is rolled back.
 
 The DDL ships in two flavors:
 
-- Postgres: [`auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql`](../../auto_bedrock_chat_fastapi/db/sql/feedback_schema.sql)
-- SQLite: [`auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql`](../../auto_bedrock_chat_fastapi/db/sql/feedback_schema_sqlite.sql)
+- Postgres: [`autolangchat/db/sql/feedback_schema.sql`](../../autolangchat/db/sql/feedback_schema.sql)
+- SQLite: [`autolangchat/db/sql/feedback_schema_sqlite.sql`](../../autolangchat/db/sql/feedback_schema_sqlite.sql)
 
 All statements are idempotent; either file can be applied directly with
 `psql -f` / `sqlite3 /path/to/feedback.db < feedback_schema_sqlite.sql` by the
@@ -285,7 +285,7 @@ database-provisioning task or auto-bootstrapped by the store on startup
 (`feedback_init_schema=true`).
 
 The schema enforces the same validation rules as the Pydantic
-[`FeedbackEntry`](../../auto_bedrock_chat_fastapi/models.py) model via
+[`FeedbackEntry`](../../autolangchat/models.py) model via
 `CHECK` constraints, so direct DB writes that bypass the application can't
 introduce invalid rows.
 

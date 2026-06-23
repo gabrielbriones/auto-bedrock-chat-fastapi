@@ -143,7 +143,7 @@ docker-compose up
 docker run -e AWS_REGION=us-east-1 \
            -e AWS_ACCESS_KEY_ID=... \
            -e AWS_SECRET_ACCESS_KEY=... \
-           -e BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0 \
+           -e AUTOCHAT_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0 \
            -p 8000:8000 \
            auto-bedrock-chat-fastapi
 ```

@@ -3,9 +3,9 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-name = "auto-bedrock-chat-fastapi"
-version = "0.1.0"
-description = "Automatically add AI chat capabilities to your FastAPI application with Amazon Bedrock integration"
+name = "autolangchat"
+version = "1.0.0"
+description = "Automatically add AI chat capabilities to your REST API application with LLM integration"
 readme = "README.md"
 license = "MIT"
 authors = ["Gabriel Briones <gabriel.briones.dev@gmail.com>"]
@@ -40,18 +40,22 @@ numpy = ">=1.21"
 beautifulsoup4 = "^4.14.3"
 html2text = "^2025.4.15"
 aiohttp = "^3.13.3"
-lxml = "^6.0.2"
-tiktoken = ">=0.5.0"
 pyyaml = ">=6.0"
 PyJWT = {extras = ["crypto"], version = ">=2.8.0", optional = true}
 passlib = {extras = ["bcrypt"], version = ">=1.7.4", optional = true}
 psycopg = {version = ">=3.1.0", optional = true, extras = ["pool"]}
 psycopg-binary = {version = ">=3.1.0", optional = true}
 pgvector = {version = ">=0.2.0", optional = true}
+langgraph-checkpoint-postgres = {version = ">=2.0.0", optional = true}
+
+# LangGraph / LangChain (core graph orchestration — required for autolangchat)
+langgraph = ">=0.2.0"
+langchain-aws = ">=0.2.0"
+langchain-core = ">=0.3.0"
 
 [tool.poetry.extras]
 sso = ["PyJWT", "passlib"]
-postgres = ["psycopg", "psycopg-binary", "pgvector"]
+postgres = ["psycopg", "psycopg-binary", "pgvector", "langgraph-checkpoint-postgres"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0.0"
@@ -106,7 +110,7 @@ skip = [".venv", "venv", ".tox", "build", "dist"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-v --cov=auto_bedrock_chat_fastapi --cov-report=html --cov-report=term-missing"
+addopts = "-v --cov=autolangchat --cov-report=html --cov-report=term-missing"
 
 [tool.mypy]
 python_version = "3.10"

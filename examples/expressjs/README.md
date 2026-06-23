@@ -148,9 +148,9 @@ The Python integration automatically detects the API base URL from the OpenAPI s
 
 ```python
 # Environment variables (.env file)
-BEDROCK_API_BASE_URL=http://localhost:3000
-BEDROCK_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders
-BEDROCK_EXCLUDED_PATHS=/internal,/admin
+AUTOCHAT_API_BASE_URL=http://localhost:3000
+AUTOCHAT_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders
+AUTOCHAT_EXCLUDED_PATHS=/internal,/admin
 ```
 
 ## Development Mode

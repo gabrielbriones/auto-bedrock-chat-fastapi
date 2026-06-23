@@ -46,7 +46,7 @@ poetry run python app_rag.py
 
 Open your browser to:
 
-- **Chat UI**: http://localhost:8001/bedrock-chat/ui
+- **Chat UI**: http://localhost:8001/chat
 - **API Docs**: http://localhost:8001/docs
 
 ## Try These Example Queries
@@ -89,7 +89,7 @@ Once the app is running, try asking:
 Edit `app_rag.py` to customize:
 
 ```python
-bedrock_chat = add_bedrock_chat(
+autolangchat_plugin = add_autolangchat(
     app,
     enable_rag=True,
     kb_top_k_results=5,           # Number of chunks to retrieve
@@ -126,40 +126,40 @@ Use `poetry run` to execute commands within the repository:
 
 ```bash
 # Check KB status
-ENABLE_RAG=true poetry run python -m auto_bedrock_chat_fastapi.commands.kb status \
+AUTOCHAT_ENABLE_RAG=true poetry run python -m autolangchat.commands.kb status \
   --config examples/fastAPI/kb_sources_fastapi.yaml \
   --db examples/fastAPI/fastapi_kb.db
 
 # Rebuild KB (force refresh)
-ENABLE_RAG=true poetry run python -m auto_bedrock_chat_fastapi.commands.kb populate \
+AUTOCHAT_ENABLE_RAG=true poetry run python -m autolangchat.commands.kb populate \
   --config examples/fastAPI/kb_sources_fastapi.yaml \
   --db examples/fastAPI/fastapi_kb.db \
   --force
 
 # Clear KB
-ENABLE_RAG=true poetry run python -m auto_bedrock_chat_fastapi.commands.kb clear \
+AUTOCHAT_ENABLE_RAG=true poetry run python -m autolangchat.commands.kb clear \
   --db examples/fastAPI/fastapi_kb.db \
   --yes
 ```
 
 #### When Using as an Installed Package
 
-If you've installed `auto-bedrock-chat-fastapi` in your own project (via pip or poetry), use these commands:
+If you've installed `autolangchat` in your own project (via pip or poetry), use these commands:
 
 ```bash
 # Check KB status
-ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb status \
+AUTOCHAT_ENABLE_RAG=true python -m autolangchat.commands.kb status \
   --config path/to/your/kb_sources.yaml \
   --db path/to/your/kb.db
 
 # Populate/rebuild KB
-ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb populate \
+AUTOCHAT_ENABLE_RAG=true python -m autolangchat.commands.kb populate \
   --config path/to/your/kb_sources.yaml \
   --db path/to/your/kb.db \
   --force
 
 # Clear KB
-ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb clear \
+AUTOCHAT_ENABLE_RAG=true python -m autolangchat.commands.kb clear \
   --db path/to/your/kb.db \
   --yes
 ```
@@ -185,7 +185,7 @@ If you've installed the package in your project:
 
 ```bash
 # Install the package
-pip install git+https://github.com/gabrielbriones/auto-bedrock-chat-fastapi.git
+pip install git+https://github.com/gabrielbriones/autolangchat.git
 
 # Create your KB sources config
 cat > my_kb_sources.yaml << EOF
@@ -201,12 +201,12 @@ knowledge_base:
 EOF
 
 # Populate your knowledge base
-ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb populate \
+AUTOCHAT_ENABLE_RAG=true python -m autolangchat.commands.kb populate \
   --config my_kb_sources.yaml \
   --db my_project_kb.db
 
 # Check status
-ENABLE_RAG=true python -m auto_bedrock_chat_fastapi.commands.kb status \
+AUTOCHAT_ENABLE_RAG=true python -m autolangchat.commands.kb status \
   --config my_kb_sources.yaml \
   --db my_project_kb.db
 ```

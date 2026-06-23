@@ -42,7 +42,7 @@ strategy:
 poetry run pytest tests/
 
 # With coverage
-poetry run pytest tests/ --cov=auto_bedrock_chat_fastapi --cov-report=xml
+poetry run pytest tests/ --cov=autolangchat --cov-report=xml
 
 # Specific file
 poetry run pytest tests/test_authentication.py -v
@@ -68,22 +68,22 @@ Enforces code standards and performs security analysis.
 | Black  | `black --check --diff`               | Code formatting              |
 | isort  | `isort --check-only --profile black` | Import sorting               |
 | Flake8 | `flake8 --max-line-length=120`       | Style guide                  |
-| mypy   | `mypy auto_bedrock_chat_fastapi/`    | Type checking (non-blocking) |
+| mypy   | `mypy autolangchat/`                 | Type checking (non-blocking) |
 
 **Run locally:**
 
 ```bash
-poetry run black --check auto_bedrock_chat_fastapi/ tests/ examples/
-poetry run isort --check-only --profile black auto_bedrock_chat_fastapi/ tests/
-poetry run flake8 auto_bedrock_chat_fastapi/ tests/ --max-line-length=120
-poetry run mypy auto_bedrock_chat_fastapi/ --ignore-missing-imports
+poetry run black --check autolangchat/ tests/ examples/
+poetry run isort --check-only --profile black autolangchat/ tests/
+poetry run flake8 autolangchat/ tests/ --max-line-length=120
+poetry run mypy autolangchat/ --ignore-missing-imports
 ```
 
 **Auto-fix formatting:**
 
 ```bash
-poetry run black auto_bedrock_chat_fastapi/ tests/ examples/
-poetry run isort --profile black auto_bedrock_chat_fastapi/ tests/
+poetry run black autolangchat/ tests/ examples/
+poetry run isort --profile black autolangchat/ tests/
 ```
 
 ### Security Job
@@ -145,7 +145,7 @@ python integration_testing/run_all.py --skip-chat
 
 # All including WebSocket (requires running server)
 # Terminal 1:
-uvicorn auto_bedrock_chat_fastapi.app:app --port 8001
+uvicorn autolangchat.app:app --port 8001
 # Terminal 2:
 python integration_testing/run_all.py
 ```

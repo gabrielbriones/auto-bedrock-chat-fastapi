@@ -10,7 +10,7 @@
 # variables so the app uses the local SQLite file instead.
 
 services:
-  bedrock-chat-api:
+  autolangchat:
     environment:
       - BEDROCK_KB_STORAGE_TYPE=sqlite
       - KB_DATABASE_PATH=data/knowledge_base.db
