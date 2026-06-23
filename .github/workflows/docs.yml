@@ -55,12 +55,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout main repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
 
       - name: Checkout wiki repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}.wiki
           token: ${{ secrets.WIKI_TOKEN }}
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check README exists
         run: test -f README.md || (echo "README.md not found" && exit 1)
