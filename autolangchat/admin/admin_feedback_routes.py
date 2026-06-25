@@ -29,12 +29,12 @@ from datetime import datetime, timezone
 from typing import Callable, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
 from ..db.feedback_base import BaseFeedbackStore
-from ..exceptions import AdminAPIError
+from ..exceptions import AdminAPIError, FeedbackNotFoundError
 from ..models import (
     FeedbackEntry,
     FeedbackListFilters,
@@ -44,7 +44,11 @@ from ..models import (
     ReviewStatus,
     ReviewUpdateRequest,
 )
-from .admin_errors import ADMIN_COMMON_RESPONSES, ADMIN_FEEDBACK_PATCH_RESPONSES
+from .admin_errors import (
+    ADMIN_COMMON_RESPONSES,
+    ADMIN_FEEDBACK_DELETE_RESPONSES,
+    ADMIN_FEEDBACK_PATCH_RESPONSES,
+)
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("bedrock.audit")
@@ -230,6 +234,49 @@ def register_admin_feedback_routes(
             },
         )
         return updated
+
+    @router.delete(
+        "/{feedback_id}",
+        status_code=204,
+        responses={**ADMIN_FEEDBACK_DELETE_RESPONSES},
+        summary="Permanently delete a feedback entry",
+    )
+    async def delete_feedback(feedback_id: UUID, identity=Depends(require_admin)) -> Response:
+        actor = identity.user_id
+        # Snapshot the entry first. A missing row raises ``FeedbackNotFoundError``
+        # which the central admin handlers map to a flat 404 envelope —
+        # consistent with the PATCH endpoint.
+        before = await feedback_store.get(feedback_id)
+        if before is None:
+            raise FeedbackNotFoundError(str(feedback_id))
+
+        # Only rejected feedback may be permanently deleted. Anything else is
+        # a conflict (409) rather than a not-found.
+        if before.review_status != ReviewStatus.REJECTED:
+            raise AdminAPIError(
+                status_code=409,
+                code="invalid_state",
+                detail="only feedback in the 'rejected' state may be deleted",
+            )
+
+        await feedback_store.delete(feedback_id)
+
+        audit_logger.info(
+            "feedback.delete",
+            extra={
+                "action": "feedback.delete",
+                "actor_user_id": actor,
+                "target_id": str(feedback_id),
+                "before": {
+                    "status": before.review_status.value,
+                    "tags": list(before.reviewer_tags),
+                    "comment": before.reviewer_comment,
+                },
+                "after": None,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return Response(status_code=204)
 
     app.include_router(router)
     logger.info("Admin feedback routes registered under %s/feedback", prefix)

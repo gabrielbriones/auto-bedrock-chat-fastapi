@@ -219,6 +219,12 @@ class BaseFeedbackStore(ABC):
         """
 
     @abstractmethod
+    async def delete(self, feedback_id: UUID) -> bool:
+        """Hard-delete a feedback entry. 
+        Returns True if found and deleted, False if not found.
+        """
+
+    @abstractmethod
     async def stats(self) -> FeedbackStats:
         """Return aggregate counts by status and rating."""
 

@@ -325,10 +325,15 @@
         if (!wrap) return;
         wrap.innerHTML = '';
 
+        // The Reviewed view supports hard-deleting rejected entries; the queue does not.
+        var isReviewed = wrapId === 'fr-table-wrap';
+
         var table = el('table', 'data-table');
         var thead = document.createElement('thead');
         var hrow = document.createElement('tr');
-        ['User', 'Rating', 'Status', 'Query', 'Created', 'Tags'].forEach(function (h) {
+        var headers = ['User', 'Rating', 'Status', 'Query', 'Created', 'Tags'];
+        if (isReviewed) headers.push('Actions');
+        headers.forEach(function (h) {
             var th = el('th'); th.textContent = h; hrow.appendChild(th);
         });
         thead.appendChild(hrow); table.appendChild(thead);
@@ -336,7 +341,7 @@
         var tbody = document.createElement('tbody');
         if (!data.items || data.items.length === 0) {
             var erow = document.createElement('tr');
-            var etd = document.createElement('td'); etd.colSpan = 6;
+            var etd = document.createElement('td'); etd.colSpan = headers.length;
             var emp = el('div', 'table-empty', 'No feedback entries match the current filters.');
             etd.appendChild(emp); erow.appendChild(etd); tbody.appendChild(erow);
         } else {
@@ -360,6 +365,11 @@
                 var tdTags   = el('td'); tdTags.appendChild(makeTagList(entry.reviewer_tags || []));
 
                 [tdUser, tdRating, tdStatus, tdQuery, tdDate, tdTags].forEach(function (td) { row.appendChild(td); });
+
+                if (isReviewed) {
+                    row.appendChild(buildFeedbackActionsCell(entry, data, wrapId, pgId, onPageChange));
+                }
+
                 tbody.appendChild(row);
             });
         }
@@ -368,6 +378,44 @@
 
         var pg = document.getElementById(pgId);
         if (pg) renderPagination(pg, data.total, data.offset, data.limit, onPageChange);
+    }
+
+    /** Build the "Actions" cell for a Reviewed-table row. Only rejected entries get a Delete button. */
+    function buildFeedbackActionsCell(entry, data, wrapId, pgId, onPageChange) {
+        var tdActions = el('td');
+        if (entry.review_status !== 'rejected') return tdActions;
+
+        var delBtn = el('button', 'btn-danger', 'Delete');
+        delBtn.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            deleteRejectedEntry(entry, data, wrapId, pgId, onPageChange, delBtn, tdActions);
+        });
+        tdActions.appendChild(delBtn);
+        return tdActions;
+    }
+
+    /** Confirm, then hard-delete a rejected entry and optimistically re-render the table. */
+    function deleteRejectedEntry(entry, data, wrapId, pgId, onPageChange, delBtn, tdActions) {
+        if (!window.confirm('Delete this rejected entry? This cannot be undone.')) return;
+
+        delBtn.disabled = true;
+        var existingErr = qs('.row-error', tdActions);
+        if (existingErr) existingErr.remove();
+
+        apiDelete('/feedback/' + encodeURIComponent(entry.id))
+            .then(function () {
+                var idx = data.items.indexOf(entry);
+                if (idx !== -1) data.items.splice(idx, 1);
+                if (typeof data.total === 'number' && data.total > 0) data.total -= 1;
+                renderFeedbackTable(data, wrapId, pgId, onPageChange);
+            })
+            .catch(function (e) {
+                delBtn.disabled = false;
+                var errSpan = el('span', 'row-error', String(e && e.message ? e.message : e));
+                errSpan.style.color = 'var(--danger, #c0392b)';
+                errSpan.style.marginLeft = '8px';
+                tdActions.appendChild(errSpan);
+            });
     }
 
     // ================================================================

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from ._autolangchat_imports import load_module
@@ -89,6 +89,13 @@ class _FakeFeedbackStore:
                 self.entries[idx] = updated
                 break
         return updated
+
+    async def delete(self, entry_id):
+        for idx, existing in enumerate(self.entries):
+            if existing.id == entry_id:
+                del self.entries[idx]
+                return True
+        return False
 
 
 def _make_entry(**kwargs):
