@@ -34,3 +34,13 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding
 ON chunks USING hnsw (embedding vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS idx_chunks_fts ON chunks USING gin(content_tsv);
+
+-- Credibility tracking (added XMGPLAT-10933)
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS
+    credibility_score REAL NOT NULL DEFAULT 1.0
+        CHECK (credibility_score BETWEEN 0.0 AND 1.0);
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS
+    removal_flagged BOOLEAN NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS idx_documents_removal_flagged
+    ON documents (removal_flagged) WHERE removal_flagged = true;

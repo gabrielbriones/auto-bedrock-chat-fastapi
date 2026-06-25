@@ -1603,6 +1603,12 @@ class AutoLangChatPlugin:
         # 4. Open the feedback-store connection pool
         await self._startup_open_feedback_store()
 
+        # 5. Schedule KB credibility decay background task (opt-in)
+        if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
+            from .kb_credibility import run_credibility_decay_loop
+
+            asyncio.create_task(run_credibility_decay_loop(self._kb_store, self.config))
+
     async def _startup_open_feedback_store(self) -> None:
         """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
 

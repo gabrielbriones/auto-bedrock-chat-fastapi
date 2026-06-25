@@ -173,7 +173,8 @@ class PgVectorKBStore(BaseKBStore):
                 cur.execute(
                     """
                     SELECT id, content, title, source, source_url, topic,
-                           date_published, metadata, created_at
+                           date_published, metadata, created_at,
+                           credibility_score, removal_flagged
                     FROM documents WHERE id = %s
                     """,
                     (doc_id,),
@@ -191,6 +192,8 @@ class PgVectorKBStore(BaseKBStore):
                     "date_published": row[6],
                     "metadata": json.loads(row[7]) if row[7] else {},
                     "created_at": str(row[8]) if row[8] else None,
+                    "credibility_score": float(row[9]) if row[9] is not None else 1.0,
+                    "removal_flagged": bool(row[10]) if row[10] is not None else False,
                 }
 
     def delete_document(self, doc_id: str) -> None:
@@ -303,9 +306,11 @@ class PgVectorKBStore(BaseKBStore):
         limit: int = 3,
         min_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         filter_sql, filter_params = self._build_filter_clause(filters)
         emb_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+        flagged_sql = " AND d.removal_flagged = false" if exclude_flagged else ""
 
         sql = f"""
             SELECT
@@ -319,11 +324,13 @@ class PgVectorKBStore(BaseKBStore):
                 d.topic,
                 d.date_published,
                 d.metadata      AS doc_metadata,
-                (c.embedding <=> %s::vector) AS distance
+                (c.embedding <=> %s::vector) AS distance,
+                d.credibility_score,
+                d.removal_flagged
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE c.embedding IS NOT NULL
-            {filter_sql}
+            {filter_sql}{flagged_sql}
             ORDER BY distance ASC
             LIMIT %s
         """
@@ -338,7 +345,8 @@ class PgVectorKBStore(BaseKBStore):
 
         results: list[Dict[str, Any]] = []
         for row in rows:
-            similarity = 1.0 - row[10]
+            # credibility_score at row[11]; weight applied unconditionally.
+            similarity = (1.0 - row[10]) * float(row[11])
             if similarity < min_score:
                 continue
             results.append(
@@ -479,7 +487,8 @@ class PgVectorKBStore(BaseKBStore):
     @staticmethod
     def _row_to_document(row, chunk_count: Optional[int] = None) -> KBDocument:
         """Convert a SELECT row (id, content, title, source, source_url, topic,
-        date_published, metadata, created_at[, chunk_count]) into a KBDocument.
+        date_published, metadata, created_at, credibility_score,
+        removal_flagged[, chunk_count]) into a KBDocument.
         """
         metadata = json.loads(row[7]) if row[7] else {}
         raw_tags = metadata.get("tags") if isinstance(metadata, dict) else None
@@ -496,6 +505,8 @@ class PgVectorKBStore(BaseKBStore):
             tags=tags,
             chunk_count=chunk_count,
             created_at=row[8],
+            credibility_score=float(row[9]) if row[9] is not None else 1.0,
+            removal_flagged=bool(row[10]) if row[10] is not None else False,
         )
 
     @staticmethod
@@ -534,6 +545,9 @@ class PgVectorKBStore(BaseKBStore):
         if filters.date_to is not None:
             clauses.append("d.date_published < %s")
             params.append(filters.date_to.strftime("%Y-%m-%d"))
+        if filters.removal_flagged is not None:
+            clauses.append("d.removal_flagged = %s")
+            params.append(filters.removal_flagged)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return where, params
@@ -548,6 +562,7 @@ class PgVectorKBStore(BaseKBStore):
         sql = f"""
             SELECT d.id, d.content, d.title, d.source, d.source_url, d.topic,
                    d.date_published, d.metadata, d.created_at,
+                   d.credibility_score, d.removal_flagged,
                    COALESCE(cc.chunk_count, 0) AS chunk_count
             FROM documents d
             LEFT JOIN (
@@ -566,10 +581,11 @@ class PgVectorKBStore(BaseKBStore):
         out: List[KBDocument] = []
         for row in rows:
             # row layout: (id, content, title, source, source_url, topic,
-            #              date_published, metadata, created_at, chunk_count)
+            #              date_published, metadata, created_at,
+            #              credibility_score, removal_flagged, chunk_count)
             created_at = str(row[8]) if row[8] else None
-            base_row = (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], created_at)
-            out.append(self._row_to_document(base_row, chunk_count=int(row[9])))
+            base_row = (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], created_at, row[9], row[10])
+            out.append(self._row_to_document(base_row, chunk_count=int(row[11])))
         return out
 
     def count_documents(
@@ -601,7 +617,8 @@ class PgVectorKBStore(BaseKBStore):
                 cur.execute(
                     """
                     SELECT id, content, title, source, source_url, topic,
-                           date_published, metadata, created_at
+                           date_published, metadata, created_at,
+                           credibility_score, removal_flagged
                     FROM documents
                     WHERE id = %s
                     FOR UPDATE
@@ -678,6 +695,8 @@ class PgVectorKBStore(BaseKBStore):
             new_date_published,
             json.dumps(new_metadata) if new_metadata else None,
             created_at,
+            row[9],  # credibility_score
+            row[10],  # removal_flagged
         )
         return self._row_to_document(updated_row, chunk_count=chunk_count)
 
@@ -700,6 +719,59 @@ class PgVectorKBStore(BaseKBStore):
             "chunks": chunk_count,
             "vectors": vector_count,
         }
+
+    def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
+        """Decay credibility scores for source='feedback' documents (XMGPLAT-10933).
+
+        Uses a single CTE UPDATE for efficiency.
+        """
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH updated AS (
+                        UPDATE documents
+                        SET
+                            credibility_score = GREATEST(0.0, credibility_score - %s),
+                            removal_flagged    = (GREATEST(0.0, credibility_score - %s) <= %s)
+                        WHERE source = 'feedback' AND removal_flagged = false
+                        RETURNING removal_flagged
+                    )
+                    SELECT
+                        COUNT(*)                                        AS total_updated,
+                        COUNT(*) FILTER (WHERE removal_flagged = true)  AS newly_flagged
+                    FROM updated
+                    """,
+                    (decay_rate, decay_rate, threshold),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return int(row[0]), int(row[1])
+
+    def reset_credibility(self, doc_id: str) -> KBDocument:
+        """Reset credibility_score to 1.0 and removal_flagged to false (XMGPLAT-10933)."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE documents
+                    SET credibility_score = 1.0, removal_flagged = false
+                    WHERE id = %s
+                    RETURNING id, content, title, source, source_url, topic,
+                              date_published, metadata, created_at,
+                              credibility_score, removal_flagged
+                    """,
+                    (doc_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    conn.rollback()
+                    raise KBDocumentNotFoundError(f"kb document {doc_id} not found")
+            conn.commit()
+        created_at = str(row[8]) if row[8] else None
+        return self._row_to_document(
+            (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], created_at, row[9], row[10])
+        )
 
     def close(self) -> None:
         """Close the connection pool."""

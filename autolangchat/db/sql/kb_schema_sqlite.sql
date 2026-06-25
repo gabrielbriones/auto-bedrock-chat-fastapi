@@ -37,3 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
 CREATE INDEX IF NOT EXISTS idx_documents_topic ON documents(topic);
 CREATE INDEX IF NOT EXISTS idx_documents_date ON documents(date_published);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+
+-- Credibility tracking columns and index are added in Python (_init_schema)
+-- because SQLite < 3.37.0 does not support ALTER TABLE ... ADD COLUMN IF NOT EXISTS,
+-- and the index on removal_flagged must be created after the column exists.

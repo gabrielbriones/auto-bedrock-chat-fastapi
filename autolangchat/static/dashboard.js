@@ -453,7 +453,7 @@
     // KB BROWSER VIEW
     // ================================================================
 
-    var _kbState = { source: '', topic: '', tags: '', date_from: '', date_to: '', offset: 0 };
+    var _kbState = { source: '', topic: '', tags: '', date_from: '', date_to: '', removal_flagged: null, offset: 0 };
 
     function renderKBBrowserShell() {
         var view = document.getElementById('view-kb-browser');
@@ -479,16 +479,25 @@
             _kbState.tags      = qs('#kb-tags').value.trim();
             _kbState.date_from = qs('#kb-date-from').value;
             _kbState.date_to   = qs('#kb-date-to').value;
+            _kbState.removal_flagged = qs('#kb-flagged-only').checked ? true : null;
             _kbState.offset    = 0;
             loadKBBrowser(_kbState);
         });
         var resetBtn = el('button', 'btn-secondary', 'Reset');
         resetBtn.style.padding = '7px 14px';
         resetBtn.addEventListener('click', function () {
-            _kbState = { source: '', topic: '', tags: '', date_from: '', date_to: '', offset: 0 };
-            qsa('#view-kb-browser select, #view-kb-browser input').forEach(function (i) { i.value = ''; });
+            _kbState = { source: '', topic: '', tags: '', date_from: '', date_to: '', removal_flagged: null, offset: 0 };
+            qsa('#view-kb-browser select, #view-kb-browser input').forEach(function (i) {
+                if (i.type === 'checkbox') { i.checked = false; } else { i.value = ''; }
+            });
             loadKBBrowser(_kbState);
         });
+        // Flagged-only checkbox
+        var flaggedLabel = el('label', 'filter-checkbox-label');
+        var flaggedCb = el('input'); flaggedCb.type = 'checkbox'; flaggedCb.id = 'kb-flagged-only';
+        flaggedLabel.appendChild(flaggedCb);
+        flaggedLabel.appendChild(document.createTextNode(' Flagged only'));
+        acts.appendChild(flaggedLabel);
         acts.appendChild(applyBtn); acts.appendChild(resetBtn);
         fb.appendChild(acts); view.appendChild(fb);
 
@@ -522,7 +531,7 @@
         var table = el('table', 'data-table');
         var thead = document.createElement('thead');
         var hrow = document.createElement('tr');
-        ['Title / ID', 'Source', 'Topic', 'Tags', 'Chunks', 'Created'].forEach(function (h) {
+        ['Title / ID', 'Source', 'Topic', 'Tags', 'Chunks', 'Credibility', 'Created'].forEach(function (h) {
             var th = el('th'); th.textContent = h; hrow.appendChild(th);
         });
         thead.appendChild(hrow); table.appendChild(thead);
@@ -530,19 +539,24 @@
         var tbody = document.createElement('tbody');
         if (!data.items || data.items.length === 0) {
             var erow = document.createElement('tr');
-            var etd = document.createElement('td'); etd.colSpan = 6;
+            var etd = document.createElement('td'); etd.colSpan = 7;
             var emp = el('div', 'table-empty', 'No KB documents match the current filters.');
             etd.appendChild(emp); erow.appendChild(etd); tbody.appendChild(erow);
         } else {
             data.items.forEach(function (doc) {
                 var row = document.createElement('tr');
-                row.className = 'clickable';
+                row.className = 'clickable' + (doc.removal_flagged ? ' kb-flagged-row' : '');
                 row.title = 'Click to edit';
                 row.addEventListener('click', function () { openKBEditor(doc.id); });
 
-                // Title with ID as subtitle
+                // Title with ID as subtitle; flag icon if removal_flagged
                 var tdTitle = document.createElement('td');
                 var titleText = el('div'); titleText.textContent = trunc(doc.title || doc.id, 40);
+                if (doc.removal_flagged) {
+                    var flagIcon = el('span', 'credibility-flag-icon'); flagIcon.textContent = '⚑';
+                    flagIcon.title = 'Flagged for removal — excluded from RAG';
+                    titleText.appendChild(flagIcon);
+                }
                 var idSmall = el('small', 'text-muted text-small'); idSmall.textContent = trunc(doc.id, 50);
                 tdTitle.appendChild(titleText); tdTitle.appendChild(idSmall);
 
@@ -550,9 +564,22 @@
                 var tdTopic  = el('td', 'truncate'); tdTopic.textContent = doc.topic || '—';
                 var tdTags   = el('td'); tdTags.appendChild(makeTagList(doc.tags || []));
                 var tdChunks = el('td'); tdChunks.textContent = doc.chunk_count != null ? String(doc.chunk_count) : '—';
+
+                // Credibility badge
+                var tdCred = el('td');
+                var score = typeof doc.credibility_score === 'number' ? doc.credibility_score : 1.0;
+                var badgeCls = doc.removal_flagged ? 'danger'
+                    : score >= 0.7 ? 'good'
+                    : score >= 0.3 ? 'warn'
+                    : 'danger';
+                var badge = el('span', 'credibility-badge ' + badgeCls);
+                badge.textContent = (Math.round(score * 100)) + '%';
+                badge.title = 'Credibility score: ' + score.toFixed(2) + (doc.removal_flagged ? ' (flagged for removal)' : '');
+                tdCred.appendChild(badge);
+
                 var tdDate   = el('td'); tdDate.textContent = fmtDate(doc.created_at);
 
-                [tdTitle, tdSource, tdTopic, tdTags, tdChunks, tdDate].forEach(function (td) { row.appendChild(td); });
+                [tdTitle, tdSource, tdTopic, tdTags, tdChunks, tdCred, tdDate].forEach(function (td) { row.appendChild(td); });
                 tbody.appendChild(row);
             });
         }
@@ -997,10 +1024,36 @@ if (window.marked && window.DOMPurify) {
         if (doc.source_url) metaRow.appendChild(metaItem('URL', trunc(doc.source_url, 40)));
         metaRow.appendChild(metaItem('Created', fmtDate(doc.created_at)));
         metaRow.appendChild(metaItem('Chunks', doc.chunk_count != null ? String(doc.chunk_count) : '—'));
+
+        // Credibility score + flagged status (XMGPLAT-10933)
+        var credScore = typeof doc.credibility_score === 'number' ? doc.credibility_score : 1.0;
+        var credBadgeCls = doc.removal_flagged ? 'danger'
+            : credScore >= 0.7 ? 'good'
+            : credScore >= 0.3 ? 'warn'
+            : 'danger';
+        var credBadge = el('span', 'credibility-badge ' + credBadgeCls);
+        credBadge.textContent = (Math.round(credScore * 100)) + '%';
+        credBadge.title = credScore.toFixed(2);
+        var credItem = el('div', 'meta-item');
+        credItem.appendChild(el('span', 'mkey', 'Credibility'));
+        credItem.appendChild(credBadge);
+        metaRow.appendChild(credItem);
+
+        if (doc.removal_flagged) {
+            var flagItem = el('div', 'meta-item');
+            flagItem.appendChild(el('span', 'mkey', 'Status'));
+            var flagBadge = el('span', 'credibility-badge danger'); flagBadge.textContent = '⚑ Flagged';
+            flagItem.appendChild(flagBadge);
+            metaRow.appendChild(flagItem);
+        }
+
         metaSec.appendChild(metaRow);
         frag.appendChild(metaSec);
 
-        // Re-embed warning (shown when content is dirty)
+        // Flagged warning banner (shown when removal_flagged)
+        var flaggedBanner = el('div', 'warning-banner' + (doc.removal_flagged ? ' flagged visible' : ' flagged'));
+        flaggedBanner.textContent = '⚠ This article is flagged for removal and is excluded from RAG results. Use Restore Score to re-enable it.';
+        frag.appendChild(flaggedBanner);
         var warnBanner = el('div', 'warning-banner');
         warnBanner.id = 'kb-reembed-warn';
         warnBanner.textContent = '⚠ Saving changes to content will re-embed this document and may take several seconds.';
@@ -1125,6 +1178,31 @@ if (window.marked && window.DOMPurify) {
                     });
             });
             footer.appendChild(rollbackBtn);
+
+            // Restore Score button — shown when score < 1.0 or article is flagged
+            var needsRestore = doc.removal_flagged || credScore < 1.0;
+            var restoreBtn = el('button', 'btn-secondary', 'Restore Score');
+            restoreBtn.title = 'Reset credibility score to 1.0 and remove the removal flag';
+            if (!needsRestore) { restoreBtn.disabled = true; restoreBtn.title = 'Score is already at maximum'; }
+            restoreBtn.addEventListener('click', function () {
+                restoreBtn.disabled = true;
+                restoreBtn.textContent = 'Restoring…';
+                rbFooterErr.classList.remove('visible');
+                apiPost('/kb/documents/' + encodeURIComponent(doc.id) + '/reset-credibility', {})
+                    .then(function () {
+                        showToast('Credibility score reset to 1.0.', 'success');
+                        hide('kbEditor');
+                        openKBEditor(doc.id);
+                        loadKBBrowser(_kbState);
+                    })
+                    .catch(function (e) {
+                        rbFooterErr.textContent = 'Restore failed: ' + String(e);
+                        rbFooterErr.classList.add('visible');
+                        restoreBtn.disabled = !needsRestore;
+                        restoreBtn.textContent = 'Restore Score';
+                    });
+            });
+            footer.appendChild(restoreBtn);
         }
 
         footer.appendChild(footerRight);

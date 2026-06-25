@@ -72,6 +72,22 @@ class SQLiteKBStore(BaseKBStore):
         schema_sql = (Path(__file__).resolve().parent / "sql" / "kb_schema_sqlite.sql").read_text()
         self.conn.executescript(schema_sql)
 
+        # Idempotent column migrations (XMGPLAT-10933).
+        # ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` was added in SQLite
+        # 3.37.0; use try/except to stay compatible with older versions.
+        _column_migrations = [
+            "ALTER TABLE documents ADD COLUMN credibility_score REAL NOT NULL DEFAULT 1.0",
+            "ALTER TABLE documents ADD COLUMN removal_flagged INTEGER NOT NULL DEFAULT 0",
+        ]
+        for stmt in _column_migrations:
+            try:
+                self.conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # column already exists
+        # Index on removal_flagged must be created after the column exists.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_removal_flagged " "ON documents(removal_flagged)")
+        self.conn.commit()
+
         # Backfill FTS5 index for any chunks not yet indexed.
         # This must stay in Python because we need the rowcount for logging.
         cursor = self.conn.cursor()
@@ -219,6 +235,7 @@ class SQLiteKBStore(BaseKBStore):
         limit: int = 3,
         min_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Perform semantic similarity search.
@@ -247,7 +264,9 @@ class SQLiteKBStore(BaseKBStore):
                 d.topic,
                 d.date_published,
                 d.metadata as doc_metadata,
-                vec_distance_cosine(v.embedding, ?) as distance
+                vec_distance_cosine(v.embedding, ?) as distance,
+                d.credibility_score,
+                d.removal_flagged
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             JOIN vec_chunks v ON c.id = v.chunk_id
@@ -274,6 +293,9 @@ class SQLiteKBStore(BaseKBStore):
                 query += " AND d.date_published <= ?"
                 params.append(filters["date_before"])
 
+        if exclude_flagged:
+            query += " AND d.removal_flagged = 0"
+
         # Order by similarity and limit results
         query += " ORDER BY distance ASC LIMIT ?"
         params.append(limit)
@@ -284,8 +306,9 @@ class SQLiteKBStore(BaseKBStore):
         # Format results
         formatted_results = []
         for row in results:
-            # Convert distance to similarity score (1 - distance for cosine)
-            similarity_score = 1.0 - row[10]
+            # Convert distance to similarity score (1 - distance for cosine),
+            # weighted by the document's credibility score (row[11]).
+            similarity_score = (1.0 - row[10]) * row[11]
 
             # Skip if below minimum score
             if similarity_score < min_score:
@@ -533,7 +556,8 @@ class SQLiteKBStore(BaseKBStore):
         cursor.execute(
             """
             SELECT id, content, title, source, source_url, topic,
-                   date_published, metadata, created_at
+                   date_published, metadata, created_at,
+                   credibility_score, removal_flagged
             FROM documents
             WHERE id = ?
         """,
@@ -554,6 +578,8 @@ class SQLiteKBStore(BaseKBStore):
             "date_published": row[6],
             "metadata": json.loads(row[7]) if row[7] else {},
             "created_at": row[8],
+            "credibility_score": float(row[9]) if row[9] is not None else 1.0,
+            "removal_flagged": bool(row[10]) if row[10] is not None else False,
         }
 
     @_locked
@@ -616,7 +642,8 @@ class SQLiteKBStore(BaseKBStore):
     @staticmethod
     def _row_to_document(row, chunk_count: Optional[int] = None) -> KBDocument:
         """Convert a SELECT row (id, content, title, source, source_url, topic,
-        date_published, metadata, created_at[, chunk_count]) into a KBDocument.
+        date_published, metadata, created_at, credibility_score,
+        removal_flagged[, chunk_count]) into a KBDocument.
         """
         metadata = json.loads(row[7]) if row[7] else {}
         raw_tags = metadata.get("tags") if isinstance(metadata, dict) else None
@@ -634,6 +661,8 @@ class SQLiteKBStore(BaseKBStore):
             tags=tags,
             chunk_count=chunk_count,
             created_at=row[8],
+            credibility_score=float(row[9]) if row[9] is not None else 1.0,
+            removal_flagged=bool(row[10]) if row[10] is not None else False,
         )
 
     @staticmethod
@@ -669,6 +698,9 @@ class SQLiteKBStore(BaseKBStore):
         if filters.date_to is not None:
             clauses.append("d.date_published < ?")
             params.append(filters.date_to.strftime("%Y-%m-%d"))
+        if filters.removal_flagged is not None:
+            clauses.append("d.removal_flagged = ?")
+            params.append(1 if filters.removal_flagged else 0)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return where, params
@@ -684,6 +716,7 @@ class SQLiteKBStore(BaseKBStore):
         sql = f"""
             SELECT d.id, d.content, d.title, d.source, d.source_url, d.topic,
                    d.date_published, d.metadata, d.created_at,
+                   d.credibility_score, d.removal_flagged,
                    COALESCE(cc.chunk_count, 0) AS chunk_count
             FROM documents d
             LEFT JOIN (
@@ -698,7 +731,7 @@ class SQLiteKBStore(BaseKBStore):
         cursor = self.conn.cursor()
         cursor.execute(sql, params + [int(limit), int(offset)])
         rows = cursor.fetchall()
-        return [self._row_to_document(row[:9], chunk_count=row[9]) for row in rows]
+        return [self._row_to_document(row[:11], chunk_count=row[11]) for row in rows]
 
     @_locked
     def count_documents(
@@ -745,7 +778,8 @@ class SQLiteKBStore(BaseKBStore):
             cursor.execute(
                 """
                 SELECT id, content, title, source, source_url, topic,
-                       date_published, metadata, created_at
+                       date_published, metadata, created_at,
+                       credibility_score, removal_flagged
                 FROM documents
                 WHERE id = ?
                 """,
@@ -830,6 +864,8 @@ class SQLiteKBStore(BaseKBStore):
             new_date_published,
             json.dumps(new_metadata) if new_metadata else None,
             row[8],
+            row[9],  # credibility_score
+            row[10],  # removal_flagged
         )
         return self._row_to_document(updated_row, chunk_count=chunk_count)
 
@@ -853,6 +889,47 @@ class SQLiteKBStore(BaseKBStore):
             "vectors": vector_count,
             "db_size_bytes": Path(self.db_path).stat().st_size if Path(self.db_path).exists() else 0,
         }
+
+    @_locked
+    def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, credibility_score FROM documents " "WHERE source = 'feedback' AND removal_flagged = 0"
+        )
+        rows = cursor.fetchall()
+        updated = 0
+        newly_flagged = 0
+        for doc_id, score in rows:
+            new_score = max(0.0, float(score) - decay_rate)
+            flagged = 1 if new_score <= threshold else 0
+            newly_flagged += flagged
+            cursor.execute(
+                "UPDATE documents SET credibility_score = ?, removal_flagged = ? WHERE id = ?",
+                (new_score, flagged, doc_id),
+            )
+            updated += 1
+        self.conn.commit()
+        return updated, newly_flagged
+
+    @_locked
+    def reset_credibility(self, doc_id: str) -> KBDocument:
+        """Reset credibility_score to 1.0 and removal_flagged to 0 (XMGPLAT-10933)."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE documents SET credibility_score = 1.0, removal_flagged = 0 WHERE id = ?",
+            (doc_id,),
+        )
+        if cursor.rowcount == 0:
+            raise KBDocumentNotFoundError(f"kb document {doc_id} not found")
+        self.conn.commit()
+        cursor.execute(
+            "SELECT id, content, title, source, source_url, topic, "
+            "date_published, metadata, created_at, credibility_score, removal_flagged "
+            "FROM documents WHERE id = ?",
+            (doc_id,),
+        )
+        row = cursor.fetchone()
+        return self._row_to_document(row)
 
     @_locked
     def close(self):

@@ -836,6 +836,40 @@ class ChatConfig(BaseSettings):
         description="Weight for keyword (word-matching) score in KB search (default: 0.3). Set to 0 to disable keyword matching.",
     )
 
+    kb_credibility_decay_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_KB_CREDIBILITY_DECAY_ENABLED",
+        description=(
+            "Enable the background credibility-decay task for synthesized KB articles. "
+            "When disabled (default) all articles keep their credibility_score indefinitely "
+            "and must be removed manually. Set to true to activate automatic aging "
+            "(XMGPLAT-10933)."
+        ),
+    )
+
+    kb_credibility_decay_rate: float = Field(
+        default=0.05,
+        alias="AUTOCHAT_KB_CREDIBILITY_DECAY_RATE",
+        gt=0.0,
+        lt=1.0,
+        description="Amount subtracted from credibility_score per decay cycle for synthesized articles (XMGPLAT-10933).",
+    )
+
+    kb_credibility_removal_threshold: float = Field(
+        default=0.3,
+        alias="AUTOCHAT_KB_CREDIBILITY_REMOVAL_THRESHOLD",
+        ge=0.0,
+        le=1.0,
+        description="credibility_score at or below which a synthesized article is flagged for removal (XMGPLAT-10933).",
+    )
+
+    kb_credibility_decay_interval_hours: int = Field(
+        default=168,
+        alias="AUTOCHAT_KB_CREDIBILITY_DECAY_INTERVAL_HOURS",
+        gt=0,
+        description="How often (in hours) the credibility decay background task runs. Default: 168 h (1 week) (XMGPLAT-10933).",
+    )
+
     model_config = SettingsConfigDict(
         env_file=_get_env_file(),
         env_file_encoding="utf-8",
