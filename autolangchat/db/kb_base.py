@@ -164,6 +164,7 @@ class BaseKBStore(ABC):
         query: str,
         limit: int = 3,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """Full-text keyword search (BM25 or equivalent)."""
 
@@ -177,6 +178,7 @@ class BaseKBStore(ABC):
         filters: Optional[Dict[str, Any]] = None,
         semantic_weight: float = 0.7,
         keyword_weight: float = 0.3,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """Combined semantic + keyword search with configurable weights."""
 

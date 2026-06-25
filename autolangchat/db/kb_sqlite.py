@@ -82,8 +82,9 @@ class SQLiteKBStore(BaseKBStore):
         for stmt in _column_migrations:
             try:
                 self.conn.execute(stmt)
-            except sqlite3.OperationalError:
-                pass  # column already exists
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
         # Index on removal_flagged must be created after the column exists.
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_removal_flagged " "ON documents(removal_flagged)")
         self.conn.commit()
@@ -369,6 +370,7 @@ class SQLiteKBStore(BaseKBStore):
         query: str,
         limit: int = 3,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Perform keyword-based full-text search (BM25 ranking).
@@ -377,6 +379,7 @@ class SQLiteKBStore(BaseKBStore):
             query: Search query text
             limit: Maximum number of results
             filters: Optional filters (source, topic, date_after, date_before)
+            exclude_flagged: If True, exclude documents with removal_flagged=1
 
         Returns:
             List of matching chunks with metadata and keyword scores
@@ -428,6 +431,9 @@ class SQLiteKBStore(BaseKBStore):
                 sql_query += " AND d.date_published <= ?"
                 params.append(filters["date_before"])
 
+        if exclude_flagged:
+            sql_query += " AND d.removal_flagged = 0"
+
         # Order by BM25 score (rank is negative in FTS5, lower is better)
         sql_query += " ORDER BY fts.rank LIMIT ?"
         params.append(limit)
@@ -471,6 +477,7 @@ class SQLiteKBStore(BaseKBStore):
         filters: Optional[Dict[str, Any]] = None,
         semantic_weight: float = 0.7,
         keyword_weight: float = 0.3,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Perform combined search using semantic similarity and keyword matching.
@@ -483,6 +490,7 @@ class SQLiteKBStore(BaseKBStore):
             filters: Optional filters (source, topic, date_after, date_before)
             semantic_weight: Weight for semantic similarity (default 0.7)
             keyword_weight: Weight for keyword matching score (default 0.3)
+            exclude_flagged: If True, exclude documents with removal_flagged=1
 
         Returns:
             List of matching chunks with combined scores
@@ -491,10 +499,19 @@ class SQLiteKBStore(BaseKBStore):
         candidate_limit = limit * 3
 
         semantic_results = self.semantic_search(
-            query_embedding=query_embedding, limit=candidate_limit, min_score=0.0, filters=filters
+            query_embedding=query_embedding,
+            limit=candidate_limit,
+            min_score=0.0,
+            filters=filters,
+            exclude_flagged=exclude_flagged,
         )
 
-        bm25_results = self.keyword_search(query=query, limit=candidate_limit, filters=filters)
+        bm25_results = self.keyword_search(
+            query=query,
+            limit=candidate_limit,
+            filters=filters,
+            exclude_flagged=exclude_flagged,
+        )
 
         # Combine results by chunk_id
         combined = {}
@@ -900,7 +917,7 @@ class SQLiteKBStore(BaseKBStore):
         updated = 0
         newly_flagged = 0
         for doc_id, score in rows:
-            new_score = max(0.0, float(score) - decay_rate)
+            new_score = max(0.0, (float(score) if score is not None else 1.0) - decay_rate)
             flagged = 1 if new_score <= threshold else 0
             newly_flagged += flagged
             cursor.execute(

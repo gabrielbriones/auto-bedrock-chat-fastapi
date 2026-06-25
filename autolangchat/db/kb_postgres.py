@@ -371,8 +371,10 @@ class PgVectorKBStore(BaseKBStore):
         query: str,
         limit: int = 3,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         filter_sql, filter_params = self._build_filter_clause(filters)
+        flagged_sql = " AND d.removal_flagged = false" if exclude_flagged else ""
 
         sql = f"""
             SELECT
@@ -390,7 +392,7 @@ class PgVectorKBStore(BaseKBStore):
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE c.content_tsv @@ plainto_tsquery('english', %s)
-            {filter_sql}
+            {filter_sql}{flagged_sql}
             ORDER BY rank DESC
             LIMIT %s
         """
@@ -432,6 +434,7 @@ class PgVectorKBStore(BaseKBStore):
         filters: Optional[Dict[str, Any]] = None,
         semantic_weight: float = 0.7,
         keyword_weight: float = 0.3,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         candidate_limit = limit * 3
 
@@ -440,11 +443,13 @@ class PgVectorKBStore(BaseKBStore):
             limit=candidate_limit,
             min_score=0.0,
             filters=filters,
+            exclude_flagged=exclude_flagged,
         )
         bm25_results = self.keyword_search(
             query=query,
             limit=candidate_limit,
             filters=filters,
+            exclude_flagged=exclude_flagged,
         )
 
         combined: Dict[str, Dict[str, Any]] = {}
