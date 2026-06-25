@@ -36,7 +36,8 @@ async def run_credibility_decay_loop(store: "BaseKBStore", config: "ChatConfig")
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            updated, newly_flagged = store.apply_credibility_decay(
+            updated, newly_flagged = await asyncio.to_thread(
+                store.apply_credibility_decay,
                 config.kb_credibility_decay_rate,
                 config.kb_credibility_removal_threshold,
             )
@@ -48,5 +49,7 @@ async def run_credibility_decay_loop(store: "BaseKBStore", config: "ChatConfig")
                 )
             else:
                 logger.debug("KB credibility decay: no synthesized articles to update")
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("KB credibility decay task failed — will retry next cycle")

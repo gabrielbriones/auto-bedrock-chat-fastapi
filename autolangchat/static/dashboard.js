@@ -507,11 +507,12 @@
 
     function loadKBBrowser(state) {
         var params = new URLSearchParams({ limit: PAGE_SIZE, offset: state.offset });
-        if (state.source)    params.set('source', state.source);
-        if (state.topic)     params.set('topic', state.topic);
-        if (state.tags)      params.set('tags', state.tags);
-        if (state.date_from) params.set('date_from', state.date_from);
-        if (state.date_to)   params.set('date_to', state.date_to);
+        if (state.source)                    params.set('source', state.source);
+        if (state.topic)                     params.set('topic', state.topic);
+        if (state.tags)                      params.set('tags', state.tags);
+        if (state.date_from)                 params.set('date_from', state.date_from);
+        if (state.date_to)                   params.set('date_to', state.date_to);
+        if (state.removal_flagged !== null)   params.set('removal_flagged', String(state.removal_flagged));
 
         var wrap = document.getElementById('kb-table-wrap');
         if (wrap) { wrap.innerHTML = ''; wrap.appendChild(buildLoadingRow()); }
