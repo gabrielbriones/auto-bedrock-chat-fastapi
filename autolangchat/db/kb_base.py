@@ -154,6 +154,7 @@ class BaseKBStore(ABC):
         limit: int = 3,
         min_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """Vector-similarity search.  Return results sorted by descending score."""
 
@@ -163,6 +164,7 @@ class BaseKBStore(ABC):
         query: str,
         limit: int = 3,
         filters: Optional[Dict[str, Any]] = None,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """Full-text keyword search (BM25 or equivalent)."""
 
@@ -176,6 +178,7 @@ class BaseKBStore(ABC):
         filters: Optional[Dict[str, Any]] = None,
         semantic_weight: float = 0.7,
         keyword_weight: float = 0.3,
+        exclude_flagged: bool = True,
     ) -> List[Dict[str, Any]]:
         """Combined semantic + keyword search with configurable weights."""
 
@@ -186,6 +189,26 @@ class BaseKBStore(ABC):
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]:
         """Return storage statistics (document/chunk/vector counts, etc.)."""
+
+    @abstractmethod
+    def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
+        """Decay credibility scores for synthesized (source='feedback') documents.
+
+        Subtracts *decay_rate* from each non-flagged feedback document's
+        ``credibility_score``, clamping to ``0.0``.  Documents whose new score
+        is at or below *threshold* are also set ``removal_flagged=True``.
+
+        Returns:
+            ``(total_updated, newly_flagged)`` — counts for logging.
+        """
+
+    @abstractmethod
+    def reset_credibility(self, doc_id: str) -> "KBDocument":
+        """Reset *doc_id*'s credibility_score to 1.0 and removal_flagged to False.
+
+        Raises :class:`~autolangchat.exceptions.KBDocumentNotFoundError` if the
+        document does not exist.
+        """
 
     @abstractmethod
     def close(self) -> None:

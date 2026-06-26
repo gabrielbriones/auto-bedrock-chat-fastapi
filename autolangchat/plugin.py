@@ -220,6 +220,7 @@ class AutoLangChatPlugin:
 
         # Shared KB store (created once, reused across requests)
         self._kb_store = None
+        self._credibility_decay_task: "asyncio.Task | None" = None
         if self.config.enable_rag:
             from .db import create_kb_store
 
@@ -1603,6 +1604,12 @@ class AutoLangChatPlugin:
         # 4. Open the feedback-store connection pool
         await self._startup_open_feedback_store()
 
+        # 5. Schedule KB credibility decay background task (opt-in)
+        if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
+            from .kb_credibility import run_credibility_decay_loop
+
+            self._credibility_decay_task = asyncio.create_task(run_credibility_decay_loop(self._kb_store, self.config))
+
     async def _startup_open_feedback_store(self) -> None:
         """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
 
@@ -1633,6 +1640,13 @@ class AutoLangChatPlugin:
     async def shutdown(self):
         """Shutdown the Bedrock chat plugin"""
         try:
+            if self._credibility_decay_task is not None and not self._credibility_decay_task.done():
+                self._credibility_decay_task.cancel()
+                try:
+                    await self._credibility_decay_task
+                except asyncio.CancelledError:
+                    pass
+                self._credibility_decay_task = None
             await self.websocket_handler.shutdown()
             await self.tool_manager.shutdown()
             if self._kb_store is not None:

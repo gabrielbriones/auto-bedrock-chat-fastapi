@@ -190,6 +190,10 @@ def register_admin_kb_routes(
             None,
             description="Exclusive upper bound on date_published (ISO 8601)",
         ),
+        removal_flagged: Optional[bool] = Query(
+            None,
+            description="Filter by removal_flagged status (true = flagged only, false = unflagged only)",
+        ),
         limit: int = Query(_LIMIT_DEFAULT, ge=1, le=_LIMIT_MAX),
         offset: int = Query(0, ge=0),
     ) -> KBDocumentListResponse:
@@ -200,6 +204,7 @@ def register_admin_kb_routes(
                 tags=_parse_tags_csv(tags),
                 date_from=date_from,
                 date_to=date_to,
+                removal_flagged=removal_flagged,
             )
         except ValidationError as exc:
             raise AdminAPIError(
@@ -212,6 +217,36 @@ def register_admin_kb_routes(
         items = await asyncio.to_thread(kb_store.list_documents, filters, limit, offset)
         total = await asyncio.to_thread(kb_store.count_documents, filters)
         return KBDocumentListResponse(items=items, total=total, limit=limit, offset=offset)
+
+    @router.post(
+        "/reset-credibility/{doc_id:path}",
+        response_model=KBDocument,
+        responses={**ADMIN_COMMON_RESPONSES},
+        summary="Reset credibility score to 1.0 and clear removal_flagged",
+    )
+    async def reset_credibility(
+        doc_id: str,
+        identity=Depends(require_admin),
+    ) -> KBDocument:
+        """Reset a document's credibility_score to 1.0 and removal_flagged to False.
+
+        Raises 404 via the global KBDocumentNotFoundError handler if the
+        document does not exist.
+        """
+        actor = identity.user_id
+        lock = await _lock_for(doc_id)
+        async with lock:
+            updated = await asyncio.to_thread(kb_store.reset_credibility, doc_id)
+            audit_logger.info(
+                "kb.document.reset_credibility",
+                extra={
+                    "action": "kb.document.reset_credibility",
+                    "actor_user_id": actor,
+                    "target_id": doc_id,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return updated
 
     @router.get(
         "/{doc_id:path}",
@@ -250,6 +285,8 @@ def register_admin_kb_routes(
             tags=tags,
             chunk_count=None,
             created_at=raw.get("created_at"),
+            credibility_score=float(raw["credibility_score"]) if raw.get("credibility_score") is not None else 1.0,
+            removal_flagged=bool(raw.get("removal_flagged")),
         )
 
     @router.patch(

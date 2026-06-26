@@ -238,7 +238,16 @@ body {
     box-shadow: 0 0 0 2px rgba(102,126,234,0.18);
 }
 
-.filter-actions { display: flex; gap: 8px; align-items: flex-end; }
+.filter-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.filter-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.875rem;
+    color: #4a5568;
+    cursor: pointer;
+    white-space: nowrap;
+}
 
 /* ---- Data table ---- */
 .data-table-wrap {
@@ -911,6 +920,37 @@ body {
 .btn-danger:disabled, .btn-success:disabled, .btn-primary:disabled, .btn-secondary:disabled, .btn-warning:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+}
+
+/* ---- Credibility badges (XMGPLAT-10933) ---- */
+.credibility-badge {
+    display: inline-block;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+}
+.credibility-badge.good   { background: #d1fae5; color: #065f46; }
+.credibility-badge.warn   { background: #fef3c7; color: #92400e; }
+.credibility-badge.danger { background: #fee2e2; color: #991b1b; }
+
+.credibility-flag-icon {
+    color: #ef4444;
+    font-size: 0.8em;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.kb-flagged-row td { background: #fff5f5 !important; }
+.kb-flagged-row:hover td { background: #fed7d7 !important; }
+
+/* ---- Flagged warning banner (red variant) ---- */
+.warning-banner.flagged {
+    background: #fff5f5;
+    border-color: #fc8181;
+    color: #742a2a;
 }
 
 /* ---- Utility ---- */

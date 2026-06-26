@@ -334,6 +334,8 @@ class KBDocument(BaseModel):
     tags: List[str] = Field(default_factory=list)
     chunk_count: Optional[int] = None
     created_at: Optional[datetime] = None
+    credibility_score: float = 1.0
+    removal_flagged: bool = False
 
     @field_validator("tags")
     @classmethod
@@ -370,6 +372,7 @@ class KBDocumentListFilters(BaseModel):
     tags: Optional[List[str]] = None
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
+    removal_flagged: Optional[bool] = None
 
     @field_validator("source", "topic")
     @classmethod
