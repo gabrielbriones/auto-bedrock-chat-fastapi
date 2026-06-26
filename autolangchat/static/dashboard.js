@@ -293,6 +293,10 @@
         fb.appendChild(acts);
         view.appendChild(fb);
 
+        // Bulk-actions bar — holds the single "Delete Selected" button that
+        // appears above the table once at least one rejected entry is checked.
+        var bulk = el('div', 'bulk-actions'); bulk.id = 'fr-bulk-actions'; view.appendChild(bulk);
+
         var wrap = el('div', 'data-table-wrap'); wrap.id = 'fr-table-wrap'; view.appendChild(wrap);
         var pg = el('div', 'pagination'); pg.id = 'fr-pagination'; view.appendChild(pg);
     }
@@ -328,20 +332,48 @@
         // The Reviewed view supports hard-deleting rejected entries; the queue does not.
         var isReviewed = wrapId === 'fr-table-wrap';
 
+        // Tracks the ids of the rejected entries currently checked for bulk
+        // deletion. Reset on every render (a fresh table = no selection).
+        var selected = new Set();
+        // Row checkboxes for rejected entries, so the header "select all"
+        // control can drive them and reflect their combined state.
+        var rowCheckboxes = [];
+        var selectAll = null;
+
         var table = el('table', 'data-table');
         var thead = document.createElement('thead');
         var hrow = document.createElement('tr');
         var headers = ['User', 'Rating', 'Status', 'Query', 'Created', 'Tags'];
-        if (isReviewed) headers.push('Actions');
+        // Leading "select all" checkbox column for the Reviewed view.
+        if (isReviewed) {
+            var thSelect = el('th', 'col-select');
+            selectAll = document.createElement('input');
+            selectAll.type = 'checkbox';
+            selectAll.title = 'Select all rejected entries';
+            selectAll.setAttribute('aria-label', 'Select all rejected entries');
+            selectAll.addEventListener('change', function () {
+                rowCheckboxes.forEach(function (cb) {
+                    cb.checked = selectAll.checked;
+                    if (selectAll.checked) selected.add(cb._entryId);
+                    else selected.delete(cb._entryId);
+                });
+                selectAll.indeterminate = false;
+                updateBulkBar();
+            });
+            thSelect.appendChild(selectAll);
+            hrow.appendChild(thSelect);
+        }
         headers.forEach(function (h) {
             var th = el('th'); th.textContent = h; hrow.appendChild(th);
         });
         thead.appendChild(hrow); table.appendChild(thead);
 
+        var colCount = headers.length + (isReviewed ? 1 : 0);
+
         var tbody = document.createElement('tbody');
         if (!data.items || data.items.length === 0) {
             var erow = document.createElement('tr');
-            var etd = document.createElement('td'); etd.colSpan = headers.length;
+            var etd = document.createElement('td'); etd.colSpan = colCount;
             var emp = el('div', 'table-empty', 'No feedback entries match the current filters.');
             etd.appendChild(emp); erow.appendChild(etd); tbody.appendChild(erow);
         } else {
@@ -364,11 +396,12 @@
                 var tdDate   = el('td'); tdDate.textContent = fmtDate(entry.created_at);
                 var tdTags   = el('td'); tdTags.appendChild(makeTagList(entry.reviewer_tags || []));
 
-                [tdUser, tdRating, tdStatus, tdQuery, tdDate, tdTags].forEach(function (td) { row.appendChild(td); });
-
+                // Leading checkbox cell first, then the data columns.
                 if (isReviewed) {
-                    row.appendChild(buildFeedbackActionsCell(entry, data, wrapId, pgId, onPageChange));
+                    row.appendChild(buildSelectCell(entry, selected, rowCheckboxes, syncSelectAll, updateBulkBar));
                 }
+
+                [tdUser, tdRating, tdStatus, tdQuery, tdDate, tdTags].forEach(function (td) { row.appendChild(td); });
 
                 tbody.appendChild(row);
             });
@@ -378,50 +411,106 @@
 
         var pg = document.getElementById(pgId);
         if (pg) renderPagination(pg, data.total, data.offset, data.limit, onPageChange);
-    }
 
-    /** Build the "Actions" cell for a Reviewed-table row. Only rejected entries get a Delete button. */
-    function buildFeedbackActionsCell(entry, data, wrapId, pgId, onPageChange) {
-        var tdActions = el('td');
-        if (entry.review_status !== 'rejected') return tdActions;
+        // Keep the "select all" checkbox in sync with individual row checks,
+        // showing an indeterminate state when only some rows are selected.
+        function syncSelectAll() {
+            if (!selectAll) return;
+            var total = rowCheckboxes.length;
+            var checked = selected.size;
+            selectAll.checked = total > 0 && checked === total;
+            selectAll.indeterminate = checked > 0 && checked < total;
+        }
 
-        var delBtn = el('button', 'btn-danger', 'Delete');
-        delBtn.addEventListener('click', function (ev) {
-            ev.stopPropagation();
-            deleteRejectedEntry(entry, data, wrapId, pgId, onPageChange, delBtn, tdActions);
-        });
-        tdActions.appendChild(delBtn);
-        return tdActions;
-    }
-
-    /** Confirm, then hard-delete a rejected entry and optimistically re-render the table. */
-    function deleteRejectedEntry(entry, data, wrapId, pgId, onPageChange, delBtn, tdActions) {
-        if (!window.confirm('Delete this rejected entry? This cannot be undone.')) return;
-
-        delBtn.disabled = true;
-        var existingErr = qs('.row-error', tdActions);
-        if (existingErr) existingErr.remove();
-
-        apiDelete('/feedback/' + encodeURIComponent(entry.id))
-            .then(function () {
-                var idx = data.items.indexOf(entry);
-                if (idx !== -1) data.items.splice(idx, 1);
-                if (typeof data.total === 'number' && data.total > 0) data.total -= 1;
-
-                if (data.items.length === 0 && data.offset > 0) {
-                    onPageChange(Math.max(0, data.offset - data.limit));
-                    return;
-                }
-
-                renderFeedbackTable(data, wrapId, pgId, onPageChange);
-            })
-            .catch(function (e) {
-                delBtn.disabled = false;
-                var errSpan = el('span', 'row-error', String(e && e.message ? e.message : e));
-                errSpan.style.color = 'var(--danger, #c0392b)';
-                errSpan.style.marginLeft = '8px';
-                tdActions.appendChild(errSpan);
+        // Render (or clear) the single bulk-delete button above the table.
+        function updateBulkBar() {
+            if (!isReviewed) return;
+            var bar = document.getElementById('fr-bulk-actions');
+            if (!bar) return;
+            bar.innerHTML = '';
+            if (selected.size === 0) { bar.classList.remove('visible'); return; }
+            bar.classList.add('visible');
+            var count = el('span', 'bulk-count', selected.size + ' selected');
+            var delBtn = el('button', 'btn-danger', 'Delete Selected');
+            delBtn.addEventListener('click', function () {
+                bulkDeleteRejected(Array.from(selected), data, wrapId, pgId, onPageChange);
             });
+            bar.appendChild(count);
+            bar.appendChild(delBtn);
+        }
+
+        // Reset the bulk bar for the freshly rendered (empty-selection) table.
+        if (isReviewed) updateBulkBar();
+    }
+
+    /**
+     * Build the leading checkbox cell for a Reviewed-table row. Only rejected
+     * entries are selectable; approved/other rows get an empty cell.
+     */
+    function buildSelectCell(entry, selected, rowCheckboxes, syncSelectAll, updateBulkBar) {
+        var td = el('td', 'col-select');
+        if (entry.review_status !== 'rejected') return td;
+
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb._entryId = entry.id;
+        cb.setAttribute('aria-label', 'Select rejected entry for deletion');
+        // Don't open the review drawer when toggling the checkbox.
+        cb.addEventListener('click', function (ev) { ev.stopPropagation(); });
+        cb.addEventListener('change', function () {
+            if (cb.checked) selected.add(entry.id);
+            else selected.delete(entry.id);
+            syncSelectAll();
+            updateBulkBar();
+        });
+        rowCheckboxes.push(cb);
+        td.appendChild(cb);
+        return td;
+    }
+
+    /** Confirm, then hard-delete every selected rejected entry and re-render the table. */
+    function bulkDeleteRejected(ids, data, wrapId, pgId, onPageChange) {
+        if (!ids || ids.length === 0) return;
+
+        var msg = ids.length === 1
+            ? 'Delete this rejected entry? This cannot be undone.'
+            : 'Delete ' + ids.length + ' rejected entries? This cannot be undone.';
+        if (!window.confirm(msg)) return;
+
+        var bar = document.getElementById('fr-bulk-actions');
+        var btn = bar ? qs('button', bar) : null;
+        if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+
+        Promise.allSettled(ids.map(function (id) {
+            return apiDelete('/feedback/' + encodeURIComponent(id));
+        })).then(function (results) {
+            var failed = 0;
+            results.forEach(function (res, i) {
+                if (res.status === 'fulfilled') {
+                    var id = ids[i];
+                    for (var j = 0; j < data.items.length; j++) {
+                        if (data.items[j].id === id) { data.items.splice(j, 1); break; }
+                    }
+                    if (typeof data.total === 'number' && data.total > 0) data.total -= 1;
+                } else {
+                    failed += 1;
+                }
+            });
+
+            var deleted = ids.length - failed;
+            if (deleted > 0) {
+                showToast('Deleted ' + deleted + ' entr' + (deleted === 1 ? 'y' : 'ies') + '.', 'success');
+            }
+            if (failed > 0) {
+                showToast('Failed to delete ' + failed + ' entr' + (failed === 1 ? 'y' : 'ies') + '.', 'error');
+            }
+
+            if (data.items.length === 0 && data.offset > 0) {
+                onPageChange(Math.max(0, data.offset - data.limit));
+                return;
+            }
+            renderFeedbackTable(data, wrapId, pgId, onPageChange);
+        });
     }
 
     // ================================================================
