@@ -259,9 +259,23 @@ def register_admin_feedback_routes(
                 detail="only feedback in the 'rejected' state may be deleted",
             )
 
-        deleted = await feedback_store.delete(feedback_id)
+        # Perform the delete atomically against the persisted status to close
+        # the TOCTOU gap: another admin may transition the entry out of
+        # ``rejected`` between the snapshot above and this DELETE. The store
+        # only removes the row while it is still ``rejected``.
+        deleted = await feedback_store.delete(feedback_id, expected_status=ReviewStatus.REJECTED)
         if not deleted:
-            raise FeedbackNotFoundError(str(feedback_id))
+            # The row vanished or changed state under us. Re-fetch to return an
+            # accurate envelope: 404 if it is gone, 409 if it is no longer
+            # rejected.
+            current = await feedback_store.get(feedback_id)
+            if current is None:
+                raise FeedbackNotFoundError(str(feedback_id))
+            raise AdminAPIError(
+                status_code=409,
+                code="invalid_state",
+                detail="only feedback in the 'rejected' state may be deleted",
+            )
 
         audit_logger.info(
             "feedback.delete",

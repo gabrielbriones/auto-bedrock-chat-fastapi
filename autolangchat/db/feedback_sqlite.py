@@ -336,15 +336,21 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         rows = await asyncio.to_thread(self._fetchall, sql, tuple(params))
         return [self._row_to_entry(r) for r in rows]
 
-    def _delete_sync(self, feedback_id: UUID) -> bool:
+    def _delete_sync(self, feedback_id: UUID, expected_status: Optional[ReviewStatus]) -> bool:
         self._ensure_open_sync()
         with self._lock:
-            cur = self._conn.execute("DELETE FROM feedback WHERE id = ?", (str(feedback_id),))
+            if expected_status is None:
+                cur = self._conn.execute("DELETE FROM feedback WHERE id = ?", (str(feedback_id),))
+            else:
+                cur = self._conn.execute(
+                    "DELETE FROM feedback WHERE id = ? AND review_status = ?",
+                    (str(feedback_id), expected_status.value),
+                )
             self._conn.commit()
             return cur.rowcount > 0
 
-    async def delete(self, feedback_id: UUID) -> bool:
-        return await asyncio.to_thread(self._delete_sync, feedback_id)
+    async def delete(self, feedback_id: UUID, expected_status: Optional[ReviewStatus] = None) -> bool:
+        return await asyncio.to_thread(self._delete_sync, feedback_id, expected_status)
 
     # ------------------------------------------------------------------
     # Filtered list / count (T2)

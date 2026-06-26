@@ -55,6 +55,7 @@ SQLiteFeedbackStore = feedback_sqlite_mod.SQLiteFeedbackStore
 PostgresFeedbackStore = feedback_postgres_mod.PostgresFeedbackStore
 FeedbackEntry = models_mod.FeedbackEntry
 Rating = models_mod.Rating
+ReviewStatus = models_mod.ReviewStatus
 
 
 def _make_entry(**kwargs):
@@ -112,16 +113,41 @@ async def test_sqlite_delete_removes_row_from_get():
         await store.close()
 
 
+async def test_sqlite_conditional_delete_matching_status_returns_true():
+    store = await _open_sqlite_store()
+    try:
+        entry = await store.create(_make_entry())
+        await store.update_review(entry.id, ReviewStatus.REJECTED, reviewer_id="admin", tags=[], comment=None)
+
+        assert await store.delete(entry.id, expected_status=ReviewStatus.REJECTED) is True
+        assert await store.get(entry.id) is None
+    finally:
+        await store.close()
+
+
+async def test_sqlite_conditional_delete_mismatched_status_keeps_row():
+    store = await _open_sqlite_store()
+    try:
+        # Entries default to ``pending_review`` — a conditional delete that
+        # requires ``rejected`` must not remove the row (the TOCTOU guard).
+        entry = await store.create(_make_entry())
+
+        assert await store.delete(entry.id, expected_status=ReviewStatus.REJECTED) is False
+        assert await store.get(entry.id) is not None
+    finally:
+        await store.close()
+
+
 # ---------------------------------------------------------------------------
 # Postgres store (faked async connection layer)
 # ---------------------------------------------------------------------------
 
 
 class _FakeCursor:
-    """Async cursor that mutates a shared in-memory id set on DELETE."""
+    """Async cursor that mutates a shared in-memory id->status map on DELETE."""
 
-    def __init__(self, ids):
-        self._ids = ids
+    def __init__(self, rows):
+        self._rows = rows
         self.rowcount = -1
         self.executed = []
 
@@ -136,16 +162,25 @@ class _FakeCursor:
         # Mirror psycopg's ``%s`` placeholder + numeric ``rowcount`` contract.
         assert "%s" in sql
         target = str(params[0])
-        if target in self._ids:
-            self._ids.discard(target)
+        # Conditional deletes append ``AND review_status = %s``; honour the
+        # extra status predicate so the TOCTOU guard is exercised end-to-end.
+        if "review_status" in sql:
+            expected_status = params[1]
+            if self._rows.get(target) == expected_status:
+                del self._rows[target]
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+        elif target in self._rows:
+            del self._rows[target]
             self.rowcount = 1
         else:
             self.rowcount = 0
 
 
 class _FakeConnection:
-    def __init__(self, ids):
-        self._ids = ids
+    def __init__(self, rows):
+        self._rows = rows
         self.commits = 0
 
     async def __aenter__(self):
@@ -155,7 +190,7 @@ class _FakeConnection:
         return False
 
     def cursor(self):
-        return _FakeCursor(self._ids)
+        return _FakeCursor(self._rows)
 
     async def commit(self):
         self.commits += 1
@@ -164,21 +199,23 @@ class _FakeConnection:
 class _FakePool:
     """Stateful stand-in for ``psycopg_pool.AsyncConnectionPool``."""
 
-    def __init__(self, ids=None):
-        self.ids = set(ids or [])
+    def __init__(self, rows=None):
+        self.rows = dict(rows or {})
         self.last_connection = None
 
     def connection(self):
-        conn = _FakeConnection(self.ids)
+        conn = _FakeConnection(self.rows)
         self.last_connection = conn
         return conn
 
 
-def _make_postgres_store(ids=None):
+def _make_postgres_store(ids=None, rows=None):
     # Bypass __init__ so we don't require psycopg or a live server; inject the
     # fake pool that ``delete`` interacts with directly.
     store = PostgresFeedbackStore.__new__(PostgresFeedbackStore)
-    store._pool = _FakePool(ids=ids)
+    if rows is None:
+        rows = {str(i): None for i in (ids or [])}
+    store._pool = _FakePool(rows=rows)
     return store
 
 
@@ -201,5 +238,19 @@ async def test_postgres_delete_removes_row():
     assert await store.delete(target) is True
     # Row is gone: the id set no longer contains it and a repeat delete
     # reports not-found.
-    assert str(target) not in store._pool.ids
+    assert str(target) not in store._pool.rows
     assert await store.delete(target) is False
+
+
+async def test_postgres_conditional_delete_matching_status_returns_true():
+    target = uuid4()
+    store = _make_postgres_store(rows={str(target): ReviewStatus.REJECTED.value})
+    assert await store.delete(target, expected_status=ReviewStatus.REJECTED) is True
+    assert str(target) not in store._pool.rows
+
+
+async def test_postgres_conditional_delete_mismatched_status_keeps_row():
+    target = uuid4()
+    store = _make_postgres_store(rows={str(target): ReviewStatus.PENDING_REVIEW.value})
+    assert await store.delete(target, expected_status=ReviewStatus.REJECTED) is False
+    assert str(target) in store._pool.rows

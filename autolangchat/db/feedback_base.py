@@ -219,9 +219,18 @@ class BaseFeedbackStore(ABC):
         """
 
     @abstractmethod
-    async def delete(self, feedback_id: UUID) -> bool:
+    async def delete(self, feedback_id: UUID, expected_status: Optional[ReviewStatus] = None) -> bool:
         """Hard-delete a feedback entry.
-        Returns True if found and deleted, False if not found.
+
+        When ``expected_status`` is provided the deletion is performed
+        atomically against the persisted state — the row is only removed if
+        its ``review_status`` still matches ``expected_status`` at the moment
+        of the DELETE. This closes the time-of-check/time-of-use gap between a
+        prior :meth:`get` and the delete itself.
+
+        Returns True if a matching row was found and deleted, False otherwise
+        (not found, or — when ``expected_status`` is set — the status no
+        longer matches).
         """
 
     @abstractmethod
