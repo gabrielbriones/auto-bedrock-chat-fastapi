@@ -248,7 +248,7 @@ def register_admin_feedback_routes(
         # consistent with the PATCH endpoint.
         before = await feedback_store.get(feedback_id)
         if before is None:
-            raise FeedbackNotFoundError(str(feedback_id))
+            raise FeedbackNotFoundError("feedback not found")
 
         # Only rejected feedback may be permanently deleted. Anything else is
         # a conflict (409) rather than a not-found.
