@@ -4,7 +4,7 @@ Covers both the SQLite and Postgres feedback stores:
 
   (a) deleting an existing entry returns ``True``;
   (b) deleting a non-existent id returns ``False``;
-  (c) the row is no longer retrievable via ``get()`` after deletion.
+  (c) subsequent deletes report not-found (and SQLite ``get()`` returns ``None``).
 
 The SQLite cases run against a real in-memory database. The Postgres
 store has no live server in CI, so its cursor/connection layer is faked
