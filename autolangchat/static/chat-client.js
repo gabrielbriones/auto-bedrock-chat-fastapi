@@ -200,6 +200,11 @@ class ChatClient {
         // Restore input state using the existing connection/auth gates.
         if (this.ws && this.ws.readyState === WebSocket.OPEN && (!window.CONFIG.requireAuth || this.authenticated)) {
             this.enableInput();
+            // Return focus to the textarea so the user can keep typing without
+            // having to click it again after the input is re-enabled.
+            if (!this.messageInput.disabled) {
+                this.messageInput.focus();
+            }
         } else {
             this.messageInput.disabled = true;
             this.sendButton.disabled = true;
