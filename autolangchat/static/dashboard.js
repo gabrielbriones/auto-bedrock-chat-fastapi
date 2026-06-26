@@ -1189,7 +1189,7 @@ if (window.marked && window.DOMPurify) {
                 restoreBtn.disabled = true;
                 restoreBtn.textContent = 'Restoring…';
                 rbFooterErr.classList.remove('visible');
-                apiPost('/kb/documents/' + encodeURIComponent(doc.id) + '/reset-credibility', {})
+                apiPost('/kb/documents/reset-credibility/' + encodeURIComponent(doc.id), {})
                     .then(function () {
                         showToast('Credibility score reset to 1.0.', 'success');
                         hide('kbEditor');

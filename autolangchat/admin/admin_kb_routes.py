@@ -218,6 +218,36 @@ def register_admin_kb_routes(
         total = await asyncio.to_thread(kb_store.count_documents, filters)
         return KBDocumentListResponse(items=items, total=total, limit=limit, offset=offset)
 
+    @router.post(
+        "/reset-credibility/{doc_id:path}",
+        response_model=KBDocument,
+        responses={**ADMIN_COMMON_RESPONSES},
+        summary="Reset credibility score to 1.0 and clear removal_flagged",
+    )
+    async def reset_credibility(
+        doc_id: str,
+        identity=Depends(require_admin),
+    ) -> KBDocument:
+        """Reset a document's credibility_score to 1.0 and removal_flagged to False.
+
+        Raises 404 via the global KBDocumentNotFoundError handler if the
+        document does not exist.
+        """
+        actor = identity.user_id
+        lock = await _lock_for(doc_id)
+        async with lock:
+            updated = await asyncio.to_thread(kb_store.reset_credibility, doc_id)
+            audit_logger.info(
+                "kb.document.reset_credibility",
+                extra={
+                    "action": "kb.document.reset_credibility",
+                    "actor_user_id": actor,
+                    "target_id": doc_id,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return updated
+
     @router.get(
         "/{doc_id:path}",
         response_model=KBDocument,
@@ -255,6 +285,8 @@ def register_admin_kb_routes(
             tags=tags,
             chunk_count=None,
             created_at=raw.get("created_at"),
+            credibility_score=float(raw.get("credibility_score") or 1.0),
+            removal_flagged=bool(raw.get("removal_flagged") or False),
         )
 
     @router.patch(
@@ -388,36 +420,6 @@ def register_admin_kb_routes(
             )
             # FastAPI returns 204 with no body when the handler returns None.
             return None
-
-    @router.post(
-        "/{doc_id:path}/reset-credibility",
-        response_model=KBDocument,
-        responses={**ADMIN_COMMON_RESPONSES},
-        summary="Reset credibility score to 1.0 and clear removal_flagged",
-    )
-    async def reset_credibility(
-        doc_id: str,
-        identity=Depends(require_admin),
-    ) -> KBDocument:
-        """Reset a document's credibility_score to 1.0 and removal_flagged to False.
-
-        Raises 404 via the global KBDocumentNotFoundError handler if the
-        document does not exist.
-        """
-        actor = identity.user_id
-        lock = await _lock_for(doc_id)
-        async with lock:
-            updated = await asyncio.to_thread(kb_store.reset_credibility, doc_id)
-            audit_logger.info(
-                "kb.document.reset_credibility",
-                extra={
-                    "action": "kb.document.reset_credibility",
-                    "actor_user_id": actor,
-                    "target_id": doc_id,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            return updated
 
     app.include_router(router)
     logger.info("Admin KB routes registered under %s/kb/documents", prefix)

@@ -309,7 +309,10 @@ class SQLiteKBStore(BaseKBStore):
         for row in results:
             # Convert distance to similarity score (1 - distance for cosine),
             # weighted by the document's credibility score (row[11]).
-            similarity_score = (1.0 - row[10]) * row[11]
+            # vec_distance_cosine returns NULL for zero-length vectors; treat as 0 similarity.
+            distance = row[10] if row[10] is not None else 1.0
+            credibility = row[11] if row[11] is not None else 1.0
+            similarity_score = (1.0 - distance) * credibility
 
             # Skip if below minimum score
             if similarity_score < min_score:
@@ -334,6 +337,9 @@ class SQLiteKBStore(BaseKBStore):
         # Re-sort by credibility-weighted similarity (SQL ordered by raw distance).
         formatted_results.sort(key=lambda r: r["similarity_score"], reverse=True)
         return formatted_results
+
+    @staticmethod
+    def _sanitize_fts5_query(query: str) -> str:
         """
         Sanitize a raw text query for use with FTS5 MATCH.
 
