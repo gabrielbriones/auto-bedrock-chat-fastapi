@@ -15,8 +15,6 @@ contract the real driver provides.
 import sys
 from uuid import uuid4
 
-import pytest
-
 from ._autolangchat_imports import install_package_stubs, load_module
 
 # Keep the package stubs installed for the lifetime of this test module so
