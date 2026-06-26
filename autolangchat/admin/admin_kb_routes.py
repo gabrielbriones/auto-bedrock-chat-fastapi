@@ -285,8 +285,8 @@ def register_admin_kb_routes(
             tags=tags,
             chunk_count=None,
             created_at=raw.get("created_at"),
-            credibility_score=float(raw.get("credibility_score") or 1.0),
-            removal_flagged=bool(raw.get("removal_flagged") or False),
+            credibility_score=float(raw["credibility_score"]) if raw.get("credibility_score") is not None else 1.0,
+            removal_flagged=bool(raw.get("removal_flagged")),
         )
 
     @router.patch(
