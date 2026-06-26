@@ -259,7 +259,9 @@ def register_admin_feedback_routes(
                 detail="only feedback in the 'rejected' state may be deleted",
             )
 
-        await feedback_store.delete(feedback_id)
+        deleted = await feedback_store.delete(feedback_id)
+        if not deleted:
+            raise FeedbackNotFoundError(str(feedback_id))
 
         audit_logger.info(
             "feedback.delete",
