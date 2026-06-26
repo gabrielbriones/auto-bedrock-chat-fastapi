@@ -34,7 +34,6 @@ async def run_credibility_decay_loop(store: "BaseKBStore", config: "ChatConfig")
     interval_seconds = config.kb_credibility_decay_interval_hours * 3600
 
     while True:
-        await asyncio.sleep(interval_seconds)
         try:
             updated, newly_flagged = await asyncio.to_thread(
                 store.apply_credibility_decay,
@@ -53,3 +52,4 @@ async def run_credibility_decay_loop(store: "BaseKBStore", config: "ChatConfig")
             raise
         except Exception:
             logger.exception("KB credibility decay task failed — will retry next cycle")
+        await asyncio.sleep(interval_seconds)

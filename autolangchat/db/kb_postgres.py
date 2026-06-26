@@ -364,6 +364,8 @@ class PgVectorKBStore(BaseKBStore):
                     "similarity_score": round(similarity, 4),
                 }
             )
+        # Re-sort by credibility-weighted similarity (SQL ordered by raw distance).
+        results.sort(key=lambda r: r["similarity_score"], reverse=True)
         return results
 
     def keyword_search(

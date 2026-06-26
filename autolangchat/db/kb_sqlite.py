@@ -331,10 +331,9 @@ class SQLiteKBStore(BaseKBStore):
                 }
             )
 
+        # Re-sort by credibility-weighted similarity (SQL ordered by raw distance).
+        formatted_results.sort(key=lambda r: r["similarity_score"], reverse=True)
         return formatted_results
-
-    @staticmethod
-    def _sanitize_fts5_query(query: str) -> str:
         """
         Sanitize a raw text query for use with FTS5 MATCH.
 
@@ -910,21 +909,25 @@ class SQLiteKBStore(BaseKBStore):
     @_locked
     def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
         cursor = self.conn.cursor()
+        # Count docs that will cross the threshold in a single query.
         cursor.execute(
-            "SELECT id, credibility_score FROM documents " "WHERE source = 'feedback' AND removal_flagged = 0"
+            "SELECT COUNT(*) FROM documents "
+            "WHERE source = 'feedback' AND removal_flagged = 0 "
+            "AND MAX(0.0, COALESCE(credibility_score, 1.0) - ?) <= ?",
+            (decay_rate, threshold),
         )
-        rows = cursor.fetchall()
-        updated = 0
-        newly_flagged = 0
-        for doc_id, score in rows:
-            new_score = max(0.0, (float(score) if score is not None else 1.0) - decay_rate)
-            flagged = 1 if new_score <= threshold else 0
-            newly_flagged += flagged
-            cursor.execute(
-                "UPDATE documents SET credibility_score = ?, removal_flagged = ? WHERE id = ?",
-                (new_score, flagged, doc_id),
-            )
-            updated += 1
+        newly_flagged = int(cursor.fetchone()[0])
+        # Batch UPDATE — single statement instead of N+1 loop.
+        cursor.execute(
+            "UPDATE documents SET "
+            "credibility_score = MAX(0.0, COALESCE(credibility_score, 1.0) - ?), "
+            "removal_flagged = CASE "
+            "  WHEN MAX(0.0, COALESCE(credibility_score, 1.0) - ?) <= ? THEN 1 "
+            "  ELSE 0 END "
+            "WHERE source = 'feedback' AND removal_flagged = 0",
+            (decay_rate, decay_rate, threshold),
+        )
+        updated = cursor.rowcount
         self.conn.commit()
         return updated, newly_flagged
 
