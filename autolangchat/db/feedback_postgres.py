@@ -314,7 +314,7 @@ class PostgresFeedbackStore(BaseFeedbackStore):
             LIMIT %s OFFSET %s
         """
         return await self._fetch_all(sql, tuple(params))
-    
+
     async def delete(self, feedback_id: UUID) -> bool:
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute("DELETE FROM feedback WHERE id = %s", (feedback_id,))

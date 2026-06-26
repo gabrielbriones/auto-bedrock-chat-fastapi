@@ -88,8 +88,7 @@ ADMIN_FEEDBACK_DELETE_RESPONSES: Dict[int, Dict[str, Any]] = {
     409: {
         "model": ErrorResponse,
         "description": (
-            "Feedback entry is not in the 'rejected' state. Only rejected "
-            "entries may be permanently deleted."
+            "Feedback entry is not in the 'rejected' state. Only rejected " "entries may be permanently deleted."
         ),
     },
 }
