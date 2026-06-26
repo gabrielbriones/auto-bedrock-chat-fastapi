@@ -90,6 +90,15 @@ class _FakeFeedbackStore:
                 break
         return updated
 
+    async def delete(self, entry_id, expected_status=None):
+        for idx, existing in enumerate(self.entries):
+            if existing.id == entry_id:
+                if expected_status is not None and existing.review_status != expected_status:
+                    return False
+                del self.entries[idx]
+                return True
+        return False
+
 
 def _make_entry(**kwargs):
     defaults = dict(
@@ -153,3 +162,98 @@ def test_feedback_patch_updates_review_fields():
     assert body["review_status"] == "approved"
     assert body["reviewer_tags"] == ["perf"]
     assert body["reviewer_comment"] == "looks good"
+
+
+def _make_rejected_entry(**kwargs):
+    entry = _make_entry(**kwargs)
+    return FeedbackEntry(
+        **{
+            **entry.model_dump(),
+            "review_status": ReviewStatus.REJECTED,
+            "reviewer_id": "admin",
+            "reviewed_at": datetime.now(timezone.utc),
+        }
+    )
+
+
+def test_feedback_delete_rejected_returns_204():
+    store = _FakeFeedbackStore()
+    entry = _make_rejected_entry()
+    store.entries = [entry]
+    client = _build_app(store)
+
+    resp = client.delete(f"/bedrock-chat/admin/feedback/{entry.id}")
+    assert resp.status_code == 204
+    assert store.entries == []
+
+
+def test_feedback_delete_missing_returns_404():
+    client = _build_app(_FakeFeedbackStore())
+    resp = client.delete(f"/bedrock-chat/admin/feedback/{uuid4()}")
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "not_found"
+
+
+def test_feedback_delete_non_rejected_returns_409():
+    store = _FakeFeedbackStore()
+    entry = _make_entry()  # defaults to pending_review
+    store.entries = [entry]
+    client = _build_app(store)
+
+    resp = client.delete(f"/bedrock-chat/admin/feedback/{entry.id}")
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "invalid_state"
+    # The entry must remain — a non-rejected delete is rejected outright.
+    assert store.entries == [entry]
+
+
+def test_feedback_delete_toctou_status_change_returns_409():
+    """The entry is ``rejected`` at snapshot time but flips to ``approved``
+    before the atomic DELETE runs. The conditional store delete must refuse to
+    remove it and the route must surface a 409 (not a spurious 204/404)."""
+
+    entry = _make_rejected_entry()
+
+    class _RacingStore(_FakeFeedbackStore):
+        async def delete(self, entry_id, expected_status=None):
+            # Simulate a concurrent admin transitioning the row out of
+            # ``rejected`` after ``get()`` but before this DELETE commits.
+            for idx, existing in enumerate(self.entries):
+                if existing.id == entry_id:
+                    self.entries[idx] = FeedbackEntry(
+                        **{**existing.model_dump(), "review_status": ReviewStatus.APPROVED}
+                    )
+            return await super().delete(entry_id, expected_status=expected_status)
+
+    store = _RacingStore()
+    store.entries = [entry]
+    client = _build_app(store)
+
+    resp = client.delete(f"/bedrock-chat/admin/feedback/{entry.id}")
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "invalid_state"
+    # The row survives because the conditional delete no longer matched.
+    assert len(store.entries) == 1
+    assert store.entries[0].review_status == ReviewStatus.APPROVED
+
+
+def test_feedback_delete_toctou_row_vanishes_returns_404():
+    """If the row is concurrently removed after the snapshot, the conditional
+    delete affects 0 rows and the route re-fetches to return a 404."""
+
+    entry = _make_rejected_entry()
+
+    class _VanishingStore(_FakeFeedbackStore):
+        async def delete(self, entry_id, expected_status=None):
+            # Concurrent hard-delete: the row is already gone by the time our
+            # conditional DELETE runs.
+            self.entries = [e for e in self.entries if e.id != entry_id]
+            return False
+
+    store = _VanishingStore()
+    store.entries = [entry]
+    client = _build_app(store)
+
+    resp = client.delete(f"/bedrock-chat/admin/feedback/{entry.id}")
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "not_found"

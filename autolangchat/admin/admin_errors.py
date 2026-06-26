@@ -79,6 +79,20 @@ ADMIN_FEEDBACK_PATCH_RESPONSES: Dict[int, Dict[str, Any]] = {
     },
 }
 
+# Admin-feedback DELETE declares 409 for the "entry is not in the
+# REJECTED state" guard: only rejected feedback may be hard-deleted, so
+# attempting to delete a pending/approved entry is a conflict rather than
+# a not-found.
+ADMIN_FEEDBACK_DELETE_RESPONSES: Dict[int, Dict[str, Any]] = {
+    **ADMIN_COMMON_RESPONSES,
+    409: {
+        "model": ErrorResponse,
+        "description": (
+            "Feedback entry is not in the 'rejected' state. Only rejected " "entries may be permanently deleted."
+        ),
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Error envelope construction

@@ -249,6 +249,35 @@ body {
     white-space: nowrap;
 }
 
+/* ---- Bulk actions bar (Reviewed view) ---- */
+.bulk-actions {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    background: #fff5f5;
+    border: 1px solid #fed7d7;
+    border-radius: 8px;
+}
+.bulk-actions.visible { display: flex; }
+.bulk-actions .bulk-count {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4a5568;
+}
+
+/* Compact leading checkbox column in data tables */
+.data-table .col-select {
+    width: 36px;
+    text-align: center;
+    white-space: nowrap;
+}
+.data-table .col-select input[type="checkbox"] {
+    cursor: pointer;
+    margin: 0;
+}
+
 /* ---- Data table ---- */
 .data-table-wrap {
     background: white;

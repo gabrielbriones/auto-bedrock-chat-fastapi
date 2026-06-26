@@ -315,6 +315,19 @@ class PostgresFeedbackStore(BaseFeedbackStore):
         """
         return await self._fetch_all(sql, tuple(params))
 
+    async def delete(self, feedback_id: UUID, expected_status: Optional[ReviewStatus] = None) -> bool:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            if expected_status is None:
+                await cur.execute("DELETE FROM feedback WHERE id = %s", (feedback_id,))
+            else:
+                await cur.execute(
+                    "DELETE FROM feedback WHERE id = %s AND review_status = %s",
+                    (feedback_id, expected_status.value),
+                )
+            deleted = cur.rowcount > 0
+            await conn.commit()
+            return deleted
+
     # ------------------------------------------------------------------
     # Filtered list / count (T2)
     # ------------------------------------------------------------------
