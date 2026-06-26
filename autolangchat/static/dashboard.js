@@ -407,6 +407,12 @@
                 var idx = data.items.indexOf(entry);
                 if (idx !== -1) data.items.splice(idx, 1);
                 if (typeof data.total === 'number' && data.total > 0) data.total -= 1;
+
+                if (data.items.length === 0 && data.offset > 0) {
+                    onPageChange(Math.max(0, data.offset - data.limit));
+                    return;
+                }
+
                 renderFeedbackTable(data, wrapId, pgId, onPageChange);
             })
             .catch(function (e) {
