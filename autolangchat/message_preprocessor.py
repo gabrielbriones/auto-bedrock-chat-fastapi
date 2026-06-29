@@ -13,6 +13,7 @@ Module-level utility functions (``is_tool_message``, ``is_user_message``,
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -29,8 +30,6 @@ from .defaults import (
     DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
     DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
     DEFAULT_SUMMARIZATION_MIN_CHUNKS,
-    DEFAULT_SUMMARIZATION_MIN_MAX_TOKENS,
-    DEFAULT_SUMMARIZATION_TEMPERATURE,
     MIN_PROPORTIONAL_BUDGET,
     TRUNCATION_HEAD_RATIO,
     TRUNCATION_TAIL_RATIO,
@@ -114,21 +113,32 @@ def get_content_size(msg: dict) -> int:
     """
     Get the size of message content for truncation decisions.
 
-    Accounts for *both* the ``content`` field and the ``tool_results``
-    payload.  Tool-call results are stored in
-    ``msg["tool_results"]`` (a list of dicts with a ``result`` key),
-    while ``content`` is only a human-readable label (e.g.
-    "Tool results (round 1)").  If ``tool_results`` is present its
-    size dominates the true token cost, so we include it here.
+    For tool messages (``role=tool`` with ``tool_results``), only the
+    ``tool_results`` payload is counted.  The ``content`` field on those
+    messages is a JSON mirror of the same data (used as a fallback only)
+    and is intentionally skipped to avoid double-counting.
+
+    For all other messages, the ``content`` field is counted directly.
 
     Args:
         msg: Message dictionary
 
     Returns:
-        Size of the content in characters (including tool_results payload)
+        Size of the content in characters
     """
     if not isinstance(msg, dict):
         return 0
+
+    # Tool result messages: payload lives in ``tool_results``; ``content``
+    # is a redundant JSON copy and must NOT be counted to avoid 2× sizing.
+    tool_results = msg.get("tool_results")
+    if msg.get("role") == "tool" and tool_results and isinstance(tool_results, list):
+        size = 0
+        for tr in tool_results:
+            if isinstance(tr, dict):
+                _, payload = _get_tool_result_payload(tr)
+                size += len(payload)
+        return size
 
     content = msg.get("content", "")
 
@@ -152,14 +162,6 @@ def get_content_size(msg: dict) -> int:
         size = len(str(content.get("content", content)))
     else:
         size = len(str(content))
-
-        # Tool result messages: actual tool-result data lives in ``tool_results``
-    tool_results = msg.get("tool_results")
-    if tool_results and isinstance(tool_results, list):
-        for tr in tool_results:
-            if isinstance(tr, dict):
-                _, payload = _get_tool_result_payload(tr)
-                size += len(payload)
 
     return size
 
@@ -279,12 +281,19 @@ class MessagePreprocessor:
         self.llm_client = llm_client
         self._on_progress: Optional[Callable] = None
         self._system_prompt: Optional[str] = None
+        self._user_query: Optional[str] = None
 
         # Derive truncation thresholds from the unified config settings.
         # Legacy constructor params are honoured only when no config is
         # provided (backward compat for callers that haven't migrated).
         if config is not None:
-            self._system_prompt = getattr(config, "system_prompt", None)
+            # Prefer get_system_prompt() (returns the effective/generated prompt)
+            # over the raw system_prompt attribute (which may be None when the
+            # prompt is auto-generated from tools count, etc.).
+            if hasattr(config, "get_system_prompt"):
+                self._system_prompt = config.get_system_prompt() or None
+            else:
+                self._system_prompt = getattr(config, "system_prompt", None)
             self.history_msg_threshold = getattr(
                 config, "history_msg_length_threshold", DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD
             )
@@ -407,6 +416,12 @@ class MessagePreprocessor:
             raise ValueError(f"threshold_factor must be positive, got {threshold_factor}")
 
         self._on_progress = on_progress
+        # Capture the last user query to guide what information is relevant to preserve
+        self._user_query = None
+        for msg in reversed(messages):
+            if is_user_message(msg):
+                self._user_query = self._extract_text_content(msg)
+                break
         try:
             f = threshold_factor
 
@@ -430,6 +445,7 @@ class MessagePreprocessor:
             return messages
         finally:
             self._on_progress = None
+            self._user_query = None
 
     # ------------------------------------------------------------------
     # History-total truncation
@@ -761,7 +777,7 @@ class MessagePreprocessor:
         """Call the LLM to summarize *content*.
 
         Builds a summarization-specific prompt and calls
-        ``self.llm_client.chat_completion()``.
+        ``await self.llm_client.ainvoke()`` directly.
 
         Args:
             content: The text to summarize.
@@ -781,11 +797,24 @@ class MessagePreprocessor:
                 "\nThe main conversation uses this system context:\n" "---\n" f"{self._system_prompt}\n" "---\n"
             )
 
+        user_context = ""
+        if self._user_query:
+            query_preview = self._user_query[:500]
+            if len(self._user_query) > 500:
+                query_preview += "..."
+            user_context = (
+                "\nThe user's current query is:\n"
+                "---\n"
+                f"{query_preview}\n"
+                "---\n"
+                "Prioritize preserving information relevant to answering this query.\n"
+            )
+
         system_msg = (
             "You are a summarization assistant. Condense the content below "
             "while preserving ALL key facts, data points, names, numbers, "
             "error messages, IDs, URLs, and actionable details."
-            f"{sys_context}\n"
+            f"{sys_context}{user_context}\n"
             "RULES:\n"
             f"- Your summary MUST be under {target_size:,} characters\n"
             "- Preserve specific data: names, numbers, URLs, error messages, "
@@ -804,20 +833,20 @@ class MessagePreprocessor:
         if iteration_context:
             system_msg += f"- This is {iteration_context}\n"
 
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": content},
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        lc_messages = [
+            SystemMessage(content=system_msg),
+            HumanMessage(content=content),
         ]
 
-        max_tokens = max(target_size // 4, DEFAULT_SUMMARIZATION_MIN_MAX_TOKENS)
+        ai_msg = await self.llm_client.ainvoke(lc_messages)
 
-        response = await self.llm_client.chat_completion(
-            messages=messages,
-            temperature=DEFAULT_SUMMARIZATION_TEMPERATURE,
-            max_tokens=max_tokens,
-        )
-
-        summary = (response or {}).get("content", "")
+        raw = ai_msg.content
+        if isinstance(raw, list):
+            summary = "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in raw)
+        else:
+            summary = str(raw)
         if not summary:
             raise RuntimeError("LLM returned empty summary response")
 
@@ -1176,7 +1205,23 @@ class MessagePreprocessor:
                 any_changed = True
 
         if any_changed:
-            return {**msg, "tool_results": new_tool_results}
+            # Regenerate the `content` field so it mirrors the truncated
+            # tool_results payloads.  `content` is used as a JSON fallback in
+            # some downstream paths (UI, logging, non-autolangchat consumers),
+            # so keeping it in sync avoids exposing the original untruncated data.
+            # NOTE: get_content_size() intentionally ignores `content` for tool
+            # messages — this step is for fidelity, not for sizing math.
+            new_content = json.dumps(
+                [
+                    (
+                        tr.get(_get_tool_result_payload(tr)[0])
+                        if isinstance(tr, dict) and _get_tool_result_payload(tr)[0]
+                        else (tr.get("error") if isinstance(tr, dict) else None)
+                    )
+                    for tr in new_tool_results
+                ]
+            )
+            return {**msg, "content": new_content, "tool_results": new_tool_results}
         return msg
 
     async def _truncate_list_content_items(

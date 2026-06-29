@@ -12,8 +12,10 @@ from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 
+from ...defaults import DEFAULT_SUMMARIZATION_TEMPERATURE
 from ...message_preprocessor import MessagePreprocessor
 from ..state import ChatState
+from .llm_call import _build_llm
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,26 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
         logger.warning("preprocess_node: chat_config not in configurable; skipping preprocessing")
         return {}
 
-    preprocessor = MessagePreprocessor(config=chat_config)
+    # Wire up the LLM directly when AI summarization is enabled.
+    # A summarizer-specific config copy is used: fixed temperature, no tools,
+    # and no top_p (avoids Claude ValidationException when temperature is set).
+    llm_client = None
+    if getattr(chat_config, "enable_ai_summarization", False):
+        summarizer_config = chat_config.model_copy(
+            update={
+                "temperature": DEFAULT_SUMMARIZATION_TEMPERATURE,
+                "top_p": None,
+                "langchain_tools": None,
+            }
+        )
+        llm_client = _build_llm(summarizer_config.model_id, summarizer_config)
+        logger.debug(
+            "preprocess_node: AI summarization enabled — LLM client built (model=%s, temperature=%.2f)",
+            summarizer_config.model_id,
+            DEFAULT_SUMMARIZATION_TEMPERATURE,
+        )
+
+    preprocessor = MessagePreprocessor(config=chat_config, llm_client=llm_client)
     processed = await preprocessor.preprocess_messages(
         messages=messages,
         on_progress=on_progress,

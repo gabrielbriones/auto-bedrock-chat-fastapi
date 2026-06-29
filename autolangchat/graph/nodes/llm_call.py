@@ -222,6 +222,66 @@ async def _invoke_with_streaming(
     return result
 
 
+def _generate_message_preview(content: Any, max_preview_len: int = 100) -> tuple:
+    """Return (content_length, preview_string) for debug logging."""
+    if isinstance(content, str):
+        content_len = len(content)
+        preview = content[:max_preview_len].replace("\n", " ")
+        if len(content) > max_preview_len:
+            preview += "..."
+    elif isinstance(content, list):
+        content_len = sum(len(str(item)) for item in content)
+        text_parts = [
+            (
+                item.get("text", "")
+                if isinstance(item, dict) and item.get("type") == "text"
+                else str(item)[:max_preview_len]
+            )
+            for item in content[:2]
+        ]
+        preview = " | ".join(text_parts)[:max_preview_len]
+        if len(content) > 2 or content_len > max_preview_len:
+            preview += "..."
+    else:
+        content_len = len(str(content))
+        preview = str(content)[:max_preview_len] + "..."
+    return content_len, preview
+
+
+def _log_conversation(messages: List[Dict], label: str) -> None:
+    """Log message states at DEBUG level — role, sizes, tool call/result counts."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    logger.debug("%s: %d messages", label, len(messages))
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        tool_calls = msg.get("tool_calls") or []
+        tool_results = msg.get("tool_results") or []
+        content_len, preview = _generate_message_preview(content)
+        role_label = f"{role} [system prompt]" if role == "system" else role
+        logger.debug(
+            "  [%d] %s (%s chars, tool_calls=%d, tool_results=%d): %s",
+            i,
+            role_label,
+            f"{content_len:,}",
+            len(tool_calls),
+            len(tool_results),
+            preview,
+        )
+        for j, tr in enumerate(tool_results):
+            if not isinstance(tr, dict):
+                continue
+            logger.debug(
+                "      - tool_result[%d] name=%s tool_call_id=%s",
+                j,
+                tr.get("name"),
+                tr.get("tool_call_id") or tr.get("tool_use_id"),
+            )
+        for j, tc in enumerate(tool_calls):
+            logger.debug("      - tool_call[%d] id=%s name=%s", j, tc.get("id"), tc.get("name"))
+
+
 async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     """Call the LLM and append the assistant response to state messages.
 
@@ -255,6 +315,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     primary_model = chat_config.model_id
     fallback_model = getattr(chat_config, "fallback_model", None)
 
+    _log_conversation(messages, "LLM call — conversation state")
+
     # --- Primary call ---
     try:
         llm = _build_llm(primary_model, chat_config)
@@ -280,6 +342,18 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             raise
 
     response_dict = _from_langchain_message(ai_msg)
+
+    if logger.isEnabledFor(logging.DEBUG):
+        content_len, preview = _generate_message_preview(response_dict.get("content", ""))
+        tool_calls = response_dict.get("tool_calls") or []
+        logger.debug(
+            "LLM response — assistant (%s chars, tool_calls=%d): %s",
+            f"{content_len:,}",
+            len(tool_calls),
+            preview,
+        )
+        for j, tc in enumerate(tool_calls):
+            logger.debug("  - tool_call[%d] id=%s name=%s", j, tc.get("id"), tc.get("name"))
 
     # Fill in model_id from config if Bedrock didn't return it in response_metadata
     if not response_dict.get("metadata", {}).get("model_id"):

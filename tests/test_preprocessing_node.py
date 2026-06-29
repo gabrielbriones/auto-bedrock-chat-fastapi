@@ -45,6 +45,9 @@ class _TightConfig:
 
     max_truncation_recursion = 3
 
+    def get_system_prompt(self) -> str:
+        return ""
+
 
 class _DefaultConfig(_TightConfig):
     """Config using production-sized thresholds — no truncation for normal messages."""
