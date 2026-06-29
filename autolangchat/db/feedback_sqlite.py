@@ -54,6 +54,7 @@ _FEEDBACK_COLUMNS = (
     "reviewer_id",
     "reviewer_tags",
     "conversation_history",
+    "entry_metadata",
     "reviewer_comment",
     "reviewed_at",
     "integrated_into_kb_id",
@@ -204,6 +205,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         # catch the "duplicate column" error for idempotency.
         for col_ddl in (
             "ALTER TABLE feedback ADD COLUMN conversation_history TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE feedback ADD COLUMN entry_metadata TEXT NOT NULL DEFAULT '{}'",
             "ALTER TABLE feedback ADD COLUMN integrated_into_kb_id TEXT",
             "ALTER TABLE feedback ADD COLUMN integrated_at TEXT",
             "ALTER TABLE feedback ADD COLUMN rolled_back_at TEXT",
@@ -247,6 +249,7 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             entry.reviewer_id,
             json.dumps(list(entry.reviewer_tags)),
             json.dumps(entry.conversation_history),
+            json.dumps(entry.entry_metadata),
             entry.reviewer_comment,
             _dt_to_iso(entry.reviewed_at),
             entry.integrated_into_kb_id,
@@ -763,6 +766,8 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
         data["reviewer_tags"] = json.loads(tags_raw) if tags_raw else []
         history_raw = data.get("conversation_history")
         data["conversation_history"] = json.loads(history_raw) if history_raw else []
+        metadata_raw = data.get("entry_metadata")
+        data["entry_metadata"] = json.loads(metadata_raw) if metadata_raw else {}
 
         # Convert datetimes from ISO strings.
         data["reviewed_at"] = _iso_to_dt(data["reviewed_at"])

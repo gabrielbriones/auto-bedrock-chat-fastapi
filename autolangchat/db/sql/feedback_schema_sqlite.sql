@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS feedback (
     kb_sources_used     TEXT NOT NULL DEFAULT '[]',
     model_id            TEXT NOT NULL,
 
+    entry_metadata      TEXT NOT NULL DEFAULT '{}',
+
     review_status       TEXT NOT NULL DEFAULT 'pending_review'
                         CHECK (review_status IN ('pending_review', 'approved', 'rejected')),
     reviewer_id         TEXT,

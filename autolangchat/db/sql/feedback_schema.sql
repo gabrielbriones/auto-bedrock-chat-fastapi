@@ -118,6 +118,10 @@ CREATE TABLE IF NOT EXISTS feedback (
 ALTER TABLE feedback
 ADD COLUMN IF NOT EXISTS conversation_history JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+-- Migration: add entry_metadata column (idempotent)
+ALTER TABLE feedback
+ADD COLUMN IF NOT EXISTS entry_metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- ---------------------------------------------------------------------------
 -- Indexes
 -- ---------------------------------------------------------------------------

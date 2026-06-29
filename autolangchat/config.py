@@ -662,6 +662,59 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    # Feedback Configuration
+    feedback_metadata_enrichment_url: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_FEEDBACK_METADATA_ENRICHMENT_URL",
+        description=(
+            "Optional URL of an HTTP endpoint called on every feedback submission. "
+            "Returns a dict stored verbatim in FeedbackEntry.entry_metadata. "
+            "When unset, entry_metadata is stored as an empty dict and no HTTP call is made."
+        ),
+    )
+
+    feedback_metadata_enrichment_timeout: float = Field(
+        default=2.0,
+        alias="AUTOCHAT_FEEDBACK_METADATA_ENRICHMENT_TIMEOUT",
+        gt=0,
+        description="Timeout in seconds for the metadata enrichment HTTP call.",
+    )
+
+    feedback_metadata_enrichment_fail_on_error: bool = Field(
+        default=False,
+        alias="AUTOCHAT_FEEDBACK_METADATA_ENRICHMENT_FAIL_ON_ERROR",
+        description=(
+            "When True, enrichment failures cause the feedback submission to be rejected. "
+            "When False (default), failures are logged and the submission proceeds with entry_metadata={}."
+        ),
+    )
+
+    feedback_metadata_enrichment_max_bytes: int = Field(
+        default=65536,
+        alias="AUTOCHAT_FEEDBACK_METADATA_ENRICHMENT_MAX_BYTES",
+        gt=0,
+        description=(
+            "Maximum response body size (bytes) from the enrichment endpoint. "
+            "Responses exceeding this limit are treated as an error (see fail_on_error). Default: 65536 (64 KB)."
+        ),
+    )
+
+    @field_validator("feedback_metadata_enrichment_url")
+    @classmethod
+    def _validate_enrichment_url_scheme(cls, v: Optional[str]) -> Optional[str]:
+        # SSRF guard: the URL is operator-supplied, but still reject non-HTTP(S)
+        # schemes (file://, gopher://, etc.) at config load time.
+        if v is None:
+            return None
+        from urllib.parse import urlparse
+
+        scheme = urlparse(v).scheme.lower()
+        if scheme not in ("http", "https"):
+            raise ValueError(
+                "feedback_metadata_enrichment_url must use http or https scheme"
+            )
+        return v
+
     # ------------------------------------------------------------------
     # LangGraph Checkpoint (Phase 3)
     # ------------------------------------------------------------------
