@@ -143,7 +143,7 @@ class FeedbackEntry(BaseModel):
         # isn't JSON-serialisable so we fail fast at construction time
         # instead of at the DB-write boundary.
         try:
-            json.dumps(v)
+            json.dumps(v, allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise ValueError("entry_metadata must be a JSON-serialisable dict") from exc
         return v
