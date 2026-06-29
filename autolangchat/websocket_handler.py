@@ -492,6 +492,7 @@ class WebSocketChatHandler:
                 "Feedback metadata enrichment failed: %s (session=%s)",
                 exc,
                 session.session_id,
+                exc_info=True,
             )
             if self.config.feedback_metadata_enrichment_fail_on_error:
                 raise FeedbackError("Feedback metadata enrichment failed") from exc
