@@ -705,6 +705,7 @@ class ChatConfig(BaseSettings):
         # Basic SSRF *mitigation*: the URL is operator-supplied, but reject non-HTTP(S)
         # schemes (file://, gopher://, etc.) at config load time. Note this does not
         # prevent http/https URLs from targeting internal hosts.
+        if v is None:
             return None
         from urllib.parse import urlparse
 
