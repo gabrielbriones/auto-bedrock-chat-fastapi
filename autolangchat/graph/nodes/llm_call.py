@@ -270,6 +270,8 @@ def _log_conversation(messages: List[Dict], label: str) -> None:
             preview,
         )
         for j, tr in enumerate(tool_results):
+            if not isinstance(tr, dict):
+                continue
             logger.debug(
                 "      - tool_result[%d] name=%s tool_call_id=%s",
                 j,

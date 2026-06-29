@@ -1216,7 +1216,7 @@ class MessagePreprocessor:
                     (
                         tr.get(_get_tool_result_payload(tr)[0])
                         if isinstance(tr, dict) and _get_tool_result_payload(tr)[0]
-                        else tr.get("error")
+                        else (tr.get("error") if isinstance(tr, dict) else None)
                     )
                     for tr in new_tool_results
                 ]
