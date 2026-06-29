@@ -702,9 +702,9 @@ class ChatConfig(BaseSettings):
     @field_validator("feedback_metadata_enrichment_url")
     @classmethod
     def _validate_enrichment_url_scheme(cls, v: Optional[str]) -> Optional[str]:
-        # SSRF guard: the URL is operator-supplied, but still reject non-HTTP(S)
-        # schemes (file://, gopher://, etc.) at config load time.
-        if v is None:
+        # Basic SSRF *mitigation*: the URL is operator-supplied, but reject non-HTTP(S)
+        # schemes (file://, gopher://, etc.) at config load time. Note this does not
+        # prevent http/https URLs from targeting internal hosts.
             return None
         from urllib.parse import urlparse
 
