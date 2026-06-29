@@ -46,8 +46,7 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
 
     # Wire up the LLM directly when AI summarization is enabled.
     # A summarizer-specific config copy is used: fixed temperature, no tools,
-    # no top_p (avoids Claude ValidationException when temperature is set),
-    # and no system_prompt (the summarizer builds its own prompt internally).
+    # and no top_p (avoids Claude ValidationException when temperature is set).
     llm_client = None
     if getattr(chat_config, "enable_ai_summarization", False):
         summarizer_config = chat_config.model_copy(

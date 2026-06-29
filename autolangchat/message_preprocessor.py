@@ -1211,7 +1211,16 @@ class MessagePreprocessor:
             # so keeping it in sync avoids exposing the original untruncated data.
             # NOTE: get_content_size() intentionally ignores `content` for tool
             # messages — this step is for fidelity, not for sizing math.
-            new_content = json.dumps([tr.get("result", tr.get("error")) for tr in new_tool_results])
+            new_content = json.dumps(
+                [
+                    (
+                        tr.get(_get_tool_result_payload(tr)[0])
+                        if isinstance(tr, dict) and _get_tool_result_payload(tr)[0]
+                        else tr.get("error")
+                    )
+                    for tr in new_tool_results
+                ]
+            )
             return {**msg, "content": new_content, "tool_results": new_tool_results}
         return msg
 
