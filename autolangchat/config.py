@@ -689,16 +689,6 @@ class ChatConfig(BaseSettings):
         ),
     )
 
-    feedback_metadata_enrichment_max_bytes: int = Field(
-        default=65536,
-        alias="AUTOCHAT_FEEDBACK_METADATA_ENRICHMENT_MAX_BYTES",
-        gt=0,
-        description=(
-            "Maximum response body size (bytes) from the enrichment endpoint. "
-            "Responses exceeding this limit are treated as an error (see fail_on_error). Default: 65536 (64 KB)."
-        ),
-    )
-
     @field_validator("feedback_metadata_enrichment_url")
     @classmethod
     def _validate_enrichment_url_scheme(cls, v: Optional[str]) -> Optional[str]:

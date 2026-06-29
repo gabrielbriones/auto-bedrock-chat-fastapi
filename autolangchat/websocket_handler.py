@@ -478,10 +478,6 @@ class WebSocketChatHandler:
             if response.status_code != 200:
                 raise ValueError(f"enrichment endpoint returned status {response.status_code}")
 
-            max_bytes = self.config.feedback_metadata_enrichment_max_bytes
-            if len(response.content) > max_bytes:
-                raise ValueError(f"enrichment response body exceeds {max_bytes} bytes")
-
             metadata = response.json()
             if not isinstance(metadata, dict):
                 raise ValueError("enrichment response body is not a JSON object")

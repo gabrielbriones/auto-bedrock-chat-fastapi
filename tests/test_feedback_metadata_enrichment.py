@@ -131,14 +131,10 @@ PostgresFeedbackStore = feedback_postgres_mod.PostgresFeedbackStore
 
 
 class _FakeResponse:
-    def __init__(self, status_code=200, *, json_data=None, content=None, json_error=False):
+    def __init__(self, status_code=200, *, json_data=None, json_error=False):
         self.status_code = status_code
         self._json_data = json_data if json_data is not None else {}
         self._json_error = json_error
-        if content is not None:
-            self.content = content
-        else:
-            self.content = b"x" * 16  # small, well under the default 64 KB cap
 
     def json(self):
         if self._json_error:
@@ -166,7 +162,6 @@ def _make_config(**overrides):
         feedback_metadata_enrichment_url="https://enrich.example/api",
         feedback_metadata_enrichment_timeout=2.0,
         feedback_metadata_enrichment_fail_on_error=False,
-        feedback_metadata_enrichment_max_bytes=65536,
         feedback_max_history_context=10,
         model_id="anthropic.claude-default",
     )
@@ -253,31 +248,6 @@ async def test_enrichment_non_object_body_returns_empty_when_lenient():
     result = await handler._fetch_feedback_metadata(_make_session(), [])
 
     assert result == {}
-
-
-async def test_enrichment_oversized_body_returns_empty_when_lenient():
-    big = b"x" * 100
-    client = _FakeHTTPClient(response=_FakeResponse(json_data={"k": "v"}, content=big))
-    handler = _make_handler(_make_config(feedback_metadata_enrichment_max_bytes=10), client)
-
-    result = await handler._fetch_feedback_metadata(_make_session(), [])
-
-    assert result == {}
-
-
-async def test_enrichment_oversized_body_raises_when_strict():
-    big = b"x" * 100
-    client = _FakeHTTPClient(response=_FakeResponse(json_data={"k": "v"}, content=big))
-    handler = _make_handler(
-        _make_config(
-            feedback_metadata_enrichment_max_bytes=10,
-            feedback_metadata_enrichment_fail_on_error=True,
-        ),
-        client,
-    )
-
-    with pytest.raises(FeedbackError):
-        await handler._fetch_feedback_metadata(_make_session(), [])
 
 
 # ---------------------------------------------------------------------------
