@@ -112,8 +112,9 @@ def build_chat_graph(
             should_continue,
             {"tools": "tools", "__end__": END},
         )
-        # tools node loops back to llm for multi-round tool calling
-        builder.add_edge("tools", "llm")
+        # tools node loops back through preprocess so tool results are truncated
+        # before being sent to the LLM (avoids context-window overflow)
+        builder.add_edge("tools", "preprocess")
     else:
         builder.add_edge("llm", END)
 
@@ -127,7 +128,7 @@ def build_chat_graph(
     graph = builder.compile(checkpointer=checkpointer)
 
     topology = (
-        "init_turn → rag → preprocess → llm → [tools] → llm → END"
+        "init_turn → rag → preprocess → llm → [tools] → preprocess → llm → END"
         if tool_manager is not None
         else "init_turn → rag → preprocess → llm → END"
     )

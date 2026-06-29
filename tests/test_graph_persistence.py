@@ -49,6 +49,9 @@ class _FakeChatConfig:
     history_msg_truncation_target = 85_000
     max_truncation_recursion = 3
 
+    def get_system_prompt(self) -> str:
+        return ""
+
 
 def _make_ai_msg(content: str = "hi", *, tool_calls=None):
     """Return a minimal mock AIMessage accepted by the llm node."""

@@ -116,11 +116,10 @@ AUTOCHAT_SYSTEM_PROMPT="You are a helpful engineering assistant."
 
 **AI Summarization defaults** (from `defaults.py`):
 
-| Constant                               | Value  | Description                                |
-| -------------------------------------- | ------ | ------------------------------------------ |
-| `DEFAULT_SUMMARIZATION_TEMPERATURE`    | `0.7`  | LLM temperature for summarization          |
-| `DEFAULT_SUMMARIZATION_MIN_MAX_TOKENS` | `1024` | Minimum max_tokens for summarization calls |
-| `DEFAULT_SUMMARIZATION_MIN_CHUNKS`     | `3`    | Minimum chunks when splitting content      |
+| Constant                            | Value | Description                           |
+| ----------------------------------- | ----- | ------------------------------------- |
+| `DEFAULT_SUMMARIZATION_TEMPERATURE` | `0.7` | LLM temperature for summarization     |
+| `DEFAULT_SUMMARIZATION_MIN_CHUNKS`  | `3`   | Minimum chunks when splitting content |
 
 ---
 

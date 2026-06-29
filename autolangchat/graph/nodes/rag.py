@@ -161,11 +161,19 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     # ------------------------------------------------------------------
     kb_context_text = _format_kb_context(kb_results) if kb_results else ""
 
+    base_system_prompt = chat_config.get_system_prompt() if chat_config else ""
+
     if not kb_context_text and not auth_context_text:
-        # No context to inject — pass through unchanged.
+        # No RAG/auth context to inject, but still need to ensure the
+        # configured system prompt is present in the messages.
+        if base_system_prompt:
+            preserved_messages = [msg for msg in messages if msg.get("role") != "system"]
+            return {
+                "messages": [{"role": "system", "content": base_system_prompt}] + preserved_messages,
+                "kb_results": kb_results,
+            }
         return {"kb_results": kb_results}
 
-    base_system_prompt = chat_config.get_system_prompt() if chat_config else ""
     context_parts = [p for p in [kb_context_text, auth_context_text] if p]
     enhanced_system_prompt = "\n\n".join(context_parts + [base_system_prompt])
 

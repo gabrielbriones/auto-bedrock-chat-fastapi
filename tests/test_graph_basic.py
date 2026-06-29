@@ -36,6 +36,9 @@ class _FakeChatConfig:
     history_msg_truncation_target = 85_000
     max_truncation_recursion = 3
 
+    def get_system_prompt(self) -> str:
+        return ""
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

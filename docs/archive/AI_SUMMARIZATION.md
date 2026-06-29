@@ -23,14 +23,13 @@ AI summarization is **opt-in** (`BEDROCK_ENABLE_AI_SUMMARIZATION=true`) and **al
 
 ### Internal Constants (defaults.py)
 
-| Constant                               | Value   | Description                                      |
-| -------------------------------------- | ------- | ------------------------------------------------ |
-| `DEFAULT_SUMMARIZATION_TEMPERATURE`    | `0.7`   | LLM temperature for summarization calls          |
-| `DEFAULT_SUMMARIZATION_MIN_MAX_TOKENS` | `1,024` | Minimum `max_tokens` for summarization LLM calls |
-| `DEFAULT_SUMMARIZATION_MIN_CHUNKS`     | `3`     | Minimum chunk count when splitting content       |
-| `TRUNCATION_HEAD_RATIO`                | `0.8`   | Plain-text fallback: fraction of budget for head |
-| `TRUNCATION_TAIL_RATIO`                | `0.2`   | Plain-text fallback: fraction of budget for tail |
-| `MIN_PROPORTIONAL_BUDGET`              | `100`   | Minimum chars per content-list item              |
+| Constant                            | Value | Description                                      |
+| ----------------------------------- | ----- | ------------------------------------------------ |
+| `DEFAULT_SUMMARIZATION_TEMPERATURE` | `0.7` | LLM temperature for summarization calls          |
+| `DEFAULT_SUMMARIZATION_MIN_CHUNKS`  | `3`   | Minimum chunk count when splitting content       |
+| `TRUNCATION_HEAD_RATIO`             | `0.8` | Plain-text fallback: fraction of budget for head |
+| `TRUNCATION_TAIL_RATIO`             | `0.2` | Plain-text fallback: fraction of budget for tail |
+| `MIN_PROPORTIONAL_BUDGET`           | `100` | Minimum chars per content-list item              |
 
 ### Quick Start
 
