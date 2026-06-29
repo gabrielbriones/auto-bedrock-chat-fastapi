@@ -132,7 +132,7 @@ def get_content_size(msg: dict) -> int:
     # Tool result messages: payload lives in ``tool_results``; ``content``
     # is a redundant JSON copy and must NOT be counted to avoid 2× sizing.
     tool_results = msg.get("tool_results")
-    if tool_results and isinstance(tool_results, list):
+    if msg.get("role") == "tool" and tool_results and isinstance(tool_results, list):
         size = 0
         for tr in tool_results:
             if isinstance(tr, dict):
@@ -1205,11 +1205,12 @@ class MessagePreprocessor:
                 any_changed = True
 
         if any_changed:
-            # Regenerate the `content` field so it reflects the truncated
-            # tool_results payloads.  The original content is a JSON dump
-            # of the full results; leaving it unchanged would cause
-            # get_content_size() to still count the un-truncated copy,
-            # making the whole truncation pass ineffective.
+            # Regenerate the `content` field so it mirrors the truncated
+            # tool_results payloads.  `content` is used as a JSON fallback in
+            # some downstream paths (UI, logging, non-autolangchat consumers),
+            # so keeping it in sync avoids exposing the original untruncated data.
+            # NOTE: get_content_size() intentionally ignores `content` for tool
+            # messages — this step is for fidelity, not for sizing math.
             new_content = json.dumps([tr.get("result", tr.get("error")) for tr in new_tool_results])
             return {**msg, "content": new_content, "tool_results": new_tool_results}
         return msg

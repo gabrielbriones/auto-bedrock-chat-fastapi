@@ -230,7 +230,7 @@ def _generate_message_preview(content: Any, max_preview_len: int = 100) -> tuple
         if len(content) > max_preview_len:
             preview += "..."
     elif isinstance(content, list):
-        content_len = len(str(content))
+        content_len = sum(len(str(item)) for item in content)
         text_parts = [
             (
                 item.get("text", "")
