@@ -20,7 +20,7 @@ from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, Fee
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
 from .graph.tools.manager import AuthInfo
 from .models import FeedbackEntry, Rating
-from .session_manager import ChatSessionManager
+from .session_manager import ChatSession, ChatSessionManager
 
 if TYPE_CHECKING:
     from .sso.sso_session_store import SSOSessionStore
@@ -434,6 +434,66 @@ class WebSocketChatHandler:
 
         await self._send_message(websocket, {"type": "pong", "timestamp": datetime.now().isoformat()})
 
+    async def _fetch_feedback_metadata(
+        self,
+        session: ChatSession,
+        conversation_history: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """Call the optional enrichment endpoint and return its metadata dict.
+
+        POSTs the session context and the already-filtered conversation history
+        to ``config.feedback_metadata_enrichment_url`` and returns the JSON
+        object the endpoint responds with, to be stored verbatim in
+        ``FeedbackEntry.entry_metadata``.
+
+        On any failure (network error, timeout, non-200 status, oversized or
+        non-object body) the behaviour depends on
+        ``config.feedback_metadata_enrichment_fail_on_error``: when True the
+        error is re-raised as :class:`FeedbackError` (rejecting the
+        submission); when False the error is logged at WARNING and an empty
+        dict is returned so feedback collection still proceeds.
+        """
+        # Build the session payload field-by-field. Do NOT use
+        # session.to_dict(): it emits duration_seconds (outside the contract)
+        # and must never expose credentials / auth_handler.
+        session_payload = {
+            "session_id": session.session_id,
+            "user_id": session.user_id,
+            "user_agent": session.user_agent,
+            "ip_address": session.ip_address,
+            "metadata": session.metadata,
+            "created_at": session.created_at.isoformat(),
+            "last_activity": session.last_activity.isoformat(),
+        }
+
+        try:
+            response = await self.http_client.post(
+                self.config.feedback_metadata_enrichment_url,
+                json={"session": session_payload, "conversation_history": conversation_history},
+                # Per-request timeout override; do not rely on the global
+                # self.http_client timeout for this call.
+                timeout=self.config.feedback_metadata_enrichment_timeout,
+            )
+
+            if response.status_code != 200:
+                raise ValueError(f"enrichment endpoint returned status {response.status_code}")
+
+            metadata = response.json()
+            if not isinstance(metadata, dict):
+                raise ValueError("enrichment response body is not a JSON object")
+
+            return metadata
+        except Exception as exc:
+            logger.warning(
+                "Feedback metadata enrichment failed: %s (session=%s)",
+                exc,
+                session.session_id,
+                exc_info=True,
+            )
+            if self.config.feedback_metadata_enrichment_fail_on_error:
+                raise FeedbackError("Feedback metadata enrichment failed") from exc
+            return {}
+
     async def _handle_feedback_message(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle a ``feedback`` message from the chat client.
 
@@ -583,6 +643,15 @@ class WebSocketChatHandler:
         kb_sources = fb_meta.get("kb_sources", [])
         model_id_from_msg = ai_message_dict.get("metadata", {}).get("model_id")
 
+        # Optional pluggable metadata enrichment (no-op when URL is unset).
+        entry_metadata: Dict[str, Any] = {}
+        if self.config.feedback_metadata_enrichment_url is not None:
+            try:
+                entry_metadata = await self._fetch_feedback_metadata(session, conversation_history)
+            except FeedbackError as exc:
+                await self._send_feedback_error(websocket, "feedback_error", str(exc), message_id=message_id)
+                return
+
         normalized_user_id = (session.user_id or "").strip()
         effective_user_id = normalized_user_id or "anonymous"
         try:
@@ -598,6 +667,7 @@ class WebSocketChatHandler:
                 kb_sources_used=kb_sources,
                 model_id=model_id_from_msg or self.config.model_id,
                 conversation_history=conversation_history,
+                entry_metadata=entry_metadata,
             )
         except ValidationError as exc:
             # Pydantic v2 ValidationError is NOT a ValueError subclass; surface

@@ -1,5 +1,6 @@
 """Shared data models for autolangchat"""
 
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -84,6 +85,9 @@ class FeedbackEntry(BaseModel):
     kb_sources_used: List[Dict[str, Any]] = Field(default_factory=list)
     model_id: str
 
+    # Arbitrary metadata injected by the optional enrichment endpoint
+    entry_metadata: Dict[str, Any] = Field(default_factory=dict)
+
     # Review workflow
     review_status: ReviewStatus = ReviewStatus.PENDING_REVIEW
     reviewer_id: Optional[str] = None
@@ -130,6 +134,19 @@ class FeedbackEntry(BaseModel):
         # Strip whitespace and drop empty tags so the persisted TEXT[] never
         # contains blanks (mirrors the spirit of the DB CHECK constraints).
         return [t.strip() for t in v if t and t.strip()]
+
+    @field_validator("entry_metadata")
+    @classmethod
+    def _ensure_json_serialisable(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        # entry_metadata is stored verbatim and later serialised to JSON
+        # (JSONB in Postgres, json.dumps in SQLite). Reject anything that
+        # isn't JSON-serialisable so we fail fast at construction time
+        # instead of at the DB-write boundary.
+        try:
+            json.dumps(v, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("entry_metadata must be a JSON-serialisable dict") from exc
+        return v
 
     @model_validator(mode="after")
     def _validate_rating_payload(self) -> "FeedbackEntry":
