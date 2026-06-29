@@ -77,9 +77,7 @@ _handler_stubs = {
     ),
     "autolangchat.graph": _stub_module("autolangchat.graph"),
     "autolangchat.graph.tools": _stub_module("autolangchat.graph.tools"),
-    "autolangchat.graph.tools.manager": _stub_module(
-        "autolangchat.graph.tools.manager", AuthInfo=object
-    ),
+    "autolangchat.graph.tools.manager": _stub_module("autolangchat.graph.tools.manager", AuthInfo=object),
     "autolangchat.session_manager": _stub_module(
         "autolangchat.session_manager", ChatSession=object, ChatSessionManager=object
     ),
@@ -289,9 +287,7 @@ async def test_enrichment_oversized_body_raises_when_strict():
 
 async def test_timeout_proceeds_with_empty_dict_when_lenient():
     client = _FakeHTTPClient(raises=httpx.TimeoutException("timed out"))
-    handler = _make_handler(
-        _make_config(feedback_metadata_enrichment_fail_on_error=False), client
-    )
+    handler = _make_handler(_make_config(feedback_metadata_enrichment_fail_on_error=False), client)
 
     result = await handler._fetch_feedback_metadata(_make_session(), [])
 
@@ -301,9 +297,7 @@ async def test_timeout_proceeds_with_empty_dict_when_lenient():
 
 async def test_timeout_rejects_when_strict():
     client = _FakeHTTPClient(raises=httpx.TimeoutException("timed out"))
-    handler = _make_handler(
-        _make_config(feedback_metadata_enrichment_fail_on_error=True), client
-    )
+    handler = _make_handler(_make_config(feedback_metadata_enrichment_fail_on_error=True), client)
 
     with pytest.raises(FeedbackError):
         await handler._fetch_feedback_metadata(_make_session(), [])
@@ -316,9 +310,7 @@ async def test_timeout_rejects_when_strict():
 
 async def test_non_200_returns_empty_dict_when_lenient():
     client = _FakeHTTPClient(response=_FakeResponse(status_code=503))
-    handler = _make_handler(
-        _make_config(feedback_metadata_enrichment_fail_on_error=False), client
-    )
+    handler = _make_handler(_make_config(feedback_metadata_enrichment_fail_on_error=False), client)
 
     result = await handler._fetch_feedback_metadata(_make_session(), [])
 
@@ -327,9 +319,7 @@ async def test_non_200_returns_empty_dict_when_lenient():
 
 async def test_non_200_rejects_when_strict():
     client = _FakeHTTPClient(response=_FakeResponse(status_code=503))
-    handler = _make_handler(
-        _make_config(feedback_metadata_enrichment_fail_on_error=True), client
-    )
+    handler = _make_handler(_make_config(feedback_metadata_enrichment_fail_on_error=True), client)
 
     with pytest.raises(FeedbackError):
         await handler._fetch_feedback_metadata(_make_session(), [])
@@ -414,9 +404,7 @@ async def test_handler_stores_enrichment_metadata_on_entry():
     )
     websocket = _FakeWebSocket()
 
-    await handler._handle_feedback_message(
-        websocket, {"message_id": "m1", "rating": Rating.NEGATIVE.value}
-    )
+    await handler._handle_feedback_message(websocket, {"message_id": "m1", "rating": Rating.NEGATIVE.value})
 
     # The enrichment call happened and its dict landed on the persisted entry.
     assert len(client.calls) == 1
@@ -438,9 +426,7 @@ async def test_handler_makes_no_call_and_empty_metadata_when_url_unset():
     )
     websocket = _FakeWebSocket()
 
-    await handler._handle_feedback_message(
-        websocket, {"message_id": "m1", "rating": Rating.NEGATIVE.value}
-    )
+    await handler._handle_feedback_message(websocket, {"message_id": "m1", "rating": Rating.NEGATIVE.value})
 
     # No HTTP request was made and entry_metadata defaulted to {}.
     assert client.calls == []

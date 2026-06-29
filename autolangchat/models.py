@@ -84,7 +84,7 @@ class FeedbackEntry(BaseModel):
     # Provenance
     kb_sources_used: List[Dict[str, Any]] = Field(default_factory=list)
     model_id: str
-    
+
     # Arbitrary metadata injected by the optional enrichment endpoint
     entry_metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -134,7 +134,7 @@ class FeedbackEntry(BaseModel):
         # Strip whitespace and drop empty tags so the persisted TEXT[] never
         # contains blanks (mirrors the spirit of the DB CHECK constraints).
         return [t.strip() for t in v if t and t.strip()]
-    
+
     @field_validator("entry_metadata")
     @classmethod
     def _ensure_json_serialisable(cls, v: Dict[str, Any]) -> Dict[str, Any]:

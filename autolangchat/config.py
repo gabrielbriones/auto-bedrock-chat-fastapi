@@ -710,9 +710,7 @@ class ChatConfig(BaseSettings):
 
         scheme = urlparse(v).scheme.lower()
         if scheme not in ("http", "https"):
-            raise ValueError(
-                "feedback_metadata_enrichment_url must use http or https scheme"
-            )
+            raise ValueError("feedback_metadata_enrichment_url must use http or https scheme")
         return v
 
     # ------------------------------------------------------------------

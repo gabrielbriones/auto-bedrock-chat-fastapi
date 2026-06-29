@@ -652,9 +652,7 @@ class WebSocketChatHandler:
             try:
                 entry_metadata = await self._fetch_feedback_metadata(session, conversation_history)
             except FeedbackError as exc:
-                await self._send_feedback_error(
-                    websocket, "feedback_error", str(exc), message_id=message_id
-                )
+                await self._send_feedback_error(websocket, "feedback_error", str(exc), message_id=message_id)
                 return
 
         normalized_user_id = (session.user_id or "").strip()
