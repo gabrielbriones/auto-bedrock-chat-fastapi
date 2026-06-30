@@ -28,7 +28,11 @@ def install_package_stubs(extra_modules=None):
 
 def load_module(module_name, relative_path, extra_modules=None):
     installed = install_package_stubs(extra_modules)
-    original = {name: sys.modules.get(name) for name in installed}
+    # Snapshot the loaded module's own entry too, so a pre-existing real module
+    # (already imported by an earlier test) is restored rather than left
+    # replaced by this file-loaded duplicate.
+    original = {name: sys.modules.get(name) for name in (*installed, module_name)}
+    pre_keys = set(sys.modules)
 
     try:
         sys.modules.update(installed)
@@ -39,6 +43,15 @@ def load_module(module_name, relative_path, extra_modules=None):
         spec.loader.exec_module(module)
         return module
     finally:
+        # Drop the loaded module and any ``autolangchat.*`` modules imported as
+        # a side effect of executing it. Leaving them in ``sys.modules`` creates
+        # duplicate module objects that can later shadow the real package (e.g.
+        # ``autolangchat.db.feedback_base``), breaking unrelated test modules
+        # collected afterwards (see XMGPLAT-10766).
+        for name in set(sys.modules) - pre_keys:
+            if name == module_name or name.startswith("autolangchat"):
+                del sys.modules[name]
+        # Restore the package stubs / extra modules we swapped in.
         for name, previous in original.items():
             if previous is None:
                 sys.modules.pop(name, None)
