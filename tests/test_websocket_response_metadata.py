@@ -6,10 +6,21 @@ expected metadata keys to the client for both the non-KB and KB code paths
 """
 
 import asyncio
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# Sibling test modules (e.g. test_admin_synthesizer, test_rag_node,
+# test_sso_provider) install lightweight ``autolangchat`` package stubs into
+# ``sys.modules`` at import time. If any survive collection they shadow the real
+# package and break the import below with ImportError / TypeError. Drop stub
+# entries (manually-created modules have ``__spec__ is None``) so Python
+# re-imports the genuine packages here (XMGPLAT-10766).
+for _name in [n for n in list(sys.modules) if n == "autolangchat" or n.startswith("autolangchat.")]:
+    if getattr(sys.modules.get(_name), "__spec__", None) is None:
+        del sys.modules[_name]
 
 from autolangchat.websocket_handler import WebSocketChatHandler
 
