@@ -22,7 +22,7 @@ for _name in [n for n in list(sys.modules) if n == "autolangchat" or n.startswit
     if getattr(sys.modules.get(_name), "__spec__", None) is None:
         del sys.modules[_name]
 
-from autolangchat.websocket_handler import WebSocketChatHandler
+from autolangchat.websocket_handler import WebSocketChatHandler  # noqa: E402
 
 
 def _make_handler(graph_state):
