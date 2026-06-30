@@ -332,7 +332,8 @@ class TestRatedFeedbackCredibilitySignal:
         assert call_args[0][0] == [doc_id]
         assert call_args[0][1] > 0  # positive delta
 
-    def test_signal_fires_on_pending_to_rejected_negative_rating(self):
+    def test_signal_does_not_fire_on_pending_to_rejected(self):
+        """Admin REJECTED means the feedback is invalid — no credibility effect."""
         doc_id = "doc-xyz"
         entry = _make_entry(
             rating=Rating.NEGATIVE,
@@ -349,9 +350,7 @@ class TestRatedFeedbackCredibilitySignal:
             json={"review_status": "rejected"},
         )
         assert resp.status_code == 200
-        kb_store.adjust_credibility.assert_called_once()
-        call_args = kb_store.adjust_credibility.call_args
-        assert call_args[0][1] < 0  # negative delta
+        kb_store.adjust_credibility.assert_not_called()
 
     def test_signal_does_not_fire_on_re_review(self):
         """APPROVED → REJECTED re-review must not trigger the signal."""

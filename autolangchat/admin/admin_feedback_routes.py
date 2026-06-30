@@ -222,14 +222,18 @@ def register_admin_feedback_routes(
         )
 
         # Rated-feedback credibility signal (XMGPLAT-10940).
-        # Fires only on the first review (PENDING_REVIEW → decided) so that
-        # re-reviews (APPROVED ↔ REJECTED) have no credibility effect.
+        # Fires only when the admin explicitly APPROVES the entry for the first
+        # time (PENDING_REVIEW → APPROVED). REJECTED entries represent
+        # admin-invalidated feedback and must not adjust credibility — applying
+        # a delta based on rejected feedback would skew KB scores with data the
+        # admin has explicitly overruled.
         credibility_adjusted = 0
         if (
             kb_store is not None
             and chat_config is not None
             and getattr(chat_config, "kb_credibility_feedback_signal_enabled", False)
             and before.review_status == ReviewStatus.PENDING_REVIEW
+            and updated.review_status == ReviewStatus.APPROVED
         ):
             doc_ids = [src["document_id"] for src in (updated.kb_sources_used or []) if src.get("document_id")]
             if doc_ids:
