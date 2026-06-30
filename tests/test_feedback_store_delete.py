@@ -15,12 +15,9 @@ contract the real driver provides.
 import sys
 from uuid import uuid4
 
-from ._autolangchat_imports import install_package_stubs, load_module
+import pytest
 
-# Keep the package stubs installed for the lifetime of this test module so
-# ``importlib.resources`` can resolve ``autolangchat.db.sql`` when the SQLite
-# store loads its schema DDL at runtime (load_module restores them otherwise).
-sys.modules.update(install_package_stubs())
+from ._autolangchat_imports import install_package_stubs, load_module
 
 exceptions_mod = load_module("autolangchat.exceptions", "exceptions.py")
 models_mod = load_module("autolangchat.models", "models.py")
@@ -56,6 +53,36 @@ PostgresFeedbackStore = feedback_postgres_mod.PostgresFeedbackStore
 FeedbackEntry = models_mod.FeedbackEntry
 Rating = models_mod.Rating
 ReviewStatus = models_mod.ReviewStatus
+
+
+@pytest.fixture(autouse=True)
+def _package_stubs():
+    """Install lightweight ``autolangchat`` package stubs only while this
+    module's tests run.
+
+    The SQLite store resolves its schema DDL at runtime via
+    ``importlib.resources.files("autolangchat.db.sql")``, which requires
+    ``autolangchat.db`` to be importable. Installing path-only stubs lets that
+    lookup resolve the lightweight ``autolangchat.db.sql`` subpackage without
+    importing the heavy real ``autolangchat.db`` package.
+
+    Scoping the stubs to test execution (rather than installing them at module
+    import time) keeps them out of ``sys.modules`` during collection, so they
+    cannot shadow the real package for other test modules collected later
+    (e.g. ``test_websocket_response_metadata`` importing
+    ``AuthenticatedUserAuthorizer`` from ``autolangchat.db``).
+    """
+    stubs = install_package_stubs()
+    saved = {name: sys.modules.get(name) for name in stubs}
+    sys.modules.update(stubs)
+    try:
+        yield
+    finally:
+        for name, previous in saved.items():
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
 
 
 def _make_entry(**kwargs):
