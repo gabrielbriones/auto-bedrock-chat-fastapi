@@ -189,12 +189,71 @@ client = WebSocketChatClient(
 ```json
 {
   "type": "ai_response",
+  "message_id": "f1c2…",
   "message": "Here are the products I found...",
   "tool_calls": [...],
   "tool_results": [...],
-  "timestamp": "2026-01-01T10:00:05"
+  "timestamp": "2026-01-01T10:00:05",
+  "metadata": {
+    "message_id": "f1c2…",
+    "model_id": "us.anthropic.claude-sonnet-4-6",
+    "usage": { "input_tokens": 120, "output_tokens": 240 },
+    "timestamp": "2026-01-01T10:00:05",
+    "tool_call_rounds": 1,
+    "total_tool_calls": 2,
+    "preprocessing_applied": false,
+    "input_tokens": 120,
+    "output_tokens": 240,
+    "kb_used": true,
+    "kb_chunks": 3,
+    "kb_sources": [
+      { "title": "Doc A", "source": "kb://a", "url": "https://…", "score": 0.91 }
+    ]
+  }
 }
 ```
+
+#### `ai_response` metadata schema
+
+The `metadata` object carries per-turn information about the model, token usage,
+tool-calling, and any knowledge-base (KB) retrieval. Keys are assembled from the
+final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
+(everything else).
+
+**Always present:**
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `message_id` | `string` (UUID) | Stable per-turn ID, also present at the top level of the `ai_response` payload. |
+| `model_id` | `string` | Active model ID. Written directly from server config and overwrites any value returned by the LLM. |
+| `usage` | `object` | Token usage for the **final** LLM call only: `{ "input_tokens": int\|null, "output_tokens": int\|null }`. For multi-round totals use the top-level `input_tokens` / `output_tokens` below. |
+| `timestamp` | `string` (ISO 8601) | Timestamp of the final LLM call. |
+| `tool_call_rounds` | `int` (default `0`) | Number of tool-call loop iterations for this turn. |
+| `total_tool_calls` | `int` (default `0`) | Total individual tool calls executed across all rounds. |
+| `preprocessing_applied` | `bool` (default `false`) | Whether message preprocessing ran on the user input. |
+
+**Conditional — token totals (only when the model returns usage):**
+
+These are accumulated across all tool-call rounds. Note they are distinct from the
+nested `usage` dict, which reflects only the final LLM call.
+
+| Key | Type | Condition | Description |
+| --- | --- | --- | --- |
+| `input_tokens` | `int` | Present when the model returns usage | Total input tokens consumed across all LLM calls in this turn. |
+| `output_tokens` | `int` | Present when the model returns usage | Total output tokens generated across all LLM calls in this turn. |
+
+**Conditional — KB results (only when the knowledge base is queried):**
+
+| Key | Type | Condition | Description |
+| --- | --- | --- | --- |
+| `kb_used` | `bool` (always `true`) | Present only when KB was queried | Indicates the knowledge base was consulted. |
+| `kb_chunks` | `int` | Present only when KB was queried | Number of KB chunks retrieved. |
+| `kb_sources` | array of `object` | Present only when KB was queried | Each entry: `title` (`string\|null`), `source` (`string\|null`), `url` (`string\|null`), `score` (`float`). |
+
+> **Server-side-only keys.** The graph state also tracks `fallback_model_used`
+> (`bool`), `fallback_model` (`string`, present only when `fallback_model_used` is
+> `true`), and `context_window_retries` (`int`). These are intentionally **not**
+> forwarded in the `ai_response` payload — clients will never receive them.
 
 **Typing indicator:**
 
