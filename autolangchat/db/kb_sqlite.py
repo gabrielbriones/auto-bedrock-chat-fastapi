@@ -913,6 +913,34 @@ class SQLiteKBStore(BaseKBStore):
         }
 
     @_locked
+    def adjust_credibility(self, doc_ids: list[str], delta: float, threshold: float) -> int:
+        """Adjust credibility scores for a set of source='feedback' documents (XMGPLAT-10940)."""
+        if not doc_ids:
+            return 0
+        placeholders = ",".join("?" * len(doc_ids))
+        cursor = self.conn.cursor()
+        if delta < 0:
+            cursor.execute(
+                f"UPDATE documents "
+                f"SET credibility_score = MAX(0.0, MIN(1.0, COALESCE(credibility_score, 1.0) + ?)), "
+                f"    removal_flagged = CASE "
+                f"      WHEN MAX(0.0, MIN(1.0, COALESCE(credibility_score, 1.0) + ?)) <= ? THEN 1 "
+                f"      ELSE removal_flagged END "
+                f"WHERE id IN ({placeholders}) AND source = 'feedback'",
+                (delta, delta, threshold, *doc_ids),
+            )
+        else:
+            cursor.execute(
+                f"UPDATE documents "
+                f"SET credibility_score = MAX(0.0, MIN(1.0, COALESCE(credibility_score, 1.0) + ?)) "
+                f"WHERE id IN ({placeholders}) AND source = 'feedback'",
+                (delta, *doc_ids),
+            )
+        updated = cursor.rowcount
+        self.conn.commit()
+        return updated
+
+    @_locked
     def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
         cursor = self.conn.cursor()
         # Count docs that will cross the threshold in a single query.

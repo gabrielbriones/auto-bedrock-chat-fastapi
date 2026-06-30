@@ -380,6 +380,7 @@ class WebSocketChatHandler:
                 response_metadata["kb_chunks"] = len(kb_results)
                 response_metadata["kb_sources"] = [
                     {
+                        "document_id": r.get("document_id"),
                         "title": r.get("title"),
                         "source": r.get("source"),
                         "url": r.get("source_url"),

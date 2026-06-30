@@ -1390,6 +1390,8 @@ class AutoLangChatPlugin:
                 prefix=admin_prefix,
                 feedback_store=self._feedback_store,
                 require_admin=require_admin,
+                kb_store=getattr(self, "_kb_store", None),
+                chat_config=self.config,
             )
         else:
             logger.info(
