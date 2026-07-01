@@ -940,11 +940,12 @@ if (window.marked && window.DOMPurify) {
         return label.replace(/_/g, ' ');
     }
 
-    /** Format a scalar metadata value for display: booleans render as TRUE/FALSE. */
-    function formatMetadataValue(value) {
-        if (typeof value === 'boolean') return value ? 'true' : 'false';
-        return String(value);
-    }
+/** Format a scalar metadata value for display: booleans render as true/false; null/undefined render as '—'. */
+function formatMetadataValue(value) {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    return String(value);
+}
 
     function buildSynthesisSection(entry) {
         var sec = el('div', 'drawer-section');
