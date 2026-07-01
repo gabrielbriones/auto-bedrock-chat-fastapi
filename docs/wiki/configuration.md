@@ -158,7 +158,7 @@ These must be passed directly to `add_autolangchat()`:
 ```python
 autolangchat_plugin = add_autolangchat(
     app,
-    model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0",  # overrides AUTOCHAT_MODEL_ID
+    model_id="us.anthropic.claude-sonnet-5",  # overrides AUTOCHAT_MODEL_ID
     temperature=0.3,
     max_tokens=8192,
     system_prompt="You are a helpful customer support assistant.",

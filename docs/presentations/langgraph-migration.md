@@ -139,7 +139,7 @@ Replace the five internal components with LangGraph equivalents. Touch nothing e
 | Admin API and dashboard                               | Completely independent of the AI layer                               |
 | Preset prompts                                        | UI concern — unchanged                                               |
 | Knowledge base (pgvector / RAG)                       | Injected into the LangGraph graph as a retrieval node                |
-| AWS Bedrock infrastructure                            | Same endpoint, same model (`claude-sonnet-4-6`), same region         |
+| AWS Bedrock infrastructure                            | Same endpoint, same model (`us.anthropic.claude-sonnet-5`), same region         |
 | Existing Postgres database                            | Now also used for conversation checkpointing — no new DB             |
 
 ### The WebSocket adapter
