@@ -82,7 +82,14 @@ class FeedbackEntry(BaseModel):
     conversation_history: List[Dict[str, Any]] = []
 
     # Provenance
-    kb_sources_used: List[Dict[str, Any]] = Field(default_factory=list)
+    kb_sources_used: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "KB documents that were retrieved and used in the RAG response. "
+            "Each entry contains: document_id (str|None), title (str|None), "
+            "source (str|None), url (str|None), score (float)."
+        ),
+    )
     model_id: str
 
     # Arbitrary metadata injected by the optional enrichment endpoint

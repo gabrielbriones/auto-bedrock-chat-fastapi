@@ -912,6 +912,42 @@ class ChatConfig(BaseSettings):
         description="How often (in hours) the credibility decay background task runs. Default: 168 h (1 week) (XMGPLAT-10933).",
     )
 
+    kb_credibility_citation_boost_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_KB_CREDIBILITY_CITATION_BOOST_ENABLED",
+        description="Enable citation-boost signal: each time a feedback document is cited in a RAG response its credibility_score increases by kb_credibility_citation_boost (XMGPLAT-10940).",
+    )
+
+    kb_credibility_citation_boost: float = Field(
+        default=0.05,
+        alias="AUTOCHAT_KB_CREDIBILITY_CITATION_BOOST",
+        ge=0.0,
+        le=1.0,
+        description="Amount added to credibility_score each time a feedback document is cited in a RAG response (XMGPLAT-10940).",
+    )
+
+    kb_credibility_feedback_signal_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_KB_CREDIBILITY_FEEDBACK_SIGNAL_ENABLED",
+        description="Enable rated-feedback credibility adjustment: when an admin first reviews a feedback entry, cited feedback documents are boosted or penalised (XMGPLAT-10940).",
+    )
+
+    kb_credibility_positive_delta: float = Field(
+        default=0.5,
+        alias="AUTOCHAT_KB_CREDIBILITY_POSITIVE_DELTA",
+        ge=0.0,
+        le=1.0,
+        description="Amount added to credibility_score for feedback documents cited by a positively-rated, admin-approved feedback entry (XMGPLAT-10940).",
+    )
+
+    kb_credibility_negative_delta: float = Field(
+        default=0.5,
+        alias="AUTOCHAT_KB_CREDIBILITY_NEGATIVE_DELTA",
+        ge=0.0,
+        le=1.0,
+        description="Amount subtracted from credibility_score for feedback documents cited by a negatively-rated, admin-approved feedback entry (XMGPLAT-10940).",
+    )
+
     model_config = SettingsConfigDict(
         env_file=_get_env_file(),
         env_file_encoding="utf-8",

@@ -191,6 +191,21 @@ class BaseKBStore(ABC):
         """Return storage statistics (document/chunk/vector counts, etc.)."""
 
     @abstractmethod
+    def adjust_credibility(self, doc_ids: List[str], delta: float, threshold: float) -> int:
+        """Adjust credibility scores for a set of feedback documents.
+
+        Adds *delta* to ``credibility_score`` for each document in *doc_ids*
+        that has ``source='feedback'``, clamping the result to ``[0.0, 1.0]``.
+        When *delta* is negative, documents whose new score is at or below
+        *threshold* are also set ``removal_flagged=True``.
+
+        Only documents with ``source='feedback'`` are touched.
+
+        Returns:
+            Number of rows updated.
+        """
+
+    @abstractmethod
     def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
         """Decay credibility scores for synthesized (source='feedback') documents.
 

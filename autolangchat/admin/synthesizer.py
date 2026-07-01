@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 
 from ..db.feedback_base import BaseFeedbackStore
 from ..db.kb_base import BaseKBStore
-from ..models import FeedbackEntry, FeedbackListFilters, KBDocumentListFilters, ReviewStatus
+from ..models import FeedbackEntry, FeedbackListFilters, KBDocument, KBDocumentListFilters, ReviewStatus
 from ..rag.embedding_pipeline import TextChunker
 
 logger = logging.getLogger(__name__)
@@ -406,6 +406,39 @@ class FeedbackSynthesizer:
             )
             existing_doc = existing_docs[0] if existing_docs else None
 
+            # ------------------------------------------------------------------
+            # T4: Prefer cited document IDs over tag-based lookup (XMGPLAT-10940).
+            # Collect document_id values from kb_sources_used across all entries,
+            # count occurrences, and override existing_doc with the most-cited
+            # document if it still exists in the KB.
+            # ------------------------------------------------------------------
+            cited_id_counts: Dict[str, int] = {}
+            for entry in entries:
+                for src in entry.kb_sources_used or []:
+                    did = src.get("document_id")
+                    if did:
+                        cited_id_counts[did] = cited_id_counts.get(did, 0) + 1
+
+            source_document_ids: List[str] = list(cited_id_counts.keys())
+
+            if cited_id_counts:
+                most_cited_id = max(cited_id_counts, key=lambda k: cited_id_counts[k])
+                raw_cited = await asyncio.to_thread(kb_store.get_document, most_cited_id)
+                if raw_cited is not None and raw_cited.get("source") == "feedback":
+                    cited_doc = KBDocument.model_validate(
+                        {
+                            **raw_cited,
+                            "tags": (raw_cited.get("metadata") or {}).get("tags", []),
+                        }
+                    )
+                    existing_doc = cited_doc
+                    logger.debug(
+                        "tag='%s': overriding tag-based lookup with cited doc '%s' (%d citations)",
+                        tag,
+                        most_cited_id,
+                        cited_id_counts[most_cited_id],
+                    )
+
             messages = _build_messages(
                 tag=tag,
                 entries=entries,
@@ -497,6 +530,9 @@ class FeedbackSynthesizer:
                 # Merge tags too
                 prev_tags: List[str] = existing_doc.metadata.get("tags") or []
                 merged_tags = list(dict.fromkeys(prev_tags + doc_tags))
+                # Merge source_document_ids
+                prev_doc_ids: List[str] = existing_doc.metadata.get("source_document_ids") or []
+                merged_doc_ids = list(dict.fromkeys(prev_doc_ids + source_document_ids))
                 await asyncio.to_thread(
                     kb_store.update_document,
                     doc_id,
@@ -507,6 +543,7 @@ class FeedbackSynthesizer:
                         "tags": merged_tags,
                         "synthesized": True,
                         "source_feedback_ids": merged_ids,
+                        "source_document_ids": merged_doc_ids,
                     },
                 )
                 logger.info("tag='%s' action=update doc_id='%s'", tag, doc_id)
@@ -535,6 +572,7 @@ class FeedbackSynthesizer:
                         "tags": doc_tags,
                         "synthesized": True,
                         "source_feedback_ids": [str(e.id) for e in entries],
+                        "source_document_ids": source_document_ids,
                     },
                 )
                 logger.info("tag='%s' action=create doc_id='%s'", tag, doc_id)

@@ -727,6 +727,40 @@ class PgVectorKBStore(BaseKBStore):
             "vectors": vector_count,
         }
 
+    def adjust_credibility(self, doc_ids: list[str], delta: float, threshold: float) -> int:
+        """Adjust credibility scores for a set of source='feedback' documents (XMGPLAT-10940)."""
+        if not doc_ids:
+            return 0
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                if delta < 0:
+                    cur.execute(
+                        """
+                        UPDATE documents
+                        SET
+                            credibility_score = GREATEST(0.0, LEAST(1.0, COALESCE(credibility_score, 1.0) + %s)),
+                            removal_flagged   = CASE
+                                WHEN GREATEST(0.0, LEAST(1.0, COALESCE(credibility_score, 1.0) + %s)) <= %s
+                                THEN true
+                                ELSE removal_flagged
+                            END
+                        WHERE id = ANY(%s) AND source = 'feedback'
+                        """,
+                        (delta, delta, threshold, doc_ids),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE documents
+                        SET credibility_score = GREATEST(0.0, LEAST(1.0, COALESCE(credibility_score, 1.0) + %s))
+                        WHERE id = ANY(%s) AND source = 'feedback'
+                        """,
+                        (delta, doc_ids),
+                    )
+                updated = cur.rowcount
+            conn.commit()
+        return updated
+
     def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
         """Decay credibility scores for source='feedback' documents (XMGPLAT-10933).
 

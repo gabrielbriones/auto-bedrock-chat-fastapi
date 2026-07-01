@@ -24,9 +24,10 @@ pattern established for :class:`autolangchat.admin_auth.RemoteAdminAuthorizer`).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
@@ -34,6 +35,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
 from ..db.feedback_base import BaseFeedbackStore
+from ..db.kb_base import BaseKBStore
 from ..exceptions import AdminAPIError, FeedbackNotFoundError
 from ..models import (
     FeedbackEntry,
@@ -44,11 +46,7 @@ from ..models import (
     ReviewStatus,
     ReviewUpdateRequest,
 )
-from .admin_errors import (
-    ADMIN_COMMON_RESPONSES,
-    ADMIN_FEEDBACK_DELETE_RESPONSES,
-    ADMIN_FEEDBACK_PATCH_RESPONSES,
-)
+from .admin_errors import ADMIN_COMMON_RESPONSES, ADMIN_FEEDBACK_DELETE_RESPONSES, ADMIN_FEEDBACK_PATCH_RESPONSES
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("bedrock.audit")
@@ -81,6 +79,8 @@ def register_admin_feedback_routes(
     prefix: str,
     feedback_store: BaseFeedbackStore,
     require_admin: Callable,
+    kb_store: Optional[BaseKBStore] = None,
+    chat_config: Optional[Any] = None,
 ) -> APIRouter:
     """Register the ``/admin/feedback*`` routes on ``app``.
 
@@ -97,6 +97,14 @@ def register_admin_feedback_routes(
     require_admin:
         The authentication/authorization dependency built by
         :meth:`BedrockChatPlugin._setup_admin_routes`.
+    kb_store:
+        Optional :class:`BaseKBStore`. When provided and
+        ``chat_config.kb_credibility_feedback_signal_enabled`` is ``True``,
+        the PATCH handler will call :meth:`BaseKBStore.adjust_credibility`
+        on cited documents when a feedback entry is first reviewed.
+    chat_config:
+        Optional :class:`ChatConfig`. Required for credibility signal
+        config values; silently ignored when ``kb_store`` is ``None``.
 
     Returns
     -------
@@ -214,6 +222,43 @@ def register_admin_feedback_routes(
             comment=body.reviewer_comment,
         )
 
+        # Rated-feedback credibility signal (XMGPLAT-10940).
+        # Fires only when the admin explicitly APPROVES the entry for the first
+        # time (PENDING_REVIEW → APPROVED). REJECTED entries represent
+        # admin-invalidated feedback and must not adjust credibility — applying
+        # a delta based on rejected feedback would skew KB scores with data the
+        # admin has explicitly overruled.
+        credibility_adjusted = 0
+        if (
+            kb_store is not None
+            and chat_config is not None
+            and getattr(chat_config, "kb_credibility_feedback_signal_enabled", False)
+            and before.review_status == ReviewStatus.PENDING_REVIEW
+            and updated.review_status == ReviewStatus.APPROVED
+        ):
+            doc_ids = list(
+                dict.fromkeys(src["document_id"] for src in (updated.kb_sources_used or []) if src.get("document_id"))
+            )
+            if doc_ids:
+                is_positive = updated.rating == Rating.POSITIVE
+                delta = (
+                    chat_config.kb_credibility_positive_delta
+                    if is_positive
+                    else -chat_config.kb_credibility_negative_delta
+                )
+                try:
+                    credibility_adjusted = await asyncio.to_thread(
+                        kb_store.adjust_credibility,
+                        doc_ids,
+                        delta,
+                        chat_config.kb_credibility_removal_threshold,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to apply rated-feedback credibility signal for feedback %s",
+                        feedback_id,
+                    )
+
         audit_logger.info(
             "feedback.review.update",
             extra={
@@ -230,6 +275,7 @@ def register_admin_feedback_routes(
                     "tags": list(updated.reviewer_tags),
                     "comment": updated.reviewer_comment,
                 },
+                "credibility_docs_adjusted": credibility_adjusted,
                 "ts": datetime.now(timezone.utc).isoformat(),
             },
         )

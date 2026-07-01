@@ -17,11 +17,11 @@ Usage
 Graph topology (Phase 2)
 ------------------------
 
-    START → preprocess → llm → [should_continue] → END
-                                        ↓
-                                  tools_execution
-                                        ↓
-                                (loops back to llm)
+    START → init_turn → rag → preprocess → llm → citation_boost → END
+                                                ↓             ↑
+                                          tools_execution      |
+                                                ↓             |
+                                          (loops back to llm) ─┘
 
 Phase 3 swaps MemorySaver for AsyncPostgresSaver.
 """
@@ -35,6 +35,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from .checkpointer import build_checkpointer
+from .nodes.citation_boost import citation_boost_node
 from .nodes.init_turn import init_turn_node
 from .nodes.llm_call import llm_call_node
 from .nodes.preprocess import preprocess_node
@@ -98,6 +99,7 @@ def build_chat_graph(
     builder.add_node("rag", _inject_node_config(config, tool_manager, rag_node))
     builder.add_node("preprocess", _inject_node_config(config, tool_manager, preprocess_node))
     builder.add_node("llm", _inject_node_config(config, tool_manager, llm_call_node))
+    builder.add_node("citation_boost", _inject_node_config(config, tool_manager, citation_boost_node))
 
     # Edges
     builder.add_edge(START, "init_turn")
@@ -110,13 +112,15 @@ def build_chat_graph(
         builder.add_conditional_edges(
             "llm",
             should_continue,
-            {"tools": "tools", "__end__": END},
+            {"tools": "tools", "__end__": "citation_boost"},
         )
         # tools node loops back through preprocess so tool results are truncated
         # before being sent to the LLM (avoids context-window overflow)
         builder.add_edge("tools", "preprocess")
     else:
-        builder.add_edge("llm", END)
+        builder.add_edge("llm", "citation_boost")
+
+    builder.add_edge("citation_boost", END)
 
     # Checkpointer: MemorySaver for Phase 1/2; Postgres (AsyncPostgresSaver) in Phase 3.
     # The pool is created closed here and opened in the FastAPI startup event via
@@ -128,9 +132,9 @@ def build_chat_graph(
     graph = builder.compile(checkpointer=checkpointer)
 
     topology = (
-        "init_turn → rag → preprocess → llm → [tools] → preprocess → llm → END"
+        "init_turn → rag → preprocess → llm → [tools → preprocess → llm →]* citation_boost → END"
         if tool_manager is not None
-        else "init_turn → rag → preprocess → llm → END"
+        else "init_turn → rag → preprocess → llm → citation_boost → END"
     )
     logger.info(
         "LangGraph chat graph compiled (nodes: %s, checkpointer: %s)",

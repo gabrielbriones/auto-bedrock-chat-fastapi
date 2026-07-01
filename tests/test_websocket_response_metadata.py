@@ -167,8 +167,9 @@ def test_metadata_kb_path():
     assert len(metadata["kb_sources"]) == 2
 
     first = metadata["kb_sources"][0]
-    assert set(first) == {"title", "source", "url", "score"}
+    assert set(first) == {"title", "source", "url", "score", "document_id"}
     assert first == {
+        "document_id": None,
         "title": "Doc A",
         "source": "kb://a",
         "url": "https://example.com/a",
