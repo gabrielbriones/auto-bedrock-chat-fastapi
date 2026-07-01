@@ -14,7 +14,7 @@ def _load_config(**env_overrides):
     """Import-safe helper: load ChatConfig with a clean env patch."""
     base_env = {
         # Minimal required var so pydantic-settings is happy
-        "AUTOCHAT_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+        "AUTOCHAT_MODEL_ID": "us.anthropic.claude-sonnet-5",
     }
     base_env.update(env_overrides)
     with patch.dict(os.environ, base_env, clear=True):
@@ -37,10 +37,10 @@ class TestAutochatEnvVarPrefix:
     def test_bedrock_model_id_ignored(self):
         """BEDROCK_MODEL_ID must have no effect — config uses AUTOCHAT_MODEL_ID."""
         config = _load_config(
-            AUTOCHAT_MODEL_ID="us.anthropic.claude-sonnet-4-6",
+            AUTOCHAT_MODEL_ID="us.anthropic.claude-sonnet-5",
             BEDROCK_MODEL_ID="should-be-ignored",
         )
-        assert config.model_id == "us.anthropic.claude-sonnet-4-6"
+        assert config.model_id == "us.anthropic.claude-sonnet-5"
 
     def test_temperature_from_autochat_var(self):
         config = _load_config(AUTOCHAT_TEMPERATURE="0.3")

@@ -84,7 +84,7 @@ BEDROCK_ENABLE_UI=true
 ### Production (.env.prod)
 
 ```env
-BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-5
 BEDROCK_TEMPERATURE=0.7
 BEDROCK_LOG_LEVEL=INFO
 BEDROCK_LOG_API_CALLS=false

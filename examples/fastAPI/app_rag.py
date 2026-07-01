@@ -41,7 +41,7 @@ When answering questions:
 
 You have access to FastAPI tutorials, guides, and API reference documentation.""",
         # Model configuration
-        model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        model_id="us.anthropic.claude-sonnet-5",
         temperature=0.7,
         max_tokens=4096,
     )

@@ -123,7 +123,7 @@ generator = create_tools_generator_from_spec(
     allowed_paths=["/api/v1/users", "/api/v1/products", "/api/v1/orders"],
     excluded_paths=["/internal", "/admin"],
     api_base_url="http://localhost:3000",  # Auto-detected from spec
-    model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+    model_id="us.anthropic.claude-sonnet-5",
     aws_region="us-east-1"
 )
 ```
@@ -136,7 +136,7 @@ AUTOCHAT_OPENAPI_SPEC_FILE=./expressjs/api_spec.json
 AUTOCHAT_API_BASE_URL=http://localhost:3000
 AUTOCHAT_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders
 AUTOCHAT_EXCLUDED_PATHS=/internal,/admin
-AUTOCHAT_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+AUTOCHAT_MODEL_ID=us.anthropic.claude-sonnet-5
 AWS_REGION=us-east-1
 ```
 

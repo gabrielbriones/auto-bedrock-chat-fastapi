@@ -49,7 +49,7 @@ class ChatConfig(BaseSettings):
 
     # Model Configuration
     model_id: str = Field(
-        default="us.anthropic.claude-sonnet-4-6",
+        default="us.anthropic.claude-sonnet-5",
         alias="AUTOCHAT_MODEL_ID",
         description="Model identifier",
     )

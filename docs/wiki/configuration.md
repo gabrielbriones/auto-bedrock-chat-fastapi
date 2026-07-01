@@ -40,7 +40,7 @@ autolangchat_plugin = add_autolangchat(
 | `AWS_REGION`             | `us-east-1`                      | AWS region                       |
 | `AWS_ACCESS_KEY_ID`      | —                                | AWS access key (or use IAM role) |
 | `AWS_SECRET_ACCESS_KEY`  | —                                | AWS secret key                   |
-| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-4-6` | Model identifier                 |
+| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-5` | Model identifier                 |
 | `AUTOCHAT_TEMPERATURE`   | `0.7`                            | Response randomness (0.0–1.0)    |
 | `AUTOCHAT_MAX_TOKENS`    | `4096`                           | Max tokens in model response     |
 | `AUTOCHAT_TOP_P`         | `0.9`                            | Top-p sampling parameter         |
@@ -158,7 +158,7 @@ These must be passed directly to `add_autolangchat()`:
 ```python
 autolangchat_plugin = add_autolangchat(
     app,
-    model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0",  # overrides AUTOCHAT_MODEL_ID
+    model_id="us.anthropic.claude-sonnet-5",  # overrides AUTOCHAT_MODEL_ID
     temperature=0.3,
     max_tokens=8192,
     system_prompt="You are a helpful customer support assistant.",

@@ -196,7 +196,7 @@ client = WebSocketChatClient(
   "timestamp": "2026-01-01T10:00:05",
   "metadata": {
     "message_id": "f1c2…",
-    "model_id": "us.anthropic.claude-sonnet-4-6",
+    "model_id": "us.anthropic.claude-sonnet-5",
     "usage": { "input_tokens": 120, "output_tokens": 240 },
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
