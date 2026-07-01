@@ -8,25 +8,26 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 
 ## 📚 Wiki Pages
 
-| Page                                         | Description                                                          |
-| -------------------------------------------- | -------------------------------------------------------------------- |
-| [Architecture](architecture)                 | System components, data flow, and module overview                    |
-| [Configuration](configuration)               | All settings, `.env` reference, code overrides                       |
-| [FastAPI Plugin Integration](fastapi-plugin) | How to add the plugin to a FastAPI app, with examples                |
-| [OpenAPI Integration](openapi-integration)   | Framework-agnostic usage via OpenAPI specs (Express.js, Flask, etc.) |
-| [Tool Calling](tool-calling)                 | How tools are generated from OpenAPI specs and called by the AI      |
-| [Chat UI](chat-ui)                           | Built-in web chat interface, endpoints, and UI customization         |
-| [Preset Prompts](preset-prompts)             | One-click prompt buttons, YAML format, `{{JOB_ID}}` placeholder      |
-| [WebSocket Client](websocket-client)         | Python WebSocket client script, connection options, auth examples    |
-| [Authentication](authentication)             | All auth methods, credential flow, and verification endpoint         |
-| [SSO (Single Sign-On)](sso)                  | OAuth2/OIDC SSO integration, provider examples, and troubleshooting  |
-| [RAG Feature](rag-feature)                   | Web crawler, vector DB, embedding pipeline, hybrid search            |
-| [Token Management](token-management)         | Input token limits, AI summarization, text truncation                |
-| [Feedback Collection](feedback-collection)   | 👍 / 👎 ratings, corrections, FeedbackStore backends                 |
-| [Admin API](admin-api)                       | Reviewer HTTP surface for feedback + KB management                   |
-| [Feedback Synthesis](feedback-synthesis)     | Synthesizing approved feedback into KB articles via LLM              |
-| [CI Pipelines](ci-pipelines)                 | GitHub Actions for tests, linting, and code quality                  |
-| [CD Pipelines](cd-pipelines)                 | GitHub Actions for builds, Docker, staging, and production           |
+| Page                                                 | Description                                                                                                               |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [Architecture](architecture)                         | System components, data flow, and module overview                                                                         |
+| [Configuration](configuration)                       | All settings, `.env` reference, code overrides                                                                            |
+| [FastAPI Plugin Integration](fastapi-plugin)         | How to add the plugin to a FastAPI app, with examples                                                                     |
+| [OpenAPI Integration](openapi-integration)           | Framework-agnostic usage via OpenAPI specs (Express.js, Flask, etc.)                                                      |
+| [Tool Calling](tool-calling)                         | How tools are generated from OpenAPI specs and called by the AI                                                           |
+| [Chat UI](chat-ui)                                   | Built-in web chat interface, endpoints, and UI customization                                                              |
+| [Preset Prompts](preset-prompts)                     | One-click prompt buttons, YAML format, `{{JOB_ID}}` placeholder                                                           |
+| [WebSocket Client](websocket-client)                 | Python WebSocket client script, connection options, auth examples                                                         |
+| [Authentication](authentication)                     | All auth methods, credential flow, and verification endpoint                                                              |
+| [SSO (Single Sign-On)](sso)                          | OAuth2/OIDC SSO integration, provider examples, and troubleshooting                                                       |
+| [RAG Feature](rag-feature)                           | Web crawler, vector DB, embedding pipeline, hybrid search                                                                 |
+| [Token Management](token-management)                 | Input token limits, AI summarization, text truncation                                                                     |
+| [Feedback Collection](feedback-collection)           | 👍 / 👎 ratings, corrections, FeedbackStore backends                                                                      |
+| [Admin API](admin-api)                               | Reviewer HTTP surface for feedback + KB management                                                                        |
+| [Feedback Synthesis](feedback-synthesis)             | Synthesizing approved feedback into KB articles via LLM                                                                   |
+| [Continuous Learning Loop](continuous-learning-loop) | Architecture, config, reviewer guide, effectiveness tracking, and troubleshooting for the feedback → synthesis → RAG loop |
+| [CI Pipelines](ci-pipelines)                         | GitHub Actions for tests, linting, and code quality                                                                       |
+| [CD Pipelines](cd-pipelines)                         | GitHub Actions for builds, Docker, staging, and production                                                                |
 
 ---
 
@@ -43,5 +44,7 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 **Working with AI knowledge bases?** See [RAG Feature](rag-feature).
 
 **Synthesizing approved feedback into KB articles?** See [Feedback Synthesis](feedback-synthesis).
+
+**Operating the full learning loop (reviewer guide, credibility decay, troubleshooting)?** See [Continuous Learning Loop](continuous-learning-loop).
 
 **Running in CI/CD?** See [CI Pipelines](ci-pipelines) and [CD Pipelines](cd-pipelines).
