@@ -703,11 +703,13 @@ class SQLiteKBStore(BaseKBStore):
             clauses.append("d.topic = ?")
             params.append(filters.topic)
         if filters.tags:
-            # Overlap: any of the supplied tags must appear in metadata.tags
-            placeholders = ",".join("?" for _ in filters.tags)
+            # Overlap: any of the supplied tags must appear in metadata.tags.
+            # Case-insensitive: compare LOWER(stored tag) against
+            # LOWER(each supplied tag) so e.g. "Perf" matches "perf".
+            placeholders = ",".join("LOWER(?)" for _ in filters.tags)
             clauses.append(
                 f"EXISTS (SELECT 1 FROM json_each(json_extract(d.metadata, '$.tags')) "
-                f"WHERE value IN ({placeholders}))"
+                f"WHERE LOWER(value) IN ({placeholders}))"
             )
             params.extend(filters.tags)
         if filters.date_from is not None:

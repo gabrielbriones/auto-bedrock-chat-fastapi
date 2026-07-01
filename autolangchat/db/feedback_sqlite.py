@@ -390,9 +390,12 @@ class SQLiteFeedbackStore(BaseFeedbackStore):
             clauses.append("created_at < ?")
             params.append(_dt_to_iso(filters.date_to))
         if filters.tags:
-            placeholders = ", ".join("?" for _ in filters.tags)
+            # Case-insensitive match: compare LOWER(stored tag) against
+            # LOWER(each supplied tag) so e.g. "Perf" matches "perf".
+            placeholders = ", ".join("LOWER(?)" for _ in filters.tags)
             clauses.append(
-                "EXISTS (SELECT 1 FROM json_each(feedback.reviewer_tags) je " f"WHERE je.value IN ({placeholders}))"
+                "EXISTS (SELECT 1 FROM json_each(feedback.reviewer_tags) je "
+                f"WHERE LOWER(je.value) IN ({placeholders}))"
             )
             params.extend(filters.tags)
         if filters.has_integrated is True:
