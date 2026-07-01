@@ -901,7 +901,6 @@ if (window.marked && window.DOMPurify) {
 
         var details = document.createElement('details');
         details.className = 'drawer-section';
-        details.setAttribute('open', '');
         var summary = document.createElement('summary');
         summary.textContent = 'Feedback Metadata';
         summary.className = 'drawer-section-summary';
