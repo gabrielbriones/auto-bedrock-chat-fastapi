@@ -1450,7 +1450,7 @@ class AutoLangChatPlugin:
         logger.info("Admin routes registered (prefix=%s)", admin_prefix)
 
     def _setup_shutdown(self):
-        """Setup shutdown handler and startup event for KB auto-population"""
+        """Register the atexit shutdown fallback and the cleanup-handler list."""
 
         # Store reference to websocket_handler for cleanup
         if not hasattr(self.app.state, "autolangchat_cleanup_handlers"):
@@ -1461,76 +1461,6 @@ class AutoLangChatPlugin:
 
         # Register atexit handler as a fallback
         atexit.register(self._sync_shutdown)
-
-        # Register startup event for KB auto-population
-        @self.app.on_event("startup")
-        async def startup_open_checkpointer():
-            """Open the LangGraph checkpoint pool and initialize the schema."""
-            from .graph.checkpointer import open_checkpointer as _open_cp
-
-            await _open_cp(self.chat_graph.checkpointer)
-
-        @self.app.on_event("startup")
-        async def startup_schedule_checkpoint_expiry():
-            """Start a background task that periodically purges expired checkpoints."""
-            from .graph.checkpointer import purge_expired_checkpoints as _purge
-
-            ttl = self.config.checkpoint_ttl_seconds
-            _PURGE_INTERVAL = 6 * 3600  # run every 6 hours
-
-            async def _loop():
-                while True:
-                    await asyncio.sleep(_PURGE_INTERVAL)
-                    try:
-                        purged = await _purge(self.chat_graph.checkpointer, ttl)
-                        if purged:
-                            logger.info("Checkpoint TTL sweep: purged %d thread(s)", purged)
-                    except Exception:
-                        logger.exception("Checkpoint TTL sweep failed")
-
-            asyncio.create_task(_loop())
-
-        @self.app.on_event("startup")
-        async def startup_populate_kb():
-            """Auto-populate KB on startup if needed"""
-            if hasattr(self, "_kb_needs_population") and self._kb_needs_population:
-                try:
-                    from .commands.kb import kb_populate
-
-                    logger.info("Starting knowledge base auto-population...")
-                    success = await kb_populate(
-                        config_path=self.config.kb_sources_config,
-                        db_path=self.config.kb_database_path,
-                        force=True,
-                        config=self.config,  # Pass config object
-                    )
-
-                    if success:
-                        logger.info("✅ Knowledge base auto-population complete")
-                    else:
-                        logger.error("❌ Knowledge base auto-population failed")
-                        if not self.config.kb_allow_empty:
-                            raise AutoLangChatError(
-                                "RAG is enabled but KB auto-population failed. " "Check logs for details."
-                            )
-                except Exception as e:
-                    logger.error(f"Failed to auto-populate KB: {e}")
-                    if not self.config.kb_allow_empty:
-                        raise
-
-        # Register shutdown event
-        @self.app.on_event("shutdown")
-        async def shutdown_cleanup():
-            """Cleanup on shutdown"""
-            await self.shutdown()
-
-        # Open the feedback-store connection pool on startup. Done after KB
-        # auto-population so it doesn't block KB readiness.
-        if self._feedback_store is not None:
-
-            @self.app.on_event("startup")
-            async def startup_open_feedback_store():
-                await self._startup_open_feedback_store()
 
     async def startup(self) -> None:
         """Open all async resources required before the first request.
@@ -1875,8 +1805,10 @@ def create_fastapi_with_autolangchat(**kwargs) -> tuple[FastAPI, AutoLangChatPlu
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """Lifespan context manager with autolangchat cleanup"""
+        """Lifespan context manager with autolangchat startup/cleanup"""
         # Startup
+        if hasattr(app.state, "autolangchat_plugin"):
+            await app.state.autolangchat_plugin.startup()
         yield
         # Shutdown - cleanup autolangchat resources
         if hasattr(app.state, "autolangchat_plugin"):
