@@ -332,6 +332,30 @@ class TestRatedFeedbackCredibilitySignal:
         assert call_args[0][0] == [doc_id]
         assert call_args[0][1] > 0  # positive delta
 
+    def test_signal_fires_on_pending_to_approved_negative_rating(self):
+        """Negatively-rated entry APPROVED by admin → negative delta applied."""
+        doc_id = "doc-xyz"
+        entry = _make_entry(
+            rating=Rating.NEGATIVE,
+            correction_text="fix this",
+            kb_sources_used=[{"document_id": doc_id, "score": 0.9}],
+        )
+        store = _FakeFeedbackStore([entry])
+        kb_store = MagicMock()
+        kb_store.adjust_credibility = MagicMock(return_value=1)
+        client = _build_app(store, kb_store=kb_store, chat_config=_FakeConfig())
+
+        resp = client.patch(
+            f"/admin/feedback/{entry.id}",
+            json={"review_status": "approved"},
+        )
+        assert resp.status_code == 200
+        kb_store.adjust_credibility.assert_called_once()
+        call_args = kb_store.adjust_credibility.call_args
+        assert call_args[0][0] == [doc_id]
+        assert call_args[0][1] < 0  # negative delta
+        assert call_args[0][2] == _FakeConfig.kb_credibility_removal_threshold
+
     def test_signal_does_not_fire_on_pending_to_rejected(self):
         """Admin REJECTED means the feedback is invalid — no credibility effect."""
         doc_id = "doc-xyz"
@@ -692,3 +716,89 @@ class TestSynthesizerCitedDocPath:
         add_call = kb_store.add_document.call_args
         metadata_arg = add_call[0][7]  # 8th positional arg (0-based) is metadata
         assert cited_id in metadata_arg.get("source_document_ids", [])
+
+
+# ===========================================================================
+# Citation Boost Node
+# ===========================================================================
+
+from autolangchat.graph.nodes.citation_boost import citation_boost_node  # noqa: E402
+
+
+class _BoostConfig:
+    kb_credibility_citation_boost_enabled = True
+    kb_credibility_citation_boost = 0.05
+    kb_credibility_removal_threshold = 0.3
+
+
+class TestCitationBoostNode:
+    @pytest.mark.asyncio
+    async def test_boost_fires_when_enabled(self):
+        doc_id = "doc-boost-1"
+        kb_store = MagicMock()
+        kb_store.adjust_credibility = MagicMock(return_value=1)
+
+        state = {"kb_results": [{"document_id": doc_id, "title": "Doc A"}]}
+        config = {"configurable": {"chat_config": _BoostConfig(), "kb_store": kb_store}}
+
+        await citation_boost_node(state, config)
+
+        kb_store.adjust_credibility.assert_called_once_with(
+            [doc_id],
+            _BoostConfig.kb_credibility_citation_boost,
+            _BoostConfig.kb_credibility_removal_threshold,
+        )
+
+    @pytest.mark.asyncio
+    async def test_boost_deduplicates_doc_ids(self):
+        doc_id = "doc-dup"
+        kb_store = MagicMock()
+        kb_store.adjust_credibility = MagicMock(return_value=1)
+
+        state = {
+            "kb_results": [
+                {"document_id": doc_id},
+                {"document_id": doc_id},  # duplicate
+                {"document_id": "other-doc"},
+            ]
+        }
+        config = {"configurable": {"chat_config": _BoostConfig(), "kb_store": kb_store}}
+
+        await citation_boost_node(state, config)
+
+        call_args = kb_store.adjust_credibility.call_args
+        assert call_args[0][0] == [doc_id, "other-doc"]  # deduped, order preserved
+
+    @pytest.mark.asyncio
+    async def test_boost_does_not_fire_when_disabled(self):
+        kb_store = MagicMock()
+
+        class _Disabled(_BoostConfig):
+            kb_credibility_citation_boost_enabled = False
+
+        state = {"kb_results": [{"document_id": "doc-abc"}]}
+        config = {"configurable": {"chat_config": _Disabled(), "kb_store": kb_store}}
+
+        await citation_boost_node(state, config)
+
+        kb_store.adjust_credibility.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_boost_does_not_fire_when_no_kb_results(self):
+        kb_store = MagicMock()
+
+        state = {"kb_results": []}
+        config = {"configurable": {"chat_config": _BoostConfig(), "kb_store": kb_store}}
+
+        await citation_boost_node(state, config)
+
+        kb_store.adjust_credibility.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_boost_does_not_fire_when_no_kb_store(self):
+        state = {"kb_results": [{"document_id": "doc-abc"}]}
+        config = {"configurable": {"chat_config": _BoostConfig(), "kb_store": None}}
+
+        result = await citation_boost_node(state, config)
+
+        assert result == {}
