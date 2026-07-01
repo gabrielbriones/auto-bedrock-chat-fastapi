@@ -738,9 +738,9 @@ class PgVectorKBStore(BaseKBStore):
                         """
                         UPDATE documents
                         SET
-                            credibility_score = GREATEST(0.0, LEAST(1.0, credibility_score + %s)),
+                            credibility_score = GREATEST(0.0, LEAST(1.0, COALESCE(credibility_score, 1.0) + %s)),
                             removal_flagged   = CASE
-                                WHEN GREATEST(0.0, LEAST(1.0, credibility_score + %s)) <= %s
+                                WHEN GREATEST(0.0, LEAST(1.0, COALESCE(credibility_score, 1.0) + %s)) <= %s
                                 THEN true
                                 ELSE removal_flagged
                             END
@@ -752,7 +752,7 @@ class PgVectorKBStore(BaseKBStore):
                     cur.execute(
                         """
                         UPDATE documents
-                        SET credibility_score = GREATEST(0.0, LEAST(1.0, credibility_score + %s))
+                        SET credibility_score = GREATEST(0.0, LEAST(1.0, COALESCE(credibility_score, 1.0) + %s))
                         WHERE id = ANY(%s) AND source = 'feedback'
                         """,
                         (delta, doc_ids),

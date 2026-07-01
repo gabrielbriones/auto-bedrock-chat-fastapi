@@ -86,7 +86,7 @@ class FeedbackEntry(BaseModel):
         default_factory=list,
         description=(
             "KB documents that were retrieved and used in the RAG response. "
-            "Each entry contains: document_id (str), title (str|None), "
+            "Each entry contains: document_id (str|None), title (str|None), "
             "source (str|None), url (str|None), score (float)."
         ),
     )
