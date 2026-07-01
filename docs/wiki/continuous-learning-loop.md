@@ -260,7 +260,7 @@ Flagged articles are:
 
 - **Excluded** from `semantic_search` by default (`exclude_flagged=True`)
 - Still visible in `GET /admin/kb/documents?removal_flagged=true`
-- Recoverable via `POST /admin/kb/documents/reset-credibility/{id}`
+- Recoverable via `POST /admin/kb/documents/reset-credibility/{id}` — percent-encode URL-shaped IDs (see [Admin API — Credibility reset](admin-api#credibility-reset))
 
 Flagging is a **soft-delete**: the article and its source feedback history
 are preserved for audit and rollback purposes.

@@ -266,6 +266,11 @@ to `1.0` and clears `removal_flagged` for a specific document. Use this
 to manually recover an article that was flagged by the credibility decay
 task after you've determined it is still valid.
 
+> If the document ID contains slashes (URL-shaped IDs from the web
+> crawler), percent-encode it exactly as described in the **URL-shaped
+> IDs** note above:
+> `POST /admin/kb/documents/reset-credibility/https%3A%2F%2Fexample.com%2Fpath%2F`
+
 ```bash
 curl -sS -b cookies.txt -X POST \
   'https://app.example.com/admin/kb/documents/reset-credibility/synthesis-ipc-computation-a1b2c3d4'
