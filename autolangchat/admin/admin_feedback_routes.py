@@ -24,6 +24,7 @@ pattern established for :class:`autolangchat.admin_auth.RemoteAdminAuthorizer`).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional
@@ -235,7 +236,9 @@ def register_admin_feedback_routes(
             and before.review_status == ReviewStatus.PENDING_REVIEW
             and updated.review_status == ReviewStatus.APPROVED
         ):
-            doc_ids = [src["document_id"] for src in (updated.kb_sources_used or []) if src.get("document_id")]
+            doc_ids = list(
+                dict.fromkeys(src["document_id"] for src in (updated.kb_sources_used or []) if src.get("document_id"))
+            )
             if doc_ids:
                 is_positive = updated.rating == Rating.POSITIVE
                 delta = (
@@ -244,7 +247,8 @@ def register_admin_feedback_routes(
                     else -chat_config.kb_credibility_negative_delta
                 )
                 try:
-                    credibility_adjusted = kb_store.adjust_credibility(
+                    credibility_adjusted = await asyncio.to_thread(
+                        kb_store.adjust_credibility,
                         doc_ids,
                         delta,
                         chat_config.kb_credibility_removal_threshold,
