@@ -35,6 +35,21 @@
     function show(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); }
     function hide(id) { var e = document.getElementById(id); if (e) e.classList.add('hidden'); }
 
+    /**
+     * Return a debounced wrapper around `fn` that delays invocation until
+     * `wait` ms have elapsed since the last call. Used to avoid firing a
+     * request on every keystroke for text/date filter inputs.
+     */
+    function debounce(fn, wait) {
+        var timer = null;
+        return function () {
+            var args = arguments;
+            var ctx = this;
+            clearTimeout(timer);
+            timer = setTimeout(function () { fn.apply(ctx, args); }, wait);
+        };
+    }
+
     /** Format ISO date string to locale-friendly display. */
     function fmtDate(iso) {
         if (!iso) return '—';
@@ -195,17 +210,20 @@
         fb.appendChild(buildDateInput('fq-date-from', 'From'));
         fb.appendChild(buildDateInput('fq-date-to', 'To'));
 
-        var acts = el('div', 'filter-actions');
-        var applyBtn = el('button', 'btn-primary', 'Apply');
-        applyBtn.style.padding = '7px 14px';
-        applyBtn.addEventListener('click', function () {
+        // Read the current filter inputs into _fqState and reload the list.
+        // Auto-applied on filter change (debounced for text/date inputs) —
+        // there is no Apply button in this view.
+        function applyFeedbackQueueFilters() {
             _fqState.rating = qs('#fq-rating').value;
             _fqState.tags = qs('#fq-tags').value.trim();
             _fqState.date_from = qs('#fq-date-from').value;
             _fqState.date_to = qs('#fq-date-to').value;
             _fqState.offset = 0;
             loadFeedbackQueue(_fqState);
-        });
+        }
+        var applyFeedbackQueueFiltersDebounced = debounce(applyFeedbackQueueFilters, 200);
+
+        var acts = el('div', 'filter-actions');
         var resetBtn = el('button', 'btn-secondary', 'Reset');
         resetBtn.style.padding = '7px 14px';
         resetBtn.addEventListener('click', function () {
@@ -213,9 +231,16 @@
             qsa('#view-feedback-queue select, #view-feedback-queue input').forEach(function (i) { i.value = ''; });
             loadFeedbackQueue(_fqState);
         });
-        acts.appendChild(applyBtn); acts.appendChild(resetBtn);
+        acts.appendChild(resetBtn);
         fb.appendChild(acts);
         view.appendChild(fb);
+
+        // Auto-apply: select fires immediately on change, text/date inputs
+        // are debounced so we don't send a request on every keystroke.
+        qs('#fq-rating', fb).addEventListener('change', applyFeedbackQueueFilters);
+        qs('#fq-tags', fb).addEventListener('input', applyFeedbackQueueFiltersDebounced);
+        qs('#fq-date-from', fb).addEventListener('input', applyFeedbackQueueFiltersDebounced);
+        qs('#fq-date-to', fb).addEventListener('input', applyFeedbackQueueFiltersDebounced);
 
         // Table wrapper (updated by loadFeedbackQueue)
         var wrap = el('div', 'data-table-wrap'); wrap.id = 'fq-table-wrap'; view.appendChild(wrap);
@@ -269,10 +294,10 @@
         fb.appendChild(buildDateInput('fr-date-from', 'From'));
         fb.appendChild(buildDateInput('fr-date-to', 'To'));
 
-        var acts = el('div', 'filter-actions');
-        var applyBtn = el('button', 'btn-primary', 'Apply');
-        applyBtn.style.padding = '7px 14px';
-        applyBtn.addEventListener('click', function () {
+        // Read the current filter inputs into _frState and reload the list.
+        // Auto-applied on filter change (debounced for text/date inputs) —
+        // there is no Apply button in this view.
+        function applyFeedbackReviewedFilters() {
             _frState.status    = qs('#fr-status').value;
             _frState.rating    = qs('#fr-rating').value;
             _frState.tags      = qs('#fr-tags').value.trim();
@@ -280,7 +305,10 @@
             _frState.date_to   = qs('#fr-date-to').value;
             _frState.offset    = 0;
             loadFeedbackReviewed(_frState);
-        });
+        }
+        var applyFeedbackReviewedFiltersDebounced = debounce(applyFeedbackReviewedFilters, 200);
+
+        var acts = el('div', 'filter-actions');
         var resetBtn = el('button', 'btn-secondary', 'Reset');
         resetBtn.style.padding = '7px 14px';
         resetBtn.addEventListener('click', function () {
@@ -289,9 +317,17 @@
             qsa('#view-feedback-reviewed select:not(#fr-status), #view-feedback-reviewed input').forEach(function (i) { i.value = ''; });
             loadFeedbackReviewed(_frState);
         });
-        acts.appendChild(applyBtn); acts.appendChild(resetBtn);
+        acts.appendChild(resetBtn);
         fb.appendChild(acts);
         view.appendChild(fb);
+
+        // Auto-apply: selects fire immediately on change, text/date inputs
+        // are debounced so we don't send a request on every keystroke.
+        qs('#fr-status', fb).addEventListener('change', applyFeedbackReviewedFilters);
+        qs('#fr-rating', fb).addEventListener('change', applyFeedbackReviewedFilters);
+        qs('#fr-tags', fb).addEventListener('input', applyFeedbackReviewedFiltersDebounced);
+        qs('#fr-date-from', fb).addEventListener('input', applyFeedbackReviewedFiltersDebounced);
+        qs('#fr-date-to', fb).addEventListener('input', applyFeedbackReviewedFiltersDebounced);
 
         // Bulk-actions bar — holds the single "Delete Selected" button that
         // appears above the table once at least one rejected entry is checked.
@@ -613,10 +649,10 @@
         fb.appendChild(buildDateInput('kb-date-from', 'Published From'));
         fb.appendChild(buildDateInput('kb-date-to', 'Published To'));
 
-        var acts = el('div', 'filter-actions');
-        var applyBtn = el('button', 'btn-primary', 'Apply');
-        applyBtn.style.padding = '7px 14px';
-        applyBtn.addEventListener('click', function () {
+        // Read the current filter inputs into _kbState and reload the list.
+        // Auto-applied on filter change (debounced for text/date inputs) —
+        // there is no Apply button in this view.
+        function applyKBBrowserFilters() {
             _kbState.source    = qs('#kb-source').value.trim();
             _kbState.topic     = qs('#kb-topic').value.trim();
             _kbState.tags      = qs('#kb-tags').value.trim();
@@ -625,7 +661,10 @@
             _kbState.removal_flagged = qs('#kb-flagged-only').checked ? true : null;
             _kbState.offset    = 0;
             loadKBBrowser(_kbState);
-        });
+        }
+        var applyKBBrowserFiltersDebounced = debounce(applyKBBrowserFilters, 200);
+
+        var acts = el('div', 'filter-actions');
         var resetBtn = el('button', 'btn-secondary', 'Reset');
         resetBtn.style.padding = '7px 14px';
         resetBtn.addEventListener('click', function () {
@@ -641,8 +680,17 @@
         flaggedLabel.appendChild(flaggedCb);
         flaggedLabel.appendChild(document.createTextNode(' Flagged only'));
         acts.appendChild(flaggedLabel);
-        acts.appendChild(applyBtn); acts.appendChild(resetBtn);
+        acts.appendChild(resetBtn);
         fb.appendChild(acts); view.appendChild(fb);
+
+        // Auto-apply: text/date inputs are debounced, the checkbox fires
+        // immediately on change.
+        qs('#kb-source', fb).addEventListener('input', applyKBBrowserFiltersDebounced);
+        qs('#kb-topic', fb).addEventListener('input', applyKBBrowserFiltersDebounced);
+        qs('#kb-tags', fb).addEventListener('input', applyKBBrowserFiltersDebounced);
+        qs('#kb-date-from', fb).addEventListener('input', applyKBBrowserFiltersDebounced);
+        qs('#kb-date-to', fb).addEventListener('input', applyKBBrowserFiltersDebounced);
+        flaggedCb.addEventListener('change', applyKBBrowserFilters);
 
         var wrap = el('div', 'data-table-wrap'); wrap.id = 'kb-table-wrap'; view.appendChild(wrap);
         var pg = el('div', 'pagination'); pg.id = 'kb-pagination'; view.appendChild(pg);
