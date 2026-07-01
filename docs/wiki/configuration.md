@@ -40,7 +40,7 @@ autolangchat_plugin = add_autolangchat(
 | `AWS_REGION`             | `us-east-1`                      | AWS region                       |
 | `AWS_ACCESS_KEY_ID`      | —                                | AWS access key (or use IAM role) |
 | `AWS_SECRET_ACCESS_KEY`  | —                                | AWS secret key                   |
-| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-4-6` | Model identifier                 |
+| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-5` | Model identifier                 |
 | `AUTOCHAT_TEMPERATURE`   | `0.7`                            | Response randomness (0.0–1.0)    |
 | `AUTOCHAT_MAX_TOKENS`    | `4096`                           | Max tokens in model response     |
 | `AUTOCHAT_TOP_P`         | `0.9`                            | Top-p sampling parameter         |
