@@ -717,6 +717,54 @@ class TestSynthesizerCitedDocPath:
         metadata_arg = add_call[0][7]  # 8th positional arg (0-based) is metadata
         assert cited_id in metadata_arg.get("source_document_ids", [])
 
+    @pytest.mark.asyncio
+    async def test_non_feedback_cited_doc_not_used_as_override(self):
+        """Cited doc with source != 'feedback' must not override tag-based lookup."""
+        cited_id = "operator-doc-001"
+        entry = _approved_entry(kb_sources_used=[{"document_id": cited_id, "score": 0.9}])
+
+        kb_store = MagicMock()
+        # cited doc exists but is an operator doc — should be ignored
+        operator_doc = {
+            "id": cited_id,
+            "content": "Operator content",
+            "title": "Operator article",
+            "source": "operator",  # <-- NOT feedback
+            "source_url": None,
+            "topic": None,
+            "date_published": None,
+            "metadata": {"tags": ["perf"], "synthesized": False, "source_feedback_ids": []},
+            "created_at": None,
+            "credibility_score": 1.0,
+            "removal_flagged": False,
+        }
+        feedback_doc = KBDocument(
+            id="synthesis-perf-tag",
+            content="Tag-based content",
+            title="Tag article",
+            source="feedback",
+            metadata={"tags": ["perf"], "synthesized": True, "source_feedback_ids": []},
+        )
+        kb_store.list_documents = MagicMock(return_value=[feedback_doc])
+        kb_store.get_document = MagicMock(return_value=operator_doc)
+        kb_store.update_document = MagicMock()
+        kb_store.add_document = MagicMock()
+        kb_store.add_chunk = MagicMock()
+
+        fb_store = MagicMock()
+        fb_store.list_entries = AsyncMock(return_value=[entry])
+        fb_store.mark_integrated = AsyncMock()
+        bedrock_client = MagicMock()
+        bedrock_client.generate_embeddings_batch = AsyncMock(return_value=[[0.1] * 1536])
+
+        synth = FeedbackSynthesizer(model_id="anthropic.claude-test")
+        with _llm_patch("update"):
+            await synth.synthesize_all(fb_store, kb_store, bedrock_client)
+
+        # Must update the tag-based feedback doc, not the operator doc
+        update_call = kb_store.update_document.call_args
+        assert update_call[0][0] == "synthesis-perf-tag"
+
 
 # ===========================================================================
 # Citation Boost Node

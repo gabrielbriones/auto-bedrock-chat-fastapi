@@ -3,9 +3,10 @@
 After the LLM has produced a response, bumps the credibility_score of every
 feedback document that was cited in the RAG results for this turn.
 
-This runs unconditionally at the end of the graph (after the final LLM call)
-so the boost fires regardless of the transport layer (WebSocket, direct
-``ainvoke``, etc.) and only when the LLM has successfully completed a turn.
+This runs at the end of the graph (after the final LLM call) whenever a
+``kb_store`` is provided via ``config["configurable"]`` and the LLM has
+successfully completed a turn. It is a no-op when ``kb_store`` is absent
+or ``kb_credibility_citation_boost_enabled`` is False.
 
 Inputs from ``config["configurable"]``:
     chat_config  — ChatConfig (required)

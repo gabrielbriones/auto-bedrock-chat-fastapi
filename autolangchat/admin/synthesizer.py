@@ -424,7 +424,7 @@ class FeedbackSynthesizer:
             if cited_id_counts:
                 most_cited_id = max(cited_id_counts, key=lambda k: cited_id_counts[k])
                 raw_cited = await asyncio.to_thread(kb_store.get_document, most_cited_id)
-                if raw_cited is not None:
+                if raw_cited is not None and raw_cited.get("source") == "feedback":
                     cited_doc = KBDocument.model_validate(
                         {
                             **raw_cited,
