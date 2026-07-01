@@ -786,6 +786,10 @@
         }
         frag.appendChild(metaSec);
 
+        // Feedback Metadata section (collapsible, only rendered when non-empty)
+        var metadataSec = buildMetadataSection(entry);
+        if (metadataSec) frag.appendChild(metadataSec);
+
         // Full conversation: history context + rated AI response
         var allMessages = (entry.conversation_history || []).slice();
         // Only add query if history is empty (it's already the last user msg in history)
@@ -878,6 +882,68 @@ if (window.marked && window.DOMPurify) {
         frag.appendChild(form);
 
         return frag;
+    }
+
+    /**
+     * Build the "Feedback Metadata" drawer section for entry.entry_metadata.
+     * Returns null when metadata is absent/empty so callers can skip rendering
+     * (avoids a broken/empty section in the drawer). The "user_id" key is
+     * skipped since the user is already shown in the Details section above.
+     */
+    function buildMetadataSection(entry) {
+        var metadata = entry.entry_metadata;
+        if (!metadata || typeof metadata !== 'object') return null;
+
+        var keys = Object.keys(metadata).filter(function (key) {
+            return key.toLowerCase() !== 'user_id';
+        });
+        if (keys.length === 0) return null;
+
+        var details = document.createElement('details');
+        details.className = 'drawer-section';
+        details.setAttribute('open', '');
+        var summary = document.createElement('summary');
+        summary.textContent = 'Feedback Metadata';
+        summary.className = 'drawer-section-summary';
+        details.appendChild(summary);
+
+        var list = el('div', 'metadata-list');
+        keys.forEach(function (key) {
+            list.appendChild(buildMetadataRow(key, metadata[key]));
+        });
+        details.appendChild(list);
+        return details;
+    }
+
+    /** Build a single key/value row for the Feedback Metadata section. */
+    function buildMetadataRow(key, value) {
+        var row = el('div', 'metadata-row');
+        row.appendChild(el('span', 'metadata-key', formatMetadataKey(key, value)));
+        if (value !== null && typeof value === 'object') {
+            var valuePre = el('pre', 'metadata-value');
+            valuePre.textContent = JSON.stringify(value, null, 2);
+            row.appendChild(valuePre);
+        } else {
+            row.appendChild(el('span', 'metadata-value', formatMetadataValue(value)));
+        }
+        return row;
+    }
+
+    /**
+     * Format a metadata key for display: booleans drop a leading "is_"/"IS_"
+     * prefix (e.g. "IS_ADMIN" -> "ADMIN"), and underscores become spaces
+     * (e.g. "TENANT_ID" -> "TENANT ID").
+     */
+    function formatMetadataKey(key, value) {
+        var label = key;
+        if (typeof value === 'boolean') label = label.replace(/^is_/i, '');
+        return label.replace(/_/g, ' ');
+    }
+
+    /** Format a scalar metadata value for display: booleans render as TRUE/FALSE. */
+    function formatMetadataValue(value) {
+        if (typeof value === 'boolean') return value ? 'true' : 'false';
+        return String(value);
     }
 
     function buildSynthesisSection(entry) {
