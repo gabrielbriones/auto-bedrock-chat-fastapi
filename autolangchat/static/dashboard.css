@@ -546,6 +546,48 @@ body {
 .meta-item .mkey { font-size: 0.72rem; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.04em; }
 .meta-item .mval { font-size: 0.88rem; color: #2d3748; font-weight: 500; }
 
+/* ---- Enriched metadata (drawer) ---- */
+.metadata-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.metadata-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.metadata-key {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #a0aec0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.metadata-value {
+    display: block;
+    font-size: 0.88rem;
+    color: #2d3748;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+}
+
+pre.metadata-value {
+    background: #f7fafc;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 0;
+}
+
 /* Side-by-side content panels */
 .content-grid {
     display: grid;
