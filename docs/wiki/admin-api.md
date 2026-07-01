@@ -230,7 +230,7 @@ becomes `reviewer_id`).
 | GET    | `/admin/kb/documents/{id}`                   | Fetch one document. `id` may contain slashes (URL-shaped IDs).  |
 | PATCH  | `/admin/kb/documents/{id}`                   | Partial update. Re-embeds when `content` changes.               |
 | DELETE | `/admin/kb/documents/{id}`                   | Hard-delete document + chunks. 204 on success.                  |
-| POST   | `/admin/kb/documents/{id}/reset-credibility` | Reset `credibility_score` to `1.0` and clear `removal_flagged`. |
+| POST   | `/admin/kb/documents/reset-credibility/{id}` | Reset `credibility_score` to `1.0` and clear `removal_flagged`. |
 
 PATCH body (all fields optional; `extra='forbid'`):
 
@@ -261,14 +261,14 @@ Concurrency: a per-document `asyncio.Lock` serializes concurrent PATCH
 
 #### Credibility reset
 
-`POST /admin/kb/documents/{id}/reset-credibility` resets `credibility_score`
+`POST /admin/kb/documents/reset-credibility/{id}` resets `credibility_score`
 to `1.0` and clears `removal_flagged` for a specific document. Use this
 to manually recover an article that was flagged by the credibility decay
 task after you've determined it is still valid.
 
 ```bash
 curl -sS -b cookies.txt -X POST \
-  'https://app.example.com/admin/kb/documents/synthesis-ipc-computation-a1b2c3d4/reset-credibility'
+  'https://app.example.com/admin/kb/documents/reset-credibility/synthesis-ipc-computation-a1b2c3d4'
 ```
 
 Response: the updated `KBDocument` with `credibility_score=1.0` and

@@ -89,7 +89,7 @@ and can be set in `.env` or as environment variables.
 | `AUTOCHAT_FEEDBACK_ALLOW_ANONYMOUS`     | `bool`      | `False`    | Accept feedback from unauthenticated users. Intended for local development only.                                                                         |
 | `AUTOCHAT_FEEDBACK_AUTHORIZED_USERS`    | `str` (CSV) | `""`       | If non-empty, only these user IDs / email addresses may submit feedback. Emails normalized to lowercase; opaque SSO sub claims matched case-sensitively. |
 | `AUTOCHAT_FEEDBACK_STORAGE_TYPE`        | `str`       | `"sqlite"` | `"sqlite"` (zero-config) or `"postgres"` (requires `AUTOCHAT_FEEDBACK_POSTGRES_URL` or `AUTOCHAT_KB_POSTGRES_URL`).                                      |
-| `AUTOCHAT_FEEDBACK_DATABASE_PATH`       | `str`       | `None`     | SQLite file path. Defaults to `AUTOCHAT_FEEDBACK_DATABASE_PATH`; falls back to `kb_database_path`.                                                       |
+| `AUTOCHAT_FEEDBACK_DATABASE_PATH`       | `str`       | `None`     | SQLite file path. When unset, falls back to `KB_DATABASE_PATH` (`kb_database_path`).                                                                     |
 | `AUTOCHAT_FEEDBACK_POSTGRES_URL`        | `str`       | `None`     | Postgres connection URL for the feedback schema. Falls back to `AUTOCHAT_KB_POSTGRES_URL`.                                                               |
 | `AUTOCHAT_FEEDBACK_POSTGRES_POOL_SIZE`  | `int`       | `5`        | Async pool size for the feedback Postgres backend. Range: 1–100.                                                                                         |
 | `AUTOCHAT_FEEDBACK_INIT_SCHEMA`         | `bool`      | `True`     | Apply the feedback DDL on startup. Set `False` when a separate provisioning task owns the schema.                                                        |
@@ -260,7 +260,7 @@ Flagged articles are:
 
 - **Excluded** from `semantic_search` by default (`exclude_flagged=True`)
 - Still visible in `GET /admin/kb/documents?removal_flagged=true`
-- Recoverable via `POST /admin/kb/documents/{id}/reset-credibility`
+- Recoverable via `POST /admin/kb/documents/reset-credibility/{id}`
 
 Flagging is a **soft-delete**: the article and its source feedback history
 are preserved for audit and rollback purposes.
@@ -316,7 +316,7 @@ it's still valid, reset its score manually:
 
 ```bash
 curl -sS -b cookies.txt -X POST \
-  'https://app.example.com/admin/kb/documents/synthesis-ipc-computation-a1b2c3d4/reset-credibility'
+  'https://app.example.com/admin/kb/documents/reset-credibility/synthesis-ipc-computation-a1b2c3d4'
 ```
 
 Response: the updated `KBDocument` with `credibility_score=1.0` and
@@ -417,12 +417,12 @@ articles are not being auto-excluded.
 
 - Confirm `AUTOCHAT_KB_CREDIBILITY_DECAY_ENABLED=true` (decay is opt-in).
 - Verify `AUTOCHAT_KB_CREDIBILITY_DECAY_RATE` is not set too high — a
-  rate of `0.5` with an interval of `168 h` means 14 cycles to reach
-  the default threshold (2 weeks ÷ number of cycles needed).
+  rate of `0.5` with an interval of `168 h` reaches the default threshold
+  in ~2 cycles (~2 weeks).
 - Check `AUTOCHAT_KB_CREDIBILITY_REMOVAL_THRESHOLD`: if set too high
   (e.g. `0.9`) most articles will be flagged quickly after any decay.
 - For articles excluded when they should be included: use
-  `POST /admin/kb/documents/{id}/reset-credibility` to restore them and
+  `POST /admin/kb/documents/reset-credibility/{id}` to restore them and
   then lower `DECAY_RATE` or raise `DECAY_INTERVAL_HOURS`.
 - Confirm that `semantic_search` is not being called with
   `exclude_flagged=False` explicitly in a custom rag node override.
