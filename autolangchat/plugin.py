@@ -1497,8 +1497,15 @@ class AutoLangChatPlugin:
                 logger.debug("AutoLangChatPlugin.startup() called again; already started, skipping.")
                 return
 
-            await self._do_startup()
+            # Mark started up-front so callers can safely invoke shutdown() if startup fails partway.
             self._started = True
+            try:
+                await self._do_startup()
+            except Exception:
+                # Best-effort cleanup of any partially-open resources/background tasks.
+                await self._do_shutdown()
+                self._started = False
+                raise
 
     async def _do_startup(self) -> None:
         """Perform the actual startup work. Only called once, guarded by ``startup()``."""
