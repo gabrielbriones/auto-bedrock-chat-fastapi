@@ -53,6 +53,26 @@ langgraph = ">=0.2.0"
 langchain-aws = ">=0.2.0"
 langchain-core = ">=0.3.0"
 
+[tool.semantic_release]
+# Keep the version in sync in the Poetry table.
+version_toml = ["pyproject.toml:tool.poetry.version"]
+# Also bump the fallback constant used when package metadata is unavailable.
+version_variables = ["autolangchat/__init__.py:__version__"]
+build_command = "pip install poetry && poetry build"
+commit_message = "chore(release): {version} [skip ci]"
+tag_format = "v{version}"
+
+[tool.semantic_release.branches.main]
+match = "(main|master)"
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = ["chore\\(release\\):.*"]
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["feat", "fix", "perf", "docs", "style", "refactor", "test", "build", "ci", "chore"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
 [tool.poetry.extras]
 sso = ["PyJWT", "passlib"]
 postgres = ["psycopg", "psycopg-binary", "pgvector", "langgraph-checkpoint-postgres"]
@@ -69,6 +89,7 @@ isort = ">=5.13.0"
 mypy = ">=1.0.0"
 pre-commit = ">=3.0.0"
 httpx = ">=0.24.0"
+python-semantic-release = "^10.5.3"
 
 [tool.poetry.group.monitoring.dependencies]
 prometheus-client = ">=0.17.0"
