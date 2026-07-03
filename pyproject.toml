@@ -52,7 +52,6 @@ langgraph-checkpoint-postgres = {version = ">=2.0.0", optional = true}
 langgraph = ">=0.2.0"
 langchain-aws = ">=0.2.0"
 langchain-core = ">=0.3.0"
-python-semantic-release = "^10.5.3"
 
 [tool.semantic_release]
 # Keep the version in sync in the Poetry table.
@@ -90,6 +89,7 @@ isort = ">=5.13.0"
 mypy = ">=1.0.0"
 pre-commit = ">=3.0.0"
 httpx = ">=0.24.0"
+python-semantic-release = "^10.5.3"
 
 [tool.poetry.group.monitoring.dependencies]
 prometheus-client = ">=0.17.0"
