@@ -29,9 +29,9 @@ jobs:
           # Full history + tags are required for semantic-release to
           # determine the next version from accumulated commits.
           fetch-depth: 0
-          # Use the PAT so pushed commits/tags are authenticated and
-          # can bypass branch protection if configured to allow it.
-          token: ${{ secrets.GH_TOKEN }}
+          # Use the default GITHUB_TOKEN for checkout — it is always valid
+          # for reading the repo the workflow runs in. semantic-release
+          # authenticates its push/release separately via GH_TOKEN below.
 
       - name: Set up Python
         uses: actions/setup-python@v6
