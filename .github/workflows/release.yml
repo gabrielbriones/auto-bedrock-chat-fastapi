@@ -20,8 +20,7 @@ jobs:
     name: Semantic Release
     runs-on: ubuntu-latest
     # Skip the auto-generated release commit so it can't trigger another run.
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    timeout-minutes: 20
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
 
     steps:
       - name: Checkout code
