@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
           # Use the PAT so pushed commits/tags are authenticated and
           # can bypass branch protection if configured to allow it.
-          token: ${{ secrets.SEMAN_RELEA_TKN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -56,7 +56,7 @@ jobs:
         env:
           # semantic-release uses GH_TOKEN to push commits/tags and to
           # create the GitHub Release.
-          GH_TOKEN: ${{ secrets.SEMAN_RELEA_TKN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           poetry run semantic-release version
           poetry run semantic-release publish
