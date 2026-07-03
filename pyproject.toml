@@ -58,7 +58,7 @@ langchain-core = ">=0.3.0"
 version_toml = ["pyproject.toml:tool.poetry.version"]
 # Also bump the fallback constant used when package metadata is unavailable.
 version_variables = ["autolangchat/__init__.py:__version__"]
-build_command = "pip install poetry && poetry build"
+build_command = "poetry build"
 commit_message = "chore(release): {version} [skip ci]"
 tag_format = "v{version}"
 
