@@ -1,0 +1,64 @@
+---
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Avoid overlapping releases racing to tag/push.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    # Skip the auto-generated release commit so it can't trigger another run.
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Full history + tags are required for semantic-release to
+          # determine the next version from accumulated commits.
+          fetch-depth: 0
+          # Use the PAT so pushed commits/tags are authenticated and
+          # can bypass branch protection if configured to allow it.
+          token: ${{ secrets.SEMAN_RELEA_TKN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "poetry==1.8.2"
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run semantic-release
+        env:
+          # semantic-release uses GH_TOKEN to push commits/tags and to
+          # create the GitHub Release.
+          GH_TOKEN: ${{ secrets.SEMAN_RELEA_TKN }}
+        run: |
+          poetry run semantic-release version
+          poetry run semantic-release publish
