@@ -221,6 +221,8 @@ class AutoLangChatPlugin:
         # Shared KB store (created once, reused across requests)
         self._kb_store = None
         self._credibility_decay_task: "asyncio.Task | None" = None
+        self._started = False
+        self._startup_lock = asyncio.Lock()
         if self.config.enable_rag:
             from .db import create_kb_store
 
@@ -1486,7 +1488,27 @@ class AutoLangChatPlugin:
         - Schedules the background checkpoint-expiry sweep task.
         - Auto-populates the knowledge base (if configured).
         - Opens the feedback-store connection pool.
+
+        Idempotent: safe to call multiple times. If resources are already
+        open (or being opened concurrently), subsequent calls are a no-op.
         """
+        async with self._startup_lock:
+            if self._started:
+                logger.debug("AutoLangChatPlugin.startup() called again; already started, skipping.")
+                return
+
+            # Mark started up-front so callers can safely invoke shutdown() if startup fails partway.
+            self._started = True
+            try:
+                await self._do_startup()
+            except Exception:
+                # Best-effort cleanup of any partially-open resources/background tasks.
+                await self._do_shutdown()
+                self._started = False
+                raise
+
+    async def _do_startup(self) -> None:
+        """Perform the actual startup work. Only called once, guarded by ``startup()``."""
         # 1. Open the LangGraph checkpointer pool + schema
         from .graph.checkpointer import open_checkpointer as _open_cp
 
@@ -1570,29 +1592,52 @@ class AutoLangChatPlugin:
             self.websocket_handler.feedback_store = None
 
     async def shutdown(self):
-        """Shutdown the Bedrock chat plugin"""
+        """Shutdown the Bedrock chat plugin.
+
+        Idempotent: safe to call multiple times, or before ``startup()`` was
+        ever called. Subsequent/premature calls are a no-op.
+        """
+        async with self._startup_lock:
+            if not self._started:
+                logger.debug("AutoLangChatPlugin.shutdown() called but plugin was not started; skipping.")
+                return
+
+            await self._do_shutdown()
+            self._started = False
+
+    async def _do_shutdown(self) -> None:
+        """Perform the actual shutdown work. Only called once, guarded by ``shutdown()``."""
         try:
-            if self._credibility_decay_task is not None and not self._credibility_decay_task.done():
-                self._credibility_decay_task.cancel()
-                try:
-                    await self._credibility_decay_task
-                except asyncio.CancelledError:
-                    pass
-                self._credibility_decay_task = None
+            await self._cancel_credibility_decay_task()
             await self.websocket_handler.shutdown()
             await self.tool_manager.shutdown()
+
             if self._kb_store is not None:
                 self._kb_store.close()
                 self._kb_store = None
+
             if self._feedback_store is not None:
                 await self._feedback_store.close()
                 self._feedback_store = None
+
             from .graph.checkpointer import close_checkpointer as _close_cp
 
             await _close_cp(self.chat_graph.checkpointer)
             logger.info("Bedrock chat plugin shutdown complete")
         except Exception as e:
             logger.error(f"Error during shutdown: {str(e)}")
+
+    async def _cancel_credibility_decay_task(self) -> None:
+        """Cancel and await the background KB credibility-decay task, if running."""
+        if self._credibility_decay_task is None or self._credibility_decay_task.done():
+            return
+
+        self._credibility_decay_task.cancel()
+        try:
+            await self._credibility_decay_task
+        except asyncio.CancelledError:
+            pass
+        self._credibility_decay_task = None
 
     def _sync_shutdown(self):
         """Synchronous shutdown handler for atexit"""
