@@ -211,8 +211,21 @@ class ToolManager:
             and either ``result`` or ``error``.
         """
         results: List[Dict[str, Any]] = []
-        capped_calls = tool_calls[: self._config.max_tool_calls]
+        limit = self._config.max_tool_calls
+        if limit is None:
+            capped_calls = tool_calls
+            skipped_calls: List[Dict[str, Any]] = []
+        else:
+            capped_calls = tool_calls[:limit]
+            skipped_calls = tool_calls[limit:]
         total_tools = len(capped_calls)
+
+        if skipped_calls:
+            logger.warning(
+                f"max_tool_calls cap ({limit}) exceeded: "
+                f"{len(skipped_calls)} tool call(s) will be skipped and returned as errors "
+                f"to satisfy the model's toolResult requirement."
+            )
 
         for i, tool_call in enumerate(capped_calls, 1):
             function_name = tool_call.get("name")
@@ -274,6 +287,20 @@ class ToolManager:
                         "error": str(e),
                     }
                 )
+
+        # Return stub errors for tool calls that were dropped by the cap so that
+        # every tool_call ID in the assistant message has a matching toolResult.
+        for skipped in skipped_calls:
+            results.append(
+                {
+                    "tool_call_id": skipped.get("id"),
+                    "name": skipped.get("name"),
+                    "error": (
+                        f"Tool call skipped: exceeded max_tool_calls limit "
+                        f"({self._config.max_tool_calls}). Re-run with fewer simultaneous calls."
+                    ),
+                }
+            )
 
         return results
 

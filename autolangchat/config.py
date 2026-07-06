@@ -121,11 +121,11 @@ class ChatConfig(BaseSettings):
     )
 
     # Session Configuration
-    max_tool_calls: int = Field(
+    max_tool_calls: Optional[int] = Field(
         default=DEFAULT_MAX_TOOL_CALLS,
         alias="AUTOCHAT_MAX_TOOL_CALLS",
         gt=0,
-        description="Maximum tool calls per conversation turn",
+        description="Maximum tool calls per conversation turn (None = unlimited)",
     )
 
     # Conversation History Management
@@ -1296,7 +1296,7 @@ def validate_config(config: ChatConfig) -> None:
     if config.temperature > 0.9:
         print(f"Warning: High temperature ({config.temperature}) may cause unpredictable responses")
 
-    if config.max_tool_calls > 20:
+    if config.max_tool_calls is not None and config.max_tool_calls > 20:
         print(f"Warning: High max_tool_calls ({config.max_tool_calls}) may cause long response times")
 
     if config.session_timeout < 300:  # 5 minutes
