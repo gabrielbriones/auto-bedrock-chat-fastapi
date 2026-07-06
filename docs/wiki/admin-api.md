@@ -224,12 +224,13 @@ becomes `reviewer_id`).
 
 ### KB Management
 
-| Method | Path                       | Description                                                    |
-| ------ | -------------------------- | -------------------------------------------------------------- |
-| GET    | `/admin/kb/documents`      | Filterable, paginated list. Returns `KBDocumentListResponse`.  |
-| GET    | `/admin/kb/documents/{id}` | Fetch one document. `id` may contain slashes (URL-shaped IDs). |
-| PATCH  | `/admin/kb/documents/{id}` | Partial update. Re-embeds when `content` changes.              |
-| DELETE | `/admin/kb/documents/{id}` | Hard-delete document + chunks. 204 on success.                 |
+| Method | Path                                         | Description                                                     |
+| ------ | -------------------------------------------- | --------------------------------------------------------------- |
+| GET    | `/admin/kb/documents`                        | Filterable, paginated list. Returns `KBDocumentListResponse`.   |
+| GET    | `/admin/kb/documents/{id}`                   | Fetch one document. `id` may contain slashes (URL-shaped IDs).  |
+| PATCH  | `/admin/kb/documents/{id}`                   | Partial update. Re-embeds when `content` changes.               |
+| DELETE | `/admin/kb/documents/{id}`                   | Hard-delete document + chunks. 204 on success.                  |
+| POST   | `/admin/kb/documents/reset-credibility/{id}` | Reset `credibility_score` to `1.0` and clear `removal_flagged`. |
 
 PATCH body (all fields optional; `extra='forbid'`):
 
@@ -257,6 +258,39 @@ Concurrency: a per-document `asyncio.Lock` serializes concurrent PATCH
 > `/admin/kb/documents/https%3A%2F%2Ffastapi.tiangolo.com%2Freference%2Ftemplating%2F`.
 > The route uses FastAPI's `:path` converter so the decoded slashes
 > match.
+
+#### Credibility reset
+
+`POST /admin/kb/documents/reset-credibility/{id}` resets `credibility_score`
+to `1.0` and clears `removal_flagged` for a specific document. Use this
+to manually recover an article that was flagged by the credibility decay
+task after you've determined it is still valid.
+
+> If the document ID contains slashes (URL-shaped IDs from the web
+> crawler), percent-encode it exactly as described in the **URL-shaped
+> IDs** note above:
+> `POST /admin/kb/documents/reset-credibility/https%3A%2F%2Fexample.com%2Fpath%2F`
+
+```bash
+curl -sS -b cookies.txt -X POST \
+  'https://app.example.com/admin/kb/documents/reset-credibility/synthesis-ipc-computation-a1b2c3d4'
+```
+
+Response: the updated `KBDocument` with `credibility_score=1.0` and
+`removal_flagged=false`.
+
+| HTTP | `code`      | When                                          |
+| ---- | ----------- | --------------------------------------------- |
+| 200  | —           | Reset complete. Returns updated `KBDocument`. |
+| 404  | `not_found` | No document with that ID exists.              |
+
+The same per-document lock used by PATCH / DELETE is acquired for
+this operation, so it is safe to call concurrently with other mutations
+on the same document.
+
+> For background on how articles become flagged and how credibility
+> scoring works, see
+> [Continuous Learning Loop — Effectiveness Tracking](continuous-learning-loop#effectiveness-tracking).
 
 ---
 

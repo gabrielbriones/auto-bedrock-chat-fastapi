@@ -64,6 +64,52 @@ uvicorn app:app --reload
 
 Open `http://localhost:8000/chat/ui` and start chatting with your API.
 
+### Using a Custom `lifespan`
+
+`autolangchat` does not use FastAPI's deprecated `@app.on_event("startup")` /
+`@app.on_event("shutdown")` hooks — per the
+[ASGI lifespan spec](https://asgi.readthedocs.io/en/latest/specs/lifespan.html)
+and [FastAPI's lifespan docs](https://fastapi.tiangolo.com/advanced/events/),
+those hooks are silently skipped by FastAPI whenever the app defines its own
+`lifespan` context manager, so relying on them is fragile. Instead, the
+plugin exposes public `startup()` / `shutdown()` methods that **must** be
+called explicitly from your app's `lifespan`:
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from autolangchat import add_autolangchat
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    plugin = getattr(app.state, "autolangchat_plugin", None)
+    if plugin is not None:
+        await plugin.startup()
+    yield
+    if plugin is not None:
+        await plugin.shutdown()
+
+app = FastAPI(title="My API", lifespan=lifespan)
+app.state.autolangchat_plugin = add_autolangchat(app, allowed_paths=["/products"])
+```
+
+`plugin.startup()`:
+1. Opens the LangGraph checkpointer connection pool and initialises the schema.
+2. Schedules the background checkpoint-expiry sweep task.
+3. Auto-populates the knowledge base (if configured).
+4. Opens the feedback-store connection pool.
+5. Schedules the KB credibility-decay background task (if enabled).
+
+`plugin.shutdown()` tears down the same resources in reverse. Both methods
+are idempotent — safe to call multiple times (e.g. `startup()` called twice
+in a row is a no-op the second time), and `shutdown()` is a no-op if
+`startup()` was never called.
+
+If you use `create_fastapi_with_autolangchat()` instead of manually creating
+the `FastAPI` app, this wiring is already done for you — its built-in
+`lifespan` calls `plugin.startup()` / `plugin.shutdown()` automatically.
+
 ---
 
 ## 🏗️ Architecture

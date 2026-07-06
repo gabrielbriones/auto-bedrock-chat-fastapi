@@ -535,11 +535,13 @@ class PgVectorKBStore(BaseKBStore):
             # ``metadata`` is stored as TEXT (JSON). Cast to JSONB at filter
             # time so we can use the ?| (overlap) operator on the tags
             # array. Each value must be text → use jsonb_array_elements_text.
-            placeholders = ",".join("%s" for _ in filters.tags)
+            # Case-insensitive: compare LOWER(stored tag) against
+            # LOWER(each supplied tag) so e.g. "Perf" matches "perf".
+            placeholders = ",".join("LOWER(%s)" for _ in filters.tags)
             clauses.append(
                 "EXISTS (SELECT 1 FROM jsonb_array_elements_text("
                 "(d.metadata::jsonb -> 'tags')) AS t(value) "
-                f"WHERE t.value IN ({placeholders}))"
+                f"WHERE LOWER(t.value) IN ({placeholders}))"
             )
             params.extend(filters.tags)
         if filters.date_from is not None:
