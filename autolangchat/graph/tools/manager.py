@@ -297,7 +297,7 @@ class ToolManager:
                     "name": skipped.get("name"),
                     "error": (
                         f"Tool call skipped: exceeded max_tool_calls limit "
-                        f"({self._config.max_tool_calls}). Re-run with fewer simultaneous calls."
+                        f"({limit}). Reduce the number of tool calls in a single turn."
                     ),
                 }
             )
