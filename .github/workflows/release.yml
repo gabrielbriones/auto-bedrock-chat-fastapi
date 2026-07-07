@@ -4,7 +4,7 @@ name: Release
 on:
   push:
     branches:
-      - main
+      - stable
   workflow_dispatch:
 
 # Avoid overlapping releases racing to tag/push.
