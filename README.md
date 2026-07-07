@@ -114,30 +114,52 @@ the `FastAPI` app, this wiring is already done for you — its built-in
 
 ## 🏗️ Architecture
 
-```
-Your FastAPI App
-       │
-       └── add_autolangchat(app)
-               │
-           ├── WebSocket Handler (/chat/ws)
-           │       └── session auth, checkpoint restore, message routing
-               │
-               ├── LangGraph StateGraph (autolangchat/graph/)
-           │       ├── rag node         — optional KB retrieval + system prompt injection
-               │       ├── preprocess node  — token budget (truncation / AI summarization)
-               │       ├── llm node         — ChatBedrockConverse (.astream() + fallback)
-           │       └── tools node       — OpenAPI-backed tool execution loop
-               │
-               ├── Tool Manager
-               │       └── OpenAPI spec → AI tools → HTTP calls to your API
-               │
-               └── Optional RAG Stack
-                       ├── ContentCrawler  (web + local file ingestion)
-                       ├── EmbeddingPipeline  (Bedrock Titan embeddings)
-                       └── VectorDB  (SQLite-vec semantic search)
+```mermaid
+graph TD
+    App["Your FastAPI App"]
+    Plugin["add_autolangchat(app)"]
+    WS["WebSocket Handler (/chat/ws)\nsession auth · checkpoint restore · message routing"]
+    Graph["LangGraph StateGraph\nautolangchat/graph/"]
+    RAGNode["rag node\noptional KB retrieval + system prompt injection"]
+    Pre["preprocess node\ntoken budget — truncation / AI summarization"]
+    LLM["llm node\nChatBedrockConverse (.astream() + fallback)"]
+    ToolsNode["tools node\nOpenAPI-backed tool execution loop"]
+    TM["Tool Manager\nOpenAPI spec → AI tools → HTTP calls to your API"]
+    RAGStack["Optional RAG Stack"]
+    Crawler["ContentCrawler\nweb + local file ingestion"]
+    Embed["EmbeddingPipeline\nBedrock Titan embeddings"]
+    VDB["VectorDB\nSQLite-vec semantic search"]
+
+    App --> Plugin
+    Plugin --> WS
+    Plugin --> Graph
+    Plugin --> TM
+    Plugin --> RAGStack
+
+    Graph --> RAGNode
+    Graph --> Pre
+    Graph --> LLM
+    Graph --> ToolsNode
+
+    RAGStack --> Crawler
+    RAGStack --> Embed
+    RAGStack --> VDB
 ```
 
-**Request flow:** User message → checkpoint restore → RAG retrieval (optional) → preprocess (token budget) → ChatBedrockConverse (streaming) → tool calls (as needed) → final response streamed via WebSocket.
+**Request flow:**
+
+```mermaid
+flowchart LR
+    U["User Message"]
+    CR["Checkpoint\nRestore"]
+    RAG["RAG Retrieval\n(optional)"]
+    PP["Preprocess\ntoken budget"]
+    CBC["ChatBedrockConverse\nstreaming"]
+    TC["Tool Calls\n(as needed)"]
+    Resp["Final Response\nvia WebSocket"]
+
+    U --> CR --> RAG --> PP --> CBC --> TC --> CBC --> Resp
+```
 
 **Checkpointing:** Conversation state is persisted via LangGraph `MemorySaver` (Phase 1) or `AsyncPostgresSaver` (Phase 3), keyed by `session_id`.
 
@@ -146,32 +168,59 @@ Your FastAPI App
 ## 📁 Source Code Structure
 
 ```
-autolangchat/                    # New package (LangGraph-based, Phase 1+)
-├── plugin.py                    # Entry point: add_autolangchat(), create_fastapi_with_autolangchat()
-├── config.py                    # ChatConfig — all settings via Pydantic + .env (AUTOCHAT_* vars)
-├── defaults.py                  # Centralized default values (thresholds, timeouts, ratios)
-├── websocket_handler.py         # WebSocket lifecycle; delegates to LangGraph graph
+autolangchat/
+├── plugin.py                        # Entry point: add_autolangchat(), create_fastapi_with_autolangchat()
+├── app.py                           # Standalone app factory
+├── config.py                        # ChatConfig — all settings via Pydantic + .env (AUTOCHAT_* vars)
+├── defaults.py                      # Centralized default values (thresholds, timeouts, ratios)
+├── exceptions.py                    # Custom exception types
+├── models.py                        # Pydantic request/response models
+├── websocket_handler.py             # WebSocket lifecycle; delegates to LangGraph graph
+├── auth_handler.py                  # Authentication types and credential management
+├── session_manager.py               # In-memory session lifecycle
+├── message_preprocessor.py         # Two-stage token budget pipeline
+├── kb_credibility.py                # KB source credibility scoring
 ├── graph/
-│   ├── graph.py                 # build_chat_graph(config, tool_manager) → CompiledGraph
-│   ├── state.py                 # ChatState(TypedDict)
-│   ├── routing.py               # should_continue() edge function
-│   ├── checkpointer.py          # MemorySaver (Phase 1) / AsyncPostgresSaver (Phase 3)
+│   ├── graph.py                     # build_chat_graph(config, tool_manager) → CompiledGraph
+│   ├── state.py                     # ChatState(TypedDict)
+│   ├── routing.py                   # should_continue() edge function
+│   ├── checkpointer.py              # MemorySaver (Phase 1) / AsyncPostgresSaver (Phase 3)
 │   ├── nodes/
-│   │   ├── rag.py               # Optional KB retrieval + enhanced system prompt injection
-│   │   ├── preprocess.py        # Wraps MessagePreprocessor — all 4 truncation stages
-│   │   └── llm_call.py          # ChatBedrockConverse node (.astream() + fallback model)
+│   │   ├── init_turn.py             # Turn initialization node
+│   │   ├── rag.py                   # Optional KB retrieval + enhanced system prompt injection
+│   │   ├── preprocess.py            # Wraps MessagePreprocessor — token budget stages
+│   │   ├── llm_call.py              # ChatBedrockConverse node (.astream() + fallback model)
+│   │   └── citation_boost.py        # Citation relevance boosting
 │   └── tools/
-│       └── tool_node.py         # Tool-call execution node
-├── tool_manager.py              # OpenAPI → tool schema + LangChain tool generation + execution
-├── auth_handler.py              # Authentication types and credential management
-├── session_manager.py           # In-memory session lifecycle
-├── message_preprocessor.py      # Two-stage token budget pipeline
-├── admin/                       # Admin routes: feedback, KB, synthesis
-├── sso/                         # SSO handlers (Azure AD, Okta)
-├── rag/                         # ContentCrawler, EmbeddingPipeline
-├── db/                          # SQLite / Postgres stores for KB + feedback
-├── templates/                   # Chat UI HTML templates
-└── static/                      # Chat UI CSS and JS assets
+│       ├── generator.py             # OpenAPI spec → tool schema generation
+│       ├── manager.py               # Tool registry + LangChain tool execution
+│       └── tool_node.py             # Tool-call execution node
+├── admin/
+│   ├── admin_auth.py                # Admin authentication
+│   ├── admin_errors.py              # Admin error handlers
+│   ├── admin_feedback_routes.py     # Feedback admin routes
+│   ├── admin_kb_routes.py           # Knowledge base admin routes
+│   ├── admin_synthesis_routes.py    # Synthesis admin routes
+│   └── synthesizer.py               # Feedback synthesis logic
+├── commands/
+│   └── kb.py                        # KB CLI commands
+├── sso/
+│   ├── sso_handler.py               # SSO handlers (Azure AD, Okta)
+│   └── sso_session_store.py         # SSO session storage
+├── rag/
+│   ├── content_crawler.py           # Web + local file ingestion
+│   ├── embedding_pipeline.py        # Embedding ingestion pipeline
+│   └── bedrock_embeddings.py        # Bedrock Titan embeddings client
+├── db/
+│   ├── feedback_base.py             # Abstract feedback store
+│   ├── feedback_sqlite.py           # SQLite feedback store
+│   ├── feedback_postgres.py         # Postgres feedback store
+│   ├── kb_base.py                   # Abstract KB store
+│   ├── kb_sqlite.py                 # SQLite KB store
+│   ├── kb_postgres.py               # Postgres KB store
+│   └── sql/                         # SQL schema files
+├── templates/                       # Chat UI HTML templates
+└── static/                          # Chat UI CSS and JS assets
 ```
 
 ---
