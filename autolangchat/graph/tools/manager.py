@@ -298,6 +298,7 @@ class ToolManager:
                     "Skipped tool call has no ID; stub toolResult cannot satisfy "
                     "Bedrock's toolUse contract. Check upstream tool call normalization."
                 )
+                continue
             results.append(
                 {
                     "tool_call_id": tc_id,
