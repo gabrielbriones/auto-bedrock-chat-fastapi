@@ -174,7 +174,7 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
     async def list_by_user(
         self,
         user_id: str,
-        limit: int = 100,
+        limit: int = 50,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         if limit <= 0:

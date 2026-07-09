@@ -362,10 +362,10 @@ class _FakeCursor:
 
     * ``INSERT ... ON CONFLICT DO NOTHING`` — a no-op when ``id`` already
       exists in ``rows`` (mirrors real Postgres semantics).
-    * The three read-only queries used by ``list_by_user``,
-      ``aggregate_by_model``, and ``aggregate_by_day``, distinguished by a
-      short substring unique to each query in the store's SQL text (rather
-      than a real SQL parser).
+    * The four read-only queries used by ``list_by_user``,
+      ``aggregate_by_model``, ``aggregate_by_day``, and ``aggregate_by_user``,
+      distinguished by a short substring unique to each query in the store's
+      SQL text (rather than a real SQL parser).
     """
 
     def __init__(self, rows):
@@ -390,7 +390,13 @@ class _FakeCursor:
         if "WHERE user_id = %s" in sql:
             user_id, limit, offset = params
             matched = [v for v in values if v[2] == user_id]
-            matched.sort(key=lambda v: (v[6], v[0]), reverse=True)
+            # Emulate ORDER BY turn_ts DESC, id ASC: sort by the ascending
+            # secondary key first, then stable-sort by the descending
+            # primary key so ties on turn_ts keep id ascending (Python's
+            # sort is stable, so the first sort's order is preserved for
+            # ties in the second).
+            matched.sort(key=lambda v: v[0])
+            matched.sort(key=lambda v: v[6], reverse=True)
             page = matched[offset : offset + limit]
             self._result = [(v[1], v[3], v[4], v[5], v[6]) for v in page]
             return

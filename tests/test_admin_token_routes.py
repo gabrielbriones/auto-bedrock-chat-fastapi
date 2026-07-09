@@ -273,15 +273,29 @@ def _make_bare_plugin(token_usage_store):
     return plugin
 
 
+def _route_paths(app: FastAPI) -> list:
+    """Return every registered route path via the OpenAPI schema.
+
+    Deliberately avoids introspecting ``app.routes`` directly — FastAPI's
+    internal representation of included routers has changed across
+    versions (e.g. 0.139 wraps included routers in a
+    ``fastapi.routing._IncludedRouter`` that doesn't expose ``.path``
+    directly), while ``/openapi.json`` is a stable public contract.
+    Mirrors the approach already used by ``test_admin_openapi.py``.
+    """
+    schema = TestClient(app).get("/openapi.json").json()
+    return list(schema["paths"].keys())
+
+
 def test_routes_not_registered_when_store_is_none():
     plugin = _make_bare_plugin(None)
-    paths = [r.path for r in plugin.app.routes]
+    paths = _route_paths(plugin.app)
     assert not any("/tokens/" in p for p in paths)
 
 
 def test_routes_registered_when_store_is_configured():
     plugin = _make_bare_plugin(_FakeTokenUsageStore())
-    paths = sorted(r.path for r in plugin.app.routes if "/tokens/" in r.path)
+    paths = sorted(p for p in _route_paths(plugin.app) if "/tokens/" in p)
     assert paths == [
         "/chat/admin/tokens/by-day",
         "/chat/admin/tokens/by-user",

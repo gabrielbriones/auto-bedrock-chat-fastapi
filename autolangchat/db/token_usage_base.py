@@ -55,7 +55,7 @@ class BaseTokenUsageStore(ABC):
     async def list_by_user(
         self,
         user_id: str,
-        limit: int = 100,
+        limit: int = 50,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Return per-turn token-usage rows for ``user_id``, newest first.
