@@ -44,6 +44,7 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
     plugin._kb_store = None
     plugin._kb_needs_population = False
     plugin._feedback_store = None
+    plugin._token_usage_store = None
     plugin.config = SimpleNamespace(
         checkpoint_ttl_seconds=3600,
         kb_credibility_decay_enabled=False,

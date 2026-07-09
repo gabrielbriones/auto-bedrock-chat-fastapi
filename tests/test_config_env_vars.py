@@ -69,6 +69,28 @@ class TestAutochatEnvVarPrefix:
         config = _load_config(AUTOCHAT_FEEDBACK_ENABLED="true")
         assert config.feedback_enabled is True
 
+    def test_token_usage_enabled_defaults_to_false(self):
+        """token_usage_enabled is opt-in (default off) so existing deployments
+        don't get surprise writes (XMGPLAT-10746)."""
+        config = _load_config()
+        assert config.token_usage_enabled is False
+
+    def test_token_usage_enabled_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_TOKEN_USAGE_ENABLED="true")
+        assert config.token_usage_enabled is True
+
+    def test_token_usage_storage_type_defaults_to_sqlite(self):
+        config = _load_config()
+        assert config.token_usage_storage_type == "sqlite"
+
+    def test_token_usage_database_path_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_TOKEN_USAGE_DATABASE_PATH="/tmp/token_usage.db")
+        assert config.token_usage_database_path == "/tmp/token_usage.db"
+
+    def test_token_usage_postgres_url_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_TOKEN_USAGE_POSTGRES_URL="postgresql://x/db")
+        assert config.token_usage_postgres_url == "postgresql://x/db"
+
     def test_admin_enabled_from_autochat_var(self):
         config = _load_config(AUTOCHAT_ADMIN_ENABLED="true")
         assert config.admin_enabled is True

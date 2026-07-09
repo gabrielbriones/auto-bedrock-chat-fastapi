@@ -251,6 +251,16 @@ class AutoLangChatPlugin:
             allow_anonymous=getattr(self.config, "feedback_allow_anonymous", False),
         )
 
+        # Token-usage store. Constructed eagerly so the WebSocket
+        # handler can be wired immediately; the connection pool / SQLite file
+        # is opened in the FastAPI startup event below and closed during
+        # shutdown. Backend selection (sqlite vs postgres) and configuration
+        # validation live in the factory.
+        from .db import create_token_usage_store
+
+        logger.debug("Checking token usage store configuration and initializing...")
+        self._token_usage_store = create_token_usage_store(self.config)
+
         # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
@@ -275,6 +285,7 @@ class AutoLangChatPlugin:
             kb_store=self._kb_store,
             feedback_store=self._feedback_store,
             feedback_authorizer=self._feedback_authorizer,
+            token_usage_store=self._token_usage_store,
         )
 
         # Setup templates for UI
@@ -1488,6 +1499,7 @@ class AutoLangChatPlugin:
         - Schedules the background checkpoint-expiry sweep task.
         - Auto-populates the knowledge base (if configured).
         - Opens the feedback-store connection pool.
+        - Opens the token-usage store connection pool.
 
         Idempotent: safe to call multiple times. If resources are already
         open (or being opened concurrently), subsequent calls are a no-op.
@@ -1558,7 +1570,10 @@ class AutoLangChatPlugin:
         # 4. Open the feedback-store connection pool
         await self._startup_open_feedback_store()
 
-        # 5. Schedule KB credibility decay background task (opt-in)
+        # 5. Open the token-usage store connection pool
+        await self._startup_open_token_usage_store()
+
+        # 6. Schedule KB credibility decay background task (opt-in)
         if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
             from .kb_credibility import run_credibility_decay_loop
 
@@ -1591,6 +1606,33 @@ class AutoLangChatPlugin:
             self._feedback_store = None
             self.websocket_handler.feedback_store = None
 
+    async def _startup_open_token_usage_store(self) -> None:
+        """Open the TokenUsageStore; on failure, close the partial resource and disable the feature.
+
+        ``TokenUsageStore.open()`` opens the underlying connection pool /
+        SQLite file before applying the schema, so a schema-bootstrap
+        exception can leave resources partially open. Without an explicit
+        ``close()`` the connection would leak for the lifetime of the
+        process.
+        """
+        if self._token_usage_store is None:
+            return
+        try:
+            await self._token_usage_store.open()
+            logger.info("TokenUsageStore opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open TokenUsageStore: %s; disabling token usage recording.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._token_usage_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened TokenUsageStore")
+            self._token_usage_store = None
+            self.websocket_handler.token_usage_store = None
+
     async def shutdown(self):
         """Shutdown the Bedrock chat plugin.
 
@@ -1619,6 +1661,10 @@ class AutoLangChatPlugin:
             if self._feedback_store is not None:
                 await self._feedback_store.close()
                 self._feedback_store = None
+
+            if self._token_usage_store is not None:
+                await self._token_usage_store.close()
+                self._token_usage_store = None
 
             from .graph.checkpointer import close_checkpointer as _close_cp
 
