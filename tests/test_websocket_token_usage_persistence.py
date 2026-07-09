@@ -134,6 +134,32 @@ def test_record_turn_called_with_expected_args():
     assert kwargs["output_tokens"] == 240
 
 
+def test_record_turn_uses_actual_model_not_configured_default():
+    """When a context-window retry falls back to a secondary model,
+    llm_call_node records the *actual* model used in graph_metadata
+    ("model_id"). record_turn must persist that value, not the statically
+    configured self.config.model_id, so billing/observability reflects
+    reality rather than always attributing usage to the primary model."""
+    token_usage_store = MagicMock()
+    token_usage_store.record_turn = AsyncMock()
+
+    graph_state = _graph_state()
+    graph_state["metadata"]["model_id"] = "us.anthropic.claude-3-haiku"  # the fallback model
+    handler = _make_handler(graph_state, token_usage_store=token_usage_store)
+
+    sent = asyncio.run(_drive(handler))
+
+    ai_responses = [m for m in sent if m.get("type") == "ai_response"]
+    assert ai_responses, f"no ai_response sent; got {sent}"
+    # The client-facing payload still reports the configured model (existing,
+    # separate behavior — see test_websocket_response_metadata.py).
+    assert ai_responses[-1]["metadata"]["model_id"] == "us.anthropic.claude-sonnet-4-6"
+
+    token_usage_store.record_turn.assert_awaited_once()
+    _, kwargs = token_usage_store.record_turn.await_args
+    assert kwargs["model_id"] == "us.anthropic.claude-3-haiku"
+
+
 def test_record_turn_not_called_when_store_unconfigured():
     handler = _make_handler(_graph_state(), token_usage_store=None)
 

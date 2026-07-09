@@ -427,11 +427,18 @@ class WebSocketChatHandler:
                 output_tokens = response_metadata.get("output_tokens")
                 if input_tokens is not None and output_tokens is not None:
                     try:
+                        # NOTE: intentionally NOT response_metadata["model_id"] —
+                        # that field is unconditionally overwritten with the
+                        # statically configured model a few lines above (for the
+                        # client-facing payload). graph_metadata["model_id"] is
+                        # the model that actually produced this response, which
+                        # may be the fallback_model if a context-window retry
+                        # occurred; that's what billing/observability needs.
                         await self.token_usage_store.record_turn(
                             turn_id=message_id,
                             session_id=session.session_id,
                             user_id=session.user_id,
-                            model_id=response_metadata["model_id"],
+                            model_id=graph_metadata.get("model_id") or self.config.model_id,
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
                             turn_ts=datetime.now(timezone.utc),
