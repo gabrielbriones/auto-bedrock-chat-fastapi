@@ -21,7 +21,7 @@ endpoint).
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 
 from fastapi import APIRouter, Depends, FastAPI, Query
@@ -110,6 +110,14 @@ def register_admin_token_routes(
         end: datetime = Query(..., description="Exclusive upper bound (ISO 8601)"),
         identity=Depends(require_admin),
     ) -> TokenByDayResponse:
+        # Normalize to UTC before comparing: this endpoint's contract is
+        # UTC day bucketing, and a naive vs. tz-aware comparison below would
+        # otherwise raise TypeError (surfacing as an unintended 500) if a
+        # client sends one offset-bearing value and one bare ISO string.
+        # Naive input is treated as already-UTC rather than server-local
+        # time, matching the documented contract for this admin API.
+        start = start if start.tzinfo is not None else start.replace(tzinfo=timezone.utc)
+        end = end if end.tzinfo is not None else end.replace(tzinfo=timezone.utc)
         # ``aggregate_by_day`` also validates this, but we check here so the
         # 400 is raised before any DB round-trip and with a specific code —
         # mirroring the date_from/date_to validation in

@@ -181,6 +181,28 @@ def test_tokens_by_day_invalid_range_returns_400():
     assert body["code"] == "invalid_date_range"
 
 
+def test_tokens_by_day_mixed_naive_and_aware_bounds_does_not_500():
+    """A naive start/end (no UTC offset) mixed with a tz-aware one must not
+    raise TypeError when compared — that would surface as an unintended 500
+    instead of a clean 400/200. Naive input is treated as already-UTC."""
+    client = _build_app()
+
+    # Valid range once both are treated as UTC: naive start < aware end.
+    resp = client.get(
+        "/bedrock-chat/admin/tokens/by-day",
+        params={"start": "2026-01-01T00:00:00", "end": "2026-01-31T00:00:00Z"},
+    )
+    assert resp.status_code == 200
+
+    # Invalid range once both are treated as UTC: naive start > aware end.
+    resp = client.get(
+        "/bedrock-chat/admin/tokens/by-day",
+        params={"start": "2026-01-31T00:00:00", "end": "2026-01-01T00:00:00Z"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "invalid_date_range"
+
+
 def test_tokens_by_day_requires_start_and_end():
     client = _build_app()
     resp = client.get("/bedrock-chat/admin/tokens/by-day")
