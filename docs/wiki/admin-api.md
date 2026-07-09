@@ -9,6 +9,9 @@ feature and the knowledge base. It exposes two route groups under
   user-submitted 👍 / 👎 corrections.
 - **KB Management** — `/admin/kb/documents/*` — list, inspect, edit, and
   delete KB documents (re-embeds on content change).
+- **Token Usage Analytics** — `/admin/tokens/*` — query recorded
+  per-turn token usage (see [Token Usage Tracking](token-usage-tracking)
+  for how the underlying data gets recorded).
 - **Capability probe** — `GET /admin/_capabilities` — tells the Chat UI
   whether the current caller is an admin; always 200.
 
@@ -291,6 +294,48 @@ on the same document.
 > For background on how articles become flagged and how credibility
 > scoring works, see
 > [Continuous Learning Loop — Effectiveness Tracking](continuous-learning-loop#effectiveness-tracking).
+
+### Token Usage Analytics
+
+Registered only when a token-usage store is configured (see
+[Token Usage Tracking](token-usage-tracking) for `AUTOCHAT_TOKEN_USAGE_*`
+settings) — when `token_usage_enabled=false` or the backend failed to
+open, these routes are not mounted and return a clean 404, mirroring the
+Feedback/KB route groups above.
+
+| Method | Path                      | Description                                                                                           |
+| ------ | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/tokens/summary`   | Aggregate token usage per model. Returns `TokenSummaryResponse`.                                      |
+| GET    | `/admin/tokens/by-user`   | Per-turn token usage rows for one user. Returns `TokenByUserResponse`.                                |
+| GET    | `/admin/tokens/by-day`    | Aggregate token usage per UTC calendar day within a range. Returns `TokenByDayResponse`.              |
+| GET    | `/admin/tokens/top-users` | Top users ranked by combined (`input_tokens + output_tokens`) usage. Returns `TokenTopUsersResponse`. |
+
+Query parameters:
+
+| Endpoint    | Param     | Type                     | Notes                                       |
+| ----------- | --------- | ------------------------ | ------------------------------------------- |
+| `by-user`   | `user_id` | string, **required**     | Exact match. 422 if omitted.                |
+| `by-user`   | `limit`   | int, default 50, max 200 | 422 on out-of-bounds.                       |
+| `by-user`   | `offset`  | int, default 0           | 422 on negative.                            |
+| `by-day`    | `start`   | ISO-8601, **required**   | Inclusive lower bound. 422 if omitted.      |
+| `by-day`    | `end`     | ISO-8601, **required**   | Exclusive upper bound. 422 if omitted.      |
+| `by-day`    | —         | —                        | 400 `invalid_date_range` if `end <= start`. |
+| `top-users` | `limit`   | int, default 10, max 100 | 422 on out-of-bounds.                       |
+
+Day buckets in `by-day` are computed in **UTC**, matching how `turn_ts`
+is normalized on write; `top-users` excludes anonymous turns (no
+`user_id`) since there's no user identity to rank.
+
+```bash
+curl -sS -b cookies.txt \
+  'https://app.example.com/admin/tokens/by-day?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z'
+```
+
+```json
+{
+  "items": [{ "date": "2026-01-15", "input_tokens": 1200, "output_tokens": 3400, "turn_count": 12 }]
+}
+```
 
 ---
 

@@ -456,3 +456,94 @@ class ErrorResponse(BaseModel):
         default=None,
         description="Field-level diagnostics (validation failures only)",
     )
+
+
+# ---------------------------------------------------------------------------
+# Token usage analytics models
+# ---------------------------------------------------------------------------
+
+
+class TokenSummaryItem(BaseModel):
+    """Aggregate token usage for a single model, across all recorded turns.
+
+    Populated from :meth:`BaseTokenUsageStore.aggregate_by_model`.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    model_id: str
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    turn_count: int = Field(ge=0)
+
+
+class TokenSummaryResponse(BaseModel):
+    """Envelope returned by ``GET /admin/tokens/summary``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    items: List[TokenSummaryItem]
+
+
+class TokenByUserItem(BaseModel):
+    """A single per-turn token-usage row for one user.
+
+    Populated from :meth:`BaseTokenUsageStore.list_by_user`.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    session_id: str
+    model_id: str
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    turn_ts: str
+
+
+class TokenByUserResponse(BaseModel):
+    """Envelope returned by ``GET /admin/tokens/by-user``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    user_id: str
+    items: List[TokenByUserItem]
+
+
+class TokenByDayItem(BaseModel):
+    """Aggregate token usage for a single UTC calendar day.
+
+    Populated from :meth:`BaseTokenUsageStore.aggregate_by_day`.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    date: str
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    turn_count: int = Field(ge=0)
+
+
+class TokenByDayResponse(BaseModel):
+    """Envelope returned by ``GET /admin/tokens/by-day``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    items: List[TokenByDayItem]
+
+
+class TokenTopUserItem(BaseModel):
+    """Aggregate token usage for a single user, used by the top-users ranking."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    user_id: str
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+
+
+class TokenTopUsersResponse(BaseModel):
+    """Envelope returned by ``GET /admin/tokens/top-users``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    items: List[TokenTopUserItem]
