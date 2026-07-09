@@ -5,22 +5,23 @@
 --
 -- This file is the canonical DDL artifact:
 --   * The database-provisioning task can apply it directly with `psql`.
---   * `PostgresTokenUsageStore._init_schema()` reads and executes this file
+--   * `PostgresTokenUsageStore._apply_schema()` reads and executes this file
 --     at startup so dev/test environments self-bootstrap (mirrors
---     `feedback_schema.sql` / `FeedbackStore._init_schema()`).
+--     `feedback_schema.sql` / `PostgresFeedbackStore._apply_schema()`).
 --
 -- All statements are idempotent (`IF NOT EXISTS`) and safe to re-run.
 -- ---------------------------------------------------------------------------
-
--- Required for `gen_random_uuid()` server-side default.
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ---------------------------------------------------------------------------
 -- Token usage table
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS token_usage (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- `id` is always supplied by the caller (the stable message_id, see
+    -- PostgresTokenUsageStore.record_turn) as a plain string, matching the
+    -- SQLite schema's `id TEXT PRIMARY KEY`. No server-side UUID default or
+    -- pgcrypto extension is required.
+    id                  TEXT PRIMARY KEY,
 
     -- Turn context
     session_id          TEXT        NOT NULL,
