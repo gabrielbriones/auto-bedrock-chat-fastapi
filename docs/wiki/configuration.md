@@ -58,10 +58,10 @@ autolangchat_plugin = add_autolangchat(
 
 ### Tool Calling
 
-| Env Variable                 | Default | Description                        |
-| ---------------------------- | ------- | ---------------------------------- |
-| `AUTOCHAT_MAX_TOOL_CALLS`    | `10`    | Max tool calls per turn            |
-| `AUTOCHAT_OPENAPI_SPEC_FILE` | `None`  | Path to external OpenAPI spec file |
+| Env Variable                 | Default       | Description                                                |
+| ---------------------------- | ------------- | ---------------------------------------------------------- |
+| `AUTOCHAT_MAX_TOOL_CALLS`    | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit) |
+| `AUTOCHAT_OPENAPI_SPEC_FILE` | `None`        | Path to external OpenAPI spec file                         |
 
 ### Session Management
 

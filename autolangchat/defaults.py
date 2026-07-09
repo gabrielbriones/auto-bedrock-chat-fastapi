@@ -7,7 +7,7 @@ from this module instead of hardcoding values.
 """
 
 # ── Tool Call Limits ─────────────────────────────────────────────────────
-DEFAULT_MAX_TOOL_CALLS = 10
+DEFAULT_MAX_TOOL_CALLS = None  # None = unlimited
 
 # ── Conversation History ─────────────────────────────────────────────────
 DEFAULT_MAX_CONVERSATION_MESSAGES = 20

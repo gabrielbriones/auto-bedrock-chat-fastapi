@@ -69,7 +69,7 @@ Optional RAG Components:
 4. **LangGraph** optionally performs RAG retrieval and enriches the system prompt.
 5. **preprocess node** ensures the message history fits within token budget.
 6. **llm node** calls `ChatBedrockConverse` with messages + tools.
-7. **If the model returns tool calls** → `ToolManager` executes HTTP requests to your API, results are appended, and the loop repeats (up to `max_tool_calls` / `max_tool_call_rounds`).
+7. **If the model returns tool calls** → `ToolManager` executes HTTP requests to your API, results are appended, and the loop repeats (up to `max_tool_call_rounds`; individual-turn call count is unlimited by default but can be capped via `max_tool_calls`).
 8. **Final response** is streamed back to the client via WebSocket.
 
 ---

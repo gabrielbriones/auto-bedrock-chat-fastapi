@@ -90,7 +90,8 @@ User: "Order 2 Wireless Headphones for user john@example.com"
 Configurable via:
 
 ```python
-add_autolangchat(app, max_tool_calls=10)
+# No limit by default — set an explicit cap if needed:
+add_autolangchat(app, max_tool_calls=20)
 ```
 
 ---
