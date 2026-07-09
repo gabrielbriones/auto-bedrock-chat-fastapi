@@ -705,6 +705,57 @@ class ChatConfig(BaseSettings):
         return v
 
     # ------------------------------------------------------------------
+    # Token Usage Storage Backend
+    # ------------------------------------------------------------------
+
+    token_usage_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_TOKEN_USAGE_ENABLED",
+        description=(
+            "Master switch for per-turn token-usage recording. When True, "
+            "the plugin calls ``db.create_token_usage_store(config)`` to build "
+            "a ``BaseTokenUsageStore`` implementation (SQLite or Postgres, "
+            "selected by ``token_usage_storage_type``) and records "
+            "(input_tokens, output_tokens) for every chat turn. If the factory "
+            "cannot construct a usable backend at runtime (missing connection "
+            "URL, missing optional dependency, etc.), the feature is silently "
+            "disabled in-place rather than crashing the app."
+        ),
+    )
+
+    token_usage_storage_type: str = Field(
+        default="sqlite",
+        alias="AUTOCHAT_TOKEN_USAGE_STORAGE_TYPE",
+        description=(
+            "Token-usage storage backend. Valid values: 'sqlite' (default, "
+            "zero-config) or 'postgres' (requires AUTOCHAT_TOKEN_USAGE_POSTGRES_URL, "
+            "AUTOCHAT_FEEDBACK_POSTGRES_URL, or AUTOCHAT_KB_POSTGRES_URL)."
+        ),
+    )
+
+    token_usage_database_path: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_TOKEN_USAGE_DATABASE_PATH",
+        description=(
+            "Filesystem path to the SQLite token-usage database when "
+            "token_usage_storage_type='sqlite'. When unset, falls back to "
+            "feedback_database_path, then kb_database_path, so a single SQLite "
+            "file can host KB, feedback, and token-usage tables."
+        ),
+    )
+
+    token_usage_postgres_url: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_TOKEN_USAGE_POSTGRES_URL",
+        description=(
+            "PostgreSQL connection URL for the token_usage table when "
+            "token_usage_storage_type='postgres'. If unset, falls back to "
+            "AUTOCHAT_FEEDBACK_POSTGRES_URL, then AUTOCHAT_KB_POSTGRES_URL, so "
+            "a single Postgres instance can host all three schemas."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # LangGraph Checkpoint (Phase 3)
     # ------------------------------------------------------------------
 

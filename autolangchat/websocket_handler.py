@@ -7,7 +7,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .config import ChatConfig
-from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, FeedbackAuthorizer
+from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, BaseTokenUsageStore, FeedbackAuthorizer
 from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
 from .graph.tools.manager import AuthInfo
 from .models import FeedbackEntry, Rating
@@ -62,6 +62,7 @@ class WebSocketChatHandler:
         kb_store: Optional[BaseKBStore] = None,
         feedback_store: Optional[BaseFeedbackStore] = None,
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
+        token_usage_store: Optional[BaseTokenUsageStore] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -74,6 +75,7 @@ class WebSocketChatHandler:
         self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer(
             allow_anonymous=getattr(config, "feedback_allow_anonymous", False)
         )
+        self.token_usage_store = token_usage_store
 
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
@@ -413,6 +415,29 @@ class WebSocketChatHandler:
                     "metadata": response_metadata,
                 },
             )
+
+            # Persist per-turn token usage (best-effort). This must never
+            # affect chat delivery: the response has already been sent to
+            # the client above, so a persistence failure here is logged and
+            # swallowed rather than propagated to the outer except-block,
+            # which would otherwise attempt to send a second (error)
+            # ``ai_response`` after a successful one.
+            if self.token_usage_store is not None:
+                input_tokens = response_metadata.get("input_tokens")
+                output_tokens = response_metadata.get("output_tokens")
+                if input_tokens is not None and output_tokens is not None:
+                    try:
+                        await self.token_usage_store.record_turn(
+                            turn_id=message_id,
+                            session_id=session.session_id,
+                            user_id=session.user_id,
+                            model_id=response_metadata["model_id"],
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            turn_ts=datetime.now(timezone.utc),
+                        )
+                    except Exception:
+                        logger.exception("Failed to record token usage for message_id=%s", message_id)
 
         except Exception as e:
             logger.error(f"Error processing chat message: {str(e)}")
