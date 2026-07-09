@@ -205,7 +205,7 @@ def create_token_usage_store(config: "ChatConfig") -> Optional[BaseTokenUsageSto
             logger.warning(
                 "token_usage_storage_type='sqlite' but none of "
                 "AUTOCHAT_TOKEN_USAGE_DATABASE_PATH, AUTOCHAT_FEEDBACK_DATABASE_PATH, "
-                "or AUTOCHAT_KB_DATABASE_PATH is set; token usage recording disabled."
+                "or KB_DATABASE_PATH is set; token usage recording disabled."
             )
             return None
         return SQLiteTokenUsageStore(db_path=db_path)
