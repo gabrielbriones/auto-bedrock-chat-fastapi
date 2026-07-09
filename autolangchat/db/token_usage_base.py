@@ -83,8 +83,11 @@ class BaseTokenUsageStore(ABC):
     ) -> List[Dict[str, Any]]:
         """Return per-day aggregate token usage within ``[start, end)``.
 
-        Day buckets are computed in UTC, matching how ``turn_ts`` is
-        normalized on write (see ``record_turn``). Each row is a ``dict``
+        Day buckets are computed in UTC. This is enforced at query time by
+        each backend's ``aggregate_by_day`` implementation (independent of
+        DB session timezone settings) — ``record_turn`` does not itself
+        guarantee ``turn_ts`` is UTC-normalized on write; callers are
+        expected to pass a UTC-aware ``datetime``. Each row is a ``dict``
         with keys ``date`` (an ``"YYYY-MM-DD"`` string), ``input_tokens``
         (summed), ``output_tokens`` (summed), ``turn_count``. ``end`` must
         be strictly after ``start``.

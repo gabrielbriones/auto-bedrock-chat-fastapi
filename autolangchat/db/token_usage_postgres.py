@@ -200,7 +200,11 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         if end <= start:
             raise ValueError("end must be after start")
         # Bucket by UTC calendar date regardless of the connection's session
-        # timezone, matching how turn_ts is normalized to UTC on write.
+        # timezone. This enforces the API contract that day buckets are
+        # computed in UTC — record_turn does not itself normalize turn_ts to
+        # UTC (it persists whatever tz-aware datetime the caller supplies),
+        # so this explicit conversion is what actually guarantees UTC
+        # bucketing here, independent of DB session settings.
         sql = """
             SELECT (turn_ts AT TIME ZONE 'UTC')::date AS day,
                    SUM(input_tokens), SUM(output_tokens), COUNT(*)

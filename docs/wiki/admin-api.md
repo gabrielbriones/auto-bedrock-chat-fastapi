@@ -322,9 +322,10 @@ Query parameters:
 | `by-day`    | —         | —                        | 400 `invalid_date_range` if `end <= start`. |
 | `top-users` | `limit`   | int, default 10, max 100 | 422 on out-of-bounds.                       |
 
-Day buckets in `by-day` are computed in **UTC**, matching how `turn_ts`
-is normalized on write; `top-users` excludes anonymous turns (no
-`user_id`) since there's no user identity to rank.
+Day buckets in `by-day` are computed in **UTC**, enforced at query time by
+each backend regardless of DB session timezone settings; `top-users`
+excludes anonymous turns (no `user_id`) since there's no user identity
+to rank.
 
 ```bash
 curl -sS -b cookies.txt \
