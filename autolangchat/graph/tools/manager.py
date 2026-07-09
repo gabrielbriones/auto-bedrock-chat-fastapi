@@ -291,10 +291,17 @@ class ToolManager:
         # Return stub errors for tool calls that were dropped by the cap so that
         # every tool_call ID in the assistant message has a matching toolResult.
         for skipped in skipped_calls:
+            tc_id = skipped.get("id", "")
+            tc_name = skipped.get("name", "")
+            if not tc_id:
+                logger.error(
+                    "Skipped tool call has no ID; stub toolResult cannot satisfy "
+                    "Bedrock's toolUse contract. Check upstream tool call normalization."
+                )
             results.append(
                 {
-                    "tool_call_id": skipped.get("id", ""),
-                    "name": skipped.get("name", ""),
+                    "tool_call_id": tc_id,
+                    "name": tc_name,
                     "error": (
                         f"Tool call skipped: exceeded max_tool_calls limit "
                         f"({limit}). Reduce the number of tool calls in a single turn."
