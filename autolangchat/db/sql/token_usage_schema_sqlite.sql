@@ -4,7 +4,7 @@
 -- Mirrors autolangchat/db/sql/token_usage_schema.sql for the SQLite
 -- backend used as the zero-config default. Differences vs. the Postgres DDL:
 --
---   * No `gen_random_uuid()` / `now()` — `id` and `turn_ts` are populated
+--   * No `now()` default for `turn_ts` — `id` and `turn_ts` are populated
 --     client-side by the caller (see `SQLiteTokenUsageStore.record_turn`).
 --   * `turn_ts` is a TEXT column holding an ISO-8601 UTC timestamp string,
 --     matching the `created_at` convention used by the `feedback` table.
