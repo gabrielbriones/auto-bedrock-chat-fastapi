@@ -293,8 +293,8 @@ class ToolManager:
         for skipped in skipped_calls:
             results.append(
                 {
-                    "tool_call_id": skipped.get("id"),
-                    "name": skipped.get("name"),
+                    "tool_call_id": skipped.get("id", ""),
+                    "name": skipped.get("name", ""),
                     "error": (
                         f"Tool call skipped: exceeded max_tool_calls limit "
                         f"({limit}). Reduce the number of tool calls in a single turn."

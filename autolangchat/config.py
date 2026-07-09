@@ -1296,7 +1296,9 @@ def validate_config(config: ChatConfig) -> None:
     if config.temperature > 0.9:
         print(f"Warning: High temperature ({config.temperature}) may cause unpredictable responses")
 
-    if config.max_tool_calls is not None and config.max_tool_calls > 20:
+    if config.max_tool_calls is None:
+        print("Warning: max_tool_calls is unlimited; set AUTOCHAT_MAX_TOOL_CALLS=<N> to cap per-turn tool calls")
+    elif config.max_tool_calls > 20:
         print(f"Warning: High max_tool_calls ({config.max_tool_calls}) may cause long response times")
 
     if config.session_timeout < 300:  # 5 minutes
