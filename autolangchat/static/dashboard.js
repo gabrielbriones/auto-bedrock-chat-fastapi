@@ -1036,6 +1036,13 @@
         // catch() below still handles the 400 defensively (e.g. edge cases
         // around timezone normalization at the boundary).
         if (_tuState.byDayEnd <= _tuState.byDayStart) {
+            // Reset applied state and clear any stale table from a previous
+            // valid range — otherwise the old results stay visible next to
+            // the new error, and byDayApplied=true would keep re-validating
+            // this same invalid range on every later nav switch.
+            _tuState.byDayApplied = false;
+            wrap.innerHTML = '';
+            wrap.appendChild(el('div', 'table-empty', 'Select a start and end date, then Apply.'));
             if (errEl) {
                 errEl.textContent = 'End date must be after start date.';
                 errEl.classList.add('visible');
@@ -1158,7 +1165,12 @@
         if (rowCount === 0 && offset === 0) return;
 
         var info = el('span', 'pagination-info');
-        info.textContent = 'Showing ' + (offset + 1) + '–' + (offset + rowCount);
+        // Guard against an inverted "Showing 51–50" when a page comes back
+        // empty past offset 0 (e.g. data shrank between requests, or the
+        // user reached Next on an exact-multiple-of-limit boundary).
+        info.textContent = rowCount === 0
+            ? 'No results.'
+            : ('Showing ' + (offset + 1) + '–' + (offset + rowCount));
         container.appendChild(info);
 
         var prevBtn = el('button', 'btn-secondary', '← Prev');
