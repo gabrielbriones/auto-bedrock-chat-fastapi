@@ -71,6 +71,38 @@ Browse and manage Knowledge Base documents from
 - **Filter chips**: source, topic, tags CSV, date-published range.
 - Clicking a row opens the [KB Document Editor](#kb-document-editor).
 
+### Token Usage
+
+Read-only usage analytics sourced from the four `GET /admin/tokens/*`
+endpoints (see [Admin API](admin-api.md#token-usage-analytics)).
+
+- The nav item is hidden entirely unless `GET /admin/_capabilities`
+  reports `token_usage_enabled: true` (i.e. a token-usage store is
+  configured server-side) — there is no "not configured" empty state
+  to reach, since the tab itself never appears.
+- **Summary** — per-model totals from `GET /admin/tokens/summary`: a
+  horizontal bar chart (combined input + output tokens per model,
+  mirroring the Feedback Stats top-tags chart) plus a table (model,
+  input tokens, output tokens, turn count).
+- **Top Users** — table from `GET /admin/tokens/top-users?limit=N`
+  (user, input tokens, output tokens). Limit selector: 5 / 10 / 20 /
+  50 / 100, default 10 (matches the API default).
+- **By Day** — start/end date pickers plus a table from
+  `GET /admin/tokens/by-day?start=&end=` (date, input tokens, output
+  tokens, turn count). Client-side validation mirrors the API's
+  `end > start` requirement, showing an inline error rather than
+  submitting an invalid range; the `invalid_date_range` API error is
+  also handled inline as a fallback.
+- **By User** — a `user_id` text input plus a table from
+  `GET /admin/tokens/by-user?user_id=&limit=&offset=` (session, model,
+  input tokens, output tokens, turn timestamp). This endpoint doesn't
+  return a total count, so pagination shows `Showing X–Y` only (no
+  `of Z`) and disables Next when a page returns fewer than `limit` rows.
+- Summary and Top Users load automatically on first view; By Day and
+  By User require their respective required inputs before fetching.
+- Empty and error states reuse the same `.table-empty` / inline-error
+  components as the other views — no bespoke patterns.
+
 ---
 
 ## Review Drawer

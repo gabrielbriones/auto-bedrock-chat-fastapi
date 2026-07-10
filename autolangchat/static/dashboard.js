@@ -67,6 +67,12 @@
         return s.length > n ? s.slice(0, n) + '…' : s;
     }
 
+    /** Format a token count with thousands separators; '—' for null/undefined. */
+    function fmtNum(n) {
+        if (n === null || n === undefined) return '—';
+        return typeof n === 'number' ? n.toLocaleString() : String(n);
+    }
+
     // ----------------------------------------------------------------
     // API helpers
     // ----------------------------------------------------------------
@@ -167,6 +173,7 @@
                 else if (view === 'feedback-reviewed') loadFeedbackReviewed(_frState);
                 else if (view === 'feedback-stats')    loadFeedbackStats();
                 else if (view === 'kb-browser')        loadKBBrowser(_kbState);
+                else if (view === 'token-usage')       loadTokenUsage();
             });
         });
     }
@@ -783,6 +790,426 @@
             _kbState.offset = newOffset;
             loadKBBrowser(_kbState);
         });
+    }
+
+    // ================================================================
+    // TOKEN USAGE VIEW
+    // ================================================================
+
+    var _tuState = {
+        topUsersLimit: 10,
+        byDayStart: '',
+        byDayEnd: '',
+        byDayApplied: false,
+        byUserId: '',
+        byUserLimit: 50,
+        byUserOffset: 0,
+        byUserApplied: false
+    };
+
+    /**
+     * Build the static shell (headers, filter bars, empty table wraps) for
+     * all four Token Usage sub-sections. Called once from init() — mirrors
+     * renderKBBrowserShell()/renderFeedbackQueueShell(). Actual data is
+     * fetched lazily by loadTokenUsage() on first (and every) nav switch.
+     */
+    function renderTokenUsageShell() {
+        var view = document.getElementById('view-token-usage');
+        view.innerHTML = '';
+
+        var hdr = el('div', 'section-header');
+        hdr.appendChild(el('h2', null, 'Token Usage'));
+        view.appendChild(hdr);
+
+        // ---- Summary ----
+        var summaryCard = el('div', 'chart-card');
+        summaryCard.appendChild(el('h3', null, 'Summary — Per Model'));
+        var summaryBody = el('div'); summaryBody.id = 'tu-summary-body';
+        summaryCard.appendChild(summaryBody);
+        view.appendChild(summaryCard);
+
+        // ---- Top Users ----
+        var topUsersCard = el('div', 'chart-card');
+        topUsersCard.appendChild(el('h3', null, 'Top Users'));
+        var tuFilterBar = el('div', 'filter-bar');
+        var limitGrp = el('div', 'filter-group');
+        limitGrp.appendChild(el('label', null, 'Limit'));
+        var limitSel = el('select'); limitSel.id = 'tu-top-users-limit';
+        [5, 10, 20, 50, 100].forEach(function (n) {
+            var o = document.createElement('option'); o.value = String(n); o.textContent = String(n);
+            if (n === _tuState.topUsersLimit) o.selected = true;
+            limitSel.appendChild(o);
+        });
+        limitGrp.appendChild(limitSel);
+        tuFilterBar.appendChild(limitGrp);
+        topUsersCard.appendChild(tuFilterBar);
+        var topUsersWrap = el('div', 'data-table-wrap'); topUsersWrap.id = 'tu-top-users-wrap';
+        topUsersCard.appendChild(topUsersWrap);
+        view.appendChild(topUsersCard);
+
+        limitSel.addEventListener('change', function () {
+            _tuState.topUsersLimit = parseInt(limitSel.value, 10);
+            loadTokenTopUsers();
+        });
+
+        // ---- By Day ----
+        var byDayCard = el('div', 'chart-card');
+        byDayCard.appendChild(el('h3', null, 'By Day'));
+        var byDayFilterBar = el('div', 'filter-bar');
+        byDayFilterBar.appendChild(buildDateInput('tu-by-day-start', 'Start'));
+        byDayFilterBar.appendChild(buildDateInput('tu-by-day-end', 'End'));
+        var byDayApplyBtn = el('button', 'btn-secondary', 'Apply');
+        byDayApplyBtn.style.padding = '7px 14px';
+        var byDayActs = el('div', 'filter-actions'); byDayActs.appendChild(byDayApplyBtn);
+        byDayFilterBar.appendChild(byDayActs);
+        byDayCard.appendChild(byDayFilterBar);
+        var byDayErr = el('div', 'inline-error'); byDayErr.id = 'tu-by-day-err';
+        byDayCard.appendChild(byDayErr);
+        var byDayWrap = el('div', 'data-table-wrap'); byDayWrap.id = 'tu-by-day-wrap';
+        byDayWrap.appendChild(el('div', 'table-empty', 'Select a start and end date, then Apply.'));
+        byDayCard.appendChild(byDayWrap);
+        view.appendChild(byDayCard);
+
+        byDayApplyBtn.addEventListener('click', function () {
+            _tuState.byDayStart = qs('#tu-by-day-start').value;
+            _tuState.byDayEnd = qs('#tu-by-day-end').value;
+            loadTokenByDay();
+        });
+
+        // ---- By User ----
+        var byUserCard = el('div', 'chart-card');
+        byUserCard.appendChild(el('h3', null, 'By User'));
+        var byUserFilterBar = el('div', 'filter-bar');
+        byUserFilterBar.appendChild(buildTextInput('tu-by-user-id', 'User ID', 'e.g. alice'));
+        var byUserApplyBtn = el('button', 'btn-secondary', 'Apply');
+        byUserApplyBtn.style.padding = '7px 14px';
+        var byUserActs = el('div', 'filter-actions'); byUserActs.appendChild(byUserApplyBtn);
+        byUserFilterBar.appendChild(byUserActs);
+        byUserCard.appendChild(byUserFilterBar);
+        var byUserWrap = el('div', 'data-table-wrap'); byUserWrap.id = 'tu-by-user-wrap';
+        byUserWrap.appendChild(el('div', 'table-empty', 'Enter a user ID, then Apply.'));
+        byUserCard.appendChild(byUserWrap);
+        var byUserPg = el('div', 'pagination'); byUserPg.id = 'tu-by-user-pagination';
+        byUserCard.appendChild(byUserPg);
+        view.appendChild(byUserCard);
+
+        function applyByUserFilter() {
+            _tuState.byUserId = qs('#tu-by-user-id').value.trim();
+            _tuState.byUserOffset = 0;
+            loadTokenByUser();
+        }
+        byUserApplyBtn.addEventListener('click', applyByUserFilter);
+        qs('#tu-by-user-id', byUserFilterBar).addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') applyByUserFilter();
+        });
+    }
+
+    /** Reload every Token Usage sub-section using current state (called on nav switch). */
+    function loadTokenUsage() {
+        loadTokenSummary();
+        loadTokenTopUsers();
+        if (_tuState.byDayApplied) loadTokenByDay();
+        if (_tuState.byUserApplied) loadTokenByUser();
+    }
+
+    function loadTokenSummary() {
+        var body = document.getElementById('tu-summary-body');
+        if (!body) return;
+        body.innerHTML = '';
+        body.appendChild(buildLoadingRow());
+
+        apiGet('/tokens/summary')
+            .then(function (data) {
+                body.innerHTML = '';
+                var items = data.items || [];
+                if (items.length === 0) {
+                    body.appendChild(el('div', 'table-empty', 'No token usage recorded yet.'));
+                    return;
+                }
+                var chart = buildTokenModelChart(items);
+                chart.style.marginBottom = '16px';
+                body.appendChild(chart);
+                body.appendChild(buildTokenSummaryTable(items));
+            })
+            .catch(function (e) {
+                body.innerHTML = '';
+                body.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
+            });
+    }
+
+    /** Horizontal bar chart of combined (input+output) tokens per model — mirrors buildTagsChart(). */
+    function buildTokenModelChart(items) {
+        var wrap = el('div', 'bar-chart');
+        var totals = items.map(function (it) { return (it.input_tokens || 0) + (it.output_tokens || 0); });
+        var maxTotal = totals.reduce(function (m, t) { return Math.max(m, t); }, 1);
+        items.forEach(function (it, i) {
+            var row = el('div', 'bar-row');
+            row.appendChild(el('span', 'bar-label', it.model_id));
+            var track = el('div', 'bar-track');
+            var fill = el('div', 'bar-fill');
+            fill.style.width = Math.round((totals[i] / maxTotal) * 100) + '%';
+            track.appendChild(fill); row.appendChild(track);
+            row.appendChild(el('span', 'bar-count', fmtNum(totals[i])));
+            wrap.appendChild(row);
+        });
+        return wrap;
+    }
+
+    function buildTokenSummaryTable(items) {
+        var wrap = el('div', 'data-table-wrap');
+        var table = el('table', 'data-table');
+        var thead = document.createElement('thead');
+        var hrow = document.createElement('tr');
+        ['Model', 'Input Tokens', 'Output Tokens', 'Turns'].forEach(function (h) {
+            var th = el('th'); th.textContent = h; hrow.appendChild(th);
+        });
+        thead.appendChild(hrow); table.appendChild(thead);
+        var tbody = document.createElement('tbody');
+        items.forEach(function (it) {
+            var row = document.createElement('tr');
+            [it.model_id, fmtNum(it.input_tokens), fmtNum(it.output_tokens), fmtNum(it.turn_count)].forEach(function (v) {
+                var td = el('td'); td.textContent = v; row.appendChild(td);
+            });
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        return wrap;
+    }
+
+    function loadTokenTopUsers() {
+        var wrap = document.getElementById('tu-top-users-wrap');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        wrap.appendChild(buildLoadingRow());
+
+        apiGet('/tokens/top-users?limit=' + _tuState.topUsersLimit)
+            .then(function (data) {
+                wrap.innerHTML = '';
+                var items = data.items || [];
+                var table = el('table', 'data-table');
+                var thead = document.createElement('thead');
+                var hrow = document.createElement('tr');
+                ['User', 'Input Tokens', 'Output Tokens'].forEach(function (h) {
+                    var th = el('th'); th.textContent = h; hrow.appendChild(th);
+                });
+                thead.appendChild(hrow); table.appendChild(thead);
+                var tbody = document.createElement('tbody');
+                if (items.length === 0) {
+                    var erow = document.createElement('tr');
+                    var etd = document.createElement('td'); etd.colSpan = 3;
+                    etd.appendChild(el('div', 'table-empty', 'No token usage recorded yet.'));
+                    erow.appendChild(etd); tbody.appendChild(erow);
+                } else {
+                    items.forEach(function (u) {
+                        var row = document.createElement('tr');
+                        [u.user_id, fmtNum(u.input_tokens), fmtNum(u.output_tokens)].forEach(function (v) {
+                            var td = el('td'); td.textContent = v; row.appendChild(td);
+                        });
+                        tbody.appendChild(row);
+                    });
+                }
+                table.appendChild(tbody);
+                wrap.appendChild(table);
+            })
+            .catch(function (e) {
+                wrap.innerHTML = '';
+                wrap.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
+            });
+    }
+
+    function loadTokenByDay() {
+        var wrap = document.getElementById('tu-by-day-wrap');
+        var errEl = document.getElementById('tu-by-day-err');
+        if (!wrap) return;
+
+        // Keep the visible inputs in sync with the applied state on
+        // nav-switch reloads — otherwise an unsaved edit left in the
+        // inputs (without clicking Apply) would visually contradict the
+        // table, which always reflects _tuState, not the DOM inputs.
+        var startEl = qs('#tu-by-day-start');
+        var endEl = qs('#tu-by-day-end');
+        if (startEl) startEl.value = _tuState.byDayStart || '';
+        if (endEl) endEl.value = _tuState.byDayEnd || '';
+
+        if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
+
+        if (!_tuState.byDayStart || !_tuState.byDayEnd) {
+            wrap.innerHTML = '';
+            wrap.appendChild(el('div', 'table-empty', 'Select a start and end date, then Apply.'));
+            return;
+        }
+        // Mirror the API's `end > start` requirement client-side so the
+        // invalid_date_range error rarely needs to round-trip for this common
+        // case — matches the ticket's "surface inline, not raw JSON" AC. The
+        // catch() below still handles the 400 defensively (e.g. edge cases
+        // around timezone normalization at the boundary).
+        if (_tuState.byDayEnd <= _tuState.byDayStart) {
+            // Reset applied state and clear any stale table from a previous
+            // valid range — otherwise the old results stay visible next to
+            // the new error, and byDayApplied=true would keep re-validating
+            // this same invalid range on every later nav switch.
+            _tuState.byDayApplied = false;
+            wrap.innerHTML = '';
+            wrap.appendChild(el('div', 'table-empty', 'Select a start and end date, then Apply.'));
+            if (errEl) {
+                errEl.textContent = 'End date must be after start date.';
+                errEl.classList.add('visible');
+            }
+            return;
+        }
+
+        _tuState.byDayApplied = true;
+        wrap.innerHTML = '';
+        wrap.appendChild(buildLoadingRow());
+
+        var params = new URLSearchParams({ start: _tuState.byDayStart, end: _tuState.byDayEnd });
+        apiGet('/tokens/by-day?' + params.toString())
+            .then(function (data) {
+                wrap.innerHTML = '';
+                var items = data.items || [];
+                var table = el('table', 'data-table');
+                var thead = document.createElement('thead');
+                var hrow = document.createElement('tr');
+                ['Date', 'Input Tokens', 'Output Tokens', 'Turns'].forEach(function (h) {
+                    var th = el('th'); th.textContent = h; hrow.appendChild(th);
+                });
+                thead.appendChild(hrow); table.appendChild(thead);
+                var tbody = document.createElement('tbody');
+                if (items.length === 0) {
+                    var erow = document.createElement('tr');
+                    var etd = document.createElement('td'); etd.colSpan = 4;
+                    etd.appendChild(el('div', 'table-empty', 'No token usage recorded in this range.'));
+                    erow.appendChild(etd); tbody.appendChild(erow);
+                } else {
+                    items.forEach(function (d) {
+                        var row = document.createElement('tr');
+                        [d.date, fmtNum(d.input_tokens), fmtNum(d.output_tokens), fmtNum(d.turn_count)].forEach(function (v) {
+                            var td = el('td'); td.textContent = v; row.appendChild(td);
+                        });
+                        tbody.appendChild(row);
+                    });
+                }
+                table.appendChild(tbody);
+                wrap.appendChild(table);
+            })
+            .catch(function (e) {
+                wrap.innerHTML = '';
+                if (e.status === 400 && e.code === 'invalid_date_range' && errEl) {
+                    // Reset applied state so loadTokenUsage() doesn't keep
+                    // re-issuing this same rejected request on every later
+                    // nav switch — mirrors the client-side pre-flight branch
+                    // above.
+                    _tuState.byDayApplied = false;
+                    wrap.appendChild(el('div', 'table-empty', 'Select a start and end date, then Apply.'));
+                    errEl.textContent = e.message || 'End date must be after start date.';
+                    errEl.classList.add('visible');
+                } else {
+                    wrap.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
+                }
+            });
+    }
+
+    function loadTokenByUser() {
+        var wrap = document.getElementById('tu-by-user-wrap');
+        var pg = document.getElementById('tu-by-user-pagination');
+        if (!wrap) return;
+
+        // Keep the visible input in sync with the applied state on
+        // nav-switch reloads — same rationale as loadTokenByDay() above.
+        var userEl = qs('#tu-by-user-id');
+        if (userEl) userEl.value = _tuState.byUserId || '';
+
+        if (!_tuState.byUserId) {
+            _tuState.byUserApplied = false;
+            wrap.innerHTML = '';
+            wrap.appendChild(el('div', 'table-empty', 'Enter a user ID, then Apply.'));
+            if (pg) pg.innerHTML = '';
+            return;
+        }
+
+        _tuState.byUserApplied = true;
+        wrap.innerHTML = '';
+        wrap.appendChild(buildLoadingRow());
+
+        var params = new URLSearchParams({
+            user_id: _tuState.byUserId,
+            limit: _tuState.byUserLimit,
+            offset: _tuState.byUserOffset
+        });
+        apiGet('/tokens/by-user?' + params.toString())
+            .then(function (data) {
+                wrap.innerHTML = '';
+                var items = data.items || [];
+                var table = el('table', 'data-table');
+                var thead = document.createElement('thead');
+                var hrow = document.createElement('tr');
+                ['Session', 'Model', 'Input Tokens', 'Output Tokens', 'Turn Timestamp'].forEach(function (h) {
+                    var th = el('th'); th.textContent = h; hrow.appendChild(th);
+                });
+                thead.appendChild(hrow); table.appendChild(thead);
+                var tbody = document.createElement('tbody');
+                if (items.length === 0) {
+                    var erow = document.createElement('tr');
+                    var etd = document.createElement('td'); etd.colSpan = 5;
+                    etd.appendChild(el('div', 'table-empty', 'No token usage recorded for this user.'));
+                    erow.appendChild(etd); tbody.appendChild(erow);
+                } else {
+                    items.forEach(function (t) {
+                        var row = document.createElement('tr');
+                        [trunc(t.session_id, 36), t.model_id, fmtNum(t.input_tokens), fmtNum(t.output_tokens), fmtDate(t.turn_ts)]
+                            .forEach(function (v) { var td = el('td'); td.textContent = v; row.appendChild(td); });
+                        tbody.appendChild(row);
+                    });
+                }
+                table.appendChild(tbody);
+                wrap.appendChild(table);
+
+                if (pg) renderByUserPagination(pg, _tuState.byUserOffset, _tuState.byUserLimit, items.length);
+            })
+            .catch(function (e) {
+                wrap.innerHTML = '';
+                wrap.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
+                if (pg) pg.innerHTML = '';
+            });
+    }
+
+    /**
+     * Pagination for /tokens/by-user, which doesn't return a total count
+     * (unlike renderPagination(), used elsewhere). Shows "Showing X–Y" only,
+     * and disables Next when the page returned fewer than `limit` rows — the
+     * only signal available that the end of the results has been reached.
+     */
+    function renderByUserPagination(container, offset, limit, rowCount) {
+        container.innerHTML = '';
+        if (rowCount === 0 && offset === 0) return;
+
+        var info = el('span', 'pagination-info');
+        // Guard against an inverted "Showing 51–50" when a page comes back
+        // empty past offset 0 (e.g. data shrank between requests, or the
+        // user reached Next on an exact-multiple-of-limit boundary).
+        info.textContent = rowCount === 0
+            ? 'No results.'
+            : ('Showing ' + (offset + 1) + '–' + (offset + rowCount));
+        container.appendChild(info);
+
+        var prevBtn = el('button', 'btn-secondary', '← Prev');
+        prevBtn.style.padding = '6px 12px';
+        prevBtn.disabled = offset === 0;
+        prevBtn.addEventListener('click', function () {
+            _tuState.byUserOffset = Math.max(0, offset - limit);
+            loadTokenByUser();
+        });
+        container.appendChild(prevBtn);
+
+        var nextBtn = el('button', 'btn-secondary', 'Next →');
+        nextBtn.style.padding = '6px 12px';
+        nextBtn.disabled = rowCount < limit;
+        nextBtn.addEventListener('click', function () {
+            _tuState.byUserOffset = offset + limit;
+            loadTokenByUser();
+        });
+        container.appendChild(nextBtn);
     }
 
     // ================================================================
@@ -1730,6 +2157,15 @@ function formatMetadataValue(value) {
                     // Push content down below the fixed banner
                     var app = document.getElementById('dashboardApp');
                     if (app) app.style.paddingTop = '40px';
+                }
+
+                // Token Usage nav item is hidden by default in the HTML
+                // (autolangchat/templates/dashboard.html) — only reveal it
+                // (and build its shell) when the server reports a
+                // token-usage store is configured.
+                if (caps.token_usage_enabled) {
+                    show('navTokenUsage');
+                    renderTokenUsageShell();
                 }
 
                 show('dashboardApp');

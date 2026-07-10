@@ -1323,13 +1323,20 @@ class AutoLangChatPlugin:
         # ----------------------------------------------------------------
         # Capability probe — GET /admin/_capabilities
         #
-        # Always returns 200 {is_admin, anonymous}. Never raises a 403 so
-        # the Chat UI can silently hide the Dashboard button rather than
-        # surfacing an error to non-admin users.  When
-        # ``require_tool_auth=False``, the anonymous-admin escape hatch is
-        # unconditional: identity is ignored even if credentials are
-        # present, and this is reflected as ``anonymous=true`` so the
-        # dashboard can render a visible dev-mode warning banner.
+        # Always returns 200 {is_admin, anonymous, token_usage_enabled}.
+        # Never raises a 403 so the Chat UI can silently hide the
+        # Dashboard button rather than surfacing an error to non-admin
+        # users.  When ``require_tool_auth=False``, the anonymous-admin
+        # escape hatch is unconditional: identity is ignored even if
+        # credentials are present, and this is reflected as
+        # ``anonymous=true`` so the dashboard can render a visible
+        # dev-mode warning banner.
+        #
+        # ``token_usage_enabled`` reflects whether ``_token_usage_store``
+        # is configured (independent of admin/auth state) so the
+        # dashboard's Token Usage nav item can be hidden when the store
+        # isn't set up — mirroring how the four ``/tokens/*`` routes
+        # themselves are only registered when the store is configured.
         # ----------------------------------------------------------------
 
         @self.app.get(
@@ -1338,26 +1345,37 @@ class AutoLangChatPlugin:
             summary="Capability probe — is the current caller an admin?",
         )
         async def get_admin_capabilities(request: Request) -> JSONResponse:
-            """Return ``{is_admin, anonymous}`` — always 200, never 403.
+            """Return ``{is_admin, anonymous, token_usage_enabled}`` — always 200, never 403.
 
             Used by the Chat UI on page load to decide whether to show
             the Dashboard button.  When ``require_tool_auth=False``, the
             anonymous-admin escape hatch is unconditionally active:
             ``{is_admin: true, anonymous: true}`` is returned regardless
             of whether any identity sources are configured or the caller
-            presented credentials.
+            presented credentials. ``token_usage_enabled`` is independent
+            of the admin/auth outcome — it reflects whether a token-usage
+            store is configured on this plugin instance.
             """
+            token_usage_enabled = getattr(self, "_token_usage_store", None) is not None
             if not self.config.require_tool_auth:
-                return JSONResponse({"is_admin": True, "anonymous": True})
+                return JSONResponse({"is_admin": True, "anonymous": True, "token_usage_enabled": token_usage_enabled})
             try:
                 identity = await _resolve_identity(request)
                 if identity is None:
-                    return JSONResponse({"is_admin": False, "anonymous": False})
+                    return JSONResponse(
+                        {"is_admin": False, "anonymous": False, "token_usage_enabled": token_usage_enabled}
+                    )
                 is_admin_result = await self._admin_authorizer.is_admin(identity)
-                return JSONResponse({"is_admin": is_admin_result, "anonymous": False})
+                return JSONResponse(
+                    {
+                        "is_admin": is_admin_result,
+                        "anonymous": False,
+                        "token_usage_enabled": token_usage_enabled,
+                    }
+                )
             except Exception:
                 logger.exception("Failed to resolve admin capabilities")
-                return JSONResponse({"is_admin": False, "anonymous": False})
+                return JSONResponse({"is_admin": False, "anonymous": False, "token_usage_enabled": token_usage_enabled})
 
         # ----------------------------------------------------------------
         # Admin Dashboard UI — GET {chat_endpoint}/dashboard
