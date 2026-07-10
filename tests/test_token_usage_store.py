@@ -588,6 +588,19 @@ async def test_postgres_list_by_user_rejects_invalid_pagination():
         await store.list_by_user("alice", offset=-1)
 
 
+async def test_postgres_list_by_user_respects_limit_and_offset():
+    store = _make_postgres_store()
+    await _seed_postgres(store)
+
+    first_page = await store.list_by_user("alice", limit=1, offset=0)
+    second_page = await store.list_by_user("alice", limit=1, offset=1)
+
+    assert len(first_page) == 1
+    assert len(second_page) == 1
+    assert first_page[0]["model_id"] == "model-b"
+    assert second_page[0]["model_id"] == "model-a"
+
+
 async def test_postgres_list_by_user_normalizes_turn_ts_to_utc():
     """``turn_ts`` must always be reported in UTC regardless of the
     timezone offset the driver returns it in — the underlying instant is
@@ -652,6 +665,18 @@ async def test_postgres_aggregate_by_day_rejects_end_not_after_start():
         await store.aggregate_by_day(ts, ts)
 
 
+async def test_postgres_aggregate_by_day_excludes_rows_outside_range():
+    store = _make_postgres_store()
+    await _seed_postgres(store)
+
+    rows = await store.aggregate_by_day(
+        datetime(2026, 7, 1, tzinfo=timezone.utc),
+        datetime(2026, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert rows == [{"date": "2026-07-01", "input_tokens": 15, "output_tokens": 25, "turn_count": 2}]
+
+
 async def test_postgres_aggregate_by_user_ranks_by_combined_tokens_desc():
     store = _make_postgres_store()
     await _seed_postgres(store)
@@ -677,3 +702,14 @@ async def test_postgres_aggregate_by_user_rejects_non_positive_limit():
     store = _make_postgres_store()
     with pytest.raises(ValueError):
         await store.aggregate_by_user(limit=0)
+
+
+async def test_postgres_aggregate_by_user_excludes_anonymous_rows():
+    store = _make_postgres_store()
+    await store.record_turn("t-anon", "sess-3", None, "model-a", 500, 500, datetime(2026, 7, 3, tzinfo=timezone.utc))
+    await _seed_postgres(store)
+
+    rows = await store.aggregate_by_user()
+
+    assert all(r["user_id"] is not None for r in rows)
+    assert {r["user_id"] for r in rows} == {"alice", "bob"}
