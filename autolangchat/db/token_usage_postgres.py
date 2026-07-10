@@ -235,7 +235,7 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
             FROM token_usage
             WHERE user_id IS NOT NULL
             GROUP BY user_id
-            ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC
+            ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC, user_id ASC
             LIMIT %s
         """
         async with self._pool.connection() as conn:

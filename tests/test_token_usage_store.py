@@ -323,6 +323,24 @@ async def test_aggregate_by_user_respects_limit():
         await store.close()
 
 
+async def test_aggregate_by_user_breaks_ties_by_user_id_ascending():
+    """When two users have the same combined token total, ordering must be
+    deterministic (user_id ASC) rather than left to the DB engine's
+    unspecified tie behavior."""
+    store = await _open_sqlite_store()
+    try:
+        ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        await store.record_turn("t1", "sess-1", "carol", "model-a", 5, 5, ts)
+        await store.record_turn("t2", "sess-2", "alice", "model-a", 5, 5, ts)
+        await store.record_turn("t3", "sess-3", "bob", "model-a", 5, 5, ts)
+
+        rows = await store.aggregate_by_user()
+
+        assert [r["user_id"] for r in rows] == ["alice", "bob", "carol"]
+    finally:
+        await store.close()
+
+
 async def test_aggregate_by_user_excludes_anonymous_rows():
     store = await _open_sqlite_store()
     try:
@@ -419,7 +437,11 @@ class _FakeCursor:
                 turn_ts, input_tokens, output_tokens = v[6], v[4], v[5]
                 if not (start <= turn_ts < end):
                     continue
-                day = turn_ts.date() if hasattr(turn_ts, "date") else turn_ts
+                # Force UTC before bucketing, matching the real SQL's
+                # ``turn_ts AT TIME ZONE 'UTC'`` — otherwise a non-UTC-tz
+                # turn_ts would bucket by the wrong calendar day here while
+                # the real store still buckets correctly, masking a bug.
+                day = turn_ts.astimezone(timezone.utc).date() if hasattr(turn_ts, "astimezone") else turn_ts
                 agg = by_day.setdefault(day, [0, 0, 0])
                 agg[0] += input_tokens
                 agg[1] += output_tokens
@@ -437,7 +459,11 @@ class _FakeCursor:
                 agg = by_user.setdefault(user_id, [0, 0])
                 agg[0] += input_tokens
                 agg[1] += output_tokens
-            ranked = sorted(by_user.items(), key=lambda kv: kv[1][0] + kv[1][1], reverse=True)
+            # Emulate ORDER BY (combined) DESC, user_id ASC: sort by the
+            # ascending tie-breaker first, then stable-sort by the
+            # descending primary key.
+            ranked = sorted(by_user.items(), key=lambda kv: kv[0])
+            ranked.sort(key=lambda kv: kv[1][0] + kv[1][1], reverse=True)
             self._result = [(user_id, *agg) for user_id, agg in ranked[:limit]]
             return
 
@@ -677,6 +703,27 @@ async def test_postgres_aggregate_by_day_excludes_rows_outside_range():
     assert rows == [{"date": "2026-07-01", "input_tokens": 15, "output_tokens": 25, "turn_count": 2}]
 
 
+async def test_postgres_aggregate_by_day_buckets_by_utc_date_not_local():
+    """A turn_ts whose *local* calendar date differs from its *UTC*
+    calendar date must bucket under the UTC date, matching the real SQL's
+    ``turn_ts AT TIME ZONE 'UTC'`` — not the tz the datetime happens to
+    carry."""
+    store = _make_postgres_store()
+    # 2026-07-02T01:00:00+02:00 == 2026-07-01T23:00:00 UTC: local date is
+    # July 2nd, UTC date is July 1st.
+    non_utc_tz = timezone(timedelta(hours=2))
+    await store.record_turn(
+        "t1", "sess-1", "alice", "model-a", 10, 20, datetime(2026, 7, 2, 1, 0, 0, tzinfo=non_utc_tz)
+    )
+
+    rows = await store.aggregate_by_day(
+        datetime(2026, 7, 1, tzinfo=timezone.utc),
+        datetime(2026, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert rows == [{"date": "2026-07-01", "input_tokens": 10, "output_tokens": 20, "turn_count": 1}]
+
+
 async def test_postgres_aggregate_by_user_ranks_by_combined_tokens_desc():
     store = _make_postgres_store()
     await _seed_postgres(store)
@@ -696,6 +743,18 @@ async def test_postgres_aggregate_by_user_respects_limit():
     rows = await store.aggregate_by_user(limit=1)
 
     assert rows == [{"user_id": "bob", "input_tokens": 100, "output_tokens": 200}]
+
+
+async def test_postgres_aggregate_by_user_breaks_ties_by_user_id_ascending():
+    store = _make_postgres_store()
+    ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    await store.record_turn("t1", "sess-1", "carol", "model-a", 5, 5, ts)
+    await store.record_turn("t2", "sess-2", "alice", "model-a", 5, 5, ts)
+    await store.record_turn("t3", "sess-3", "bob", "model-a", 5, 5, ts)
+
+    rows = await store.aggregate_by_user()
+
+    assert [r["user_id"] for r in rows] == ["alice", "bob", "carol"]
 
 
 async def test_postgres_aggregate_by_user_rejects_non_positive_limit():
