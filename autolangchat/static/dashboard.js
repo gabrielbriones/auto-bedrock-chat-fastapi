@@ -1087,6 +1087,11 @@
             .catch(function (e) {
                 wrap.innerHTML = '';
                 if (e.status === 400 && e.code === 'invalid_date_range' && errEl) {
+                    // Reset applied state so loadTokenUsage() doesn't keep
+                    // re-issuing this same rejected request on every later
+                    // nav switch — mirrors the client-side pre-flight branch
+                    // above.
+                    _tuState.byDayApplied = false;
                     wrap.appendChild(el('div', 'table-empty', 'Select a start and end date, then Apply.'));
                     errEl.textContent = e.message || 'End date must be after start date.';
                     errEl.classList.add('visible');
@@ -1102,6 +1107,7 @@
         if (!wrap) return;
 
         if (!_tuState.byUserId) {
+            _tuState.byUserApplied = false;
             wrap.innerHTML = '';
             wrap.appendChild(el('div', 'table-empty', 'Enter a user ID, then Apply.'));
             if (pg) pg.innerHTML = '';
