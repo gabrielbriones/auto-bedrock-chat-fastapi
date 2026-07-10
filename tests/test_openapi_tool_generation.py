@@ -217,3 +217,117 @@ class TestToolManagerGenerateLangchainTools:
         result = await tool_map["list_jobs"].ainvoke({"status": "running"})
         data = json.loads(result)
         assert data == {"jobs": [{"id": 1}]}
+
+
+# ---------------------------------------------------------------------------
+# ToolManager.execute_tool_calls — cap / skip / stub behaviour
+# ---------------------------------------------------------------------------
+
+
+def _make_manager_with_limit(limit):
+    """Return a ToolManager whose max_tool_calls is set to *limit* (None = unlimited)."""
+    from autolangchat.config import ChatConfig
+
+    base_config = ChatConfig(model_id="test-model", excluded_paths=[])
+    config = base_config.model_copy(update={"max_tool_calls": limit})
+    generator = ToolsGenerator(openapi_spec=_GET_SPEC, config=config)
+    return ToolManager(
+        generated_tools=generator._generated_tools,
+        config=config,
+        base_url="http://test-api",
+    )
+
+
+def _make_calls(n, prefix="call"):
+    """Build *n* normalised tool-call dicts for ``list_jobs``."""
+    return [{"id": f"{prefix}_{i}", "name": "list_jobs", "arguments": {}} for i in range(n)]
+
+
+class TestToolManagerExecuteCap:
+    """Tests for the per-turn tool-call cap, skipped-stub, and unlimited-default paths."""
+
+    @pytest.mark.asyncio
+    async def test_unlimited_executes_all_calls(self):
+        """max_tool_calls=None must execute every call — no skipping."""
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+        fake_response.text = "{}"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        calls = _make_calls(5)
+        results = await manager.execute_tool_calls(calls)
+
+        assert len(results) == 5
+        assert manager._http_client.request.await_count == 5
+
+    @pytest.mark.asyncio
+    async def test_cap_produces_one_result_per_call(self):
+        """With a cap of 2 and 5 calls the result list must still have 5 entries."""
+        manager = _make_manager_with_limit(2)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+        fake_response.text = "{}"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        calls = _make_calls(5)
+        results = await manager.execute_tool_calls(calls)
+
+        assert len(results) == 5
+
+    @pytest.mark.asyncio
+    async def test_cap_only_executes_capped_calls_via_http(self):
+        """HTTP must be called only for the first *max_tool_calls* entries."""
+        manager = _make_manager_with_limit(3)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+        fake_response.text = "{}"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        calls = _make_calls(6)
+        await manager.execute_tool_calls(calls)
+
+        assert manager._http_client.request.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_skipped_calls_return_stub_errors(self):
+        """Calls beyond the cap must come back as error results (not successes)."""
+        manager = _make_manager_with_limit(2)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+        fake_response.text = "{}"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        calls = _make_calls(4)
+        results = await manager.execute_tool_calls(calls)
+
+        skipped = results[2:]
+        for r in skipped:
+            assert "error" in r
+            assert "skipped" in r["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_result_tool_call_ids_match_inputs(self):
+        """Every result tool_call_id must match the id of the corresponding input call."""
+        manager = _make_manager_with_limit(2)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+        fake_response.text = "{}"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        calls = _make_calls(5)
+        results = await manager.execute_tool_calls(calls)
+
+        result_ids = {r["tool_call_id"] for r in results}
+        call_ids = {c["id"] for c in calls}
+        assert result_ids == call_ids

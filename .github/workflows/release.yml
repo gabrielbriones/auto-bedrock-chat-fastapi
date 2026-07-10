@@ -4,7 +4,7 @@ name: Release
 on:
   push:
     branches:
-      - main
+      - stable
   workflow_dispatch:
 
 # Avoid overlapping releases racing to tag/push.
@@ -36,7 +36,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install Poetry
         run: |

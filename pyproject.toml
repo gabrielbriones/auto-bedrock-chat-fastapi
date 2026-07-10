@@ -63,7 +63,7 @@ commit_message = "chore(release): {version} [skip ci]"
 tag_format = "v{version}"
 
 [tool.semantic_release.branches.main]
-match = "(main|master)"
+match = "(stable)"
 
 [tool.semantic_release.changelog]
 exclude_commit_patterns = ["chore\\(release\\):.*"]

@@ -73,6 +73,7 @@ _handler_stubs = {
         AuthenticatedUserAuthorizer=object,
         BaseFeedbackStore=object,
         BaseKBStore=object,
+        BaseTokenUsageStore=object,
         FeedbackAuthorizer=object,
     ),
     "autolangchat.graph": _stub_module("autolangchat.graph"),

@@ -9,10 +9,13 @@ plugin:
   pgvector).
 * :mod:`.feedback_base`, :mod:`.feedback_sqlite`,
   :mod:`.feedback_postgres` \u2014 user-feedback storage.
+* :mod:`.token_usage_base`, :mod:`.token_usage_sqlite`,
+  :mod:`.token_usage_postgres` — per-turn token-usage storage.
 
-The two factory functions exported here \u2014 :func:`create_kb_store` and
-:func:`create_feedback_store` \u2014 instantiate the backend selected by the
-matching ``ChatConfig.*_storage_type`` field.
+The three factory functions exported here — :func:`create_kb_store`,
+:func:`create_feedback_store`, and :func:`create_token_usage_store` —
+instantiate the backend selected by the matching
+``ChatConfig.*_storage_type`` field.
 
 The in-memory SSO session store remains at the top-level
 :mod:`autolangchat.sso.sso_session_store` module because it is a
@@ -34,6 +37,8 @@ from .feedback_base import (
 from .feedback_sqlite import SQLiteFeedbackStore
 from .kb_base import BaseKBStore
 from .kb_sqlite import SQLiteKBStore
+from .token_usage_base import BaseTokenUsageStore
+from .token_usage_sqlite import SQLiteTokenUsageStore
 
 try:  # optional [postgres] extra
     from .feedback_postgres import PostgresFeedbackStore
@@ -44,6 +49,11 @@ try:  # optional [postgres] extra
     from .kb_postgres import PgVectorKBStore
 except ImportError:  # pragma: no cover
     PgVectorKBStore = None  # type: ignore[assignment,misc]
+
+try:  # optional [postgres] extra
+    from .token_usage_postgres import PostgresTokenUsageStore
+except ImportError:  # pragma: no cover
+    PostgresTokenUsageStore = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from ..config import ChatConfig
@@ -166,16 +176,82 @@ def create_feedback_store(config: "ChatConfig") -> Optional[BaseFeedbackStore]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Token usage store factory
+# ---------------------------------------------------------------------------
+
+
+def create_token_usage_store(config: "ChatConfig") -> Optional[BaseTokenUsageStore]:
+    """Build the token-usage store selected by ``config.token_usage_storage_type``.
+
+    Returns ``None`` when token-usage recording is disabled or when the
+    requested backend is not usable in the current environment (missing
+    optional dependency, missing required config). Such cases are logged
+    at WARNING so deployments don't fail to boot just because token-usage
+    recording is misconfigured — the WebSocket handler simply skips
+    persistence for that turn.
+
+    The caller is responsible for awaiting :meth:`BaseTokenUsageStore.open`
+    on the returned instance and for closing it on shutdown.
+    """
+    if not config.token_usage_enabled:
+        return None
+
+    storage_type = (config.token_usage_storage_type or "sqlite").lower()
+
+    if storage_type == "sqlite":
+        db_path = config.token_usage_database_path or config.feedback_database_path or config.kb_database_path
+        if not db_path:
+            logger.warning(
+                "token_usage_storage_type='sqlite' but none of "
+                "AUTOCHAT_TOKEN_USAGE_DATABASE_PATH, AUTOCHAT_FEEDBACK_DATABASE_PATH, "
+                "or KB_DATABASE_PATH is set; token usage recording disabled."
+            )
+            return None
+        return SQLiteTokenUsageStore(db_path=db_path)
+
+    if storage_type == "postgres":
+        connection_url = config.token_usage_postgres_url or config.feedback_postgres_url or config.kb_postgres_url
+        if not connection_url:
+            logger.warning(
+                "token_usage_storage_type='postgres' but none of "
+                "AUTOCHAT_TOKEN_USAGE_POSTGRES_URL, AUTOCHAT_FEEDBACK_POSTGRES_URL, "
+                "or AUTOCHAT_KB_POSTGRES_URL is set; token usage recording disabled."
+            )
+            return None
+        try:
+            from .token_usage_postgres import PostgresTokenUsageStore
+
+            return PostgresTokenUsageStore(connection_url=connection_url)
+        except ImportError:
+            logger.warning(
+                "token_usage_storage_type='postgres' but the [postgres] extra "
+                "is not installed; token usage recording disabled.",
+                exc_info=True,
+            )
+            return None
+
+    logger.warning(
+        "Unknown token_usage_storage_type=%r; token usage recording disabled. " "Valid values: 'sqlite', 'postgres'.",
+        storage_type,
+    )
+    return None
+
+
 __all__ = [
     "AllowlistFeedbackAuthorizer",
     "AuthenticatedUserAuthorizer",
     "BaseFeedbackStore",
     "BaseKBStore",
+    "BaseTokenUsageStore",
     "FeedbackAuthorizer",
     "PgVectorKBStore",
     "PostgresFeedbackStore",
+    "PostgresTokenUsageStore",
     "SQLiteFeedbackStore",
     "SQLiteKBStore",
+    "SQLiteTokenUsageStore",
     "create_feedback_store",
     "create_kb_store",
+    "create_token_usage_store",
 ]

@@ -190,6 +190,7 @@ DEBUG - Stage 2.1: message at index 1 truncated: 120000 → 85000 chars
 
 - [Configuration](configuration.md) — full settings reference
 - [Architecture](architecture.md) — where `MessagePreprocessor` fits
+- [Token Usage Tracking](token-usage-tracking.md) — recording per-turn `input_tokens`/`output_tokens` for observability/billing (a separate concern from the budget/truncation system on this page)
 - `docs/message-truncation-diagrams.html` — visual diagrams of the truncation pipeline
 - `autolangchat/message_preprocessor.py` — implementation
 - `autolangchat/defaults.py` — all default values

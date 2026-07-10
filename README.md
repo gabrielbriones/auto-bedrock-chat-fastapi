@@ -95,6 +95,7 @@ app.state.autolangchat_plugin = add_autolangchat(app, allowed_paths=["/products"
 ```
 
 `plugin.startup()`:
+
 1. Opens the LangGraph checkpointer connection pool and initialises the schema.
 2. Schedules the background checkpoint-expiry sweep task.
 3. Auto-populates the knowledge base (if configured).
