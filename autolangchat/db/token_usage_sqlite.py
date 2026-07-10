@@ -20,7 +20,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from importlib import resources
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from .token_usage_base import BaseTokenUsageStore
 
@@ -168,6 +168,103 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         await asyncio.to_thread(self._execute_write, sql, params)
 
     # ------------------------------------------------------------------
+    # Queries
+    # ------------------------------------------------------------------
+
+    async def list_by_user(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        sql = """
+            SELECT session_id, model_id, input_tokens, output_tokens, turn_ts
+            FROM token_usage
+            WHERE user_id = ?
+            ORDER BY turn_ts DESC, id ASC
+            LIMIT ? OFFSET ?
+        """
+        rows = await asyncio.to_thread(self._fetchall, sql, (user_id, limit, offset))
+        return [
+            {
+                "session_id": r[0],
+                "model_id": r[1],
+                "input_tokens": r[2],
+                "output_tokens": r[3],
+                "turn_ts": r[4],
+            }
+            for r in rows
+        ]
+
+    async def aggregate_by_model(self) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT model_id, SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            FROM token_usage
+            GROUP BY model_id
+            ORDER BY model_id ASC
+        """
+        rows = await asyncio.to_thread(self._fetchall, sql, ())
+        return [
+            {
+                "model_id": r[0],
+                "input_tokens": r[1],
+                "output_tokens": r[2],
+                "turn_count": r[3],
+            }
+            for r in rows
+        ]
+
+    async def aggregate_by_day(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> List[Dict[str, Any]]:
+        if end <= start:
+            raise ValueError("end must be after start")
+        sql = """
+            SELECT substr(turn_ts, 1, 10) AS day, SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            FROM token_usage
+            WHERE turn_ts >= ? AND turn_ts < ?
+            GROUP BY day
+            ORDER BY day ASC
+        """
+        rows = await asyncio.to_thread(self._fetchall, sql, (_dt_to_iso(start), _dt_to_iso(end)))
+        return [
+            {
+                "date": r[0],
+                "input_tokens": r[1],
+                "output_tokens": r[2],
+                "turn_count": r[3],
+            }
+            for r in rows
+        ]
+
+    async def aggregate_by_user(self, limit: int = 10) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        sql = """
+            SELECT user_id, SUM(input_tokens), SUM(output_tokens)
+            FROM token_usage
+            WHERE user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC, user_id ASC
+            LIMIT ?
+        """
+        rows = await asyncio.to_thread(self._fetchall, sql, (limit,))
+        return [
+            {
+                "user_id": r[0],
+                "input_tokens": r[1],
+                "output_tokens": r[2],
+            }
+            for r in rows
+        ]
+
+    # ------------------------------------------------------------------
     # Internal helpers (run inside ``asyncio.to_thread``)
     # ------------------------------------------------------------------
 
@@ -181,3 +278,10 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
             except Exception:
                 self._conn.rollback()
                 raise
+
+    def _fetchall(self, sql: str, params: tuple) -> List[tuple]:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            return cur.fetchall()

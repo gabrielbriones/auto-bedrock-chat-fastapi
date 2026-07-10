@@ -1460,6 +1460,24 @@ class AutoLangChatPlugin:
         else:
             logger.info("Admin synthesis routes skipped: both feedback_store and kb_store " "must be configured")
 
+        # Token Usage Analytics endpoints. Only registered when a
+        # token-usage store is actually wired; otherwise ``/admin/tokens*``
+        # would 500 on every call.
+        if getattr(self, "_token_usage_store", None) is not None:
+            from .admin.admin_token_routes import register_admin_token_routes
+
+            register_admin_token_routes(
+                self.app,
+                prefix=admin_prefix,
+                token_usage_store=self._token_usage_store,
+                require_admin=require_admin,
+            )
+        else:
+            logger.info(
+                "Admin token routes skipped: token_usage_store is not configured "
+                "(token_usage_enabled=False or backend init failed)"
+            )
+
         logger.info("Admin routes registered (prefix=%s)", admin_prefix)
 
     def _setup_shutdown(self):

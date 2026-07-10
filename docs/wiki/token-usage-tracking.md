@@ -73,6 +73,15 @@ Writes are idempotent (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` keyed on
 propagated — a token-usage write failure never prevents the chat response
 from being delivered.
 
+## Querying the recorded data
+
+Once enabled, recorded rows can be queried through the
+`/admin/tokens/*` endpoints (per-model summary, per-user history,
+per-day aggregates, and top-users ranking) — see
+[Admin API — Token Usage Analytics](admin-api#token-usage-analytics).
+Those routes are only registered when a token-usage store is configured,
+mirroring the Feedback/KB admin route groups.
+
 ## Out of scope
 
 Embedding-token tracking is not implemented: the Bedrock Titan and Cohere

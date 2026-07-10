@@ -12,9 +12,9 @@ Requires the optional ``[postgres]`` extra::
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib import resources
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .token_usage_base import BaseTokenUsageStore
 
@@ -129,3 +129,124 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
             await conn.commit()
+
+    # ------------------------------------------------------------------
+    # Queries
+    # ------------------------------------------------------------------
+
+    async def list_by_user(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        sql = """
+            SELECT session_id, model_id, input_tokens, output_tokens, turn_ts
+            FROM token_usage
+            WHERE user_id = %s
+            ORDER BY turn_ts DESC, id ASC
+            LIMIT %s OFFSET %s
+        """
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (user_id, limit, offset))
+                rows = await cur.fetchall()
+        return [
+            {
+                "session_id": r[0],
+                "model_id": r[1],
+                "input_tokens": r[2],
+                "output_tokens": r[3],
+                # Force UTC regardless of the connection's session timezone —
+                # TIMESTAMPTZ always persists the correct instant, but the
+                # *displayed* offset otherwise depends on session settings.
+                # Matches aggregate_by_day's explicit UTC bucketing and the
+                # SQLite backend's always-UTC TEXT storage.
+                "turn_ts": r[4].astimezone(timezone.utc).isoformat() if hasattr(r[4], "astimezone") else r[4],
+            }
+            for r in rows
+        ]
+
+    async def aggregate_by_model(self) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT model_id, SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            FROM token_usage
+            GROUP BY model_id
+            ORDER BY model_id ASC
+        """
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql)
+                rows = await cur.fetchall()
+        return [
+            {
+                "model_id": r[0],
+                "input_tokens": r[1],
+                "output_tokens": r[2],
+                "turn_count": r[3],
+            }
+            for r in rows
+        ]
+
+    async def aggregate_by_day(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> List[Dict[str, Any]]:
+        if end <= start:
+            raise ValueError("end must be after start")
+        # Bucket by UTC calendar date regardless of the connection's session
+        # timezone. This enforces the API contract that day buckets are
+        # computed in UTC — record_turn does not itself normalize turn_ts to
+        # UTC (it persists whatever tz-aware datetime the caller supplies),
+        # so this explicit conversion is what actually guarantees UTC
+        # bucketing here, independent of DB session settings.
+        sql = """
+            SELECT (turn_ts AT TIME ZONE 'UTC')::date AS day,
+                   SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            FROM token_usage
+            WHERE turn_ts >= %s AND turn_ts < %s
+            GROUP BY day
+            ORDER BY day ASC
+        """
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (start, end))
+                rows = await cur.fetchall()
+        return [
+            {
+                "date": str(r[0]),
+                "input_tokens": r[1],
+                "output_tokens": r[2],
+                "turn_count": r[3],
+            }
+            for r in rows
+        ]
+
+    async def aggregate_by_user(self, limit: int = 10) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        sql = """
+            SELECT user_id, SUM(input_tokens), SUM(output_tokens)
+            FROM token_usage
+            WHERE user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC, user_id ASC
+            LIMIT %s
+        """
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (limit,))
+                rows = await cur.fetchall()
+        return [
+            {
+                "user_id": r[0],
+                "input_tokens": r[1],
+                "output_tokens": r[2],
+            }
+            for r in rows
+        ]

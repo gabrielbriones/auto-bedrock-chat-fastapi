@@ -24,6 +24,7 @@ per-file-ignores =
     # and ``Query(...)`` as default values; B008 misfires here.
     autolangchat/admin/admin_feedback_routes.py:B008
     autolangchat/admin/admin_kb_routes.py:B008
+    autolangchat/admin/admin_token_routes.py:B008
     tests/test_admin_auth.py:B008
     # Protocol method body uses ``...`` on the same line (PEP 544 idiom).
     autolangchat/admin/admin_auth.py:E704
