@@ -2,6 +2,107 @@
 
 <!-- version list -->
 
+## v2.0.0 (2026-07-10)
+
+### Bug Fixes
+
+- Add deterministic tie-break to aggregate_by_user; fix fake day bucketing
+  ([`50067ed`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/50067edbe6c2e5bc64a1e789ec184a2b53b0383c))
+
+- Add empty-string defaults to skipped-stub; warn when max_tool_calls is None
+  ([`6ad4eca`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6ad4eca081482e179581290ee3704081d2bb52a4))
+
+- Align list_by_user defaults, fake-cursor sort order, and test env drift
+  ([`83a98b1`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/83a98b125280be00587f95453553bf99c548f70e))
+
+- Avoid duplicated 'Error: Error:' prefix; add missing capability test
+  ([`0eae018`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0eae01840bd7c7d831de117497fbab1d1ead77c9))
+
+- Clear stale By Day results on invalid range; fix inverted By User pagination text
+  ([`7d352b0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7d352b051e64f9e0d77927796136655e7dee6ce7))
+
+- Correct env var name in token_usage sqlite fallback warning
+  ([`125913b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/125913b2e65d84571225054d4dcc9bd5d8b31627))
+
+- Correct misleading UTC-normalization claim in aggregate_by_day comments
+  ([`012cd9c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/012cd9c951727fa5493b9599cb157530057eecc2))
+
+- Correct stale gen_random_uuid() reference in SQLite schema comment
+  ([`c134a8b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c134a8bf33abc70a91221d7e2f882b82c84cf20e))
+
+- Guard empty ID in skipped stubs; remove noisy None warning from validate_config
+  ([`bab0b95`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/bab0b95c306cffd15caff5c680b4e44cc1c62216))
+
+- Normalize by-day start/end to UTC before comparing
+  ([`fbae8a1`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/fbae8a101925a58fe5df0573bd9daae3d6b21925))
+
+- Record actual model used (not configured default) in token_usage
+  ([`912708b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/912708b6b3a10424ae8c525ef725dcec32d0ca3c))
+
+- Reset applied state on By Day server rejection and By User ID clear
+  ([`b4a05d7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b4a05d77b7aa9f07a32d3e9ed011550d17762a6b))
+
+- Skip phantom stub when skipped tool call has no ID
+  ([`d480fb6`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d480fb6ebe3d5d152178c43417cebd75b81c3490))
+
+- Stub errors for capped tool calls; default max_tool_calls to unlimited
+  ([`a01e244`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a01e244f79eba25a372a20d8d8c6ac502a98b952))
+
+- Sync By Day/By User inputs to applied state on nav-switch reload
+  ([`2229339`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2229339c1e16da299783ecc0020bc53375cbe85e))
+
+- Use local `limit` var and clearer wording in skipped-tool-call error
+  ([`42d71b1`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/42d71b15be3c8cf6f2c3c06c705eccd424fdbd90))
+
+- Use TEXT primary key for token_usage.id in Postgres schema
+  ([`2b47c7c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2b47c7c51cf5bfe8ed7898d8124e441ba7761e66))
+
+### Build System
+
+- **docker**: Install openssl legacy provider in runtime image
+  ([`2e0370b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2e0370b6cbe2af9d15d5018b891840e05bb07ab6))
+
+### Chores
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`1ea3182`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1ea3182eccb86dce3c384838c2bd9b618068d741))
+
+- **deps**: Update dependency python to 3.14
+  ([`2a7b888`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2a7b888fb9e8e88b1fca8d8351872760ff02e6ee))
+
+- **deps**: Update python-minor-patch
+  ([`3f4612c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/3f4612cac7d07a22b2a26a1a2b536ab8bf49dcb5))
+
+### Continuous Integration
+
+- **release**: Change triggers for semantic release to stable branch instead of main
+  ([`4abb760`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/4abb760f5ccb7c5e7c0169627d1e8f82a85226a8))
+
+### Documentation
+
+- Add missing blank line before list in README (fixes MD032)
+  ([`1c78e0b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1c78e0b59c202fa3d3a5680bac1bad2ff80cd7c7))
+
+### Features
+
+- **admin-api**: Add token usage analytics admin routes
+  ([`83f16b0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/83f16b0dbcebc8e8af5b04323167a738aded31e4))
+
+- **dashboard**: Add Token Usage view to Admin Dashboard
+  ([`f1ec350`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f1ec3501b299c846e647dcfdd661d8a02212a203))
+
+- **token-usage**: Persist per-turn input/output token counts
+  ([`2ef1c9f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2ef1c9f96079940b744e945ccf5effc2a20a91f1))
+
+### Testing
+
+- Add execute_tool_calls cap/skip/stub coverage
+  ([`8b1d97f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8b1d97f806a731e81170ff17d44940b85f6c661a))
+
+- Add Postgres coverage parity for list_by_user/aggregate_by_day/user
+  ([`db8e186`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/db8e1864362d2f45c87053192c8eb012a11fbd06))
+
+
 ## v1.1.0 (2026-07-03)
 
 ### Bug Fixes
