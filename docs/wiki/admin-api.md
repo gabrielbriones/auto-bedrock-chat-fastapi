@@ -163,20 +163,21 @@ All endpoints sit under `/admin/`. Responses use a flat error envelope:
 
 ### Capability probe
 
-| Method | Path                   | Description                                                         |
-| ------ | ---------------------- | ------------------------------------------------------------------- |
-| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous}` — **always 200**, never 403 or 401. |
+| Method | Path                   | Description                                                                              |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------------- |
+| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous, token_usage_enabled}` — **always 200**, never 403 or 401. |
 
 Response shape:
 
 ```json
-{ "is_admin": true, "anonymous": false }
+{ "is_admin": true, "anonymous": false, "token_usage_enabled": true }
 ```
 
-| Field       | Type    | Notes                                                                                                                |
-| ----------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
-| `is_admin`  | boolean | `true` when the caller is authenticated and authorised as an admin.                                                  |
-| `anonymous` | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely. |
+| Field                 | Type    | Notes                                                                                                                                                                                                          |
+| --------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is_admin`            | boolean | `true` when the caller is authenticated and authorised as an admin.                                                                                                                                            |
+| `anonymous`           | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely.                                                                                           |
+| `token_usage_enabled` | boolean | `true` when a token-usage store is configured (`_token_usage_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the Token Usage nav item when no store is configured. |
 
 The Chat UI calls this endpoint on page load. If `is_admin=true` it
 reveals the Dashboard button in the header; otherwise the button stays
