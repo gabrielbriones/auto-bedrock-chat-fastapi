@@ -1023,6 +1023,15 @@
         var errEl = document.getElementById('tu-by-day-err');
         if (!wrap) return;
 
+        // Keep the visible inputs in sync with the applied state on
+        // nav-switch reloads — otherwise an unsaved edit left in the
+        // inputs (without clicking Apply) would visually contradict the
+        // table, which always reflects _tuState, not the DOM inputs.
+        var startEl = qs('#tu-by-day-start');
+        var endEl = qs('#tu-by-day-end');
+        if (startEl) startEl.value = _tuState.byDayStart || '';
+        if (endEl) endEl.value = _tuState.byDayEnd || '';
+
         if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
 
         if (!_tuState.byDayStart || !_tuState.byDayEnd) {
@@ -1105,6 +1114,11 @@
         var wrap = document.getElementById('tu-by-user-wrap');
         var pg = document.getElementById('tu-by-user-pagination');
         if (!wrap) return;
+
+        // Keep the visible input in sync with the applied state on
+        // nav-switch reloads — same rationale as loadTokenByDay() above.
+        var userEl = qs('#tu-by-user-id');
+        if (userEl) userEl.value = _tuState.byUserId || '';
 
         if (!_tuState.byUserId) {
             _tuState.byUserApplied = false;
