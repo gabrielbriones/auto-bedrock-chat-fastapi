@@ -75,3 +75,19 @@ def test_capabilities_token_usage_enabled_true_when_store_configured():
     resp = client.get("/chat/admin/_capabilities")
     assert resp.status_code == 200
     assert resp.json()["token_usage_enabled"] is True
+
+
+def test_capabilities_token_usage_enabled_reported_even_when_not_admin():
+    # require_tool_auth=True with no identity source configured (sso_enabled=False,
+    # auth_verification_endpoint=None in _make_config) means _resolve_identity()
+    # returns None, so is_admin/anonymous are both False — but token_usage_enabled
+    # must still be reported since it's independent of the admin/auth outcome.
+    plugin = _make_bare_plugin(_FakeTokenUsageStore())
+    plugin.config.require_tool_auth = True
+    client = TestClient(plugin.app)
+    resp = client.get("/chat/admin/_capabilities")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_admin"] is False
+    assert body["anonymous"] is False
+    assert body["token_usage_enabled"] is True

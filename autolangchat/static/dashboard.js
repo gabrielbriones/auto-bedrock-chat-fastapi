@@ -933,7 +933,7 @@
             })
             .catch(function (e) {
                 body.innerHTML = '';
-                body.appendChild(buildErrorRow(String(e)));
+                body.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
             });
     }
 
@@ -1014,7 +1014,7 @@
             })
             .catch(function (e) {
                 wrap.innerHTML = '';
-                wrap.appendChild(buildErrorRow(String(e)));
+                wrap.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
             });
     }
 
@@ -1096,7 +1096,7 @@
                     errEl.textContent = e.message || 'End date must be after start date.';
                     errEl.classList.add('visible');
                 } else {
-                    wrap.appendChild(buildErrorRow(String(e)));
+                    wrap.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
                 }
             });
     }
@@ -1155,7 +1155,7 @@
             })
             .catch(function (e) {
                 wrap.innerHTML = '';
-                wrap.appendChild(buildErrorRow(String(e)));
+                wrap.appendChild(buildErrorRow((e && e.message) ? e.message : String(e)));
                 if (pg) pg.innerHTML = '';
             });
     }
