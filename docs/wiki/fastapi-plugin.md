@@ -105,7 +105,7 @@ autolangchat_plugin = add_autolangchat(
     session_timeout=1800,
     max_conversation_messages=30,
 
-    # Tool limits
+    # Tool limits (omit max_tool_calls for no limit; set an int to cap per-turn calls)
     max_tool_calls=15,
     max_tool_call_rounds=10,
 

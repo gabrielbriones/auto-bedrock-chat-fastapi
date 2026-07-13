@@ -41,6 +41,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    libssl3t64 \
+    openssl \
+    openssl-provider-legacy \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

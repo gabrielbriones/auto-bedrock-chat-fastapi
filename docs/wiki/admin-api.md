@@ -9,6 +9,9 @@ feature and the knowledge base. It exposes two route groups under
   user-submitted 👍 / 👎 corrections.
 - **KB Management** — `/admin/kb/documents/*` — list, inspect, edit, and
   delete KB documents (re-embeds on content change).
+- **Token Usage Analytics** — `/admin/tokens/*` — query recorded
+  per-turn token usage (see [Token Usage Tracking](token-usage-tracking)
+  for how the underlying data gets recorded).
 - **Capability probe** — `GET /admin/_capabilities` — tells the Chat UI
   whether the current caller is an admin; always 200.
 
@@ -160,20 +163,21 @@ All endpoints sit under `/admin/`. Responses use a flat error envelope:
 
 ### Capability probe
 
-| Method | Path                   | Description                                                         |
-| ------ | ---------------------- | ------------------------------------------------------------------- |
-| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous}` — **always 200**, never 403 or 401. |
+| Method | Path                   | Description                                                                              |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------------- |
+| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous, token_usage_enabled}` — **always 200**, never 403 or 401. |
 
 Response shape:
 
 ```json
-{ "is_admin": true, "anonymous": false }
+{ "is_admin": true, "anonymous": false, "token_usage_enabled": true }
 ```
 
-| Field       | Type    | Notes                                                                                                                |
-| ----------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
-| `is_admin`  | boolean | `true` when the caller is authenticated and authorised as an admin.                                                  |
-| `anonymous` | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely. |
+| Field                 | Type    | Notes                                                                                                                                                                                                          |
+| --------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is_admin`            | boolean | `true` when the caller is authenticated and authorised as an admin.                                                                                                                                            |
+| `anonymous`           | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely.                                                                                           |
+| `token_usage_enabled` | boolean | `true` when a token-usage store is configured (`_token_usage_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the Token Usage nav item when no store is configured. |
 
 The Chat UI calls this endpoint on page load. If `is_admin=true` it
 reveals the Dashboard button in the header; otherwise the button stays
@@ -291,6 +295,49 @@ on the same document.
 > For background on how articles become flagged and how credibility
 > scoring works, see
 > [Continuous Learning Loop — Effectiveness Tracking](continuous-learning-loop#effectiveness-tracking).
+
+### Token Usage Analytics
+
+Registered only when a token-usage store is configured (see
+[Token Usage Tracking](token-usage-tracking) for `AUTOCHAT_TOKEN_USAGE_*`
+settings) — when `token_usage_enabled=false` or the backend failed to
+open, these routes are not mounted and return a clean 404, mirroring the
+Feedback/KB route groups above.
+
+| Method | Path                      | Description                                                                                           |
+| ------ | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/tokens/summary`   | Aggregate token usage per model. Returns `TokenSummaryResponse`.                                      |
+| GET    | `/admin/tokens/by-user`   | Per-turn token usage rows for one user. Returns `TokenByUserResponse`.                                |
+| GET    | `/admin/tokens/by-day`    | Aggregate token usage per UTC calendar day within a range. Returns `TokenByDayResponse`.              |
+| GET    | `/admin/tokens/top-users` | Top users ranked by combined (`input_tokens + output_tokens`) usage. Returns `TokenTopUsersResponse`. |
+
+Query parameters:
+
+| Endpoint    | Param     | Type                     | Notes                                       |
+| ----------- | --------- | ------------------------ | ------------------------------------------- |
+| `by-user`   | `user_id` | string, **required**     | Exact match. 422 if omitted.                |
+| `by-user`   | `limit`   | int, default 50, max 200 | 422 on out-of-bounds.                       |
+| `by-user`   | `offset`  | int, default 0           | 422 on negative.                            |
+| `by-day`    | `start`   | ISO-8601, **required**   | Inclusive lower bound. 422 if omitted.      |
+| `by-day`    | `end`     | ISO-8601, **required**   | Exclusive upper bound. 422 if omitted.      |
+| `by-day`    | —         | —                        | 400 `invalid_date_range` if `end <= start`. |
+| `top-users` | `limit`   | int, default 10, max 100 | 422 on out-of-bounds.                       |
+
+Day buckets in `by-day` are computed in **UTC**, enforced at query time by
+each backend regardless of DB session timezone settings; `top-users`
+excludes anonymous turns (no `user_id`) since there's no user identity
+to rank.
+
+```bash
+curl -sS -b cookies.txt \
+  'https://app.example.com/admin/tokens/by-day?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z'
+```
+
+```json
+{
+  "items": [{ "date": "2026-01-15", "input_tokens": 1200, "output_tokens": 3400, "turn_count": 12 }]
+}
+```
 
 ---
 

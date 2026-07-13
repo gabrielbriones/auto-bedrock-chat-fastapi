@@ -22,6 +22,7 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 | [SSO (Single Sign-On)](sso)                          | OAuth2/OIDC SSO integration, provider examples, and troubleshooting                                                       |
 | [RAG Feature](rag-feature)                           | Web crawler, vector DB, embedding pipeline, hybrid search                                                                 |
 | [Token Management](token-management)                 | Input token limits, AI summarization, text truncation                                                                     |
+| [Token Usage Tracking](token-usage-tracking)         | Per-turn token counts, `TokenUsageStore` backends, config reference                                                       |
 | [Feedback Collection](feedback-collection)           | 👍 / 👎 ratings, corrections, FeedbackStore backends                                                                      |
 | [Admin API](admin-api)                               | Reviewer HTTP surface for feedback + KB management                                                                        |
 | [Feedback Synthesis](feedback-synthesis)             | Synthesizing approved feedback into KB articles via LLM                                                                   |
