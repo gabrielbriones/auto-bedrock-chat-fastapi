@@ -196,8 +196,19 @@ body {
     border-top: 1px solid #cbd5e0;
 }
 
-.chat-container {
+.app-layout {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 16px;
     width: 95%;
+    max-width: 1660px;
+    height: 90vh;
+}
+
+.chat-container {
+    flex: 1;
+    min-width: 0;
     max-width: 1400px;
     height: 90vh;
     background: white;
@@ -573,6 +584,43 @@ body {
         max-width: 100%;
         height: 100vh;
         border-radius: 0;
+    }
+
+    .app-layout {
+        width: 100%;
+        max-width: 100%;
+        height: 100vh;
+        gap: 0;
+    }
+
+    .conversation-sidebar:not(.hidden) {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 82%;
+        max-width: 300px;
+        height: 100%;
+        z-index: 900;
+        border-radius: 0;
+        transform: translateX(-100%);
+        transition: transform 200ms ease;
+        box-shadow: 2px 0 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .conversation-sidebar.open {
+        transform: translateX(0);
+    }
+
+    .sidebar-backdrop.open {
+        display: block;
+    }
+
+    .sidebar-toggle-btn {
+        display: flex;
+    }
+
+    .sidebar-close-btn {
+        display: inline-flex;
     }
 
     .chat-header {
@@ -1099,4 +1147,187 @@ body {
        its own row instead of cramming against the action buttons. */
     margin-left: 0;
     margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------------------
+   Conversation sidebar (XMGPLAT-10380)
+   ---------------------------------------------------------------------------
+   Desktop: a card to the left of .chat-container inside .app-layout, shown/
+   hidden as a whole via the ".hidden" class (feature disabled or user not
+   authenticated).
+   Mobile (<=768px, see media query above): becomes an off-canvas drawer that
+   slides in via the ".open" class, with a dimming backdrop and a hamburger
+   toggle button. ".hidden" still fully removes it regardless of breakpoint.
+   --------------------------------------------------------------------------- */
+
+.conversation-sidebar {
+    width: 260px;
+    flex: 0 0 260px;
+    background: #f7fafc;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.conversation-sidebar.hidden {
+    display: none;
+}
+
+.conversation-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px;
+    background: #4a5568;
+}
+
+.new-chat-btn {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 6px;
+    background: transparent;
+    color: #fff;
+    font-weight: 500;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+}
+
+.new-chat-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.sidebar-close-btn {
+    display: none; /* shown on mobile via the media query above */
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #fff;
+    font-size: 1.3rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.sidebar-close-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.conversation-list {
+    list-style: none;
+    margin: 0;
+    padding: 8px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.conversation-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 10px 10px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+}
+
+.conversation-item:hover {
+    background: #e2e8f0;
+}
+
+.conversation-item.active {
+    background: #667eea;
+}
+
+.conversation-item.active .conversation-item-title {
+    color: #fff;
+}
+
+.conversation-item-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.9rem;
+    color: #2d3748;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.conversation-item-actions {
+    display: flex;
+    gap: 2px;
+    flex: 0 0 auto;
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.conversation-item:hover .conversation-item-actions,
+.conversation-item.active .conversation-item-actions {
+    opacity: 1;
+}
+
+.conv-action-btn {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #4a5568;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.conversation-item.active .conv-action-btn {
+    color: #fff;
+}
+
+.conv-action-btn:hover {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.conversation-item.active .conv-action-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.sidebar-toggle-btn {
+    display: none; /* shown on mobile via the media query above */
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 8px;
+    background: #4a5568;
+    color: #fff;
+    font-size: 1.1rem;
+    cursor: pointer;
+    z-index: 950;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.sidebar-toggle-btn.hidden {
+    display: none;
+}
+
+.sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 890;
 }

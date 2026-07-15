@@ -756,6 +756,82 @@ class ChatConfig(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Conversation Storage Backend
+    # ------------------------------------------------------------------
+
+    conversation_persistence_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_CONVERSATION_PERSISTENCE_ENABLED",
+        description=(
+            "Master switch for per-user, named conversation persistence. "
+            "When True, the plugin calls ``db.create_conversation_store(config)`` "
+            "to build a ``BaseConversationStore`` implementation (SQLite or "
+            "Postgres, selected by ``conversation_storage_type``) that indexes "
+            "LangGraph conversation threads by user (id, title, timestamps). "
+            "LangGraph checkpoint data remains the source of truth for message "
+            "history; this store only tracks metadata for the conversation "
+            "list/sidebar. If the factory cannot construct a usable backend at "
+            "runtime (missing connection URL, missing optional dependency, "
+            "etc.), the feature is silently disabled rather than crashing the "
+            "app."
+        ),
+    )
+
+    conversation_storage_type: str = Field(
+        default="sqlite",
+        alias="AUTOCHAT_CONVERSATION_STORAGE_TYPE",
+        description=(
+            "Conversation metadata storage backend. Valid values: 'sqlite' "
+            "(default, zero-config) or 'postgres' (requires "
+            "AUTOCHAT_CONVERSATION_POSTGRES_URL, AUTOCHAT_FEEDBACK_POSTGRES_URL, "
+            "or AUTOCHAT_KB_POSTGRES_URL)."
+        ),
+    )
+
+    conversation_db_path: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_CONVERSATION_DB_PATH",
+        description=(
+            "Filesystem path to the SQLite conversations database when "
+            "conversation_storage_type='sqlite'. When unset, falls back to "
+            "feedback_database_path, then kb_database_path, so a single "
+            "SQLite file can host KB, feedback, and conversation tables."
+        ),
+    )
+
+    conversation_postgres_url: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_CONVERSATION_POSTGRES_URL",
+        description=(
+            "PostgreSQL connection URL for the conversations table when "
+            "conversation_storage_type='postgres'. If unset, falls back to "
+            "AUTOCHAT_FEEDBACK_POSTGRES_URL, then AUTOCHAT_KB_POSTGRES_URL, so "
+            "a single Postgres instance can host all schemas."
+        ),
+    )
+
+    max_conversations_per_user: int = Field(
+        default=100,
+        alias="AUTOCHAT_MAX_CONVERSATIONS_PER_USER",
+        gt=0,
+        description=(
+            "Maximum number of conversations retained per user. Enforcement "
+            "(e.g. pruning the oldest conversation on overflow) is implemented "
+            "by ConversationStore.create_conversation."
+        ),
+    )
+
+    conversation_title_model_id: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_CONVERSATION_TITLE_MODEL_ID",
+        description=(
+            "Bedrock model id used to auto-generate a short conversation title "
+            "from the first turn. When unset, falls back to the main chat "
+            "``model_id``."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # LangGraph Checkpoint (Phase 3)
     # ------------------------------------------------------------------
 

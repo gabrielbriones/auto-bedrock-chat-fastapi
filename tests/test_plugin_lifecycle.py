@@ -8,6 +8,7 @@ patched so no real connection pool is opened.
 """
 
 import asyncio
+import logging
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -45,6 +46,7 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
     plugin._kb_needs_population = False
     plugin._feedback_store = None
     plugin._token_usage_store = None
+    plugin._conversation_store = None
     plugin.config = SimpleNamespace(
         checkpoint_ttl_seconds=3600,
         kb_credibility_decay_enabled=False,
@@ -180,4 +182,85 @@ async def test_startup_after_shutdown_restarts(patch_checkpointer):
     assert patch_checkpointer.open.await_count == 2
     assert patch_checkpointer.close.await_count == 1
 
+    await _cancel_new_tasks(before)
+
+
+# ---------------------------------------------------------------------------
+# Conversation persistence: MemorySaver degraded-mode warning (XMGPLAT-10380)
+# ---------------------------------------------------------------------------
+
+
+async def test_startup_warns_when_memory_saver_and_conversation_persistence_enabled(patch_checkpointer, caplog):
+    conversation_store = MagicMock()
+    conversation_store.open = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+    # A plain MagicMock checkpointer is not an AsyncPostgresSaver instance —
+    # stands in for the default MemorySaver.
+    plugin.chat_graph = SimpleNamespace(checkpointer=MagicMock(name="memory_saver"))
+    plugin.websocket_handler.conversation_store = conversation_store
+    before = asyncio.all_tasks()
+
+    with caplog.at_level(logging.WARNING, logger="autolangchat.plugin"):
+        await plugin.startup()
+
+    assert any("not AsyncPostgresSaver" in r.message for r in caplog.records)
+    assert plugin._started is True  # degraded-mode warning must not block startup
+
+    await plugin.shutdown()
+    await _cancel_new_tasks(before)
+
+
+async def test_startup_does_not_warn_when_checkpointer_is_async_postgres_saver(patch_checkpointer, caplog):
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    conversation_store = MagicMock()
+    conversation_store.open = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+    plugin.chat_graph = SimpleNamespace(checkpointer=MagicMock(spec=AsyncPostgresSaver))
+    plugin.websocket_handler.conversation_store = conversation_store
+    before = asyncio.all_tasks()
+
+    with caplog.at_level(logging.WARNING, logger="autolangchat.plugin"):
+        await plugin.startup()
+
+    assert not any("not AsyncPostgresSaver" in r.message for r in caplog.records)
+    assert plugin._started is True
+
+    await plugin.shutdown()
+    await _cancel_new_tasks(before)
+
+
+async def test_startup_does_not_warn_when_conversation_store_not_configured(patch_checkpointer, caplog):
+    # _conversation_store defaults to None in _make_plugin — even if the
+    # config flag were somehow True, there's no store to have degraded.
+    plugin = _make_plugin()
+    plugin.config.conversation_persistence_enabled = True
+    before = asyncio.all_tasks()
+
+    with caplog.at_level(logging.WARNING, logger="autolangchat.plugin"):
+        await plugin.startup()
+
+    assert not any("not AsyncPostgresSaver" in r.message for r in caplog.records)
+
+    await plugin.shutdown()
+    await _cancel_new_tasks(before)
+
+
+async def test_startup_does_not_warn_when_conversation_persistence_disabled(patch_checkpointer, caplog):
+    conversation_store = MagicMock()
+    conversation_store.open = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = False
+    plugin.chat_graph = SimpleNamespace(checkpointer=MagicMock(name="memory_saver"))
+    plugin.websocket_handler.conversation_store = conversation_store
+    before = asyncio.all_tasks()
+
+    with caplog.at_level(logging.WARNING, logger="autolangchat.plugin"):
+        await plugin.startup()
+
+    assert not any("not AsyncPostgresSaver" in r.message for r in caplog.records)
+
+    await plugin.shutdown()
     await _cancel_new_tasks(before)

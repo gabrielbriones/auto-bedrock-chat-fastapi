@@ -11,11 +11,13 @@ plugin:
   :mod:`.feedback_postgres` \u2014 user-feedback storage.
 * :mod:`.token_usage_base`, :mod:`.token_usage_sqlite`,
   :mod:`.token_usage_postgres` — per-turn token-usage storage.
+* :mod:`.conversation_base`, :mod:`.conversation_sqlite`,
+  :mod:`.conversation_postgres` — per-user conversation metadata storage.
 
-The three factory functions exported here — :func:`create_kb_store`,
-:func:`create_feedback_store`, and :func:`create_token_usage_store` —
-instantiate the backend selected by the matching
-``ChatConfig.*_storage_type`` field.
+The four factory functions exported here — :func:`create_kb_store`,
+:func:`create_feedback_store`, :func:`create_token_usage_store`, and
+:func:`create_conversation_store` — instantiate the backend selected by the
+matching ``ChatConfig.*_storage_type`` field.
 
 The in-memory SSO session store remains at the top-level
 :mod:`autolangchat.sso.sso_session_store` module because it is a
@@ -28,6 +30,8 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, Optional
 
+from .conversation_base import BaseConversationStore
+from .conversation_sqlite import SQLiteConversationStore
 from .feedback_base import (
     AllowlistFeedbackAuthorizer,
     AuthenticatedUserAuthorizer,
@@ -39,6 +43,11 @@ from .kb_base import BaseKBStore
 from .kb_sqlite import SQLiteKBStore
 from .token_usage_base import BaseTokenUsageStore
 from .token_usage_sqlite import SQLiteTokenUsageStore
+
+try:  # optional [postgres] extra
+    from .conversation_postgres import PostgresConversationStore
+except ImportError:  # pragma: no cover - exercised only without the extra
+    PostgresConversationStore = None  # type: ignore[assignment,misc]
 
 try:  # optional [postgres] extra
     from .feedback_postgres import PostgresFeedbackStore
@@ -238,19 +247,91 @@ def create_token_usage_store(config: "ChatConfig") -> Optional[BaseTokenUsageSto
     return None
 
 
+# ---------------------------------------------------------------------------
+# Conversation store factory
+# ---------------------------------------------------------------------------
+
+
+def create_conversation_store(config: "ChatConfig") -> Optional[BaseConversationStore]:
+    """Build the conversation store selected by ``config.conversation_storage_type``.
+
+    Returns ``None`` when conversation persistence is disabled or when the
+    requested backend is not usable in the current environment (missing
+    optional dependency, missing required config). Such cases are logged
+    at WARNING so deployments don't fail to boot just because conversation
+    persistence is misconfigured — the WebSocket handler simply responds
+    with a ``conversation_persistence_disabled`` error if a client tries to
+    use a conversation message type.
+
+    The caller is responsible for awaiting :meth:`BaseConversationStore.open`
+    on the returned instance and for closing it on shutdown.
+    """
+    if not config.conversation_persistence_enabled:
+        return None
+
+    storage_type = (config.conversation_storage_type or "sqlite").lower()
+    max_conversations = config.max_conversations_per_user
+
+    if storage_type == "sqlite":
+        db_path = config.conversation_db_path or config.feedback_database_path or config.kb_database_path
+        if not db_path:
+            logger.warning(
+                "conversation_storage_type='sqlite' but none of "
+                "AUTOCHAT_CONVERSATION_DB_PATH, AUTOCHAT_FEEDBACK_DATABASE_PATH, "
+                "or KB_DATABASE_PATH is set; conversation persistence disabled."
+            )
+            return None
+        return SQLiteConversationStore(db_path=db_path, max_conversations_per_user=max_conversations)
+
+    if storage_type == "postgres":
+        connection_url = config.conversation_postgres_url or config.feedback_postgres_url or config.kb_postgres_url
+        if not connection_url:
+            logger.warning(
+                "conversation_storage_type='postgres' but none of "
+                "AUTOCHAT_CONVERSATION_POSTGRES_URL, AUTOCHAT_FEEDBACK_POSTGRES_URL, "
+                "or AUTOCHAT_KB_POSTGRES_URL is set; conversation persistence disabled."
+            )
+            return None
+        try:
+            from .conversation_postgres import PostgresConversationStore
+
+            return PostgresConversationStore(
+                connection_url=connection_url,
+                max_conversations_per_user=max_conversations,
+            )
+        except ImportError:
+            logger.warning(
+                "conversation_storage_type='postgres' but the [postgres] extra "
+                "is not installed; conversation persistence disabled.",
+                exc_info=True,
+            )
+            return None
+
+    logger.warning(
+        "Unknown conversation_storage_type=%r; conversation persistence disabled. "
+        "Valid values: 'sqlite', 'postgres'.",
+        storage_type,
+    )
+    return None
+
+
 __all__ = [
     "AllowlistFeedbackAuthorizer",
     "AuthenticatedUserAuthorizer",
+    "BaseConversationStore",
     "BaseFeedbackStore",
     "BaseKBStore",
     "BaseTokenUsageStore",
     "FeedbackAuthorizer",
     "PgVectorKBStore",
+    "PostgresConversationStore",
     "PostgresFeedbackStore",
     "PostgresTokenUsageStore",
+    "SQLiteConversationStore",
     "SQLiteFeedbackStore",
     "SQLiteKBStore",
     "SQLiteTokenUsageStore",
+    "create_conversation_store",
     "create_feedback_store",
     "create_kb_store",
     "create_token_usage_store",

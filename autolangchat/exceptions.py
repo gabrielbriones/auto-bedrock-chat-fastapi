@@ -139,6 +139,23 @@ class KBDocumentNotFoundError(KBStoreError):
 
 
 # ---------------------------------------------------------------------------
+# Conversation store
+# ---------------------------------------------------------------------------
+
+
+class ConversationError(AutoLangChatError):
+    """Base exception for conversation-store operations."""
+
+    pass
+
+
+class ConversationNotFoundError(ConversationError):
+    """Raised when a conversation cannot be located by id."""
+
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Admin API
 # ---------------------------------------------------------------------------
 
