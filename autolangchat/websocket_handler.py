@@ -1174,12 +1174,26 @@ class WebSocketChatHandler:
             return
 
         conversations = await self.conversation_store.list_conversations(session.user_id, limit=limit, offset=offset)
+        # Project down to the documented WS shape ({id, title, updated_at,
+        # message_count}) rather than forwarding the full store row —
+        # user_id is redundant (always the caller's own id), and
+        # created_at/metadata/is_archived aren't used by the client and
+        # needlessly widen the response payload/surface area.
+        projected = [
+            {
+                "id": c["id"],
+                "title": c.get("title"),
+                "updated_at": c.get("updated_at"),
+                "message_count": c.get("message_count", 0),
+            }
+            for c in conversations
+        ]
 
         await self._send_message(
             websocket,
             {
                 "type": "conversation_list",
-                "conversations": conversations,
+                "conversations": projected,
                 "timestamp": datetime.now().isoformat(),
             },
         )

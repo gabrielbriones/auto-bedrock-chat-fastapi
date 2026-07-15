@@ -29,7 +29,9 @@ Covers ``WebSocketChatHandler``:
       still actively writing to.
   (j) ``conversation_list`` rejects a ``limit`` above the 200 upper bound
       (mirrors the REST endpoint's cap) rather than allowing an
-      unbounded response.
+      unbounded response, and projects each item down to the documented
+      ``{id, title, updated_at, message_count}`` shape rather than
+      forwarding the full store row.
 """
 
 import asyncio
@@ -201,6 +203,30 @@ async def test_conversation_list_accepts_limit_at_upper_bound():
 
         sent = _sent(ws)
         assert sent[0]["type"] == "conversation_list"
+    finally:
+        await store.close()
+
+
+async def test_conversation_list_projects_to_documented_shape_only():
+    """conversation_list must send only {id, title, updated_at,
+    message_count} per item — not the full store row (user_id, created_at,
+    metadata, is_archived), matching docs/wiki/websocket-client.md and
+    avoiding an unnecessary payload/surface-area leak."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+        await store.create_conversation("conv-1", "alice", title="Hello", metadata={"secret": "internal"})
+
+        ws = _new_ws()
+        await handler._handle_conversation_list(ws, {})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_list"
+        item = sent[0]["conversations"][0]
+        assert set(item.keys()) == {"id", "title", "updated_at", "message_count"}
+        assert item["id"] == "conv-1"
+        assert item["title"] == "Hello"
     finally:
         await store.close()
 
