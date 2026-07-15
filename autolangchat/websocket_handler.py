@@ -365,11 +365,7 @@ class WebSocketChatHandler:
             # anonymous sessions list each other's conversations — so they
             # keep the legacy session_id-as-thread_id behavior.
             # ------------------------------------------------------------------
-            use_conversation_persistence = (
-                getattr(self.config, "conversation_persistence_enabled", False)
-                and self.conversation_store is not None
-                and bool(session.user_id and session.user_id.strip())
-            )
+            use_conversation_persistence = self._conversation_persistence_active_for_session(session)
             conversation_id: Optional[str] = None
             conversation_just_created = False
             if use_conversation_persistence:
@@ -954,16 +950,36 @@ class WebSocketChatHandler:
     # Conversation management (per-user, named, persisted conversations)
     # ------------------------------------------------------------------
 
+    def _conversation_persistence_active_for_session(self, session: ChatSession) -> bool:
+        """Return True when ``session`` should use a persisted conversation id as its LangGraph ``thread_id``.
+
+        Requires the feature to be enabled, an actual :class:`BaseConversationStore`
+        to be wired, *and* an authenticated ``user_id`` — matches the gate
+        ``_handle_chat_message`` uses before lazily creating a conversation.
+        Anonymous connections and misconfigured deployments (flag enabled but
+        no store wired) keep the legacy ``session_id``-as-``thread_id``
+        behavior everywhere (chat, feedback, history, clear) rather than only
+        in ``_handle_chat_message`` — otherwise those other handlers would
+        incorrectly report "no active conversation" for a thread that chat is
+        still happily writing to under ``session.session_id``.
+        """
+        return (
+            getattr(self.config, "conversation_persistence_enabled", False)
+            and self.conversation_store is not None
+            and bool(session.user_id and session.user_id.strip())
+        )
+
     def _active_thread_id(self, session: ChatSession) -> Optional[str]:
         """Return the LangGraph ``thread_id`` for this connection's next graph operation.
 
-        When conversation persistence is disabled, ``session.session_id``
-        doubles as the ``thread_id`` (legacy behavior, unchanged). When
-        enabled, the active conversation is tracked separately in
+        When conversation persistence is not active for this session (see
+        :meth:`_conversation_persistence_active_for_session`), ``session.session_id``
+        doubles as the ``thread_id`` (legacy behavior, unchanged). Otherwise the
+        active conversation is tracked separately in
         ``session.metadata["conversation_id"]`` — ``None`` until the user
         has sent a chat message or loaded a conversation on this connection.
         """
-        if not getattr(self.config, "conversation_persistence_enabled", False):
+        if not self._conversation_persistence_active_for_session(session):
             return session.session_id
         return session.metadata.get("conversation_id")
 

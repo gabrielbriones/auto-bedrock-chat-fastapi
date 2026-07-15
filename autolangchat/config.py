@@ -813,11 +813,11 @@ class ChatConfig(BaseSettings):
     max_conversations_per_user: int = Field(
         default=100,
         alias="AUTOCHAT_MAX_CONVERSATIONS_PER_USER",
-        gt=0,
+        ge=0,
         description=(
-            "Maximum number of conversations retained per user. Enforcement "
-            "(e.g. pruning the oldest conversation on overflow) is implemented "
-            "by ConversationStore.create_conversation."
+            "Maximum number of conversations retained per user. Set to 0 to "
+            "disable pruning. Enforcement (e.g. pruning the oldest conversation "
+            "on overflow) is implemented by ConversationStore.create_conversation."
         ),
     )
 

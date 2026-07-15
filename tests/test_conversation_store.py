@@ -18,9 +18,15 @@ And the ``create_conversation_store`` factory (``autolangchat/db/__init__.py``):
   (h) returns ``None`` when ``conversation_persistence_enabled=False``;
   (i) returns ``None`` (with a warning, not a crash) when enabled but no
       usable SQLite path can be resolved.
+
+And the ``ChatConfig.max_conversations_per_user`` bound:
+
+  (j) ``0`` is accepted (it disables pruning — see (e) above) and negative
+      values are rejected.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from autolangchat.config import ChatConfig
 from autolangchat.db import SQLiteConversationStore, create_conversation_store
@@ -276,3 +282,21 @@ def test_create_conversation_store_unknown_storage_type_returns_none():
         AUTOCHAT_CONVERSATION_DB_PATH=":memory:",
     )
     assert create_conversation_store(config) is None
+
+
+# ---------------------------------------------------------------------------
+# max_conversations_per_user config bound
+# ---------------------------------------------------------------------------
+
+
+def test_max_conversations_per_user_accepts_zero():
+    """0 must be a legal value — it disables pruning entirely (see
+    SQLiteConversationStore/PostgresConversationStore, which only prune when
+    ``max_conversations_per_user > 0``)."""
+    config = ChatConfig(AUTOCHAT_MAX_CONVERSATIONS_PER_USER=0)
+    assert config.max_conversations_per_user == 0
+
+
+def test_max_conversations_per_user_rejects_negative():
+    with pytest.raises(ValidationError):
+        ChatConfig(AUTOCHAT_MAX_CONVERSATIONS_PER_USER=-1)

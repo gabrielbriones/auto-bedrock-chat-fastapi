@@ -19,6 +19,12 @@ Covers ``WebSocketChatHandler``:
   (h) auto-titling: ``conversation_titled`` is broadcast after the
       fire-and-forget background task completes, exactly once per
       conversation.
+  (i) regression: ``_active_thread_id`` (used by feedback/history/clear)
+      falls back to ``session.session_id`` — not ``None`` — whenever
+      ``_handle_chat_message`` itself would fall back to it (persistence
+      enabled but no store wired, or an anonymous session), so those
+      handlers don't report "no active conversation" for a thread chat is
+      still actively writing to.
 """
 
 import asyncio
@@ -490,3 +496,90 @@ async def test_titling_failure_is_swallowed_and_does_not_affect_chat_delivery():
         assert any(m["type"] == "ai_response" for m in sent)
     finally:
         await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Regression: _active_thread_id must agree with _handle_chat_message's
+# use_conversation_persistence gate, not just the raw config flag.
+# ---------------------------------------------------------------------------
+
+
+async def test_history_falls_back_to_session_id_when_persistence_enabled_but_store_not_wired():
+    """conversation_persistence_enabled=True with no store configured must
+    not break legacy history for the session's own chat turns — chat itself
+    falls back to session_id as thread_id in this case, so history/clear/
+    feedback must follow the same thread_id, not report "no active
+    conversation"."""
+    session = _make_session()
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=None)
+
+    ws_chat = _new_ws()
+    await handler._handle_chat_message(ws_chat, {"message": "hello"})
+    sent_chat = _sent(ws_chat)
+    assert "conversation_created" not in [m["type"] for m in sent_chat]
+
+    ws_history = _new_ws()
+    await handler._handle_history_request(ws_history, {})
+    sent_history = _sent(ws_history)
+    assert sent_history[0]["type"] == "history"
+    assert len(sent_history[0]["messages"]) == 2  # user + assistant
+
+
+async def test_history_falls_back_to_session_id_for_anonymous_session_when_persistence_enabled():
+    store = await _make_store()
+    try:
+        session = _make_session(user_id=None)
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, chat_graph=chat_graph, conversation_store=store)
+
+        ws_chat = _new_ws()
+        await handler._handle_chat_message(ws_chat, {"message": "hello"})
+
+        ws_history = _new_ws()
+        await handler._handle_history_request(ws_history, {})
+        sent_history = _sent(ws_history)
+        assert sent_history[0]["type"] == "history"
+        assert len(sent_history[0]["messages"]) == 2
+    finally:
+        await store.close()
+
+
+async def test_clear_history_falls_back_to_session_id_when_store_not_wired():
+    session = _make_session()
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=None)
+
+    ws_chat = _new_ws()
+    await handler._handle_chat_message(ws_chat, {"message": "hello"})
+
+    ws_clear = _new_ws()
+    await handler._handle_clear_history(ws_clear, {})
+    sent_clear = _sent(ws_clear)
+    assert sent_clear[0]["type"] == "history_cleared"
+    # The checkpoint under session_id (not "no active conversation") was cleared.
+    assert chat_graph._checkpoints[session.session_id] == []
+
+
+async def test_active_thread_id_matches_chat_message_gate_directly():
+    """Direct unit check that _active_thread_id and the chat-message gate
+    never diverge, across all four (persistence, store, user_id) combinations."""
+    chat_graph = _make_chat_graph()
+
+    for persistence_enabled, has_store, user_id in [
+        (False, True, "alice"),
+        (True, False, "alice"),
+        (True, True, None),
+        (True, True, "alice"),
+    ]:
+        session = _make_session(user_id=user_id)
+        config = _make_config(conversation_persistence_enabled=persistence_enabled)
+        store = MagicMock() if has_store else None
+        handler = _make_handler(session, config=config, chat_graph=chat_graph, conversation_store=store)
+
+        expect_conversation_thread_id = persistence_enabled and has_store and bool(user_id)
+        if expect_conversation_thread_id:
+            session.metadata["conversation_id"] = "some-conv-id"
+            assert handler._active_thread_id(session) == "some-conv-id"
+        else:
+            assert handler._active_thread_id(session) == session.session_id

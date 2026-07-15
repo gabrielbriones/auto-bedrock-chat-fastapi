@@ -23,7 +23,7 @@ AUTOCHAT_CONVERSATION_PERSISTENCE_ENABLED=true
 ```
 
 The storage backend defaults to **SQLite**, so no database setup is
-required for local development:
+required for local development. To use **Postgres** instead, configure:
 
 ```bash
 AUTOCHAT_CONVERSATION_STORAGE_TYPE=postgres
