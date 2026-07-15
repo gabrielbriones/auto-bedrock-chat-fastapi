@@ -9,8 +9,10 @@ Covers ``register_conversation_routes`` end-to-end through a real FastAPI
   (c) auth isolation — 401 with no identity, 403 when the ``user_id`` query
       param doesn't match the caller, 404 (not a distinguishing 403) for
       path-addressed conversations owned by someone else;
-  (d) ``409 conversation_history_unavailable`` (not an empty list) when
-      ``aget_state`` yields no checkpoint values, vs. a normal 200 once a
+  (d) ``409 conversation_history_unavailable`` only when the conversation has
+      recorded turns (``message_count > 0``) but ``aget_state`` yields no
+      checkpoint values — a zero-message (just-created) conversation returns
+      ``200`` with an empty message list instead, vs. a normal ``200`` once a
       checkpoint exists.
 """
 
@@ -236,8 +238,23 @@ def test_list_only_returns_own_conversations(client):
 # ---------------------------------------------------------------------------
 
 
-def test_messages_returns_409_when_checkpoint_unavailable(client):
+def test_messages_returns_empty_list_for_zero_message_conversation(client):
+    """A brand-new conversation with no recorded turns (just created via
+    POST, never chatted in) has no checkpoint yet — that must return 200
+    with an empty message list, not conversation_history_unavailable."""
     created = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice")).json()
+    r = client.get(f"/chat/conversations/{created['id']}/messages", headers=_auth("alice"))
+    assert r.status_code == 200
+    assert r.json()["messages"] == []
+
+
+def test_messages_returns_409_when_turns_recorded_but_checkpoint_missing(client, store):
+    """A conversation with recorded turns (message_count > 0) whose
+    checkpoint is missing really has lost history (e.g. MemorySaver after a
+    restart) — that must return conversation_history_unavailable."""
+    created = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice")).json()
+    asyncio.run(store.record_turn(created["id"]))  # message_count becomes 1, no matching checkpoint exists
+
     r = client.get(f"/chat/conversations/{created['id']}/messages", headers=_auth("alice"))
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "conversation_history_unavailable"

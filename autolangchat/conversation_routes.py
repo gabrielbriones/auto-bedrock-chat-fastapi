@@ -231,18 +231,25 @@ def register_conversation_routes(
         checkpoint_state = await chat_graph.aget_state(cfg)
         checkpoint_values = checkpoint_state.values if checkpoint_state else None
         if not checkpoint_values:
-            # Process likely restarted since this conversation was created
-            # and the active checkpointer is MemorySaver (non-persistent).
-            # Distinct from "no messages yet" — see module docstring.
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "conversation_history_unavailable",
-                    "message": "This conversation's message history is unavailable",
-                },
-            )
+            if conversation.get("message_count", 0) > 0:
+                # This conversation has recorded turns, so a missing
+                # checkpoint means the process likely restarted with a
+                # non-persistent checkpointer (MemorySaver) — history was
+                # actually lost, distinct from "no messages yet".
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "conversation_history_unavailable",
+                        "message": "This conversation's message history is unavailable",
+                    },
+                )
+            # A brand-new conversation (e.g. just created via POST, never
+            # chatted in yet) that has never had a turn recorded — an empty
+            # history is the correct, valid response here, not "unavailable".
+            raw_messages: List[Dict[str, Any]] = []
+        else:
+            raw_messages = checkpoint_values.get("messages", [])
 
-        raw_messages: List[Dict[str, Any]] = checkpoint_values.get("messages", [])
         formatted = _format_history_messages(raw_messages)
 
         if before:

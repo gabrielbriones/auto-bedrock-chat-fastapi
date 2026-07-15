@@ -66,7 +66,12 @@ it. You can enable conversation persistence with either checkpointer; with
 `MemorySaver` the plugin logs a one-time startup warning, and
 `conversation_load` / `GET .../messages` return
 `409 conversation_history_unavailable` (not an empty history) for any
-conversation whose checkpoint didn't survive.
+conversation that has recorded turns (`message_count > 0`) whose
+checkpoint didn't survive. A brand-new conversation that has never had a
+turn recorded (e.g. just created via `POST /conversations`, or the
+WebSocket's lazy-create failed before its first `ainvoke`) instead loads
+normally with an empty message list — that's a legitimately empty
+conversation, not lost history.
 
 ---
 
@@ -90,13 +95,13 @@ full message shapes; a summary:
 
 `conversation_error` codes:
 
-| Code                                | Meaning                                                                                                              |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `conversation_persistence_disabled` | The feature isn't enabled or no store is configured                                                                  |
-| `unauthorized_conversation`         | The session has no authenticated `user_id` (conversations require auth — see below)                                  |
-| `conversation_not_found`            | The id doesn't exist **or** belongs to another user (deliberately not distinguished — see [Auth model](#auth-model)) |
-| `conversation_history_unavailable`  | The checkpoint has no values (process restarted with a non-persistent checkpointer)                                  |
-| `invalid_conversation_request`      | Malformed payload (missing/invalid `conversation_id`, `title`, `limit`, `offset`)                                    |
+| Code                                | Meaning                                                                                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conversation_persistence_disabled` | The feature isn't enabled or no store is configured                                                                                               |
+| `unauthorized_conversation`         | The session has no authenticated `user_id` (conversations require auth — see below)                                                               |
+| `conversation_not_found`            | The id doesn't exist **or** belongs to another user (deliberately not distinguished — see [Auth model](#auth-model))                              |
+| `conversation_history_unavailable`  | The conversation has recorded turns (`message_count > 0`) but the checkpoint has no values (process restarted with a non-persistent checkpointer) |
+| `invalid_conversation_request`      | Malformed payload (missing/invalid `conversation_id`, `title`, `limit`, `offset`)                                                                 |
 
 ### Connection identity vs. conversation identity
 

@@ -10,8 +10,10 @@ Covers ``WebSocketChatHandler``:
       ``unauthorized_conversation`` when the session has no ``user_id``;
   (d) IDOR protection: loading/deleting/renaming another user's conversation
       returns ``conversation_not_found`` (not a distinguishing 403);
-  (e) ``conversation_history_unavailable`` when ``aget_state`` yields no
-      checkpoint values;
+  (e) ``conversation_history_unavailable`` only when a conversation has
+      recorded turns (``message_count > 0``) but ``aget_state`` yields no
+      checkpoint values — a zero-message conversation loads with an empty
+      history instead;
   (f) lazy conversation creation on the first chat message, reused on
       subsequent turns, with ``record_turn`` called after each turn;
   (g) anonymous (no ``user_id``) connections never get persisted
@@ -25,6 +27,9 @@ Covers ``WebSocketChatHandler``:
       enabled but no store wired, or an anonymous session), so those
       handlers don't report "no active conversation" for a thread chat is
       still actively writing to.
+  (j) ``conversation_list`` rejects a ``limit`` above the 200 upper bound
+      (mirrors the REST endpoint's cap) rather than allowing an
+      unbounded response.
 """
 
 import asyncio
@@ -166,6 +171,40 @@ async def test_message_loop_dispatches_all_conversation_message_types():
         await store.close()
 
 
+async def test_conversation_list_rejects_limit_above_upper_bound():
+    """A client can't force a huge single-response allocation by requesting
+    an enormous limit — the WebSocket path mirrors the REST endpoint's
+    le=200 cap."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_list(ws, {"limit": 100000})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_error"
+        assert sent[0]["code"] == "invalid_conversation_request"
+    finally:
+        await store.close()
+
+
+async def test_conversation_list_accepts_limit_at_upper_bound():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_list(ws, {"limit": 200})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_list"
+    finally:
+        await store.close()
+
+
 # ---------------------------------------------------------------------------
 # conversation_load reads history via aget_state only
 # ---------------------------------------------------------------------------
@@ -206,12 +245,37 @@ async def test_conversation_load_reads_history_via_aget_state_only():
         await store.close()
 
 
-async def test_conversation_load_returns_history_unavailable_when_no_checkpoint():
+async def test_conversation_load_returns_empty_history_for_zero_message_conversation():
+    """A brand-new conversation with no recorded turns (e.g. created via
+    REST POST, never chatted in) has no checkpoint yet — that must load
+    successfully with an empty message list, not conversation_history_unavailable."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+        await store.create_conversation("conv-1", "alice")  # message_count defaults to 0
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_loaded"
+        assert sent[0]["messages"] == []
+        assert session.metadata.get("conversation_id") == "conv-1"
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_returns_history_unavailable_when_turns_recorded_but_checkpoint_missing():
+    """A conversation with recorded turns (message_count > 0) whose
+    checkpoint is missing really has lost history (e.g. MemorySaver after a
+    restart) — that must return conversation_history_unavailable."""
     store = await _make_store()
     try:
         session = _make_session()
         handler = _make_handler(session, conversation_store=store)
         await store.create_conversation("conv-1", "alice")
+        await store.record_turn("conv-1")  # message_count becomes 1, no matching checkpoint exists
 
         ws = _new_ws()
         await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})

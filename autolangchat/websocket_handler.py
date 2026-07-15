@@ -42,6 +42,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on conversation_list's ``limit`` — mirrors the REST
+# GET /chat/conversations endpoint's ``Query(50, ge=1, le=200)`` cap, so a
+# client can't force a huge single-response allocation/serialization via
+# the WebSocket path when the same guard already exists over REST.
+_CONVERSATION_LIST_MAX_LIMIT = 200
+
 
 def _get_sso_session_store_class():
     """Lazy import of SSOSessionStore (requires PyJWT)."""
@@ -1061,11 +1067,24 @@ class WebSocketChatHandler:
         Keeps a strong reference in ``self._background_tasks`` until the
         task completes (removed via a done-callback) so it isn't
         garbage-collected mid-flight — a well-known asyncio footgun for
-        tasks with no other referent.
+        tasks with no other referent. The done-callback also retrieves the
+        task's result/exception so a bug in a future fire-and-forget
+        caller that doesn't handle its own exceptions internally still gets
+        logged, rather than only surfacing as an easy-to-miss "Task
+        exception was never retrieved" warning.
         """
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+
+        def _on_done(t: "asyncio.Task[Any]") -> None:
+            self._background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.error("Background task failed", exc_info=exc)
+
+        task.add_done_callback(_on_done)
 
     def _build_title_llm_client(self) -> Optional[Any]:
         """Build a lightweight LLM client for conversation-title generation.
@@ -1146,6 +1165,13 @@ class WebSocketChatHandler:
                 websocket, "invalid_conversation_request", "limit must be positive and offset non-negative"
             )
             return
+        if limit > _CONVERSATION_LIST_MAX_LIMIT:
+            await self._send_conversation_error(
+                websocket,
+                "invalid_conversation_request",
+                f"limit must be <= {_CONVERSATION_LIST_MAX_LIMIT}",
+            )
+            return
 
         conversations = await self.conversation_store.list_conversations(session.user_id, limit=limit, offset=offset)
 
@@ -1201,19 +1227,26 @@ class WebSocketChatHandler:
         checkpoint_state = await self.chat_graph.aget_state(cfg)
         checkpoint_values = checkpoint_state.values if checkpoint_state else None
         if not checkpoint_values:
-            # Process likely restarted since this conversation was created
-            # and the active checkpointer is MemorySaver (non-persistent).
-            # Distinct from "no messages yet" so the client doesn't render
-            # an empty-but-valid conversation.
-            await self._send_conversation_error(
-                websocket,
-                "conversation_history_unavailable",
-                "This conversation's message history is unavailable",
-                conversation_id=conversation_id,
-            )
-            return
+            if conversation.get("message_count", 0) > 0:
+                # This conversation has recorded turns, so a missing
+                # checkpoint means the process likely restarted with a
+                # non-persistent checkpointer (MemorySaver) — history was
+                # actually lost, distinct from "no messages yet".
+                await self._send_conversation_error(
+                    websocket,
+                    "conversation_history_unavailable",
+                    "This conversation's message history is unavailable",
+                    conversation_id=conversation_id,
+                )
+                return
+            # A brand-new conversation (e.g. created via REST POST, or the
+            # WebSocket lazy-create failed before the first ainvoke) that
+            # has never had a turn recorded — an empty history is the
+            # correct, loadable state here, not "unavailable".
+            raw_messages: List[Dict[str, Any]] = []
+        else:
+            raw_messages = checkpoint_values.get("messages", [])
 
-        raw_messages: List[Dict[str, Any]] = checkpoint_values.get("messages", [])
         history = self._format_history_messages(raw_messages)
 
         session.metadata["conversation_id"] = conversation_id
