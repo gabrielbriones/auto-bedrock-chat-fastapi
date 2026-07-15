@@ -53,7 +53,7 @@ add_autolangchat(app, allowed_paths=["/products"])
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=your-key
 AWS_SECRET_ACCESS_KEY=your-secret
-AUTOCHAT_MODEL_ID=us.anthropic.claude-sonnet-4-6
+AUTOCHAT_MODEL_ID=us.anthropic.claude-sonnet-5
 ```
 
 ### Run

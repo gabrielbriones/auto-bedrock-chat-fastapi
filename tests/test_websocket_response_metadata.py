@@ -30,7 +30,7 @@ def _make_handler(graph_state):
     ``graph_state`` from the chat graph."""
     config = MagicMock()
     config.timeout = 30.0
-    config.model_id = "us.anthropic.claude-sonnet-4-6"
+    config.model_id = "us.anthropic.claude-sonnet-5"
     config.require_tool_auth = False
     config.include_auth_info_in_prompts = False
     config.feedback_allow_anonymous = False
@@ -127,7 +127,7 @@ def test_metadata_non_kb_path():
     assert not (_KB_KEYS & metadata.keys())
 
     # model_id is overwritten from server config, not the LLM response.
-    assert metadata["model_id"] == "us.anthropic.claude-sonnet-4-6"
+    assert metadata["model_id"] == "us.anthropic.claude-sonnet-5"
     # Nested usage dict reflects the final LLM call.
     assert metadata["usage"] == {"input_tokens": 50, "output_tokens": 80}
     # Top-level totals come from the accumulated graph metadata.

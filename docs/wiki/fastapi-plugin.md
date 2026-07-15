@@ -81,7 +81,7 @@ async def list_products():
 autolangchat_plugin = add_autolangchat(
     app,
     # Model
-    model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    model_id="us.anthropic.claude-sonnet-5",
     temperature=0.5,
     max_tokens=8192,
     system_prompt="You are a helpful customer support assistant.",

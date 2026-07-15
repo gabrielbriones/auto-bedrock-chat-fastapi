@@ -1809,7 +1809,7 @@ def add_autolangchat(
 
     Args:
         app: FastAPI application instance
-        model_id: LLM model ID to use (e.g. us.anthropic.claude-sonnet-4-6)
+        model_id: LLM model ID to use (e.g. us.anthropic.claude-sonnet-5)
         aws_region: AWS region for Bedrock inference
         system_prompt: Custom system prompt
         temperature: Model temperature (0.0-1.0)
