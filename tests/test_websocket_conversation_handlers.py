@@ -32,6 +32,11 @@ Covers ``WebSocketChatHandler``:
       unbounded response, and projects each item down to the documented
       ``{id, title, updated_at, message_count}`` shape rather than
       forwarding the full store row.
+  (k) regression: a ``conversation_store.create_conversation`` failure
+      (e.g. transient DB error) degrades to the legacy
+      ``session_id``-as-``thread_id`` behavior for that turn — chat
+      delivery still succeeds — rather than surfacing an error
+      ``ai_response``.
 """
 
 import asyncio
@@ -457,6 +462,40 @@ async def test_chat_message_lazily_creates_conversation_once():
         assert row["message_count"] == 2
     finally:
         await store.close()
+
+
+async def test_chat_message_degrades_to_session_id_when_create_conversation_fails():
+    """A transient conversation-store failure (DB down, connection dropped,
+    etc.) must not block chat delivery — conversation persistence is
+    optional, so the turn should fall back to session_id as thread_id
+    rather than surfacing an error ai_response."""
+    session = _make_session()
+    chat_graph = _make_chat_graph()
+
+    failing_store = MagicMock()
+    failing_store.create_conversation = AsyncMock(side_effect=RuntimeError("db unavailable"))
+
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=failing_store)
+
+    ws = _new_ws()
+    await handler._handle_chat_message(ws, {"message": "hello"})
+
+    sent = _sent(ws)
+    types = [m["type"] for m in sent]
+    assert "conversation_created" not in types
+    ai_response = next(m for m in sent if m["type"] == "ai_response")
+    assert ai_response["conversation_id"] is None
+    assert "message" in ai_response and ai_response["message"]  # real assistant reply, not an error envelope
+    assert not ai_response.get("error")
+
+    # The graph turn actually ran against session_id, not a dropped/never-created conversation_id.
+    chat_graph.ainvoke.assert_awaited_once()
+    _, kwargs = chat_graph.ainvoke.await_args
+    assert kwargs["config"]["configurable"]["thread_id"] == session.session_id
+
+    # No stale conversation_id was recorded, so the next turn retries lazy-creation.
+    assert session.metadata.get("conversation_id") is None
+    failing_store.record_turn.assert_not_called()
 
 
 async def test_anonymous_session_never_gets_persisted_conversation():

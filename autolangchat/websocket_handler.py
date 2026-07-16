@@ -377,19 +377,37 @@ class WebSocketChatHandler:
             if use_conversation_persistence:
                 conversation_id = session.metadata.get("conversation_id")
                 if conversation_id is None:
-                    conversation_id = str(uuid.uuid4())
-                    await self.conversation_store.create_conversation(conversation_id, session.user_id)
-                    session.metadata["conversation_id"] = conversation_id
-                    conversation_just_created = True
-                    await self._send_message(
-                        websocket,
-                        {
-                            "type": "conversation_created",
-                            "conversation_id": conversation_id,
-                            "timestamp": datetime.now().isoformat(),
-                        },
-                    )
-                thread_id = conversation_id
+                    new_conversation_id = str(uuid.uuid4())
+                    try:
+                        await self.conversation_store.create_conversation(new_conversation_id, session.user_id)
+                    except Exception:
+                        # Conversation persistence is optional — a transient
+                        # store failure (DB down, connection dropped, etc.)
+                        # must degrade to the legacy session_id-as-thread_id
+                        # behavior for this turn rather than blocking chat
+                        # delivery entirely. Do NOT set
+                        # session.metadata["conversation_id"]: leaving it
+                        # unset means the next turn retries lazy-creation
+                        # instead of referencing a conversation that was
+                        # never actually persisted.
+                        logger.exception(
+                            "Failed to create conversation for session=%s; "
+                            "falling back to session_id as thread_id for this turn",
+                            session.session_id,
+                        )
+                    else:
+                        conversation_id = new_conversation_id
+                        session.metadata["conversation_id"] = conversation_id
+                        conversation_just_created = True
+                        await self._send_message(
+                            websocket,
+                            {
+                                "type": "conversation_created",
+                                "conversation_id": conversation_id,
+                                "timestamp": datetime.now().isoformat(),
+                            },
+                        )
+                thread_id = conversation_id if conversation_id is not None else session.session_id
             else:
                 thread_id = session.session_id
 
