@@ -1357,7 +1357,16 @@ class ChatClient {
             actions.appendChild(deleteBtn);
 
             li.appendChild(actions);
+            li.setAttribute('role', 'button');
+            li.tabIndex = 0;
             li.addEventListener('click', () => this.loadConversation(conv.id));
+            li.addEventListener('keydown', (e) => {
+                if (e.target !== li) return; // ignore keypresses on nested action buttons
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.loadConversation(conv.id);
+                }
+            });
             this.conversationList.appendChild(li);
         });
     }
