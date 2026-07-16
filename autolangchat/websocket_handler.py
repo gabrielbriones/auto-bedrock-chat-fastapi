@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -16,8 +17,22 @@ from pydantic import ValidationError
 
 from .auth_handler import AuthenticationHandler, AuthType, Credentials
 from .config import ChatConfig
-from .db import AuthenticatedUserAuthorizer, BaseFeedbackStore, BaseKBStore, BaseTokenUsageStore, FeedbackAuthorizer
-from .exceptions import FeedbackError, InvalidStatusTransitionError, UnauthorizedFeedbackError, WebSocketError
+from .conversation_titler import generate_conversation_title
+from .db import (
+    AuthenticatedUserAuthorizer,
+    BaseConversationStore,
+    BaseFeedbackStore,
+    BaseKBStore,
+    BaseTokenUsageStore,
+    FeedbackAuthorizer,
+)
+from .exceptions import (
+    ConversationNotFoundError,
+    FeedbackError,
+    InvalidStatusTransitionError,
+    UnauthorizedFeedbackError,
+    WebSocketError,
+)
 from .graph.tools.manager import AuthInfo
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
@@ -26,6 +41,12 @@ if TYPE_CHECKING:
     from .sso.sso_session_store import SSOSessionStore
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on conversation_list's ``limit`` — mirrors the REST
+# GET /chat/conversations endpoint's ``Query(50, ge=1, le=200)`` cap, so a
+# client can't force a huge single-response allocation/serialization via
+# the WebSocket path when the same guard already exists over REST.
+_CONVERSATION_LIST_MAX_LIMIT = 200
 
 
 def _get_sso_session_store_class():
@@ -63,6 +84,7 @@ class WebSocketChatHandler:
         feedback_store: Optional[BaseFeedbackStore] = None,
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
         token_usage_store: Optional[BaseTokenUsageStore] = None,
+        conversation_store: Optional[BaseConversationStore] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -76,6 +98,11 @@ class WebSocketChatHandler:
             allow_anonymous=getattr(config, "feedback_allow_anonymous", False)
         )
         self.token_usage_store = token_usage_store
+        self.conversation_store = conversation_store
+        # Strong references to fire-and-forget background tasks (e.g.
+        # conversation auto-titling) so they aren't garbage-collected
+        # mid-flight; each task removes itself on completion.
+        self._background_tasks: set = set()
 
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
@@ -229,6 +256,18 @@ class WebSocketChatHandler:
                     await self._handle_logout(websocket, message_data)
                 elif message_type == "feedback":
                     await self._handle_feedback_message(websocket, message_data)
+                elif message_type == "conversation_list":
+                    await self._handle_conversation_list(websocket, message_data)
+                elif message_type == "conversation_new":
+                    await self._handle_conversation_new(websocket, message_data)
+                elif message_type == "conversation_load":
+                    await self._handle_conversation_load(websocket, message_data)
+                elif message_type == "conversation_delete":
+                    await self._handle_conversation_delete(websocket, message_data)
+                elif message_type == "conversation_delete_all":
+                    await self._handle_conversation_delete_all(websocket, message_data)
+                elif message_type == "conversation_rename":
+                    await self._handle_conversation_rename(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -319,6 +358,60 @@ class WebSocketChatHandler:
                 await self._send_message(websocket, msg_dict)
 
             # ------------------------------------------------------------------
+            # Resolve the LangGraph thread_id for this turn.
+            #
+            # When conversation persistence is enabled *and* the connection is
+            # authenticated, the thread_id is the active conversation id
+            # (session.metadata["conversation_id"]) rather than session_id —
+            # this decouples the WebSocket connection identity from the
+            # LangGraph conversation identity so a single connection can
+            # switch between conversations via `conversation_load`/`conversation_new`.
+            # Anonymous connections (no user_id) never get persisted
+            # conversations — a shared "anonymous" bucket would let unrelated
+            # anonymous sessions list each other's conversations — so they
+            # keep the legacy session_id-as-thread_id behavior.
+            # ------------------------------------------------------------------
+            use_conversation_persistence = self._conversation_persistence_active_for_session(session)
+            conversation_id: Optional[str] = None
+            conversation_just_created = False
+            if use_conversation_persistence:
+                conversation_id = session.metadata.get("conversation_id")
+                if conversation_id is None:
+                    new_conversation_id = str(uuid.uuid4())
+                    try:
+                        await self.conversation_store.create_conversation(new_conversation_id, session.user_id)
+                    except Exception:
+                        # Conversation persistence is optional — a transient
+                        # store failure (DB down, connection dropped, etc.)
+                        # must degrade to the legacy session_id-as-thread_id
+                        # behavior for this turn rather than blocking chat
+                        # delivery entirely. Do NOT set
+                        # session.metadata["conversation_id"]: leaving it
+                        # unset means the next turn retries lazy-creation
+                        # instead of referencing a conversation that was
+                        # never actually persisted.
+                        logger.exception(
+                            "Failed to create conversation for session=%s; "
+                            "falling back to session_id as thread_id for this turn",
+                            session.session_id,
+                        )
+                    else:
+                        conversation_id = new_conversation_id
+                        session.metadata["conversation_id"] = conversation_id
+                        conversation_just_created = True
+                        await self._send_message(
+                            websocket,
+                            {
+                                "type": "conversation_created",
+                                "conversation_id": conversation_id,
+                                "timestamp": datetime.now().isoformat(),
+                            },
+                        )
+                thread_id = conversation_id if conversation_id is not None else session.session_id
+            else:
+                thread_id = session.session_id
+
+            # ------------------------------------------------------------------
             # Delegate entirely to LangGraph.
             # Pass only ``user_message`` — the ``init_turn`` node prepends it
             # to the checkpointed conversation history inside the graph.
@@ -331,7 +424,7 @@ class WebSocketChatHandler:
                 {"user_message": user_message},
                 config={
                     "configurable": {
-                        "thread_id": session.session_id,
+                        "thread_id": thread_id,
                         "on_progress": _on_progress,
                         "auth_info": auth_info,
                         "kb_store": self.kb_store,
@@ -413,8 +506,35 @@ class WebSocketChatHandler:
                     "tool_results": final_response.get("tool_results", []),
                     "timestamp": datetime.now().isoformat(),
                     "metadata": response_metadata,
+                    "conversation_id": conversation_id,
                 },
             )
+
+            # Persist the turn against the conversation metadata store
+            # (best-effort, mirrors the token-usage persistence below — the
+            # response has already been sent, so a failure here must not
+            # surface as a second ``ai_response``).
+            if use_conversation_persistence and conversation_id is not None:
+                try:
+                    await self.conversation_store.record_turn(conversation_id)
+                except Exception:
+                    logger.exception("Failed to record conversation turn for conversation_id=%s", conversation_id)
+
+            # Auto-title a freshly created conversation in the background so
+            # title-generation latency never delays the ai_response that was
+            # just sent above. Fires once per conversation (only on the turn
+            # that created it).
+            if conversation_just_created and conversation_id is not None:
+                self._spawn_background_task(
+                    self._generate_and_apply_title(
+                        websocket,
+                        conversation_id,
+                        [
+                            {"role": "user", "content": user_message},
+                            {"role": "assistant", "content": content},
+                        ],
+                    )
+                )
 
             # Persist per-turn token usage (best-effort). This must never
             # affect chat delivery: the response has already been sent to
@@ -616,7 +736,16 @@ class WebSocketChatHandler:
 
         # Recover the original assistant response by message_id from the
         # LangGraph checkpoint (source of truth for conversation history).
-        cfg: Dict[str, Any] = {"configurable": {"thread_id": session.session_id}}
+        thread_id = self._active_thread_id(session)
+        if thread_id is None:
+            await self._send_feedback_error(
+                websocket,
+                "no_active_conversation",
+                "No active conversation. Start chatting or load a conversation first.",
+                message_id=message_id,
+            )
+            return
+        cfg: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
         checkpoint_state = await self.chat_graph.aget_state(cfg)
         messages: List[Dict[str, Any]] = (checkpoint_state.values or {}).get("messages", []) if checkpoint_state else []
         ai_message_dict = next(
@@ -792,24 +921,18 @@ class WebSocketChatHandler:
             await self._send_error(websocket, "Session not found")
             return
 
-        cfg: Dict[str, Any] = {"configurable": {"thread_id": session.session_id}}
+        thread_id = self._active_thread_id(session)
+        if thread_id is None:
+            await self._send_error(websocket, "No active conversation. Start chatting or load a conversation first.")
+            return
+
+        cfg: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
         checkpoint_state = await self.chat_graph.aget_state(cfg)
         raw_messages: List[Dict[str, Any]] = (
             (checkpoint_state.values or {}).get("messages", []) if checkpoint_state else []
         )
 
-        history = [
-            {
-                "message_id": m.get("metadata", {}).get("message_id"),
-                "role": m.get("role"),
-                "content": m.get("content", ""),
-                "timestamp": m.get("metadata", {}).get("timestamp"),
-                "tool_calls": m.get("tool_calls", []),
-                "tool_results": m.get("tool_results", []),
-                "metadata": m.get("metadata", {}),
-            }
-            for m in raw_messages
-        ]
+        history = self._format_history_messages(raw_messages)
 
         await self._send_message(
             websocket,
@@ -828,7 +951,12 @@ class WebSocketChatHandler:
             await self._send_error(websocket, "Session not found")
             return
 
-        cfg: Dict[str, Any] = {"configurable": {"thread_id": session.session_id}}
+        thread_id = self._active_thread_id(session)
+        if thread_id is None:
+            await self._send_error(websocket, "No active conversation. Start chatting or load a conversation first.")
+            return
+
+        cfg: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
         await self.chat_graph.aupdate_state(cfg, {"messages": [], "metadata": {}})
         # Clear in-memory feedback metadata for this session too
         session.metadata.pop("feedback_meta", None)
@@ -838,6 +966,432 @@ class WebSocketChatHandler:
             {
                 "type": "history_cleared",
                 "message": "Conversation history cleared",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Conversation management (per-user, named, persisted conversations)
+    # ------------------------------------------------------------------
+
+    def _conversation_persistence_active_for_session(self, session: ChatSession) -> bool:
+        """Return True when ``session`` should use a persisted conversation id as its LangGraph ``thread_id``.
+
+        Requires the feature to be enabled, an actual :class:`BaseConversationStore`
+        to be wired, *and* an authenticated ``user_id`` — matches the gate
+        ``_handle_chat_message`` uses before lazily creating a conversation.
+        Anonymous connections and misconfigured deployments (flag enabled but
+        no store wired) keep the legacy ``session_id``-as-``thread_id``
+        behavior everywhere (chat, feedback, history, clear) rather than only
+        in ``_handle_chat_message`` — otherwise those other handlers would
+        incorrectly report "no active conversation" for a thread that chat is
+        still happily writing to under ``session.session_id``.
+        """
+        return (
+            getattr(self.config, "conversation_persistence_enabled", False)
+            and self.conversation_store is not None
+            and bool(session.user_id and session.user_id.strip())
+        )
+
+    def _active_thread_id(self, session: ChatSession) -> Optional[str]:
+        """Return the LangGraph ``thread_id`` for this connection's next graph operation.
+
+        When conversation persistence is not active for this session (see
+        :meth:`_conversation_persistence_active_for_session`), ``session.session_id``
+        doubles as the ``thread_id`` (legacy behavior, unchanged). Otherwise the
+        active conversation is tracked separately in
+        ``session.metadata["conversation_id"]`` — ``None`` until the user
+        has sent a chat message or loaded a conversation on this connection.
+        """
+        if not self._conversation_persistence_active_for_session(session):
+            return session.session_id
+        return session.metadata.get("conversation_id")
+
+    async def _send_conversation_error(
+        self,
+        websocket: WebSocket,
+        code: str,
+        message: str,
+        *,
+        conversation_id: Optional[str] = None,
+    ) -> None:
+        """Send a ``conversation_error`` envelope for conversation_* message handlers.
+
+        Mirrors :meth:`_send_feedback_error`'s ``{type, code, message}``
+        contract so the client can branch on ``code`` (e.g.
+        ``conversation_persistence_disabled``, ``conversation_not_found``,
+        ``conversation_history_unavailable``) rather than parsing free text.
+        """
+        payload: Dict[str, Any] = {
+            "type": "conversation_error",
+            "code": code,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if conversation_id is not None:
+            payload["conversation_id"] = conversation_id
+        await self._send_message(websocket, payload)
+
+    @staticmethod
+    def _format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert LangGraph checkpoint message dicts to the client-facing history shape."""
+        return [
+            {
+                "message_id": m.get("metadata", {}).get("message_id"),
+                "role": m.get("role"),
+                "content": m.get("content", ""),
+                "timestamp": m.get("metadata", {}).get("timestamp"),
+                "tool_calls": m.get("tool_calls", []),
+                "tool_results": m.get("tool_results", []),
+                "metadata": m.get("metadata", {}),
+            }
+            for m in raw_messages
+        ]
+
+    async def _conversation_guard(self, websocket: WebSocket) -> Optional[ChatSession]:
+        """Common preamble for every ``conversation_*`` message handler.
+
+        Sends a ``conversation_error`` and returns ``None`` when conversation
+        persistence isn't enabled/configured, the session can't be found, or
+        the connection has no authenticated ``user_id`` (conversations are a
+        per-user feature — there is no anonymous conversation list).
+        """
+        if not getattr(self.config, "conversation_persistence_enabled", False) or self.conversation_store is None:
+            await self._send_conversation_error(
+                websocket,
+                "conversation_persistence_disabled",
+                "Conversation persistence is not enabled on this server",
+            )
+            return None
+
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return None
+
+        if not session.user_id or not session.user_id.strip():
+            await self._send_conversation_error(
+                websocket,
+                "unauthorized_conversation",
+                "Authentication is required to use conversations",
+            )
+            return None
+
+        return session
+
+    def _spawn_background_task(self, coro: Any) -> None:
+        """Schedule ``coro`` as a fire-and-forget task.
+
+        Keeps a strong reference in ``self._background_tasks`` until the
+        task completes (removed via a done-callback) so it isn't
+        garbage-collected mid-flight — a well-known asyncio footgun for
+        tasks with no other referent. The done-callback also retrieves the
+        task's result/exception so a bug in a future fire-and-forget
+        caller that doesn't handle its own exceptions internally still gets
+        logged, rather than only surfacing as an easy-to-miss "Task
+        exception was never retrieved" warning.
+        """
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+
+        def _on_done(t: "asyncio.Task[Any]") -> None:
+            self._background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.error("Background task failed", exc_info=exc)
+
+        task.add_done_callback(_on_done)
+
+    def _build_title_llm_client(self) -> Optional[Any]:
+        """Build a lightweight LLM client for conversation-title generation.
+
+        Uses ``conversation_title_model_id`` when configured, falling back
+        to the main chat ``model_id``. Returns ``None`` (triggering the
+        truncated-first-message fallback in
+        :func:`~autolangchat.conversation_titler.generate_conversation_title`)
+        when ``langchain-aws`` isn't installed or client construction fails.
+        """
+        try:
+            from langchain_aws import ChatBedrockConverse
+        except ImportError:
+            return None
+
+        kwargs: Dict[str, Any] = {
+            "model": self.config.conversation_title_model_id or self.config.model_id,
+            "region_name": self.config.aws_region,
+            # Titles are short (5-8 words); keep the cap small.
+            "max_tokens": 60,
+        }
+        if self.config.aws_access_key_id and self.config.aws_secret_access_key:
+            kwargs["aws_access_key_id"] = self.config.aws_access_key_id
+            kwargs["aws_secret_access_key"] = self.config.aws_secret_access_key
+
+        try:
+            return ChatBedrockConverse(**kwargs)
+        except Exception:
+            logger.warning("Failed to build title-generation LLM client", exc_info=True)
+            return None
+
+    async def _generate_and_apply_title(
+        self,
+        websocket: WebSocket,
+        conversation_id: str,
+        messages: List[Dict[str, Any]],
+    ) -> None:
+        """Fire-and-forget: title a freshly created conversation and notify the client.
+
+        Runs after the ``ai_response`` has already been sent so
+        title-generation latency never delays the chat reply. Failures are
+        logged and otherwise swallowed — an untitled conversation is a
+        cosmetic issue, not a hard failure, and the client already has a
+        working conversation either way.
+        """
+        try:
+            llm_client = self._build_title_llm_client()
+            title = await generate_conversation_title(llm_client, messages)
+            await self.conversation_store.update_conversation(conversation_id, title=title)
+            await self._send_message(
+                websocket,
+                {
+                    "type": "conversation_titled",
+                    "conversation_id": conversation_id,
+                    "title": title,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        except Exception:
+            logger.warning("Conversation auto-titling failed for conversation_id=%s", conversation_id, exc_info=True)
+
+    async def _handle_conversation_list(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_list`` request — return the user's conversations."""
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        try:
+            limit = int(data.get("limit", 50))
+            offset = int(data.get("offset", 0))
+        except (TypeError, ValueError):
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "limit and offset must be integers"
+            )
+            return
+        if limit <= 0 or offset < 0:
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "limit must be positive and offset non-negative"
+            )
+            return
+        if limit > _CONVERSATION_LIST_MAX_LIMIT:
+            await self._send_conversation_error(
+                websocket,
+                "invalid_conversation_request",
+                f"limit must be <= {_CONVERSATION_LIST_MAX_LIMIT}",
+            )
+            return
+
+        conversations = await self.conversation_store.list_conversations(session.user_id, limit=limit, offset=offset)
+        # Project down to the documented WS shape ({id, title, updated_at,
+        # message_count}) rather than forwarding the full store row —
+        # user_id is redundant (always the caller's own id), and
+        # created_at/metadata/is_archived aren't used by the client and
+        # needlessly widen the response payload/surface area.
+        projected = [
+            {
+                "id": c["id"],
+                "title": c.get("title"),
+                "updated_at": c.get("updated_at"),
+                "message_count": c.get("message_count", 0),
+            }
+            for c in conversations
+        ]
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_list",
+                "conversations": projected,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_conversation_new(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_new`` request — detach from any active conversation.
+
+        Conversation creation stays lazy: no row is written here. The next
+        chat message on this connection mints a brand-new ``thread_id`` and
+        creates the conversation (see ``_handle_chat_message``).
+        """
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        session.metadata["conversation_id"] = None
+        # Stale per-turn feedback cache from the previous conversation no
+        # longer applies once we've detached from it.
+        session.metadata.pop("feedback_meta", None)
+
+    async def _handle_conversation_load(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_load`` request — switch this connection to an existing conversation."""
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        conversation_id = data.get("conversation_id")
+        if not conversation_id or not isinstance(conversation_id, str):
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "conversation_id is required"
+            )
+            return
+
+        conversation = await self.conversation_store.get_conversation(conversation_id)
+        # Do not distinguish "not found" from "belongs to another user" in
+        # the response — that would let a client enumerate valid conversation
+        # ids it doesn't own.
+        if conversation is None or conversation.get("user_id") != session.user_id:
+            await self._send_conversation_error(
+                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+            )
+            return
+
+        cfg: Dict[str, Any] = {"configurable": {"thread_id": conversation_id}}
+        checkpoint_state = await self.chat_graph.aget_state(cfg)
+        checkpoint_values = checkpoint_state.values if checkpoint_state else None
+        if not checkpoint_values:
+            if conversation.get("message_count", 0) > 0:
+                # This conversation has recorded turns, so a missing
+                # checkpoint means the process likely restarted with a
+                # non-persistent checkpointer (MemorySaver) — history was
+                # actually lost, distinct from "no messages yet".
+                await self._send_conversation_error(
+                    websocket,
+                    "conversation_history_unavailable",
+                    "This conversation's message history is unavailable",
+                    conversation_id=conversation_id,
+                )
+                return
+            # A brand-new conversation (e.g. created via REST POST, or the
+            # WebSocket lazy-create failed before the first ainvoke) that
+            # has never had a turn recorded — an empty history is the
+            # correct, loadable state here, not "unavailable".
+            raw_messages: List[Dict[str, Any]] = []
+        else:
+            raw_messages = checkpoint_values.get("messages", [])
+
+        history = self._format_history_messages(raw_messages)
+
+        session.metadata["conversation_id"] = conversation_id
+        # Switching conversations invalidates the per-turn feedback cache
+        # collected against the previously active thread.
+        session.metadata.pop("feedback_meta", None)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_loaded",
+                "conversation_id": conversation_id,
+                "conversation": conversation,
+                "messages": history,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_conversation_delete(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_delete`` request — remove one conversation's metadata row."""
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        conversation_id = data.get("conversation_id")
+        if not conversation_id or not isinstance(conversation_id, str):
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "conversation_id is required"
+            )
+            return
+
+        conversation = await self.conversation_store.get_conversation(conversation_id)
+        if conversation is None or conversation.get("user_id") != session.user_id:
+            await self._send_conversation_error(
+                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+            )
+            return
+
+        await self.conversation_store.delete_conversation(conversation_id)
+        if session.metadata.get("conversation_id") == conversation_id:
+            session.metadata["conversation_id"] = None
+            session.metadata.pop("feedback_meta", None)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_deleted",
+                "conversation_id": conversation_id,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_conversation_delete_all(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_delete_all`` request — remove all of the user's conversations."""
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        deleted_count = await self.conversation_store.delete_all_conversations(session.user_id)
+        session.metadata["conversation_id"] = None
+        session.metadata.pop("feedback_meta", None)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_all_deleted",
+                "deleted_count": deleted_count,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_conversation_rename(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_rename`` request — set an explicit user-chosen title."""
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        conversation_id = data.get("conversation_id")
+        if not conversation_id or not isinstance(conversation_id, str):
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "conversation_id is required"
+            )
+            return
+
+        title = data.get("title")
+        if not title or not isinstance(title, str) or not title.strip():
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "title is required", conversation_id=conversation_id
+            )
+            return
+        title = title.strip()
+
+        conversation = await self.conversation_store.get_conversation(conversation_id)
+        if conversation is None or conversation.get("user_id") != session.user_id:
+            await self._send_conversation_error(
+                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+            )
+            return
+
+        try:
+            await self.conversation_store.update_conversation(conversation_id, title=title)
+        except ConversationNotFoundError:
+            await self._send_conversation_error(
+                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+            )
+            return
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_renamed",
+                "conversation_id": conversation_id,
+                "title": title,
                 "timestamp": datetime.now().isoformat(),
             },
         )

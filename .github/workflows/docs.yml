@@ -36,8 +36,8 @@ on:
     branches:
       - main
     paths:
-      - 'docs/wiki/**'
-      - '.github/workflows/docs.yml'
+      - "docs/wiki/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -85,7 +85,7 @@ jobs:
           git add -A
           git commit -m "chore(docs): sync wiki from ${GITHUB_SHA::7}"
           git push origin "HEAD:${branch}"
-      
+
   markdown-validation:
     name: Validate Markdown (README + docs/wiki)
     runs-on: ubuntu-latest

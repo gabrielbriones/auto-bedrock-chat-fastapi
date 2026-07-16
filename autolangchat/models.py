@@ -547,3 +547,116 @@ class TokenTopUsersResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     items: List[TokenTopUserItem]
+
+
+# ---------------------------------------------------------------------------
+# Conversation REST API models (XMGPLAT-10380)
+# ---------------------------------------------------------------------------
+
+
+class ConversationResponse(BaseModel):
+    """A single conversation metadata row.
+
+    Mirrors the ``dict`` shape returned by
+    :meth:`~autolangchat.db.conversation_base.BaseConversationStore.get_conversation`.
+    ``id`` equals the LangGraph checkpoint ``thread_id`` for this
+    conversation — message history itself is not part of this model; see
+    :class:`ConversationMessagesResponse`.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    id: str
+    user_id: str
+    title: Optional[str] = None
+    created_at: str
+    updated_at: str
+    message_count: int = Field(ge=0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_archived: bool = False
+
+
+class ConversationListResponse(BaseModel):
+    """Paginated envelope returned by ``GET /chat/conversations``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    items: List[ConversationResponse]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+
+
+class ConversationCreateRequest(BaseModel):
+    """Request body for ``POST /chat/conversations``.
+
+    ``user_id`` must match the authenticated caller's resolved identity —
+    it is not a way to create a conversation on another user's behalf.
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    user_id: str
+    title: Optional[str] = None
+
+    @field_validator("user_id")
+    @classmethod
+    def _strip_user_id(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("user_id must not be blank")
+        return v
+
+
+class ConversationUpdateRequest(BaseModel):
+    """Request body for ``PATCH /chat/conversations/{conversation_id}``.
+
+    At least one of ``title``/``metadata`` must be provided (mirrors
+    :meth:`BaseConversationStore.update_conversation`).
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    title: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _require_at_least_one_field(self) -> "ConversationUpdateRequest":
+        if self.title is None and self.metadata is None:
+            raise ValueError("At least one of title or metadata must be provided")
+        return self
+
+
+class ConversationDeleteAllResponse(BaseModel):
+    """Response body for ``DELETE /chat/conversations?user_id=``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    deleted_count: int = Field(ge=0)
+
+
+class ConversationMessageItem(BaseModel):
+    """A single message within a conversation's LangGraph checkpoint history.
+
+    Same shape as the WebSocket ``history``/``conversation_loaded`` message
+    items.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    message_id: Optional[str] = None
+    role: Optional[str] = None
+    content: str = ""
+    timestamp: Optional[str] = None
+    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_results: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ConversationMessagesResponse(BaseModel):
+    """Response body for ``GET /chat/conversations/{conversation_id}/messages``."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    conversation_id: str
+    messages: List[ConversationMessageItem]

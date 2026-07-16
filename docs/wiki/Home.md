@@ -26,6 +26,7 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 | [Feedback Collection](feedback-collection)           | 👍 / 👎 ratings, corrections, FeedbackStore backends                                                                      |
 | [Admin API](admin-api)                               | Reviewer HTTP surface for feedback + KB management                                                                        |
 | [Feedback Synthesis](feedback-synthesis)             | Synthesizing approved feedback into KB articles via LLM                                                                   |
+| [Conversation Persistence](conversation-persistence) | Per-user named conversations, sidebar UI, WebSocket protocol, REST API                                                    |
 | [Continuous Learning Loop](continuous-learning-loop) | Architecture, config, reviewer guide, effectiveness tracking, and troubleshooting for the feedback → synthesis → RAG loop |
 | [CI Pipelines](ci-pipelines)                         | GitHub Actions for tests, linting, and code quality                                                                       |
 | [CD Pipelines](cd-pipelines)                         | GitHub Actions for builds, Docker, staging, and production                                                                |
@@ -45,6 +46,8 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 **Working with AI knowledge bases?** See [RAG Feature](rag-feature).
 
 **Synthesizing approved feedback into KB articles?** See [Feedback Synthesis](feedback-synthesis).
+
+**Want per-user named conversation history and a sidebar UI?** See [Conversation Persistence](conversation-persistence).
 
 **Operating the full learning loop (reviewer guide, credibility decay, troubleshooting)?** See [Continuous Learning Loop](continuous-learning-loop).
 

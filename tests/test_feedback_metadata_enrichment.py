@@ -71,6 +71,7 @@ _handler_stubs = {
     "autolangchat.db": _stub_module(
         "autolangchat.db",
         AuthenticatedUserAuthorizer=object,
+        BaseConversationStore=object,
         BaseFeedbackStore=object,
         BaseKBStore=object,
         BaseTokenUsageStore=object,

@@ -33,6 +33,22 @@ class ChatClient {
         // assistant response so the input can be disabled mid-turn.
         this.awaitingResponse = false;
 
+        // Conversation sidebar (XMGPLAT-10380): activeConversationId is the
+        // LangGraph thread_id for whatever conversation this connection is
+        // currently "in" — kept separate from any WebSocket session/connection
+        // identifier. null until a conversation is created (first chat message)
+        // or explicitly loaded from the sidebar.
+        this._conversationSidebarEnabled = !!window.CONFIG.conversationPersistenceEnabled;
+        this.activeConversationId = null;
+        this.conversations = [];
+        this.conversationSidebar = document.getElementById('conversationSidebar');
+        this.conversationList = document.getElementById('conversationList');
+        this.newChatButton = document.getElementById('newChatButton');
+        this.sidebarToggleButton = document.getElementById('sidebarToggleButton');
+        this.sidebarCloseButton = document.getElementById('sidebarCloseButton');
+        this.sidebarBackdrop = document.getElementById('sidebarBackdrop');
+        this._setupConversationSidebarListeners();
+
         this.setupEventListeners();
         this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
@@ -549,6 +565,7 @@ class ChatClient {
                 // Hide auth modal now that server confirmed credentials
                 const authModal = document.getElementById('authModal');
                 if (authModal) authModal.classList.add('hidden');
+                this._updateConversationSidebarVisibility();
                 break;
 
             case 'auth_failed':
@@ -586,6 +603,7 @@ class ChatClient {
                     userDisplay.style.display = 'none';
                 }
                 this.updateAuthButtonUI();  // Update button after logout
+                this._updateConversationSidebarVisibility();
                 // Disable input if auth is required
                 if (window.CONFIG.requireAuth) {
                     this.messageInput.disabled = true;
@@ -610,6 +628,7 @@ class ChatClient {
                     this.messageInput.disabled = true;
                     this.sendButton.disabled = true;
                 }
+                this._updateConversationSidebarVisibility();
                 break;
 
             case 'typing':
@@ -620,6 +639,58 @@ class ChatClient {
                 this.hideTypingIndicator();
                 this.addMessage('assistant', data.message, data.tool_calls, data.tool_results, data.message_id);
                 this._unlockInputAfterResponse();
+                if (data.conversation_id && data.conversation_id !== this.activeConversationId) {
+                    this.activeConversationId = data.conversation_id;
+                    this._renderConversationList();
+                }
+                break;
+
+            case 'conversation_list':
+                this.conversations = data.conversations || [];
+                this._renderConversationList();
+                break;
+
+            case 'conversation_created':
+                this.activeConversationId = data.conversation_id;
+                this._upsertConversationInList({ id: data.conversation_id, title: null });
+                break;
+
+            case 'conversation_loaded':
+                this.activeConversationId = data.conversation_id;
+                this._renderConversationHistory(data.messages || []);
+                this._renderConversationList();
+                this._closeSidebarDrawer();
+                break;
+
+            case 'conversation_deleted':
+                this.conversations = this.conversations.filter(c => c.id !== data.conversation_id);
+                if (this.activeConversationId === data.conversation_id) {
+                    this.activeConversationId = null;
+                    this._clearChatArea();
+                }
+                this._renderConversationList();
+                break;
+
+            case 'conversation_all_deleted':
+                this.conversations = [];
+                this.activeConversationId = null;
+                this._clearChatArea();
+                this._renderConversationList();
+                break;
+
+            case 'conversation_titled':
+                this._upsertConversationInList({ id: data.conversation_id, title: data.title });
+                break;
+
+            case 'conversation_renamed':
+                this._upsertConversationInList({ id: data.conversation_id, title: data.title });
+                break;
+
+            case 'conversation_error':
+                console.warn('conversation_error', data);
+                if (data.code === 'conversation_history_unavailable') {
+                    this.addMessage('system', `⚠️ ${data.message || 'This conversation\'s history is unavailable.'}`);
+                }
                 break;
 
             case 'feedback_ack':
@@ -654,6 +725,7 @@ class ChatClient {
                 }
                 this.addMessage('system', `⏰ ${data.message || 'Session expired. Please log in again.'}`);
                 this.updateAuthButtonUI();
+                this._updateConversationSidebarVisibility();
                 // Show auth modal with SSO type pre-selected if SSO is configured
                 if (window.CONFIG.ssoEnabled) {
                     const authModal = document.getElementById('authModal');
@@ -1096,6 +1168,207 @@ class ChatClient {
     _unmarkFeedbackSubmitted(messageId) {
         this._submittedFeedback.delete(messageId);
         this._persistSubmittedFeedback();
+    }
+
+    // ------------------------------------------------------------------
+    // Conversation sidebar (XMGPLAT-10380)
+    // ------------------------------------------------------------------
+
+    _setupConversationSidebarListeners() {
+        if (!this._conversationSidebarEnabled) return;
+        if (this.newChatButton) {
+            this.newChatButton.addEventListener('click', () => this.startNewConversation());
+        }
+        if (this.sidebarToggleButton) {
+            this.sidebarToggleButton.addEventListener('click', () => this._toggleSidebarDrawer());
+        }
+        if (this.sidebarCloseButton) {
+            this.sidebarCloseButton.addEventListener('click', () => this._closeSidebarDrawer());
+        }
+        if (this.sidebarBackdrop) {
+            this.sidebarBackdrop.addEventListener('click', () => this._closeSidebarDrawer());
+        }
+    }
+
+    _toggleSidebarDrawer() {
+        if (!this.conversationSidebar) return;
+        const opening = !this.conversationSidebar.classList.contains('open');
+        this.conversationSidebar.classList.toggle('open', opening);
+        if (this.sidebarBackdrop) this.sidebarBackdrop.classList.toggle('open', opening);
+    }
+
+    _closeSidebarDrawer() {
+        if (this.conversationSidebar) this.conversationSidebar.classList.remove('open');
+        if (this.sidebarBackdrop) this.sidebarBackdrop.classList.remove('open');
+    }
+
+    /**
+     * Show/hide the sidebar based on config + auth state, and (re)populate it
+     * once it becomes visible. Called on every auth state transition
+     * (auth_configured, auth_failed, logout_success, auth_expired,
+     * connection_established) so it stays correct across reconnects.
+     */
+    _updateConversationSidebarVisibility() {
+        if (!this._conversationSidebarEnabled) return;
+        const show = this.authenticated;
+        if (this.conversationSidebar) this.conversationSidebar.classList.toggle('hidden', !show);
+        if (this.sidebarToggleButton) this.sidebarToggleButton.classList.toggle('hidden', !show);
+
+        if (!show) {
+            this.activeConversationId = null;
+            this._closeSidebarDrawer();
+            return;
+        }
+
+        this.requestConversationList();
+        // Auto-reconnect: the new connection has no active conversation on
+        // the server (fresh session.metadata), so re-load the one this tab
+        // was last showing rather than silently losing the association.
+        if (this.activeConversationId) {
+            this.loadConversation(this.activeConversationId, /* force */ true);
+        }
+    }
+
+    requestConversationList() {
+        if (!this._conversationSidebarEnabled || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ type: 'conversation_list' }));
+    }
+
+    startNewConversation() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ type: 'conversation_new' }));
+        this.activeConversationId = null;
+        this._clearChatArea();
+        this._renderConversationList();
+        this._closeSidebarDrawer();
+    }
+
+    loadConversation(conversationId, force = false) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (!force && conversationId === this.activeConversationId) {
+            this._closeSidebarDrawer();
+            return;
+        }
+        this.ws.send(JSON.stringify({ type: 'conversation_load', conversation_id: conversationId }));
+    }
+
+    _clearChatArea() {
+        this.chatMessages.innerHTML = '';
+        const welcome = document.createElement('div');
+        welcome.className = 'message system';
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        content.textContent = 'New conversation started.';
+        welcome.appendChild(content);
+        this.chatMessages.appendChild(welcome);
+    }
+
+    _renderConversationHistory(messages) {
+        this.chatMessages.innerHTML = '';
+        (messages || []).forEach((m) => {
+            if (m.role === 'user' || m.role === 'assistant') {
+                this.addMessage(m.role, m.content, m.tool_calls, m.tool_results, m.message_id);
+            }
+        });
+        if (!messages || !messages.length) {
+            this._clearChatArea();
+        }
+    }
+
+    _upsertConversationInList(partial) {
+        const now = new Date().toISOString();
+        const idx = this.conversations.findIndex((c) => c.id === partial.id);
+        if (idx === -1) {
+            this.conversations.unshift(
+                Object.assign({ id: partial.id, title: null, updated_at: now, message_count: 0 }, partial)
+            );
+        } else {
+            this.conversations[idx] = Object.assign(
+                {},
+                this.conversations[idx],
+                partial,
+                { updated_at: partial.updated_at || now }
+            );
+        }
+        this._renderConversationList();
+    }
+
+    _renameConversationPrompt(conv) {
+        const next = window.prompt('Rename conversation', conv.title || '');
+        if (next === null) return;
+        const trimmed = next.trim();
+        if (!trimmed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ type: 'conversation_rename', conversation_id: conv.id, title: trimmed }));
+    }
+
+    _deleteConversationConfirm(conv) {
+        const label = conv.title || 'this conversation';
+        if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ type: 'conversation_delete', conversation_id: conv.id }));
+    }
+
+    _renderConversationList() {
+        if (!this.conversationList) return;
+        this.conversationList.innerHTML = '';
+
+        // The server already orders newest-updated-first; re-sort
+        // defensively since client-side upserts (title/rename) can
+        // perturb ordering without a fresh conversation_list round-trip.
+        const sorted = [...this.conversations].sort((a, b) =>
+            (b.updated_at || '').localeCompare(a.updated_at || '')
+        );
+
+        sorted.forEach((conv) => {
+            const li = document.createElement('li');
+            li.className = 'conversation-item' + (conv.id === this.activeConversationId ? ' active' : '');
+            li.dataset.conversationId = conv.id;
+
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'conversation-item-title';
+            titleSpan.textContent = conv.title || 'Untitled conversation';
+            li.appendChild(titleSpan);
+
+            const actions = document.createElement('span');
+            actions.className = 'conversation-item-actions';
+
+            const renameBtn = document.createElement('button');
+            renameBtn.type = 'button';
+            renameBtn.className = 'conv-action-btn conv-rename-btn';
+            renameBtn.title = 'Rename';
+            renameBtn.setAttribute('aria-label', 'Rename conversation');
+            renameBtn.textContent = '✎';
+            renameBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._renameConversationPrompt(conv);
+            });
+            actions.appendChild(renameBtn);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'conv-action-btn conv-delete-btn';
+            deleteBtn.title = 'Delete';
+            deleteBtn.setAttribute('aria-label', 'Delete conversation');
+            deleteBtn.textContent = '🗑';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._deleteConversationConfirm(conv);
+            });
+            actions.appendChild(deleteBtn);
+
+            li.appendChild(actions);
+            li.setAttribute('role', 'button');
+            li.tabIndex = 0;
+            li.addEventListener('click', () => this.loadConversation(conv.id));
+            li.addEventListener('keydown', (e) => {
+                if (e.target !== li) return; // ignore keypresses on nested action buttons
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.loadConversation(conv.id);
+                }
+            });
+            this.conversationList.appendChild(li);
+        });
     }
 
     showTypingIndicator(message = 'AI is typing...') {
