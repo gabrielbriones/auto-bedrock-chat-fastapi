@@ -335,9 +335,9 @@ class TestToolManagerExecuteCap:
         assert result_ids == call_ids
 
 
-# ---------------------------------------------------------------------------
-# ToolManager.execute_tool_calls — concurrent execution (XMGPLAT-10911)
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------
+# ToolManager.execute_tool_calls — concurrent execution 
+# ------------------------------------------------------
 
 
 class TestToolManagerExecuteConcurrency:
