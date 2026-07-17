@@ -336,7 +336,7 @@ class TestToolManagerExecuteCap:
 
 
 # ------------------------------------------------------
-# ToolManager.execute_tool_calls — concurrent execution 
+# ToolManager.execute_tool_calls — concurrent execution
 # ------------------------------------------------------
 
 
