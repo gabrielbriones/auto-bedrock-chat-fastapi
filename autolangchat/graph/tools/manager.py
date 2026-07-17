@@ -272,7 +272,10 @@ class ToolManager:
             # so messages stay meaningful even though execution below happens
             # concurrently.
             if on_progress is not None:
-                await on_progress(f"Calling {function_name}... ({position}/{total_tools})")
+                try:
+                    await on_progress(f"Calling {function_name}... ({position}/{total_tools})")
+                except Exception as e:
+                    logger.error(f"Error in on_progress callback for {function_name}: {e}")
 
             pending_indices.append(i)
             pending_coros.append(self._execute_single_tool_call(tool_metadata, arguments, auth_info))
