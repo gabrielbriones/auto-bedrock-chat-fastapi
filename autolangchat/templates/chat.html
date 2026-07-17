@@ -45,13 +45,19 @@
                 </div>
                 <div class="chat-header-center">
                     <h1>{{ ui_title }}</h1>
-                    <p>Powered by {{ model_id }}</p>
+                    <p>Powered by <span id="modelIdDisplay">{{ model_display_name }}</span></p>
                 </div>
                 <div class="chat-header-right">
                     <span id="ssoUserDisplay" class="sso-user-display"></span>
                     {% if admin_enabled %}
                     <button id="dashboardButton" class="dashboard-btn" style="display:none"
                             title="Admin Dashboard">Dashboard</button>
+                    {% endif %}
+                    {% if enable_config_sidebar %}
+                    <button id="configSidebarToggleButton" class="config-sidebar-toggle-btn" type="button"
+                            title="Settings" aria-label="Open settings">
+                        &#9881;<span class="config-override-badge hidden" id="configOverrideBadge">0</span>
+                    </button>
                     {% endif %}
                     <button id="authButton" class="auth-button">Log in</button>
                 </div>
@@ -79,6 +85,21 @@
                 <button id="sendButton" disabled>Send</button>
             </div>
         </div>
+
+        {% if enable_config_sidebar %}
+        <div class="config-sidebar-backdrop" id="configSidebarBackdrop"></div>
+        <aside class="config-sidebar" id="configSidebar">
+            <div class="config-sidebar-header">
+                <h2>Settings</h2>
+                <button id="configSidebarCloseButton" class="sidebar-close-btn" type="button"
+                        aria-label="Close settings">&times;</button>
+            </div>
+            <div class="config-sidebar-body" id="configSidebarBody"></div>
+            <div class="config-sidebar-footer">
+                <button id="configResetButton" class="config-reset-btn" type="button">Reset to defaults</button>
+            </div>
+        </aside>
+        {% endif %}
     </div>
 
     <script>
@@ -102,6 +123,10 @@
             adminPrefix: {{ admin_prefix | tojson }},
             dashboardUrl: {{ dashboard_url | tojson }},
             conversationPersistenceEnabled: {{ 'true' if conversation_persistence_enabled else 'false' }},
+            enableConfigSidebar: {{ 'true' if enable_config_sidebar else 'false' }},
+            allowedDynamicOverrides: {{ allowed_dynamic_overrides | tojson }},
+            availableModels: {{ available_models | tojson }},
+            overrideDefaults: {{ override_defaults | tojson }},
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

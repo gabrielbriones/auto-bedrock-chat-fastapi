@@ -550,6 +550,7 @@ class AutoLangChatPlugin:
                             "default_auth_type": self.config.default_auth_type or "",
                             "ui_title": self.config.ui_title,
                             "model_id": self.config.model_id,
+                            "model_display_name": self.config.get_model_display_name(),
                             "ui_welcome_message": self.config.ui_welcome_message,
                             "app_title": self.app.title or "API",
                             "preset_prompts": self._preset_prompts,
@@ -570,6 +571,29 @@ class AutoLangChatPlugin:
                                 f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
                             ),
                             "conversation_persistence_enabled": conversation_persistence_enabled,
+                            # Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+                            "enable_config_sidebar": bool(
+                                self.config.enable_config_sidebar and self.config.enable_dynamic_overrides
+                            ),
+                            "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,
+                            # Model choices for the sidebar's model_id dropdown, sourced from
+                            # AUTOCHAT_AVAILABLE_MODELS (falls back to a built-in default list).
+                            # Each entry is {"id": model_id, "name": display_name} -- the UI only
+                            # ever renders "name"; the backend keeps using "id" (model_id).
+                            "available_models": self.config.get_available_models_for_ui(),
+                            # Current global values for every overridable parameter, so the
+                            # sidebar's controls start at the actual effective defaults rather
+                            # than an arbitrary client-side fallback.
+                            "override_defaults": {
+                                "model_id": self.config.model_id,
+                                "temperature": self.config.temperature,
+                                "max_tokens": self.config.max_tokens,
+                                "top_p": self.config.top_p,
+                                "enable_ai_summarization": self.config.enable_ai_summarization,
+                                "enable_rag": self.config.enable_rag,
+                                "kb_top_k_results": self.config.kb_top_k_results,
+                                "kb_similarity_threshold": self.config.kb_similarity_threshold,
+                            },
                         },
                     )
                 except Exception as e:

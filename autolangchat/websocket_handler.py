@@ -268,6 +268,10 @@ class WebSocketChatHandler:
                     await self._handle_conversation_delete_all(websocket, message_data)
                 elif message_type == "conversation_rename":
                     await self._handle_conversation_rename(websocket, message_data)
+                elif message_type == "config_update":
+                    await self._handle_config_update(websocket, message_data)
+                elif message_type == "config_reset":
+                    await self._handle_config_reset(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -353,6 +357,41 @@ class WebSocketChatHandler:
                 metadata=session.metadata,
             )
 
+            # ------------------------------------------------------------------
+            # Dynamic parameter overrides (XMGPLAT-9697).
+            #
+            # Priority: per-message overrides > per-session overrides > global
+            # config. `override_mode: "session"` additionally persists the
+            # *valid* per-message overrides onto the session so they apply to
+            # subsequent turns until changed (`config_update`) or cleared
+            # (`config_reset`); the default `"message"` mode applies them only
+            # to this turn. Rejected overrides (disabled feature, not in the
+            # allowlist, bad type/range, etc.) are surfaced in the response
+            # metadata below rather than failing the whole turn.
+            # ------------------------------------------------------------------
+            raw_overrides: Dict[str, Any] = data.get("config_overrides") or {}
+            override_mode = data.get("override_mode", "message")
+            valid_message_overrides, override_rejections = self._apply_config_overrides(
+                session, raw_overrides, override_mode
+            )
+            merged_overrides = {**session.metadata.get("config_overrides", {}), **valid_message_overrides}
+            effective_config = self.config.model_copy(update=merged_overrides) if merged_overrides else self.config
+            # NOTE: `valid_message_overrides` is only what arrived inline on *this*
+            # chat message's `config_overrides` field -- it's normally empty when
+            # overrides come from the settings sidebar, since those are sent as a
+            # separate `config_update` message (session-persisted) rather than
+            # embedded in the `chat` message. Log the merged/effective result
+            # (what actually reaches the graph this turn), not just the
+            # per-message piece, or this line looks like overrides "didn't work"
+            # even when a session override is correctly in effect.
+            logger.debug(
+                "Config overrides for this turn: message=%s (rejections=%s), " "session=%s, merged=%s",
+                valid_message_overrides,
+                override_rejections,
+                session.metadata.get("config_overrides", {}),
+                merged_overrides,
+            )
+
             # Closure: send progress updates to the WebSocket client
             async def _on_progress(msg_dict: Dict[str, Any]) -> None:
                 await self._send_message(websocket, msg_dict)
@@ -430,6 +469,7 @@ class WebSocketChatHandler:
                         "kb_store": self.kb_store,
                         "embedding_client": self.embedding_client,
                         "auth_context_text": auth_context_text,
+                        "chat_config": effective_config,
                     }
                 },
             )
@@ -454,17 +494,24 @@ class WebSocketChatHandler:
                     "total_tool_calls": graph_metadata.get("total_tool_calls", 0),
                     "preprocessing_applied": graph_metadata.get("preprocessing_applied", False),
                     "kb_chunks": len(kb_results) if kb_results else 0,
-                    "model_id": self.config.model_id,
+                    "model_id": effective_config.model_id,
                     "ts": datetime.now().astimezone().isoformat(),
                 },
             )
             logger.debug(f"Chat graph response ({len(content):,} chars): {content[:100]}")
 
             response_metadata = final_response.get("metadata", {}).copy()
-            response_metadata["model_id"] = self.config.model_id
+            response_metadata["model_id"] = effective_config.model_id
+            # Human-readable name for the "Powered by ..." chat header (XMGPLAT-9697).
+            # Matches model_id above -- the *configured* model for this turn, not
+            # necessarily whichever model actually answered (see NOTE near the
+            # token-usage-store call below re: fallback_model retries).
+            response_metadata["model_name"] = effective_config.get_model_display_name()
             response_metadata["tool_call_rounds"] = graph_metadata.get("tool_call_rounds", 0)
             response_metadata["total_tool_calls"] = graph_metadata.get("total_tool_calls", 0)
             response_metadata["preprocessing_applied"] = graph_metadata.get("preprocessing_applied", False)
+            if override_rejections:
+                response_metadata["rejected_overrides"] = override_rejections
             # Surface token counts at the top level (bubbled by llm_call into graph_metadata)
             if graph_metadata.get("input_tokens") is not None:
                 response_metadata["input_tokens"] = graph_metadata["input_tokens"]
@@ -549,16 +596,16 @@ class WebSocketChatHandler:
                     try:
                         # NOTE: intentionally NOT response_metadata["model_id"] —
                         # that field is unconditionally overwritten with the
-                        # statically configured model a few lines above (for the
-                        # client-facing payload). graph_metadata["model_id"] is
-                        # the model that actually produced this response, which
+                        # effective per-turn configured model a few lines above
+                        # (for the client-facing payload). graph_metadata["model_id"]
+                        # is the model that actually produced this response, which
                         # may be the fallback_model if a context-window retry
                         # occurred; that's what billing/observability needs.
                         await self.token_usage_store.record_turn(
                             turn_id=message_id,
                             session_id=session.session_id,
                             user_id=session.user_id,
-                            model_id=graph_metadata.get("model_id") or self.config.model_id,
+                            model_id=graph_metadata.get("model_id") or effective_config.model_id,
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
                             turn_ts=datetime.now(timezone.utc),
@@ -966,6 +1013,90 @@ class WebSocketChatHandler:
             {
                 "type": "history_cleared",
                 "message": "Conversation history cleared",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Dynamic parameter overrides (XMGPLAT-9697)
+    # ------------------------------------------------------------------
+
+    def _apply_config_overrides(
+        self, session: ChatSession, raw_overrides: Dict[str, Any], override_mode: str
+    ) -> tuple[Dict[str, Any], List[str]]:
+        """Validate ``raw_overrides`` against ``self.config`` and, when
+        ``override_mode == "session"``, persist the valid ones onto
+        ``session.metadata["config_overrides"]`` so they apply to subsequent
+        turns until changed or cleared (``config_reset``).
+
+        Returns the ``(valid_overrides, rejection_reasons)`` for *this call
+        only* — not the full merged/active set (see ``session.metadata.get(
+        "config_overrides", {})`` for that).
+        """
+        if not raw_overrides:
+            return {}, []
+
+        valid_overrides, rejection_reasons = self.config.validate_overrides(raw_overrides)
+
+        if override_mode == "session" and valid_overrides:
+            session.metadata.setdefault("config_overrides", {}).update(valid_overrides)
+
+        return valid_overrides, rejection_reasons
+
+    async def _handle_config_update(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Handle a ``config_update`` message: validate dynamic parameter
+        overrides and (by default) persist them on the session, without
+        triggering a chat turn. Responds with ``config_updated`` confirming
+        the full set of currently active session overrides.
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return
+
+        raw_overrides: Dict[str, Any] = data.get("config_overrides") or {}
+        override_mode = data.get("override_mode", "session")
+
+        valid_overrides, rejection_reasons = self._apply_config_overrides(session, raw_overrides, override_mode)
+        logger.debug(
+            "config_update: mode=%s raw=%s -> applied=%s rejected=%s active_session_overrides=%s",
+            override_mode,
+            raw_overrides,
+            valid_overrides,
+            rejection_reasons,
+            session.metadata.get("config_overrides", {}),
+        )
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "config_updated",
+                "active_overrides": session.metadata.get("config_overrides", {}),
+                "applied_overrides": valid_overrides,
+                "rejected_overrides": rejection_reasons,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_config_reset(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Handle a ``config_reset`` message: clear all session-level dynamic
+        parameter overrides, reverting subsequent turns to global config
+        defaults. Responds with ``config_updated`` (empty active overrides).
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return
+
+        session.metadata.pop("config_overrides", None)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "config_updated",
+                "active_overrides": {},
+                "applied_overrides": {},
+                "rejected_overrides": [],
                 "timestamp": datetime.now().isoformat(),
             },
         )

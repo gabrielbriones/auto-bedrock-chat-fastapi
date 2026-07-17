@@ -24,6 +24,40 @@ from .defaults import (
 )
 from .exceptions import ConfigurationError
 
+try:
+    # Source of truth for supported Bedrock model IDs and their human-readable
+    # "name" (used to label the model_id dropdown in the settings sidebar).
+    # Only models present here are supported -- see ChatConfig's model_id/
+    # fallback_model/available_models validators below.
+    from langchain_aws.data._profiles import _PROFILES
+except ImportError:  # pragma: no cover -- langchain-aws is a required dependency
+    _PROFILES: Dict[str, Dict[str, Any]] = {}
+
+# ---------------------------------------------------------------------------
+# Dynamic Parameter Overrides (XMGPLAT-9697)
+# ---------------------------------------------------------------------------
+# Parameters end users may override per-message or per-session via WebSocket
+# metadata, gated by `enable_dynamic_overrides` and the `allowed_dynamic_overrides`
+# allowlist (see ChatConfig.validate_overrides()). `max_tool_calls` and
+# `preserve_system_message` are intentionally excluded for now -- see
+# docs/plans/XMGPLAT-9697-dynamic-parameter-overrides.md for why.
+OVERRIDABLE_LLM_PARAMS = frozenset({"model_id", "temperature", "max_tokens", "top_p"})
+OVERRIDABLE_FEATURE_TOGGLES = frozenset(
+    {"enable_ai_summarization", "enable_rag", "kb_top_k_results", "kb_similarity_threshold"}
+)
+OVERRIDABLE_PARAMS = OVERRIDABLE_LLM_PARAMS | OVERRIDABLE_FEATURE_TOGGLES
+
+# Built-in fallback for the settings sidebar's model_id dropdown, used when
+# `AUTOCHAT_AVAILABLE_MODELS` isn't set (see `ChatConfig.get_available_models()`).
+DEFAULT_AVAILABLE_MODELS = [
+    "us.anthropic.claude-sonnet-5",
+    "us.anthropic.claude-sonnet-4-6",
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "us.anthropic.claude-opus-4-8",
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "openai.gpt-oss-safeguard-120b",
+]
+
 
 def _get_env_file() -> str:
     """Determine which .env file to use based on environment"""
@@ -75,6 +109,43 @@ class ChatConfig(BaseSettings):
         ge=0.0,
         le=1.0,
         description="Top-p sampling parameter",
+    )
+
+    # Dynamic Parameter Overrides Configuration
+    enable_dynamic_overrides: bool = Field(
+        default=False,
+        alias="AUTOCHAT_ENABLE_DYNAMIC_OVERRIDES",
+        description=(
+            "Master switch allowing end users to override LLM params and feature toggles "
+            "per message or per session via WebSocket metadata. Default: False."
+        ),
+    )
+
+    allowed_dynamic_overrides: Optional[List[str]] = Field(
+        default=None,
+        alias="AUTOCHAT_ALLOWED_DYNAMIC_OVERRIDES",
+        description=(
+            "Allowlist of parameter names end users may override. When None and "
+            "enable_dynamic_overrides is True, all overridable params are allowed. "
+            "See OVERRIDABLE_PARAMS in config.py for the full set."
+        ),
+    )
+
+    enable_config_sidebar: bool = Field(
+        default=False,
+        alias="AUTOCHAT_ENABLE_CONFIG_SIDEBAR",
+        description="Whether to show the dynamic parameter overrides settings sidebar in the chat UI.",
+    )
+
+    available_models: Optional[List[str]] = Field(
+        default=None,
+        alias="AUTOCHAT_AVAILABLE_MODELS",
+        description=(
+            "Comma-separated list of model IDs offered in the settings sidebar's "
+            "model_id dropdown (dynamic parameter overrides). When unset, falls back "
+            "to a built-in default list -- see DEFAULT_AVAILABLE_MODELS in config.py "
+            "and ChatConfig.get_available_models()."
+        ),
     )
 
     # System Configuration
@@ -982,11 +1053,11 @@ class ChatConfig(BaseSettings):
     )
 
     kb_similarity_threshold: float = Field(
-        default=0.0,
+        default=0.3,
         alias="KB_SIMILARITY_THRESHOLD",
         ge=0.0,
         le=1.0,
-        description="Minimum similarity score for KB results (default: 0.0). Set higher (e.g. 0.3-0.5) to filter low-relevance results.",
+        description="Minimum similarity score for KB results (default: 0.3). Set lower (e.g. 0.0-0.2) to broaden matches.",
     )
 
     kb_semantic_weight: float = Field(
@@ -1089,6 +1160,8 @@ class ChatConfig(BaseSettings):
         "excluded_paths",
         "admin_required_groups",
         "feedback_authorized_users",
+        "allowed_dynamic_overrides",
+        "available_models",
         mode="before",
     )
     @classmethod
@@ -1104,6 +1177,50 @@ class ChatConfig(BaseSettings):
         """Validate temperature range"""
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"Temperature must be between 0.0 and 1.0, got {v}")
+        return v
+
+    @field_validator("model_id")
+    @classmethod
+    def validate_model_id_is_supported(cls, v):
+        """Restrict model_id to known langchain-aws model profiles.
+
+        _PROFILES (langchain_aws.data._profiles) is also the source of the
+        human-readable "name" used to label the model_id dropdown in the
+        settings sidebar -- only profiled model IDs are supported so a
+        display name is always available. Skipped (not enforced) if
+        _PROFILES failed to import, since we then have nothing to validate
+        against.
+        """
+        if _PROFILES and v not in _PROFILES:
+            raise ValueError(
+                f"model_id '{v}' is not a recognized Bedrock model profile "
+                "(see langchain_aws.data._profiles._PROFILES for the supported set)."
+            )
+        return v
+
+    @field_validator("fallback_model")
+    @classmethod
+    def validate_fallback_model_is_supported(cls, v):
+        """Same profile restriction as model_id, when configured."""
+        if v is not None and _PROFILES and v not in _PROFILES:
+            raise ValueError(
+                f"fallback_model '{v}' is not a recognized Bedrock model profile "
+                "(see langchain_aws.data._profiles._PROFILES for the supported set)."
+            )
+        return v
+
+    @field_validator("available_models")
+    @classmethod
+    def validate_available_models_are_supported(cls, v):
+        """Same profile restriction as model_id, applied to every entry."""
+        if v is None or not _PROFILES:
+            return v
+        unknown = [m for m in v if m not in _PROFILES]
+        if unknown:
+            raise ValueError(
+                f"available_models contains unrecognized model id(s): {unknown} "
+                "(see langchain_aws.data._profiles._PROFILES for the supported set)."
+            )
         return v
 
     @field_validator("single_msg_truncation_target")
@@ -1275,6 +1392,144 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,
         }
+
+    def get_available_models(self) -> List[str]:
+        """Model IDs to offer in the settings sidebar's model_id dropdown.
+
+        Returns ``available_models`` when explicitly configured (via
+        ``AUTOCHAT_AVAILABLE_MODELS``), otherwise falls back to
+        ``DEFAULT_AVAILABLE_MODELS``.
+        """
+        return self.available_models or DEFAULT_AVAILABLE_MODELS
+
+    def get_available_models_for_ui(self) -> List[Dict[str, Any]]:
+        """``get_available_models()``, paired with each model's human-readable
+        display name and ``temperature``-support flag from ``_PROFILES``, for
+        rendering in the settings sidebar.
+
+        The UI only ever sees ``name`` for display; the backend keeps using
+        the raw ``id`` (``model_id``) for everything else. The currently
+        configured ``model_id`` is always included (even if omitted from
+        ``available_models``) so the dropdown never lacks the active model.
+
+        ``supports_temperature`` mirrors ``_PROFILES[id]["temperature"]`` and
+        is used by the frontend to show/hide the temperature *and* top_p
+        controls together: `_PROFILES` has no separate top_p flag, and models
+        that disable temperature sampling (e.g. some reasoning models) don't
+        accept top_p either -- Bedrock Converse only lets a request specify
+        one of the two anyway (see ``_build_llm`` in ``graph/nodes/llm_call.py``).
+        Defaults to ``True`` (show the controls) when unknown, so a missing
+        profile entry degrades to the pre-existing always-show behavior.
+
+        ``max_output_tokens`` mirrors ``_PROFILES[id]["max_output_tokens"]`` and
+        is used by the frontend to cap the max_tokens control's upper bound (and
+        clamp its current value down) per selected model. ``None`` when unknown,
+        in which case the frontend falls back to its own static ceiling.
+        """
+        model_ids = list(self.get_available_models())
+        if self.model_id not in model_ids:
+            model_ids = [self.model_id] + model_ids
+
+        return [
+            {
+                "id": model_id,
+                "name": _PROFILES.get(model_id, {}).get("name", model_id),
+                "supports_temperature": _PROFILES.get(model_id, {}).get("temperature", True),
+                "max_output_tokens": _PROFILES.get(model_id, {}).get("max_output_tokens"),
+            }
+            for model_id in model_ids
+        ]
+
+    def get_model_display_name(self, model_id: Optional[str] = None) -> str:
+        """Human-readable ``_PROFILES[model_id]["name"]`` for the given (or current)
+        model_id, e.g. for the "Powered by ..." chat header. Falls back to the raw
+        model_id itself when it has no profile entry (shouldn't normally happen
+        since model_id is validated against ``_PROFILES`` at construction time).
+        """
+        resolved_model_id = model_id or self.model_id
+        return _PROFILES.get(resolved_model_id, {}).get("name", resolved_model_id)
+
+    def validate_overrides(self, overrides: Dict[str, Any]) -> "tuple[Dict[str, Any], List[str]]":
+        """Validate and filter a dict of proposed dynamic parameter overrides.
+
+        Applies the ``enable_dynamic_overrides`` master switch, the
+        ``allowed_dynamic_overrides`` allowlist, and per-parameter type/range
+        validation. Invalid or disallowed keys are rejected individually (with a
+        reason) rather than aborting the whole batch, so a request can end up
+        with a partial set of applied overrides.
+
+        Args:
+            overrides: Proposed ``{param_name: value}`` overrides.
+
+        Returns:
+            Tuple of ``(valid_overrides, rejection_reasons)``.
+        """
+        valid_overrides: Dict[str, Any] = {}
+        rejection_reasons: List[str] = []
+
+        if not overrides:
+            return valid_overrides, rejection_reasons
+
+        if not self.enable_dynamic_overrides:
+            rejection_reasons.append("Dynamic parameter overrides are disabled (enable_dynamic_overrides=False)")
+            return valid_overrides, rejection_reasons
+
+        allowlist = set(self.allowed_dynamic_overrides) if self.allowed_dynamic_overrides is not None else None
+
+        for key, value in overrides.items():
+            if key not in OVERRIDABLE_PARAMS:
+                rejection_reasons.append(f"'{key}' is not an overridable parameter")
+                continue
+            if allowlist is not None and key not in allowlist:
+                rejection_reasons.append(f"'{key}' is not in allowed_dynamic_overrides")
+                continue
+
+            error = self._validate_override_value(key, value)
+            if error:
+                rejection_reasons.append(error)
+                continue
+
+            valid_overrides[key] = value
+
+        return valid_overrides, rejection_reasons
+
+    @staticmethod
+    def _validate_override_value(key: str, value: Any) -> Optional[str]:
+        """Return an error message if ``value`` is invalid for ``key``, else ``None``."""
+        if key == "model_id":
+            if not isinstance(value, str) or not value.strip():
+                return "model_id must be a non-empty string"
+            if _PROFILES and value not in _PROFILES:
+                return f"model_id '{value}' is not a recognized Bedrock model profile"
+        elif key == "temperature":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return "temperature must be a number"
+            if not 0.0 <= float(value) <= 1.0:
+                return "temperature must be between 0.0 and 1.0"
+        elif key == "max_tokens":
+            if isinstance(value, bool) or not isinstance(value, int):
+                return "max_tokens must be an integer"
+            if value <= 0:
+                return "max_tokens must be greater than 0"
+        elif key == "top_p":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return "top_p must be a number"
+            if not 0.0 <= float(value) <= 1.0:
+                return "top_p must be between 0.0 and 1.0"
+        elif key in ("enable_ai_summarization", "enable_rag"):
+            if not isinstance(value, bool):
+                return f"{key} must be a boolean"
+        elif key == "kb_top_k_results":
+            if isinstance(value, bool) or not isinstance(value, int):
+                return "kb_top_k_results must be an integer"
+            if value <= 0:
+                return "kb_top_k_results must be greater than 0"
+        elif key == "kb_similarity_threshold":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return "kb_similarity_threshold must be a number"
+            if not 0.0 <= float(value) <= 1.0:
+                return "kb_similarity_threshold must be between 0.0 and 1.0"
+        return None
 
 
 def load_config(

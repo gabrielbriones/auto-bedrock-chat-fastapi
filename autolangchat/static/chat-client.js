@@ -49,6 +49,20 @@ class ChatClient {
         this.sidebarBackdrop = document.getElementById('sidebarBackdrop');
         this._setupConversationSidebarListeners();
 
+        // Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+        this._configSidebarEnabled = !!window.CONFIG.enableConfigSidebar;
+        this._allowedDynamicOverrides = window.CONFIG.allowedDynamicOverrides || null;
+        this._activeConfigOverrides = {};
+        this.configSidebarToggleButton = document.getElementById('configSidebarToggleButton');
+        this.configSidebar = document.getElementById('configSidebar');
+        this.configSidebarCloseButton = document.getElementById('configSidebarCloseButton');
+        this.configSidebarBackdrop = document.getElementById('configSidebarBackdrop');
+        this.configSidebarBody = document.getElementById('configSidebarBody');
+        this.configResetButton = document.getElementById('configResetButton');
+        this.configOverrideBadge = document.getElementById('configOverrideBadge');
+        this.modelIdDisplay = document.getElementById('modelIdDisplay');
+        this._setupConfigSidebarListeners();
+
         this.setupEventListeners();
         this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
@@ -643,6 +657,17 @@ class ChatClient {
                     this.activeConversationId = data.conversation_id;
                     this._renderConversationList();
                 }
+                if (data.metadata && data.metadata.rejected_overrides && data.metadata.rejected_overrides.length) {
+                    console.warn('Rejected config overrides:', data.metadata.rejected_overrides);
+                }
+                // Authoritative source for which model actually produced this
+                // turn (accounts for per-message overrides and fallback_model
+                // retries, not just what the sidebar last set). Prefer the
+                // server-provided human-readable name; fall back to the raw
+                // model_id if an older server doesn't send model_name yet.
+                if (this.modelIdDisplay && data.metadata && data.metadata.model_id) {
+                    this.modelIdDisplay.textContent = data.metadata.model_name || data.metadata.model_id;
+                }
                 break;
 
             case 'conversation_list':
@@ -699,6 +724,10 @@ class ChatClient {
 
             case 'feedback_error':
                 this._handleFeedbackError(data);
+                break;
+
+            case 'config_updated':
+                this._handleConfigUpdated(data);
                 break;
 
             case 'error':
@@ -1369,6 +1398,393 @@ class ChatClient {
             });
             this.conversationList.appendChild(li);
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Dynamic parameter overrides settings sidebar (XMGPLAT-9697)
+    // ------------------------------------------------------------------
+
+    _setupConfigSidebarListeners() {
+        if (!this._configSidebarEnabled) return;
+        if (this.configSidebarToggleButton) {
+            this.configSidebarToggleButton.addEventListener('click', () => this._toggleConfigSidebarDrawer());
+        }
+        if (this.configSidebarCloseButton) {
+            this.configSidebarCloseButton.addEventListener('click', () => this._closeConfigSidebarDrawer());
+        }
+        if (this.configSidebarBackdrop) {
+            this.configSidebarBackdrop.addEventListener('click', () => this._closeConfigSidebarDrawer());
+        }
+        if (this.configResetButton) {
+            this.configResetButton.addEventListener('click', () => this._sendConfigReset());
+        }
+        this._renderConfigSidebarControls();
+    }
+
+    _toggleConfigSidebarDrawer() {
+        if (!this.configSidebar) return;
+        const opening = !this.configSidebar.classList.contains('open');
+        this.configSidebar.classList.toggle('open', opening);
+        if (this.configSidebarBackdrop) this.configSidebarBackdrop.classList.toggle('open', opening);
+    }
+
+    _closeConfigSidebarDrawer() {
+        if (this.configSidebar) this.configSidebar.classList.remove('open');
+        if (this.configSidebarBackdrop) this.configSidebarBackdrop.classList.remove('open');
+    }
+
+    /** Definitions for every dynamically-overridable parameter's sidebar control. */
+    static get DYNAMIC_OVERRIDE_FIELDS() {
+        return [
+            {
+                key: 'model_id', label: 'Model', type: 'select',
+                // Sourced from AUTOCHAT_AVAILABLE_MODELS (server config), not hardcoded --
+                // see window.CONFIG.availableModels (set in plugin.py / chat.html).
+                options: window.CONFIG.availableModels || [],
+            },
+            { key: 'temperature', label: 'Temperature', type: 'range', min: 0, max: 1, step: 0.1 },
+            { key: 'top_p', label: 'Top P', type: 'range', min: 0, max: 1, step: 0.1 },
+            { key: 'max_tokens', label: 'Max output tokens', type: 'number', min: 1, max: 100000, step: 1 },
+            {
+                key: 'enable_ai_summarization', label: 'AI summarization', type: 'checkbox',
+                tooltip: 'Technique for handling input that\'s too large to process in one go. '
+                    + 'Off: the text is smartly truncated — faster responses, less token usage. '
+                    + 'On: everything is processed in chunks instead — no info is lost, but token usage '
+                    + 'is much higher. Has no effect when the input isn\'t actually large.',
+            },
+            { key: 'enable_rag', label: 'Knowledge base (RAG)', type: 'checkbox' },
+            { key: 'kb_top_k_results', label: 'KB results (top-K)', type: 'number', min: 1, max: 20, step: 1 },
+            {
+                key: 'kb_similarity_threshold', label: 'KB similarity threshold', type: 'range', min: 0, max: 1, step: 0.05,
+                tooltip: 'Minimum relevance score a knowledge-base result must have to be used '
+                    + '(0.0–1.0). Recommended range: 0.3–0.7. Lower values return more results but some '
+                    + 'may be less relevant; higher values are stricter and may return nothing if no good match exists.',
+            },
+        ];
+    }
+
+    /** Only the fields allowed by the server's `allowedDynamicOverrides` (null = all). */
+    _visibleOverrideFields() {
+        const fields = ChatClient.DYNAMIC_OVERRIDE_FIELDS;
+        if (!this._allowedDynamicOverrides) return fields;
+        const allowed = new Set(this._allowedDynamicOverrides);
+        return fields.filter((f) => allowed.has(f.key));
+    }
+
+    /** Human-readable display name for a model_id, sourced from
+     * window.CONFIG.availableModels ({id, name} entries -- see
+     * ChatConfig.get_available_models_for_ui()). Falls back to the raw id
+     * itself if it isn't found there (e.g. a fallback_model not offered in
+     * the dropdown). */
+    _modelIdToName(modelId) {
+        if (!modelId) return modelId;
+        const match = (window.CONFIG.availableModels || []).find((m) => m.id === modelId);
+        return match ? match.name : modelId;
+    }
+
+    /** Loose equality for comparing an override's current value against its
+     * global default, used to decide whether a control should show the
+     * "overridden" highlight. Handles booleans (checkbox values arrive as
+     * real booleans) and numbers (floating-point tolerance for the range
+     * sliders, since e.g. 0.1 + 0.2 !== 0.3 in JS) alongside plain string
+     * equality for model_id. */
+    _valueEqualsDefault(value, defaultValue) {
+        if (typeof value === 'boolean' || typeof defaultValue === 'boolean') {
+            return !!value === !!defaultValue;
+        }
+        if (typeof value === 'number' && typeof defaultValue === 'number') {
+            return Math.abs(value - defaultValue) < 1e-9;
+        }
+        return value === defaultValue;
+    }
+
+    /** Build a small "?" icon that shows `tooltipText` on hover/focus (see the
+     * .config-help-icon CSS rules for the actual tooltip bubble). Focusable
+     * and labeled for keyboard/screen-reader users, not just mouse hover. */
+    _buildHelpIcon(tooltipText) {
+        const icon = document.createElement('span');
+        icon.className = 'config-help-icon';
+        icon.textContent = '?';
+        icon.dataset.tooltip = tooltipText;
+        icon.title = tooltipText;
+        icon.tabIndex = 0;
+        icon.setAttribute('role', 'img');
+        icon.setAttribute('aria-label', tooltipText);
+        return icon;
+    }
+
+    _renderConfigSidebarControls() {
+        if (!this._configSidebarEnabled || !this.configSidebarBody) return;
+        this.configSidebarBody.innerHTML = '';
+
+        this._visibleOverrideFields().forEach((field) => {
+            const row = document.createElement('div');
+            row.className = 'config-control-row';
+            row.dataset.overrideKey = field.key;
+
+            if (field.type === 'checkbox') {
+                row.classList.add('config-toggle-row');
+                const label = document.createElement('label');
+                label.htmlFor = `override_${field.key}`;
+                label.appendChild(document.createTextNode(field.label));
+                if (field.tooltip) {
+                    label.appendChild(this._buildHelpIcon(field.tooltip));
+                }
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.id = `override_${field.key}`;
+                input.checked = !!(window.CONFIG.overrideDefaults || {})[field.key];
+                if (field.key === 'enable_rag') {
+                    input.addEventListener('change', () => {
+                        this._sendConfigUpdate(field.key, input.checked);
+                        this._updateKbControlsVisibility(input.checked);
+                    });
+                } else {
+                    input.addEventListener('change', () => this._sendConfigUpdate(field.key, input.checked));
+                }
+                row.appendChild(label);
+                row.appendChild(input);
+                this.configSidebarBody.appendChild(row);
+                return;
+            }
+
+            const label = document.createElement('label');
+            label.htmlFor = `override_${field.key}`;
+            const labelTextWrap = document.createElement('span');
+            labelTextWrap.className = 'config-label-text';
+            labelTextWrap.appendChild(document.createTextNode(field.label));
+            if (field.tooltip) {
+                labelTextWrap.appendChild(this._buildHelpIcon(field.tooltip));
+            }
+            label.appendChild(labelTextWrap);
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'config-control-value';
+            label.appendChild(valueSpan);
+            row.appendChild(label);
+
+            let input;
+            if (field.type === 'select') {
+                input = document.createElement('select');
+                // field.options entries are {id, name} objects from the server
+                // (ChatConfig.get_available_models_for_ui()) -- the dropdown shows
+                // the human-readable "name" but sends the raw "id" (model_id) back.
+                // The server always includes the currently configured model_id, so
+                // no client-side "ensure present" merging is needed here.
+                const currentModel = (window.CONFIG.overrideDefaults || {}).model_id || window.CONFIG.modelId;
+                field.options.forEach((opt) => {
+                    const optionEl = document.createElement('option');
+                    optionEl.value = opt.id;
+                    optionEl.textContent = opt.name;
+                    input.appendChild(optionEl);
+                });
+                input.value = currentModel || (field.options[0] && field.options[0].id) || '';
+                input.addEventListener('change', () => {
+                    this._sendConfigUpdate(field.key, input.value);
+                    this._updateTemperatureControlsVisibility(input.value);
+                    this._updateMaxTokensCapForModel(input.value);
+                });
+            } else if (field.type === 'range') {
+                input = document.createElement('input');
+                input.type = 'range';
+                input.min = field.min;
+                input.max = field.max;
+                input.step = field.step;
+                input.value = (window.CONFIG.overrideDefaults || {})[field.key] ?? field.min;
+                valueSpan.textContent = input.value;
+                input.addEventListener('input', () => { valueSpan.textContent = input.value; });
+                input.addEventListener('change', () => this._sendConfigUpdate(field.key, parseFloat(input.value)));
+            } else {
+                input = document.createElement('input');
+                input.type = 'number';
+                input.min = field.min;
+                input.max = field.max;
+                input.step = field.step;
+                input.value = (window.CONFIG.overrideDefaults || {})[field.key] ?? field.min;
+                if (field.key === 'max_tokens') {
+                    // Clamp to the input's current `max` (kept in sync with the
+                    // selected model's max_output_tokens by _updateMaxTokensCapForModel)
+                    // in case the user types a value exceeding it directly.
+                    input.addEventListener('change', () => {
+                        const cap = parseInt(input.max, 10);
+                        let value = parseInt(input.value, 10) || field.min;
+                        if (!Number.isNaN(cap) && value > cap) value = cap;
+                        input.value = value;
+                        this._sendConfigUpdate(field.key, value);
+                    });
+                } else {
+                    input.addEventListener('change', () => this._sendConfigUpdate(field.key, parseInt(input.value, 10)));
+                }
+            }
+            input.id = `override_${field.key}`;
+            row.appendChild(input);
+            this.configSidebarBody.appendChild(row);
+        });
+
+        // Initial visibility of the temperature/top_p rows, and the max_tokens
+        // cap, must match whichever model is currently selected (default or an
+        // already-active override).
+        const initialModelId = (window.CONFIG.overrideDefaults || {}).model_id || window.CONFIG.modelId;
+        this._updateTemperatureControlsVisibility(initialModelId);
+        this._updateMaxTokensCapForModel(initialModelId);
+
+        // Same idea for the KB controls: only relevant when RAG is enabled.
+        const initialEnableRag = !!(window.CONFIG.overrideDefaults || {}).enable_rag;
+        this._updateKbControlsVisibility(initialEnableRag);
+    }
+
+    /** Show/hide the kb_top_k_results and kb_similarity_threshold sidebar rows
+     * together, based on whether RAG (`enable_rag`) is currently on -- those
+     * controls are meaningless when RAG is disabled. */
+    _updateKbControlsVisibility(enableRag) {
+        if (!this.configSidebarBody) return;
+        ['kb_top_k_results', 'kb_similarity_threshold'].forEach((key) => {
+            const row = this.configSidebarBody.querySelector(`.config-control-row[data-override-key="${key}"]`);
+            if (row) row.classList.toggle('hidden', !enableRag);
+        });
+    }
+
+    /** Show/hide the temperature and top_p sidebar rows together, based on
+     * whether `modelId` supports temperature sampling
+     * (`_PROFILES[modelId]["temperature"]`, via ChatConfig.get_available_models_for_ui()).
+     * top_p is gated on the same flag as temperature (there's no separate top_p
+     * flag in _PROFILES, and Bedrock Converse only accepts one of the two per
+     * request anyway -- see _build_llm in graph/nodes/llm_call.py) -- models
+     * that disable temperature typically don't support top_p either. */
+    _updateTemperatureControlsVisibility(modelId) {
+        if (!this.configSidebarBody) return;
+        const model = (window.CONFIG.availableModels || []).find((m) => m.id === modelId);
+        const supportsTemperature = model ? model.supports_temperature !== false : true;
+        ['temperature', 'top_p'].forEach((key) => {
+            const row = this.configSidebarBody.querySelector(`.config-control-row[data-override-key="${key}"]`);
+            if (row) row.classList.toggle('hidden', !supportsTemperature);
+        });
+    }
+
+    /** Cap the max_tokens control's upper bound to `modelId`'s
+     * `_PROFILES[modelId]["max_output_tokens"]` (via
+     * ChatConfig.get_available_models_for_ui()), and clamp its current value
+     * down (sending the clamped value as a config_update) if it now exceeds
+     * that cap -- e.g. after switching to a model with a smaller output limit,
+     * or after a reset whose global-default max_tokens exceeds the model's cap.
+     * Falls back to the control's static ceiling (DYNAMIC_OVERRIDE_FIELDS'
+     * max_tokens.max) when the model's max_output_tokens isn't known. */
+    _updateMaxTokensCapForModel(modelId) {
+        if (!this.configSidebarBody) return;
+        const row = this.configSidebarBody.querySelector('.config-control-row[data-override-key="max_tokens"]');
+        if (!row) return;
+        const input = row.querySelector('input[type="number"]');
+        if (!input) return;
+
+        const model = (window.CONFIG.availableModels || []).find((m) => m.id === modelId);
+        const field = ChatClient.DYNAMIC_OVERRIDE_FIELDS.find((f) => f.key === 'max_tokens');
+        const cap = (model && model.max_output_tokens) || (field && field.max);
+        if (!cap) return;
+
+        input.max = cap;
+        const currentValue = parseInt(input.value, 10);
+        if (!Number.isNaN(currentValue) && currentValue > cap) {
+            input.value = cap;
+            const valueSpan = row.querySelector('.config-control-value');
+            if (valueSpan) valueSpan.textContent = cap;
+            this._sendConfigUpdate('max_tokens', cap);
+        }
+    }
+
+    _sendConfigUpdate(key, value) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({
+            type: 'config_update',
+            config_overrides: { [key]: value },
+            override_mode: 'session',
+        }));
+    }
+
+    _sendConfigReset() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ type: 'config_reset' }));
+    }
+
+    /** Handle the server's `config_updated` confirmation: refresh the badge
+     * count and highlight which controls currently have an active override. */
+    _handleConfigUpdated(data) {
+        this._activeConfigOverrides = data.active_overrides || {};
+
+        if (data.rejected_overrides && data.rejected_overrides.length) {
+            this.addMessage('system', `⚠️ Some settings were rejected: ${data.rejected_overrides.join('; ')}`);
+        }
+
+        if (this.configOverrideBadge) {
+            const count = Object.keys(this._activeConfigOverrides).length;
+            this.configOverrideBadge.textContent = String(count);
+            this.configOverrideBadge.classList.toggle('hidden', count === 0);
+        }
+
+        if (this.modelIdDisplay) {
+            const overriddenModelId = this._activeConfigOverrides.model_id;
+            const defaultModelId = (window.CONFIG.overrideDefaults || {}).model_id || window.CONFIG.modelId;
+            this.modelIdDisplay.textContent = this._modelIdToName(overriddenModelId || defaultModelId);
+        }
+
+        if (this.configSidebarBody) {
+            this.configSidebarBody.querySelectorAll('.config-control-row').forEach((row) => {
+                const key = row.dataset.overrideKey;
+                const isOverridden = Object.prototype.hasOwnProperty.call(this._activeConfigOverrides, key);
+                const input = row.querySelector('select, input');
+                if (!input) return;
+
+                if (isOverridden) {
+                    const value = this._activeConfigOverrides[key];
+                    if (input.type === 'checkbox') {
+                        input.checked = !!value;
+                    } else {
+                        input.value = value;
+                        const valueSpan = row.querySelector('.config-control-value');
+                        if (valueSpan && input.type === 'range') valueSpan.textContent = value;
+                    }
+                    // Only highlight when the override's value actually differs
+                    // from the global default -- e.g. dialing temperature back
+                    // to its default value should drop the highlight even
+                    // though the server is technically still tracking an
+                    // override for this key.
+                    const defaultValue = (window.CONFIG.overrideDefaults || {})[key];
+                    row.classList.toggle('overridden', !this._valueEqualsDefault(value, defaultValue));
+                } else {
+                    // Not (or no longer) overridden -- reset the control back to the
+                    // actual global default rather than leaving whatever value the
+                    // user last dialed in (this is what makes "Reset to defaults"
+                    // actually update the UI, not just clear server-side state).
+                    row.classList.remove('overridden');
+                    const field = ChatClient.DYNAMIC_OVERRIDE_FIELDS.find((f) => f.key === key);
+                    const defaultValue = (window.CONFIG.overrideDefaults || {})[key];
+                    if (input.type === 'checkbox') {
+                        input.checked = !!defaultValue;
+                    } else if (field && field.type === 'select') {
+                        input.value = defaultValue || (field.options && field.options[0] && field.options[0].id) || '';
+                    } else {
+                        input.value = defaultValue ?? (field ? field.min : '');
+                        const valueSpan = row.querySelector('.config-control-value');
+                        if (valueSpan && input.type === 'range') valueSpan.textContent = input.value;
+                    }
+                }
+            });
+        }
+
+        // Model may have changed (new override or reset) -- keep the
+        // temperature/top_p controls' visibility, and the max_tokens cap, in
+        // sync with the resulting effective model.
+        const effectiveModelId = this._activeConfigOverrides.model_id
+            || (window.CONFIG.overrideDefaults || {}).model_id
+            || window.CONFIG.modelId;
+        this._updateTemperatureControlsVisibility(effectiveModelId);
+        this._updateMaxTokensCapForModel(effectiveModelId);
+
+        // Same for the KB controls, based on the resulting effective enable_rag
+        // (note: false is a valid override value, so check for key presence
+        // rather than truthiness).
+        const effectiveEnableRag = Object.prototype.hasOwnProperty.call(this._activeConfigOverrides, 'enable_rag')
+            ? this._activeConfigOverrides.enable_rag
+            : !!(window.CONFIG.overrideDefaults || {}).enable_rag;
+        this._updateKbControlsVisibility(effectiveEnableRag);
     }
 
     showTypingIndicator(message = 'AI is typing...') {
