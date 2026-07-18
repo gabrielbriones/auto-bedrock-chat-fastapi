@@ -30,8 +30,15 @@ try:
     # Only models present here are supported -- see ChatConfig's model_id/
     # fallback_model/available_models validators below.
     from langchain_aws.data._profiles import _PROFILES
-except ImportError:  # pragma: no cover -- langchain-aws is a required dependency
-    _PROFILES: Dict[str, Dict[str, Any]] = {}
+except ImportError as exc:  # pragma: no cover
+    # langchain-aws is a required dependency; without profiles we cannot
+    # enforce model allowlisting or provide stable display names, and silently
+    # degrading to "no validation" would contradict the whole point of this
+    # restriction (unrecognized model IDs should stop the server, not be
+    # silently accepted). Fail fast instead.
+    raise ConfigurationError(
+        "langchain-aws is required to validate Bedrock model profiles. " "Install with: pip install langchain-aws"
+    ) from exc
 
 # ---------------------------------------------------------------------------
 # Dynamic Parameter Overrides (XMGPLAT-9697)

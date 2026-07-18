@@ -374,7 +374,20 @@ class WebSocketChatHandler:
             valid_message_overrides, override_rejections = self._apply_config_overrides(
                 session, raw_overrides, override_mode
             )
-            merged_overrides = {**session.metadata.get("config_overrides", {}), **valid_message_overrides}
+
+            # Enforce the master feature gate for *all* override sources (including
+            # any already present in session.metadata) -- not just new ones arriving
+            # on this message. `_apply_config_overrides()`/`validate_overrides()`
+            # already refuse to *write* new overrides when the flag is off, but that
+            # alone isn't a sufficient guarantee here: relying solely on "we always
+            # write correctly" is fragile against future changes (e.g. an admin API
+            # that hot-toggles the flag, or a refactor that touches session.metadata
+            # elsewhere). Re-checking on every read/merge keeps the gate authoritative.
+            if not self.config.enable_dynamic_overrides:
+                session.metadata.pop("config_overrides", None)
+                merged_overrides: Dict[str, Any] = {}
+            else:
+                merged_overrides = {**session.metadata.get("config_overrides", {}), **valid_message_overrides}
             effective_config = self.config.model_copy(update=merged_overrides) if merged_overrides else self.config
             # NOTE: `valid_message_overrides` is only what arrived inline on *this*
             # chat message's `config_overrides` field -- it's normally empty when

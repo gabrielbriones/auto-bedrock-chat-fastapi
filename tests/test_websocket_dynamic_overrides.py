@@ -189,6 +189,25 @@ class TestChatMessageOverrides:
         assert effective_config is handler.config
         assert effective_config.temperature == 0.7
 
+    def test_disabled_feature_gate_ignores_stale_session_overrides(self):
+        """Regression test (Copilot PR review, XMGPLAT-9697): a pre-existing
+        session override must not be re-applied when enable_dynamic_overrides
+        is off, even though _apply_config_overrides() itself never writes new
+        overrides while disabled. Simulates a stale/pre-existing
+        session.metadata["config_overrides"] entry directly, since that's the
+        only way this state could arise (e.g. a future refactor or hot-toggle
+        of the flag), and asserts the merge/read path clears it too."""
+        handler, session = _make_handler(enable_dynamic_overrides=False)
+        session.metadata["config_overrides"] = {"temperature": 0.1}
+        websocket = _websocket()
+
+        asyncio.run(handler._handle_chat_message(websocket, {"message": "hi"}))
+
+        effective_config = _effective_config(handler)
+        assert effective_config is handler.config
+        assert effective_config.temperature == 0.7
+        assert session.metadata.get("config_overrides", {}) == {}
+
     def test_allowlist_restricts_overridable_params(self):
         handler, _ = _make_handler(allowed_dynamic_overrides=["temperature"])
         websocket = _websocket()

@@ -660,11 +660,13 @@ class ChatClient {
                 if (data.metadata && data.metadata.rejected_overrides && data.metadata.rejected_overrides.length) {
                     console.warn('Rejected config overrides:', data.metadata.rejected_overrides);
                 }
-                // Authoritative source for which model actually produced this
-                // turn (accounts for per-message overrides and fallback_model
-                // retries, not just what the sidebar last set). Prefer the
-                // server-provided human-readable name; fall back to the raw
-                // model_id if an older server doesn't send model_name yet.
+                // Display the configured/effective model for this turn (accounts for
+                // per-message overrides). Note: this may differ from the model that
+                // actually produced the response if the server performed a
+                // fallback-model retry; the server intentionally reports the
+                // configured model here for client display, not the model that
+                // actually answered. Prefer the human-readable name; fall back to the
+                // raw model_id if an older server doesn't send model_name yet.
                 if (this.modelIdDisplay && data.metadata && data.metadata.model_id) {
                     this.modelIdDisplay.textContent = data.metadata.model_name || data.metadata.model_id;
                 }
