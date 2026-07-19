@@ -11,6 +11,7 @@ Tool generation (OpenAPI spec parsing, LangChain wrapping) is handled by
 tool metadata dict and only concerns itself with HTTP dispatch.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -193,24 +194,26 @@ class ToolManager:
         auth_info: Optional[AuthInfo] = None,
         on_progress: Optional[Callable] = None,
     ) -> List[Dict[str, Any]]:
-        """Execute a list of tool calls by making HTTP requests.
+        """Execute a list of tool calls concurrently by making HTTP requests.
 
-        Each tool call is validated, then dispatched as an HTTP request to
-        the appropriate API endpoint.  Authentication headers are applied
-        from ``auth_info`` when provided.
+        Each tool call is validated, then (if valid) dispatched concurrently
+        as an HTTP request to the appropriate API endpoint via
+        ``asyncio.gather()``. Authentication headers are applied from
+        ``auth_info`` when provided.
 
         Args:
             tool_calls: List of tool call dicts, each containing ``id``,
                 ``name``, and ``arguments``.
             auth_info: Optional authentication data to apply to HTTP headers.
             on_progress: Optional async callback ``(message: str) -> None``
-                invoked before each tool call for progress reporting.
+                invoked for each valid tool call, before execution starts,
+                for progress reporting.
 
         Returns:
-            List of result dicts, each containing ``tool_call_id``, ``name``,
-            and either ``result`` or ``error``.
+            List of result dicts (in the original ``tool_calls`` order), each
+            containing ``tool_call_id``, ``name``, and either ``result`` or
+            ``error``.
         """
-        results: List[Dict[str, Any]] = []
         limit = self._config.max_tool_calls
         if limit is None:
             capped_calls = tool_calls
@@ -227,66 +230,70 @@ class ToolManager:
                 f"to satisfy the model's toolResult requirement."
             )
 
-        for i, tool_call in enumerate(capped_calls, 1):
+        # Pre-allocate result slots so ordering is preserved regardless of
+        # completion order once tasks are gathered concurrently.
+        results: List[Optional[Dict[str, Any]]] = [None] * total_tools
+        pending_indices: List[int] = []
+        pending_coros: List[Any] = []
+
+        for i, tool_call in enumerate(capped_calls):
+            position = i + 1
             function_name = tool_call.get("name")
+            self._total_tool_calls_executed += 1
 
-            try:
-                logger.debug(f"Executing tool call {i}/{total_tools}: {tool_call}")
-                self._total_tool_calls_executed += 1
+            # Validate: tool exists
+            tool_metadata = self._generated_tools.get(function_name)
+            if not tool_metadata:
+                logger.warning(f"Unknown tool requested: {function_name}")
+                results[i] = {
+                    "tool_call_id": tool_call.get("id"),
+                    "name": function_name,
+                    "error": f"Unknown tool: {function_name}",
+                }
+                continue
 
-                # Optional progress callback
-                if on_progress is not None:
-                    await on_progress(f"Calling {function_name}... ({i}/{total_tools})")
+            # Validate: required arguments present
+            arguments = tool_call.get("arguments", {})
+            fn_desc = tool_metadata.get("function_desc", {})
+            required = fn_desc.get("parameters", {}).get("required", [])
+            missing = [p for p in required if p not in arguments]
+            if missing:
+                logger.warning(f"Missing required args for tool {function_name}: {missing}")
+                results[i] = {
+                    "tool_call_id": tool_call.get("id"),
+                    "name": function_name,
+                    "error": f"Missing required arguments: {missing}",
+                }
+                continue
 
-                # Validate: tool exists
-                tool_metadata = self._generated_tools.get(function_name)
-                if not tool_metadata:
-                    logger.warning(f"Unknown tool requested: {function_name}")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call.get("id"),
-                            "name": function_name,
-                            "error": f"Unknown tool: {function_name}",
-                        }
-                    )
-                    continue
+            logger.debug(f"Executing tool call {position}/{total_tools}: {tool_call}")
 
-                # Validate: required arguments present
-                arguments = tool_call.get("arguments", {})
-                fn_desc = tool_metadata.get("function_desc", {})
-                required = fn_desc.get("parameters", {}).get("required", [])
-                missing = [p for p in required if p not in arguments]
-                if missing:
-                    logger.warning(f"Missing required args for tool {function_name}: {missing}")
-                    results.append(
-                        {
-                            "tool_call_id": tool_call.get("id"),
-                            "name": function_name,
-                            "error": f"Missing required arguments: {missing}",
-                        }
-                    )
-                    continue
+            # Progress is reported before scheduling, in original call order,
+            # so messages stay meaningful even though execution below happens
+            # concurrently.
+            if on_progress is not None:
+                try:
+                    await on_progress(f"Calling {function_name}... ({position}/{total_tools})")
+                except Exception as e:
+                    logger.error(f"Error in on_progress callback for {function_name}: {e}")
 
-                # Execute
-                result = await self._execute_single_tool_call(tool_metadata, arguments, auth_info)
+            pending_indices.append(i)
+            pending_coros.append(self._execute_single_tool_call(tool_metadata, arguments, auth_info))
 
-                results.append(
-                    {
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "result": result,
-                    }
-                )
+        if pending_coros:
+            outcomes = await asyncio.gather(*pending_coros, return_exceptions=True)
+            for idx, outcome in zip(pending_indices, outcomes):
+                tool_call = capped_calls[idx]
+                function_name = tool_call.get("name")
+                is_error = isinstance(outcome, Exception)
+                if is_error:
+                    logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
 
-            except Exception as e:
-                logger.error(f"Error executing tool call {function_name}: {str(e)}")
-                results.append(
-                    {
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "error": str(e),
-                    }
-                )
+                result_entry = {"tool_call_id": tool_call.get("id"), "name": function_name}
+                result_entry["error" if is_error else "result"] = str(outcome) if is_error else outcome
+                results[idx] = result_entry
+
+        final_results: List[Dict[str, Any]] = [r for r in results if r is not None]
 
         # Return stub errors for tool calls that were dropped by the cap so that
         # every tool_call ID in the assistant message has a matching toolResult.
@@ -299,7 +306,7 @@ class ToolManager:
                     "Bedrock's toolUse contract. Check upstream tool call normalization."
                 )
                 continue
-            results.append(
+            final_results.append(
                 {
                     "tool_call_id": tc_id,
                     "name": tc_name,
@@ -310,7 +317,7 @@ class ToolManager:
                 }
             )
 
-        return results
+        return final_results
 
     async def shutdown(self) -> None:
         """Close the internal HTTP client and release resources.
