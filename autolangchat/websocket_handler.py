@@ -369,7 +369,7 @@ class WebSocketChatHandler:
             # allowlist, bad type/range, etc.) are surfaced in the response
             # metadata below rather than failing the whole turn.
             # ------------------------------------------------------------------
-            raw_overrides: Dict[str, Any] = data.get("config_overrides") or {}
+            raw_overrides: Any = data.get("config_overrides") or {}
             override_mode = data.get("override_mode", "message")
             valid_message_overrides, override_rejections = self._apply_config_overrides(
                 session, raw_overrides, override_mode
@@ -1035,12 +1035,21 @@ class WebSocketChatHandler:
     # ------------------------------------------------------------------
 
     def _apply_config_overrides(
-        self, session: ChatSession, raw_overrides: Dict[str, Any], override_mode: str
+        self, session: ChatSession, raw_overrides: Any, override_mode: Any
     ) -> tuple[Dict[str, Any], List[str]]:
         """Validate ``raw_overrides`` against ``self.config`` and, when
         ``override_mode == "session"``, persist the valid ones onto
         ``session.metadata["config_overrides"]`` so they apply to subsequent
         turns until changed or cleared (``config_reset``).
+
+        ``raw_overrides``/``override_mode`` come directly from untrusted
+        WebSocket JSON, so their *runtime* type/value is not guaranteed to
+        match the annotations a well-behaved client would send -- a client
+        could send a list, string, number, etc. for ``config_overrides``, or
+        an arbitrary string for ``override_mode``. Both are validated here
+        (rather than assumed) so a malformed payload is rejected gracefully
+        with a clear reason instead of raising (which would otherwise abort
+        the *entire* chat turn, not just the malformed override).
 
         Returns the ``(valid_overrides, rejection_reasons)`` for *this call
         only* — not the full merged/active set (see ``session.metadata.get(
@@ -1048,6 +1057,12 @@ class WebSocketChatHandler:
         """
         if not raw_overrides:
             return {}, []
+
+        if not isinstance(raw_overrides, dict):
+            return {}, [f"config_overrides must be a JSON object, got {type(raw_overrides).__name__}"]
+
+        if override_mode not in ("message", "session"):
+            return {}, [f"override_mode must be 'message' or 'session', got {override_mode!r}"]
 
         valid_overrides, rejection_reasons = self.config.validate_overrides(raw_overrides)
 
@@ -1067,7 +1082,7 @@ class WebSocketChatHandler:
             await self._send_error(websocket, "Session not found")
             return
 
-        raw_overrides: Dict[str, Any] = data.get("config_overrides") or {}
+        raw_overrides: Any = data.get("config_overrides") or {}
         override_mode = data.get("override_mode", "session")
 
         valid_overrides, rejection_reasons = self._apply_config_overrides(session, raw_overrides, override_mode)

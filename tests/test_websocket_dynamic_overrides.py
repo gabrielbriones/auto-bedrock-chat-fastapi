@@ -224,6 +224,58 @@ class TestChatMessageOverrides:
         assert effective_config.max_tokens == 4096  # rejected (not in allowlist) -> global default
 
 
+class TestMalformedOverridePayloads:
+    """Regression tests (Copilot PR review, XMGPLAT-9697): config_overrides and
+    override_mode come directly from untrusted WebSocket JSON. A malformed
+    payload must be rejected gracefully (with a clear reason) rather than
+    raising -- which would otherwise abort the entire chat turn, not just the
+    malformed override."""
+
+    def test_non_dict_config_overrides_rejected_gracefully_in_chat_message(self):
+        handler, _ = _make_handler()
+        websocket = _websocket()
+
+        # A list (or any non-dict) config_overrides must not crash the turn --
+        # the chat message should still be processed normally.
+        asyncio.run(
+            handler._handle_chat_message(websocket, {"message": "hi", "config_overrides": ["not", "a", "dict"]})
+        )
+
+        ai_responses = [m for m in _sent_messages(websocket) if m.get("type") == "ai_response"]
+        assert ai_responses
+        assert not ai_responses[-1].get("error")
+        rejected = ai_responses[-1]["metadata"].get("rejected_overrides", [])
+        assert any("must be a JSON object" in r for r in rejected)
+
+    def test_string_config_overrides_rejected_gracefully_in_config_update(self):
+        handler, session = _make_handler()
+        websocket = _websocket()
+
+        asyncio.run(handler._handle_config_update(websocket, {"config_overrides": "not-a-dict"}))
+
+        sent = _sent_messages(websocket)
+        assert sent[-1]["type"] == "config_updated"
+        assert sent[-1]["applied_overrides"] == {}
+        assert any("must be a JSON object" in r for r in sent[-1]["rejected_overrides"])
+        assert session.metadata.get("config_overrides", {}) == {}
+
+    def test_invalid_override_mode_rejected_with_clear_reason(self):
+        handler, session = _make_handler()
+        websocket = _websocket()
+
+        asyncio.run(
+            handler._handle_config_update(
+                websocket, {"config_overrides": {"temperature": 0.4}, "override_mode": "bogus"}
+            )
+        )
+
+        sent = _sent_messages(websocket)
+        assert sent[-1]["applied_overrides"] == {}
+        assert any("override_mode" in r for r in sent[-1]["rejected_overrides"])
+        # Not silently treated as "message" mode nor persisted as "session" mode.
+        assert session.metadata.get("config_overrides", {}) == {}
+
+
 class TestConfigUpdateMessage:
     def test_config_update_persists_session_overrides_by_default(self):
         handler, session = _make_handler()
