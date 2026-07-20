@@ -1483,6 +1483,23 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
 
         allowlist = set(self.allowed_dynamic_overrides) if self.allowed_dynamic_overrides is not None else None
 
+        # Resolve the effective model_id for this batch so max_tokens can be
+        # capped against the model that will actually be in effect, not just
+        # the globally configured one -- a client can override both model_id
+        # and max_tokens in the same payload. Only trust the proposed model_id
+        # when it would itself pass validation and isn't blocked by the
+        # allowlist; its own rejection (if any) is still reported normally by
+        # the main loop below.
+        effective_model_id = self.model_id
+        proposed_model_id = overrides.get("model_id")
+        if (
+            isinstance(proposed_model_id, str)
+            and proposed_model_id.strip()
+            and (allowlist is None or "model_id" in allowlist)
+            and not self._validate_override_value("model_id", proposed_model_id)
+        ):
+            effective_model_id = proposed_model_id
+
         for key, value in overrides.items():
             if key not in OVERRIDABLE_PARAMS:
                 rejection_reasons.append(f"'{key}' is not an overridable parameter")
@@ -1491,7 +1508,7 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
                 rejection_reasons.append(f"'{key}' is not in allowed_dynamic_overrides")
                 continue
 
-            error = self._validate_override_value(key, value)
+            error = self._validate_override_value(key, value, effective_model_id=effective_model_id)
             if error:
                 rejection_reasons.append(error)
                 continue
@@ -1501,8 +1518,14 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
         return valid_overrides, rejection_reasons
 
     @staticmethod
-    def _validate_override_value(key: str, value: Any) -> Optional[str]:
-        """Return an error message if ``value`` is invalid for ``key``, else ``None``."""
+    def _validate_override_value(key: str, value: Any, effective_model_id: Optional[str] = None) -> Optional[str]:
+        """Return an error message if ``value`` is invalid for ``key``, else ``None``.
+
+        ``effective_model_id`` (only used by the ``max_tokens`` check) is the
+        model that will actually be in effect for this batch -- either a valid
+        ``model_id`` override in the same payload, or the caller's current
+        ``model_id`` when none is being overridden. See ``validate_overrides()``.
+        """
         if key == "model_id":
             if not isinstance(value, str) or not value.strip():
                 return "model_id must be a non-empty string"
@@ -1518,6 +1541,10 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
                 return "max_tokens must be an integer"
             if value <= 0:
                 return "max_tokens must be greater than 0"
+            if effective_model_id:
+                model_cap = _PROFILES.get(effective_model_id, {}).get("max_output_tokens")
+                if model_cap is not None and value > model_cap:
+                    return f"max_tokens ({value}) exceeds model '{effective_model_id}' max_output_tokens ({model_cap})"
         elif key == "top_p":
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 return "top_p must be a number"

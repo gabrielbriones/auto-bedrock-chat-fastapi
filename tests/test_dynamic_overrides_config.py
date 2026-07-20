@@ -244,6 +244,45 @@ class TestValidateOverridesValueValidation:
         assert valid == {}
         assert "max_tokens" in reasons[0]
 
+    def test_max_tokens_within_default_model_cap_accepted(self):
+        """us.anthropic.claude-sonnet-5 (the default model_id here) caps at
+        128000 max_output_tokens."""
+        config = self._enabled_config()
+        valid, reasons = config.validate_overrides({"max_tokens": 100000})
+        assert valid == {"max_tokens": 100000}
+        assert reasons == []
+
+    def test_max_tokens_exceeding_default_model_cap_rejected(self):
+        config = self._enabled_config()
+        valid, reasons = config.validate_overrides({"max_tokens": 200000})
+        assert valid == {}
+        assert "max_tokens" in reasons[0]
+        assert "max_output_tokens" in reasons[0]
+
+    def test_max_tokens_validated_against_model_id_override_in_same_payload(self):
+        """us.anthropic.claude-sonnet-4-6 caps at 64000 -- a max_tokens value
+        that would be fine for the default sonnet-5 (128000 cap) must still be
+        rejected when the same payload also switches the model."""
+        config = self._enabled_config()
+        valid, reasons = config.validate_overrides({"model_id": "us.anthropic.claude-sonnet-4-6", "max_tokens": 100000})
+        assert "max_tokens" not in valid
+        assert any("max_output_tokens" in r for r in reasons)
+
+    def test_max_tokens_accepted_within_overridden_model_cap(self):
+        config = self._enabled_config()
+        valid, reasons = config.validate_overrides({"model_id": "us.anthropic.claude-sonnet-4-6", "max_tokens": 50000})
+        assert valid == {"model_id": "us.anthropic.claude-sonnet-4-6", "max_tokens": 50000}
+        assert reasons == []
+
+    def test_max_tokens_falls_back_to_current_model_when_model_id_override_invalid(self):
+        """An invalid model_id override is rejected on its own, but must not
+        poison max_tokens validation -- it should still be checked against the
+        config's current (unchanged) model_id."""
+        config = self._enabled_config()
+        valid, reasons = config.validate_overrides({"model_id": "not-a-real-model", "max_tokens": 100000})
+        assert valid == {"max_tokens": 100000}
+        assert any("model_id" in r for r in reasons)
+
     def test_top_p_out_of_range_rejected(self):
         config = self._enabled_config()
         valid, reasons = config.validate_overrides({"top_p": -0.1})
