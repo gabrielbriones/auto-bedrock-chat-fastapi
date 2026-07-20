@@ -2,6 +2,85 @@
 
 <!-- version list -->
 
+## v2.1.0 (2026-07-20)
+
+### Bug Fixes
+
+- Align conversation-persistence fallback gate, config bound, and docs
+  ([`8241ad3`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8241ad344536287e8fb5b495cc745ccca9f99c11))
+
+- Cap max_tokens overrides against the effective model's max_output_tokens
+  ([`06c2026`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/06c20260fbd9397e4b5cefbc5588b5eedb212367))
+
+- Degrade gracefully when conversation creation fails mid-turn
+  ([`d3a72f5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d3a72f5278de30cdd38753f91cbbfe6dd266890b))
+
+- Enforce dynamic-overrides gate on merge, fail fast on missing model profiles
+  ([`cbed668`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/cbed6684b919f5ce900c79f30734abe9cc12a92c))
+
+- Harden background tasks, cap conversation_list limit, fix history-unavailable for zero-message
+  conversations
+  ([`8817141`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8817141ec0d56124aa0f875303c9b4a858b822e5))
+
+- Make conversation sidebar items keyboard-accessible
+  ([`4c2ed61`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/4c2ed617207bb272ff68175d74dc6c4892f314cd))
+
+- Project conversation_list items to the documented minimal WebSocket shape
+  ([`545c20c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/545c20cba0972974499dd63d91f386c53012d2e2))
+
+- Reject malformed config_overrides/override_mode instead of raising
+  ([`a0f636a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a0f636ad20c3ff5d8bc558c671ffb5768a6feaaa))
+
+- Update default model comment to Claude Sonnet 5 in .env.example
+  ([`788b92b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/788b92bc198a04954f2891dd549dd86b3633af88))
+
+### Chores
+
+- Delete unnecessary comment
+  ([`8c6753b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8c6753b0199708824962a4bf103f16498ef526e9))
+
+- Upgrade llm model to Claude Sonnet 5
+  ([`2f70582`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2f705824dc3bd6e3f2ea0c79dcc6639ac5d8a539))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`ad8f260`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/ad8f26004c91afa7d4c32564c73a0311b4a663cc))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`8c5ba9e`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8c5ba9e7bdb9d4bb4a1cc10364035d242df455ad))
+
+- **deps**: Update actions/setup-python action to v7
+  ([`8b8ae4c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8b8ae4c760ceb0cdbeb7bb473fba85a2ae5462e8))
+
+- **deps**: Update python-minor-patch
+  ([`dc9f679`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/dc9f679fd92988f4837b4eaba164993032b081ba))
+
+- **deps**: Update python-minor-patch
+  ([`e972a11`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e972a11d1210661d62232af47c77146f5c186bff))
+
+### Code Style
+
+- **test_openapi_tool_generation**: Black linter corrections
+  ([`83d00b9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/83d00b90cfb937bf84b9a92036a89ad7f7468942))
+
+### Documentation
+
+- **config**: Finish rollout of claude-sonnet-5 default model id
+  ([`1216fdc`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1216fdc947d21d1371200167bf053fefdc3b3402))
+
+### Features
+
+- **conversations**: Add per-user persisted conversations (XMGPLAT-10380)
+  ([`df772a8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/df772a81a6e83df23615efee8cd4a930b41244c9))
+
+- **overrides**: Add dynamic parameter overrides with settings sidebar (XMGPLAT-9697)
+  ([`1c2b720`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1c2b7209b39d57183d76cb3356e16b1d9baf1b48))
+
+### Performance Improvements
+
+- **tools**: Execute tool calls concurrently via asyncio.gather
+  ([`8a0a2b5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8a0a2b5db396a7d139dfdf45239cb3a007472ba0))
+
+
 ## v2.0.0 (2026-07-10)
 
 ### Bug Fixes

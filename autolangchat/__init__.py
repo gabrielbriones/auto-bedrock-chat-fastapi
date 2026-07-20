@@ -5,7 +5,7 @@ orchestration layer now runs on a LangGraph StateGraph instead of the
 hand-rolled session-management + LLM-call loop.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES, AuthenticationHandler, AuthType, Credentials
 from .config import ChatConfig, load_config, validate_config
