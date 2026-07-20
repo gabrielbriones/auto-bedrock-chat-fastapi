@@ -247,7 +247,7 @@ User Query
     ↓
 [Inject into System Prompt]
     ↓
-[Claude 4.5 Sonnet] → Generate response
+[Claude 5 Sonnet] → Generate response
     ↓
 User Response (with citations)
 ```

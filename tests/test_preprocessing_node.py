@@ -23,7 +23,7 @@ from autolangchat.graph.nodes.preprocess import preprocess_node
 class _TightConfig:
     """Config with very small thresholds so test messages trigger truncation."""
 
-    model_id = "us.anthropic.claude-sonnet-4-6"
+    model_id = "us.anthropic.claude-sonnet-5"
     fallback_model = None
     aws_region = "us-east-1"
     temperature = 0.7

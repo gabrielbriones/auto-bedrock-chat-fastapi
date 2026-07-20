@@ -143,18 +143,20 @@ def _build_llm(model_id: str, chat_config: Any):
         "region_name": chat_config.aws_region,
         "max_tokens": chat_config.max_tokens,
     }
-    # Explicit credentials override the boto3 credential chain when set
-    aws_access_key_id = getattr(chat_config, "aws_access_key_id", None)
-    aws_secret_access_key = getattr(chat_config, "aws_secret_access_key", None)
-    if aws_access_key_id and aws_secret_access_key:
-        kwargs["aws_access_key_id"] = aws_access_key_id
-        kwargs["aws_secret_access_key"] = aws_secret_access_key
     # Pass only one of temperature / top_p to avoid ValidationException
     if temperature is not None:
         kwargs["temperature"] = temperature
     elif top_p is not None:
         kwargs["top_p"] = top_p
 
+    logger.debug("Building ChatBedrockConverse: args=%s", kwargs)
+
+    # Explicit credentials override the boto3 credential chain when set
+    aws_access_key_id = getattr(chat_config, "aws_access_key_id", None)
+    aws_secret_access_key = getattr(chat_config, "aws_secret_access_key", None)
+    if aws_access_key_id and aws_secret_access_key:
+        kwargs["aws_access_key_id"] = aws_access_key_id
+        kwargs["aws_secret_access_key"] = aws_secret_access_key
     # Set a generous read timeout on the underlying boto3 client so that
     # large-output requests (e.g. max_tokens=8192) don't hit the default 60s
     # botocore limit.  The floor of 300s covers even the slowest generation

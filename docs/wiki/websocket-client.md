@@ -171,6 +171,17 @@ client = WebSocketChatClient(
 { "type": "logout" }
 ```
 
+**Conversation management** (only when [conversation persistence](conversation-persistence) is enabled and the session is authenticated — see that page for the full protocol, auth model, and REST equivalent):
+
+```json
+{ "type": "conversation_list", "limit": 50, "offset": 0 }
+{ "type": "conversation_new" }
+{ "type": "conversation_load", "conversation_id": "b16d7f4e-…" }
+{ "type": "conversation_delete", "conversation_id": "b16d7f4e-…" }
+{ "type": "conversation_delete_all" }
+{ "type": "conversation_rename", "conversation_id": "b16d7f4e-…", "title": "Renamed chat" }
+```
+
 ### Messages You Receive
 
 **Connection established:**
@@ -196,7 +207,7 @@ client = WebSocketChatClient(
   "timestamp": "2026-01-01T10:00:05",
   "metadata": {
     "message_id": "f1c2…",
-    "model_id": "us.anthropic.claude-sonnet-4-6",
+    "model_id": "us.anthropic.claude-sonnet-5",
     "usage": { "input_tokens": 120, "output_tokens": 240 },
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
@@ -255,6 +266,24 @@ nested `usage` dict, which reflects only the final LLM call.
 > `true`), and `context_window_retries` (`int`). These are intentionally **not**
 > forwarded in the `ai_response` payload — clients will never receive them.
 
+**Conversation lifecycle** (only sent when [conversation persistence](conversation-persistence) is enabled — see that page for the full protocol):
+
+```json
+{ "type": "conversation_created", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+{ "type": "conversation_list", "conversations": [ { "id": "...", "title": "...", "updated_at": "...", "message_count": 3 } ], "timestamp": "..." }
+{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "timestamp": "..." }
+{ "type": "conversation_deleted", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+{ "type": "conversation_all_deleted", "deleted_count": 3, "timestamp": "..." }
+{ "type": "conversation_titled", "conversation_id": "b16d7f4e-…", "title": "Configuring Okta SSO", "timestamp": "..." }
+{ "type": "conversation_renamed", "conversation_id": "b16d7f4e-…", "title": "My renamed chat", "timestamp": "..." }
+{ "type": "conversation_error", "code": "conversation_not_found", "message": "Conversation not found", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+```
+
+Note that `ai_response` also gains a `conversation_id` field (nullable) once
+this feature is enabled — see [Conversation Persistence](conversation-persistence)
+for the full lifecycle (lazy creation on first message, auto-titling, and the
+`conversation_error` codes).
+
 **Typing indicator:**
 
 ```json
@@ -299,4 +328,5 @@ export AUTOCHAT_AUTH_TOKEN="your-token"
 
 - [Authentication](authentication.md) — auth types and credential flow
 - [Chat UI](chat-ui.md) — built-in web interface
+- [Conversation Persistence](conversation-persistence.md) — per-user named conversations, sidebar, REST API
 - `examples/websockets/interactive.py` — full source code

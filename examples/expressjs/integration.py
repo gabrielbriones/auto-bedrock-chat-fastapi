@@ -190,7 +190,7 @@ async def demonstrate_framework_agnostic_usage():
             allowed_paths=["/api/v1/users", "/api/v1/products", "/api/v1/orders"],
             excluded_paths=["/internal"],
             # Note: api_base_url will be auto-detected from spec servers (http://localhost:3000)
-            model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            model_id="us.anthropic.claude-sonnet-5",
             aws_region="us-east-1",
         )
 
@@ -274,7 +274,7 @@ async def demonstrate_framework_agnostic_usage():
     print("   AUTOCHAT_API_BASE_URL=http://localhost:3000  # Auto-detected from spec if not set")
     print("   AUTOCHAT_ALLOWED_PATHS=/api/v1/users,/api/v1/products,/api/v1/orders")
     print("   AUTOCHAT_EXCLUDED_PATHS=/internal,/admin")
-    print("   AUTOCHAT_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0")
+    print("   AUTOCHAT_MODEL_ID=us.anthropic.claude-sonnet-5")
     print("   AWS_REGION=us-east-1")
 
     print("\n✅ Demo completed successfully!")

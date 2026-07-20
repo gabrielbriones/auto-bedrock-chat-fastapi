@@ -23,46 +23,83 @@
         {% include 'auth_modal.html' %}
     </div>
 
-    <div class="chat-container">
-        <div class="chat-header">
-            <div class="chat-header-left">
-                <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
-            </div>
-            <div class="chat-header-center">
-                <h1>{{ ui_title }}</h1>
-                <p>Powered by {{ model_id }}</p>
-            </div>
-            <div class="chat-header-right">
-                <span id="ssoUserDisplay" class="sso-user-display"></span>
-                {% if admin_enabled %}
-                <button id="dashboardButton" class="dashboard-btn" style="display:none"
-                        title="Admin Dashboard">Dashboard</button>
-                {% endif %}
-                <button id="authButton" class="auth-button">Log in</button>
-            </div>
-        </div>
+    <div class="app-layout">
+        <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
-        <div class="chat-messages" id="chatMessages">
-            <div class="message system">
-                <div class="message-content">
-                    {{ ui_welcome_message }}
+        <button id="sidebarToggleButton" class="sidebar-toggle-btn hidden" type="button"
+                aria-label="Toggle conversations">&#9776;</button>
+
+        <aside class="conversation-sidebar hidden" id="conversationSidebar">
+            <div class="conversation-sidebar-header">
+                <button id="newChatButton" class="new-chat-btn" type="button">+ New Chat</button>
+                <button id="sidebarCloseButton" class="sidebar-close-btn" type="button"
+                        aria-label="Close conversations">&times;</button>
+            </div>
+            <ul class="conversation-list" id="conversationList" aria-label="Conversations"></ul>
+        </aside>
+
+        <div class="chat-container">
+            <div class="chat-header">
+                <div class="chat-header-left">
+                    <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
+                </div>
+                <div class="chat-header-center">
+                    <h1>{{ ui_title }}</h1>
+                    <p>Powered by <span id="modelIdDisplay">{{ model_display_name }}</span></p>
+                </div>
+                <div class="chat-header-right">
+                    <span id="ssoUserDisplay" class="sso-user-display"></span>
+                    {% if admin_enabled %}
+                    <button id="dashboardButton" class="dashboard-btn" style="display:none"
+                            title="Admin Dashboard">Dashboard</button>
+                    {% endif %}
+                    {% if enable_config_sidebar %}
+                    <button id="configSidebarToggleButton" class="config-sidebar-toggle-btn" type="button"
+                            title="Settings" aria-label="Open settings">
+                        &#9881;<span class="config-override-badge hidden" id="configOverrideBadge">0</span>
+                    </button>
+                    {% endif %}
+                    <button id="authButton" class="auth-button">Log in</button>
                 </div>
             </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <div class="message system">
+                    <div class="message-content">
+                        {{ ui_welcome_message }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="typing-indicator" id="typingIndicator">
+                <div class="spinner"></div>
+                <span id="typingText">AI is typing...</span>
+            </div>
+
+            <div class="preset-variables-section" id="presetVariablesSection"></div>
+
+            <div class="preset-prompts" id="presetPromptsBar"></div>
+
+            <div class="chat-input">
+                <textarea id="messageInput" placeholder="Type your message..." disabled rows="1"></textarea>
+                <button id="sendButton" disabled>Send</button>
+            </div>
         </div>
 
-        <div class="typing-indicator" id="typingIndicator">
-            <div class="spinner"></div>
-            <span id="typingText">AI is typing...</span>
-        </div>
-
-        <div class="preset-variables-section" id="presetVariablesSection"></div>
-
-        <div class="preset-prompts" id="presetPromptsBar"></div>
-
-        <div class="chat-input">
-            <textarea id="messageInput" placeholder="Type your message..." disabled rows="1"></textarea>
-            <button id="sendButton" disabled>Send</button>
-        </div>
+        {% if enable_config_sidebar %}
+        <div class="config-sidebar-backdrop" id="configSidebarBackdrop"></div>
+        <aside class="config-sidebar" id="configSidebar">
+            <div class="config-sidebar-header">
+                <h2>Settings</h2>
+                <button id="configSidebarCloseButton" class="sidebar-close-btn" type="button"
+                        aria-label="Close settings">&times;</button>
+            </div>
+            <div class="config-sidebar-body" id="configSidebarBody"></div>
+            <div class="config-sidebar-footer">
+                <button id="configResetButton" class="config-reset-btn" type="button">Reset to defaults</button>
+            </div>
+        </aside>
+        {% endif %}
     </div>
 
     <script>
@@ -85,6 +122,11 @@
             adminEnabled: {{ 'true' if admin_enabled else 'false' }},
             adminPrefix: {{ admin_prefix | tojson }},
             dashboardUrl: {{ dashboard_url | tojson }},
+            conversationPersistenceEnabled: {{ 'true' if conversation_persistence_enabled else 'false' }},
+            enableConfigSidebar: {{ 'true' if enable_config_sidebar else 'false' }},
+            allowedDynamicOverrides: {{ allowed_dynamic_overrides | tojson }},
+            availableModels: {{ available_models | tojson }},
+            overrideDefaults: {{ override_defaults | tojson }},
         };
     </script>
     <script src="{{ url_for('static', path='auth.js') }}"></script>

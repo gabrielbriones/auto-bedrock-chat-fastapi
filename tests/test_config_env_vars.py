@@ -14,7 +14,7 @@ def _load_config(**env_overrides):
     """Import-safe helper: load ChatConfig with a clean env patch."""
     base_env = {
         # Minimal required var so pydantic-settings is happy
-        "AUTOCHAT_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+        "AUTOCHAT_MODEL_ID": "us.anthropic.claude-sonnet-5",
     }
     base_env.update(env_overrides)
     with patch.dict(os.environ, base_env, clear=True):
@@ -31,16 +31,16 @@ class TestAutochatEnvVarPrefix:
     """AUTOCHAT_* vars are read; BEDROCK_* vars are ignored."""
 
     def test_model_id_from_autochat_var(self):
-        config = _load_config(AUTOCHAT_MODEL_ID="us.anthropic.claude-3-haiku")
-        assert config.model_id == "us.anthropic.claude-3-haiku"
+        config = _load_config(AUTOCHAT_MODEL_ID="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        assert config.model_id == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     def test_bedrock_model_id_ignored(self):
         """BEDROCK_MODEL_ID must have no effect — config uses AUTOCHAT_MODEL_ID."""
         config = _load_config(
-            AUTOCHAT_MODEL_ID="us.anthropic.claude-sonnet-4-6",
+            AUTOCHAT_MODEL_ID="us.anthropic.claude-sonnet-5",
             BEDROCK_MODEL_ID="should-be-ignored",
         )
-        assert config.model_id == "us.anthropic.claude-sonnet-4-6"
+        assert config.model_id == "us.anthropic.claude-sonnet-5"
 
     def test_temperature_from_autochat_var(self):
         config = _load_config(AUTOCHAT_TEMPERATURE="0.3")
@@ -122,13 +122,24 @@ class TestAutochatEnvVarPrefix:
         config = _load_config()
         assert config.aws_region  # non-empty string
 
+    def test_kb_similarity_threshold_default(self):
+        """Regression guard: kb_similarity_threshold's default must match its
+        own Field description (previously drifted to 0.3 while the
+        description still said 0.0 -- caught in peer review, not by a test)."""
+        config = _load_config()
+        assert config.kb_similarity_threshold == 0.3
+
+    def test_kb_similarity_threshold_from_env_var(self):
+        config = _load_config(KB_SIMILARITY_THRESHOLD="0.5")
+        assert config.kb_similarity_threshold == 0.5
+
     def test_fallback_model_from_autochat_var(self):
-        config = _load_config(AUTOCHAT_FALLBACK_MODEL="us.anthropic.claude-3-haiku")
-        assert config.fallback_model == "us.anthropic.claude-3-haiku"
+        config = _load_config(AUTOCHAT_FALLBACK_MODEL="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        assert config.fallback_model == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     def test_bedrock_fallback_model_ignored(self):
         config = _load_config(
-            AUTOCHAT_FALLBACK_MODEL="correct-fallback",
+            AUTOCHAT_FALLBACK_MODEL="us.anthropic.claude-opus-4-8",
             BEDROCK_FALLBACK_MODEL="should-be-ignored",
         )
-        assert config.fallback_model == "correct-fallback"
+        assert config.fallback_model == "us.anthropic.claude-opus-4-8"

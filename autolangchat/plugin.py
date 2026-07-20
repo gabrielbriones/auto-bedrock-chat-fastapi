@@ -8,7 +8,7 @@ import os
 import re
 import secrets
 from contextlib import asynccontextmanager
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -261,6 +261,17 @@ class AutoLangChatPlugin:
         logger.debug("Checking token usage store configuration and initializing...")
         self._token_usage_store = create_token_usage_store(self.config)
 
+        # Conversation metadata store. Constructed eagerly so the WebSocket
+        # handler can be wired immediately; the connection pool / SQLite file
+        # is opened in the FastAPI startup event below and closed during
+        # shutdown. Backend selection (sqlite vs postgres) and configuration
+        # validation live in the factory. LangGraph checkpoint data (not this
+        # store) remains the source of truth for message history.
+        from .db import create_conversation_store
+
+        logger.debug("Checking conversation store configuration and initializing...")
+        self._conversation_store = create_conversation_store(self.config)
+
         # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
@@ -286,6 +297,7 @@ class AutoLangChatPlugin:
             feedback_store=self._feedback_store,
             feedback_authorizer=self._feedback_authorizer,
             token_usage_store=self._token_usage_store,
+            conversation_store=self._conversation_store,
         )
 
         # Setup templates for UI
@@ -518,6 +530,15 @@ class AutoLangChatPlugin:
                         feedback_enabled,
                     )
 
+                    # Same principle as feedback_enabled above: gate on the
+                    # store actually being configured, not just the raw
+                    # config flag, so the sidebar isn't shown when the
+                    # backend failed to construct (misconfiguration, missing
+                    # optional dependency, etc.).
+                    conversation_persistence_enabled = bool(
+                        self.config.conversation_persistence_enabled and self._conversation_store is not None
+                    )
+
                     return self.templates.TemplateResponse(
                         request,
                         "chat.html",
@@ -529,6 +550,7 @@ class AutoLangChatPlugin:
                             "default_auth_type": self.config.default_auth_type or "",
                             "ui_title": self.config.ui_title,
                             "model_id": self.config.model_id,
+                            "model_display_name": self.config.get_model_display_name(),
                             "ui_welcome_message": self.config.ui_welcome_message,
                             "app_title": self.app.title or "API",
                             "preset_prompts": self._preset_prompts,
@@ -548,6 +570,30 @@ class AutoLangChatPlugin:
                             "dashboard_url": (
                                 f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
                             ),
+                            "conversation_persistence_enabled": conversation_persistence_enabled,
+                            # Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+                            "enable_config_sidebar": bool(
+                                self.config.enable_config_sidebar and self.config.enable_dynamic_overrides
+                            ),
+                            "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,
+                            # Model choices for the sidebar's model_id dropdown, sourced from
+                            # AUTOCHAT_AVAILABLE_MODELS (falls back to a built-in default list).
+                            # Each entry is {"id": model_id, "name": display_name} -- the UI only
+                            # ever renders "name"; the backend keeps using "id" (model_id).
+                            "available_models": self.config.get_available_models_for_ui(),
+                            # Current global values for every overridable parameter, so the
+                            # sidebar's controls start at the actual effective defaults rather
+                            # than an arbitrary client-side fallback.
+                            "override_defaults": {
+                                "model_id": self.config.model_id,
+                                "temperature": self.config.temperature,
+                                "max_tokens": self.config.max_tokens,
+                                "top_p": self.config.top_p,
+                                "enable_ai_summarization": self.config.enable_ai_summarization,
+                                "enable_rag": self.config.enable_rag,
+                                "kb_top_k_results": self.config.kb_top_k_results,
+                                "kb_similarity_threshold": self.config.kb_similarity_threshold,
+                            },
                         },
                     )
                 except Exception as e:
@@ -677,6 +723,26 @@ class AutoLangChatPlugin:
         if self.config.sso_enabled:
             self._setup_sso_routes()
 
+        # Conversation REST endpoints (per-user, named, persisted
+        # conversations). Only registered when a conversation store is
+        # actually wired; otherwise every call would 500. Independent of
+        # ``admin_enabled`` — this is a regular user-facing feature, not
+        # part of the admin surface.
+        if self.config.conversation_persistence_enabled and self._conversation_store is not None:
+            from .conversation_routes import register_conversation_routes
+
+            register_conversation_routes(
+                self.app,
+                prefix=self.config.chat_endpoint,
+                conversation_store=self._conversation_store,
+                chat_graph=self.chat_graph,
+                require_conversation_user=self._build_require_conversation_user(),
+            )
+        else:
+            logger.info(
+                "Conversation REST routes skipped: conversation_persistence_enabled=False " "or backend not configured"
+            )
+
         # Admin endpoints. Reserve the
         # ``/admin/synthesis/*`` prefix for the synthesis provenance endpoint(s).
         # registered here so unknown subpaths get a clean 404.
@@ -693,6 +759,8 @@ class AutoLangChatPlugin:
             logger.info(f"  Knowledge Search: {self.config.chat_endpoint}/knowledge/search ({search_mode})")
         if self.config.enable_ui:
             logger.info(f"  UI: {self.config.ui_endpoint}")
+        if self.config.conversation_persistence_enabled and self._conversation_store is not None:
+            logger.info(f"  Conversations: {self.config.chat_endpoint}/conversations")
         if self.config.admin_enabled:
             logger.info(f"  Admin Capabilities: {self.config.chat_endpoint}/admin/_capabilities")
             if self.config.enable_ui:
@@ -1077,6 +1145,70 @@ class AutoLangChatPlugin:
             logger.error(f"Unexpected error checking KB status: {e}")
             if not self.config.kb_allow_empty:
                 raise AutoLangChatError(f"Failed to validate knowledge base: {e}")
+
+    def _build_require_conversation_user(self) -> Callable[[Request], Any]:
+        """Build the auth dependency for the conversation REST endpoints.
+
+        Resolves the caller's identity from the same two sources used by
+        the admin API — an SSO session cookie, then the tool-auth
+        ``auth_verification_endpoint`` (see ``_setup_admin_routes`` for the
+        full rationale on both). Unlike ``require_admin``, this performs no
+        authorization check beyond "is there *any* resolvable identity"
+        (401 if not) — each conversation route separately enforces that the
+        resolved identity's ``user_id`` matches the resource being accessed
+        (403/404), since conversations are a per-user feature with no
+        "admin sees everyone's conversations" concept.
+
+        Note: unlike ``require_admin``, this does not synthesize a dynamic
+        signature to advertise per-scheme OpenAPI Security metadata — that
+        machinery exists purely for a nicer Swagger "Authorize" experience
+        on the admin routes and isn't required for the dependency to
+        function correctly here.
+        """
+        from fastapi import HTTPException
+
+        from .admin.admin_auth import (
+            AdminIdentity,
+            resolve_admin_identity_from_auth_endpoint,
+            resolve_admin_identity_from_sso_session,
+        )
+
+        sso_configured = bool(
+            self.config.sso_enabled and self.sso_session_store is not None and self.config.sso_session_secret
+        )
+        auth_endpoint_configured = bool(self.config.auth_verification_endpoint)
+
+        async def require_conversation_user(request: Request) -> AdminIdentity:
+            identity: Optional[AdminIdentity] = None
+            if sso_configured:
+                session_token = request.cookies.get("sso_session_token")
+                if session_token:
+                    sso_session_id = type(self.sso_session_store).validate_session_token(
+                        session_token, self.config.sso_session_secret
+                    )
+                    if sso_session_id:
+                        sso_session = self.sso_session_store.get_session(sso_session_id)
+                        if sso_session:
+                            identity = resolve_admin_identity_from_sso_session(sso_session)
+            if identity is None and auth_endpoint_configured:
+                endpoint_url = self.config.auth_verification_endpoint
+                if endpoint_url.startswith("/") and self.app_base_url:
+                    endpoint_url = f"{self.app_base_url}{endpoint_url}"
+                identity = await resolve_admin_identity_from_auth_endpoint(request, endpoint_url)
+
+            if identity is None:
+                if not sso_configured and not auth_endpoint_configured:
+                    logger.warning(
+                        "conversation REST endpoint hit but no identity source is configured "
+                        "(sso_enabled and auth_verification_endpoint both unset)"
+                    )
+                raise HTTPException(
+                    status_code=401, detail={"code": "not_authenticated", "message": "Not authenticated"}
+                )
+
+            return identity
+
+        return require_conversation_user
 
     def _setup_admin_routes(self):
         """Register the ``/admin/*`` HTTP block for the Expert Review API.
@@ -1609,7 +1741,11 @@ class AutoLangChatPlugin:
         # 5. Open the token-usage store connection pool
         await self._startup_open_token_usage_store()
 
-        # 6. Schedule KB credibility decay background task (opt-in)
+        # 6. Open the conversation-store connection pool
+        await self._startup_open_conversation_store()
+        self._warn_if_memory_saver_with_conversation_persistence()
+
+        # 7. Schedule KB credibility decay background task (opt-in)
         if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
             from .kb_credibility import run_credibility_decay_loop
 
@@ -1669,6 +1805,62 @@ class AutoLangChatPlugin:
             self._token_usage_store = None
             self.websocket_handler.token_usage_store = None
 
+    async def _startup_open_conversation_store(self) -> None:
+        """Open the ConversationStore; on failure, close the partial resource and disable the feature.
+
+        ``ConversationStore.open()`` opens the underlying connection pool /
+        SQLite file before applying the schema, so a schema-bootstrap
+        exception can leave resources partially open. Without an explicit
+        ``close()`` the connection would leak for the lifetime of the
+        process.
+        """
+        if self._conversation_store is None:
+            return
+        try:
+            await self._conversation_store.open()
+            logger.info("ConversationStore opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open ConversationStore: %s; disabling conversation persistence.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._conversation_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened ConversationStore")
+            self._conversation_store = None
+            self.websocket_handler.conversation_store = None
+
+    def _warn_if_memory_saver_with_conversation_persistence(self) -> None:
+        """Log a one-time degraded-mode warning for MemorySaver + conversation persistence.
+
+        Conversation *metadata* (titles, the sidebar list) always persists
+        independently of the LangGraph checkpointer. Conversation *history*
+        (``aget_state``) only survives process restarts when the
+        checkpointer is ``AsyncPostgresSaver`` — the default ``MemorySaver``
+        is in-process only. This is a supported, non-fatal configuration
+        (see docs/plans notes on the Postgres checkpointer being a
+        recommendation, not a hard precondition) — just one worth surfacing
+        to operators.
+        """
+        if self._conversation_store is None or not self.config.conversation_persistence_enabled:
+            return
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            if isinstance(self.chat_graph.checkpointer, AsyncPostgresSaver):
+                return
+        except ImportError:
+            pass  # langgraph-checkpoint-postgres not installed -> definitely not AsyncPostgresSaver
+        logger.warning(
+            "conversation_persistence_enabled=True but the LangGraph checkpointer is not "
+            "AsyncPostgresSaver (likely MemorySaver, in-process only). Conversation metadata "
+            "(titles, the conversation list) will persist normally, but message history for a "
+            "conversation will be lost on process restart. Set AUTOCHAT_POSTGRES_URL to use the "
+            "Postgres checkpointer if durable history is required."
+        )
+
     async def shutdown(self):
         """Shutdown the Bedrock chat plugin.
 
@@ -1701,6 +1893,10 @@ class AutoLangChatPlugin:
             if self._token_usage_store is not None:
                 await self._token_usage_store.close()
                 self._token_usage_store = None
+
+            if self._conversation_store is not None:
+                await self._conversation_store.close()
+                self._conversation_store = None
 
             from .graph.checkpointer import close_checkpointer as _close_cp
 
@@ -1809,7 +2005,7 @@ def add_autolangchat(
 
     Args:
         app: FastAPI application instance
-        model_id: LLM model ID to use (e.g. us.anthropic.claude-sonnet-4-6)
+        model_id: LLM model ID to use (e.g. us.anthropic.claude-sonnet-5)
         aws_region: AWS region for Bedrock inference
         system_prompt: Custom system prompt
         temperature: Model temperature (0.0-1.0)

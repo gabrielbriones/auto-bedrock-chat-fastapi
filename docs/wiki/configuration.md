@@ -35,16 +35,16 @@ autolangchat_plugin = add_autolangchat(
 
 ### AWS / Bedrock
 
-| Env Variable             | Default                          | Description                      |
-| ------------------------ | -------------------------------- | -------------------------------- |
-| `AWS_REGION`             | `us-east-1`                      | AWS region                       |
-| `AWS_ACCESS_KEY_ID`      | —                                | AWS access key (or use IAM role) |
-| `AWS_SECRET_ACCESS_KEY`  | —                                | AWS secret key                   |
-| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-4-6` | Model identifier                 |
-| `AUTOCHAT_TEMPERATURE`   | `0.7`                            | Response randomness (0.0–1.0)    |
-| `AUTOCHAT_MAX_TOKENS`    | `4096`                           | Max tokens in model response     |
-| `AUTOCHAT_TOP_P`         | `0.9`                            | Top-p sampling parameter         |
-| `AUTOCHAT_SYSTEM_PROMPT` | `None`                           | Custom system prompt             |
+| Env Variable             | Default                        | Description                      |
+| ------------------------ | ------------------------------ | -------------------------------- |
+| `AWS_REGION`             | `us-east-1`                    | AWS region                       |
+| `AWS_ACCESS_KEY_ID`      | —                              | AWS access key (or use IAM role) |
+| `AWS_SECRET_ACCESS_KEY`  | —                              | AWS secret key                   |
+| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-5` | Model identifier                 |
+| `AUTOCHAT_TEMPERATURE`   | `0.7`                          | Response randomness (0.0–1.0)    |
+| `AUTOCHAT_MAX_TOKENS`    | `4096`                         | Max tokens in model response     |
+| `AUTOCHAT_TOP_P`         | `0.9`                          | Top-p sampling parameter         |
+| `AUTOCHAT_SYSTEM_PROMPT` | `None`                         | Custom system prompt             |
 
 ### Endpoints
 
@@ -62,6 +62,19 @@ autolangchat_plugin = add_autolangchat(
 | ---------------------------- | ------------- | ---------------------------------------------------------- |
 | `AUTOCHAT_MAX_TOOL_CALLS`    | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit) |
 | `AUTOCHAT_OPENAPI_SPEC_FILE` | `None`        | Path to external OpenAPI spec file                         |
+
+### Dynamic Parameter Overrides
+
+| Env Variable                         | Default       | Description                                                                                                                          |
+| ------------------------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `AUTOCHAT_ENABLE_DYNAMIC_OVERRIDES`  | `false`       | Master switch allowing end users to override LLM params/feature toggles per message or per session via WebSocket metadata            |
+| `AUTOCHAT_ALLOWED_DYNAMIC_OVERRIDES` | _(none)_      | Comma-separated allowlist of overridable parameter names. When unset and the master switch is on, all overridable params are allowed |
+| `AUTOCHAT_ENABLE_CONFIG_SIDEBAR`     | `false`       | Whether to show the dynamic parameter overrides settings sidebar in the chat UI                                                      |
+| `AUTOCHAT_AVAILABLE_MODELS`          | built-in list | Comma-separated model IDs offered in the sidebar's `model_id` dropdown                                                               |
+
+> `model_id`, `fallback_model`, and every entry in `AUTOCHAT_AVAILABLE_MODELS` must be a model ID known to langchain-aws (`langchain_aws.data._profiles._PROFILES`) — the server refuses to start otherwise. The sidebar's dropdown shows each model's human-readable `_PROFILES[...]["name"]`; the backend continues to use the raw `model_id` internally. The `temperature` and `top_p` sliders are shown or hidden together based on the selected model's `_PROFILES[...]["temperature"]` flag (there's no separate `top_p` flag, and models that disable temperature sampling generally don't accept `top_p` either). The `max_tokens` control's upper bound is capped to the selected model's `_PROFILES[...]["max_output_tokens"]`; switching models or resetting to defaults clamps the current value down (and persists the clamped value) if it would otherwise exceed the new model's limit. The `kb_top_k_results` and `kb_similarity_threshold` controls are only shown while `enable_rag` is on.
+>
+> Overridable parameters: `model_id`, `temperature`, `max_tokens`, `top_p`, `enable_ai_summarization`, `enable_rag`, `kb_top_k_results`, `kb_similarity_threshold`. `max_tool_calls` and `preserve_system_message` are intentionally excluded for now — see [XMGPLAT-9697-dynamic-parameter-overrides.md](../plans/XMGPLAT-9697-dynamic-parameter-overrides.md).
 
 ### Session Management
 
@@ -122,7 +135,7 @@ autolangchat_plugin = add_autolangchat(
 | `KB_CHUNK_SIZE`           | `512`                        | Token size for text chunks                                |
 | `KB_CHUNK_OVERLAP`        | `100`                        | Token overlap between chunks                              |
 | `KB_TOP_K_RESULTS`        | `5`                          | Number of top chunks to retrieve per query                |
-| `KB_SIMILARITY_THRESHOLD` | `0.0`                        | Minimum similarity score for results                      |
+| `KB_SIMILARITY_THRESHOLD` | `0.3`                        | Minimum similarity score for results                      |
 | `KB_SEMANTIC_WEIGHT`      | `0.7`                        | Weight for semantic (embedding) score in hybrid search    |
 | `KB_KEYWORD_WEIGHT`       | `0.3`                        | Weight for keyword (FTS) score in hybrid search           |
 
@@ -158,7 +171,7 @@ These must be passed directly to `add_autolangchat()`:
 ```python
 autolangchat_plugin = add_autolangchat(
     app,
-    model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0",  # overrides AUTOCHAT_MODEL_ID
+    model_id="us.anthropic.claude-sonnet-5",  # overrides AUTOCHAT_MODEL_ID
     temperature=0.3,
     max_tokens=8192,
     system_prompt="You are a helpful customer support assistant.",
