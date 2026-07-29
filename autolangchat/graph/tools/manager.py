@@ -20,6 +20,7 @@ import httpx
 
 from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
+from ...exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,16 @@ class ToolManager:
         """The resolved API base URL."""
         return self._base_url
 
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """The shared ``httpx.AsyncClient`` used for tool-call HTTP dispatch.
+
+        Exposed so other transports (e.g. the MCP ``tools/call`` handler's
+        OAuth2 Client Credentials token exchange) can reuse the same
+        connection pool instead of opening a new one per request.
+        """
+        return self._http_client
+
     def generate_langchain_tools(self) -> List[Any]:
         """Return LangChain ``StructuredTool`` objects for every generated tool.
 
@@ -187,6 +198,50 @@ class ToolManager:
         }
         self._config.tools_desc = tools_desc
         self._config.langchain_tools = self.generate_langchain_tools()
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        auth_info: Optional[AuthInfo] = None,
+    ) -> Any:
+        """Execute a single named tool call and return its raw result.
+
+        Thin public wrapper around ``_execute_single_tool_call`` for callers
+        outside the LangGraph/Bedrock batch loop (e.g. the MCP ``tools/call``
+        handler) that invoke one tool by name and need either the raw result
+        or a raised exception. Unlike ``execute_tool_calls()`` — which is
+        batch-oriented, applies ``max_tool_calls`` capping, and reports
+        failures as ``{"error": ...}`` dict entries instead of raising — this
+        method performs a single lookup/validation/dispatch and lets
+        exceptions propagate so callers can map them to their own error
+        format (e.g. a JSON-RPC error response).
+
+        Args:
+            name: Registered tool name (a key in ``_generated_tools``).
+            arguments: Arguments for the tool call.
+            auth_info: Optional authentication data for the HTTP request.
+
+        Returns:
+            The parsed response (JSON dict, list, or string) from the tool's
+            HTTP endpoint.
+
+        Raises:
+            ToolError: If ``name`` is not a registered tool, or required
+                arguments are missing.
+        """
+        tool_metadata = self._generated_tools.get(name)
+        if not tool_metadata:
+            raise ToolError(f"Unknown tool: {name}")
+
+        fn_desc = tool_metadata.get("function_desc", {})
+        required = fn_desc.get("parameters", {}).get("required", [])
+        missing = [p for p in required if p not in arguments]
+        if missing:
+            raise ToolError(f"Missing required arguments for tool {name}: {missing}")
+
+        self._total_tool_calls_executed += 1
+        return await self._execute_single_tool_call(tool_metadata, arguments, auth_info)
 
     async def execute_tool_calls(
         self,

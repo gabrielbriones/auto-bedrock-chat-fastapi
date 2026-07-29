@@ -117,7 +117,124 @@ autolangchat_plugin = add_autolangchat(
 | `AUTOCHAT_SUPPORTED_AUTH_TYPES` | all types | Auth types accepted (list, set in code)      |
 | `AUTOCHAT_DEFAULT_AUTH_TYPE`    | _(none)_  | Pre-select this auth type in the UI modal    |
 
-### Logging
+### MCP (Model Context Protocol)
+
+| Env Variable            | Default     | Description                                                                                                               |
+| ----------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `AUTOCHAT_MCP_ENABLED`  | `false`     | Master switch for the MCP Streamable HTTP endpoint. Requires the optional `[mcp]` extra (`pip install autolangchat[mcp]`) |
+| `AUTOCHAT_MCP_ENDPOINT` | `/chat/mcp` | Endpoint path for the MCP server, mounted when `AUTOCHAT_MCP_ENABLED` is true                                             |
+
+Exposes the same OpenAPI-derived tools already available to the LangGraph/Bedrock chat loop to MCP clients (Claude Desktop, VS Code Copilot, etc.) as a pure `tools/list`/`tools/call` provider — MCP clients bring their own LLM and tool-calling loop, so the chat loop itself is not reused for this endpoint.
+
+**Auth** is extracted per-request from the incoming HTTP headers (no separate env vars — it mirrors `AUTOCHAT_SUPPORTED_AUTH_TYPES`), detected in this order:
+
+| Auth type                 | Header(s)                                                                                       | Notes                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bearer token              | `Authorization: Bearer <token>`                                                                 | Forwarded as-is to the target API                                                                                                                                                                                                                                                                                                                                                                           |
+| Basic auth                | `Authorization: Basic <base64(user:pass)>`                                                      | Standard HTTP Basic                                                                                                                                                                                                                                                                                                                                                                                         |
+| OAuth2 Client Credentials | `X-OAuth2-Client-Id`, `X-OAuth2-Client-Secret`, `X-OAuth2-Token-Url`, optional `X-OAuth2-Scope` | All three required headers must be present together; a fresh token exchange happens on every request (no cross-request caching, since the MCP session manager is stateless)                                                                                                                                                                                                                                 |
+| API key                   | `X-API-Key`                                                                                     |                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Custom headers            | `X-Forward-<Name>`                                                                              | Forwarded verbatim as `<Name>` (prefix stripped)                                                                                                                                                                                                                                                                                                                                                            |
+| SSO                       | `Authorization: Bearer <session_token>`                                                         | Only recognized when `AUTOCHAT_SSO_ENABLED=true`. The `session_token` comes from the existing `/chat/auth/sso/login` web flow (unchanged) — the MCP layer swaps in the underlying IdP access token for the actual tool call. When enabled, `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` are also published so spec-compliant MCP clients can auto-discover the IdP |
+
+If none of the above match, the tool call still executes unauthenticated.
+
+**Example MCP client configs** (VS Code `mcp.json` — see [Add and manage MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers) for other clients/formats):
+
+```jsonc
+// Bearer token
+{
+  "servers": {
+    "my-api": {
+      "type": "http",
+      "url": "http://localhost:8000/chat/mcp",
+      "headers": { "Authorization": "Bearer ${input:my_api_token}" }
+    }
+  },
+  "inputs": [{ "id": "my_api_token", "type": "promptString", "description": "Bearer token", "password": true }]
+}
+```
+
+```jsonc
+// Basic auth
+{
+  "servers": {
+    "my-api": {
+      "type": "http",
+      "url": "http://localhost:8000/chat/mcp",
+      "headers": { "Authorization": "Basic ${input:my_api_basic_b64}" }
+    }
+  },
+  "inputs": [{ "id": "my_api_basic_b64", "type": "promptString", "description": "base64(user:pass)", "password": true }]
+}
+```
+
+```jsonc
+// API key
+{
+  "servers": {
+    "my-api": {
+      "type": "http",
+      "url": "http://localhost:8000/chat/mcp",
+      "headers": { "X-API-Key": "${input:my_api_key}" }
+    }
+  },
+  "inputs": [{ "id": "my_api_key", "type": "promptString", "description": "API key", "password": true }]
+}
+```
+
+```jsonc
+// OAuth2 Client Credentials
+{
+  "servers": {
+    "my-api": {
+      "type": "http",
+      "url": "http://localhost:8000/chat/mcp",
+      "headers": {
+        "X-OAuth2-Client-Id": "${input:my_api_client_id}",
+        "X-OAuth2-Client-Secret": "${input:my_api_client_secret}",
+        "X-OAuth2-Token-Url": "https://idp.example.com/oauth2/token"
+      }
+    }
+  },
+  "inputs": [
+    { "id": "my_api_client_id", "type": "promptString", "description": "OAuth2 client_id" },
+    { "id": "my_api_client_secret", "type": "promptString", "description": "OAuth2 client_secret", "password": true }
+  ]
+}
+```
+
+```jsonc
+// Custom headers (forwarded as X-Tenant-Id, X-Region)
+{
+  "servers": {
+    "my-api": {
+      "type": "http",
+      "url": "http://localhost:8000/chat/mcp",
+      "headers": { "X-Forward-Tenant-Id": "acme", "X-Forward-Region": "us-east" }
+    }
+  }
+}
+```
+
+```jsonc
+// SSO — session_token obtained by visiting http://localhost:8000/chat/auth/sso/login
+// in a browser first, then presented the same way as a bearer token
+{
+  "servers": {
+    "my-api": {
+      "type": "http",
+      "url": "http://localhost:8000/chat/mcp",
+      "headers": { "Authorization": "Bearer ${input:my_api_sso_session_token}" }
+    }
+  },
+  "inputs": [
+    { "id": "my_api_sso_session_token", "type": "promptString", "description": "SSO session_token", "password": true }
+  ]
+}
+```
+
+> Since `${input:...}` values are cached by the MCP client after the first prompt (not re-validated against expiry), rotate the input `id` (e.g. append a version/date suffix) to force a fresh prompt when a credential is rotated — or hardcode the header values directly in `mcp.json` if your rotation cadence makes that simpler, keeping in mind the file is plaintext and may be swept up by the client's own settings-sync feature if enabled.
 
 | Env Variable         | Default | Description                             |
 | -------------------- | ------- | --------------------------------------- |
