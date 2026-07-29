@@ -989,6 +989,29 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    # ------------------------------------------------------------------
+    # MCP Server
+    # ------------------------------------------------------------------
+
+    mcp_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_MCP_ENABLED",
+        description=(
+            "Master switch for the MCP (Model Context Protocol) Streamable "
+            "HTTP endpoint. When False, the endpoint is not registered so "
+            "unauthorized callers receive a clean 404. Exposes the same "
+            "OpenAPI-derived tools (via ``ToolsGenerator``/``ToolManager``) "
+            "to MCP clients (Claude Desktop, VS Code Copilot, etc.) without "
+            "going through the Bedrock/LangGraph chat loop."
+        ),
+    )
+
+    mcp_endpoint: str = Field(
+        default="/chat/mcp",
+        alias="AUTOCHAT_MCP_ENDPOINT",
+        description="Endpoint path for the MCP Streamable HTTP server, mounted when mcp_enabled is True.",
+    )
+
     kb_embedding_dimensions: int = Field(
         default=1536,
         alias="AUTOCHAT_KB_EMBEDDING_DIMENSIONS",
@@ -1704,6 +1727,8 @@ def validate_config(config: ChatConfig) -> None:
         raise ConfigurationError("Feedback max history context cannot be negative")
 
     endpoints = [config.chat_endpoint, config.websocket_endpoint, config.ui_endpoint]
+    if config.mcp_enabled:
+        endpoints.append(config.mcp_endpoint)
     # Validate endpoint paths don't conflict
     if len(set(endpoints)) != len(endpoints):
         raise ConfigurationError("Chat endpoints cannot have duplicate paths")

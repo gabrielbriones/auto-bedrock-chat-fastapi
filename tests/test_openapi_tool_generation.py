@@ -447,3 +447,94 @@ class TestToolManagerExecuteConcurrency:
         await manager.execute_tool_calls(calls)
 
         assert manager._total_tool_calls_executed == 4
+
+
+# ---------------------------------------------------------------------------
+# ToolManager.call_tool — single-call public wrapper (used by e.g. MCP)
+# ---------------------------------------------------------------------------
+
+
+class TestToolManagerCallTool:
+    """Tests for the ``call_tool`` single-call public wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_raw_result_for_known_tool(self):
+        manager = _make_manager(_GET_SPEC)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {"jobs": []}
+        fake_response.text = '{"jobs": []}'
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        result = await manager.call_tool("list_jobs", {})
+
+        assert result == {"jobs": []}
+        manager._http_client.request.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_raises_tool_error(self):
+        from autolangchat.exceptions import ToolError
+
+        manager = _make_manager(_GET_SPEC)
+
+        with pytest.raises(ToolError, match="Unknown tool"):
+            await manager.call_tool("does_not_exist", {})
+
+    @pytest.mark.asyncio
+    async def test_missing_required_argument_raises_tool_error(self):
+        from autolangchat.exceptions import ToolError
+
+        manager = _make_manager(_GET_SPEC)
+
+        with pytest.raises(ToolError, match="Missing required arguments"):
+            await manager.call_tool("get_job", {})
+
+    @pytest.mark.asyncio
+    async def test_increments_total_tool_calls_executed(self):
+        manager = _make_manager(_GET_SPEC)
+
+        async def _fast_execute(tool_metadata, arguments, auth_info=None):
+            return {"ok": True}
+
+        manager._execute_single_tool_call = _fast_execute
+
+        await manager.call_tool("list_jobs", {})
+
+        assert manager._total_tool_calls_executed == 1
+
+    @pytest.mark.asyncio
+    async def test_propagates_execution_exceptions(self):
+        """Unlike execute_tool_calls, call_tool must let exceptions propagate (not swallow them)."""
+        manager = _make_manager(_GET_SPEC)
+
+        async def _boom(tool_metadata, arguments, auth_info=None):
+            raise RuntimeError("boom")
+
+        manager._execute_single_tool_call = _boom
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await manager.call_tool("list_jobs", {})
+
+    @pytest.mark.asyncio
+    async def test_applies_auth_info_headers(self):
+        """auth_info must flow through to the underlying HTTP call, same as batch execution."""
+        manager = _make_manager(_GET_SPEC)
+
+        from autolangchat.auth_handler import AuthenticationHandler, AuthType, Credentials
+        from autolangchat.graph.tools.manager import AuthInfo
+
+        credentials = Credentials(auth_type=AuthType.BEARER_TOKEN, bearer_token="tok123")
+        auth_handler = AuthenticationHandler(credentials=credentials)
+        auth_info = AuthInfo(credentials=credentials, auth_handler=auth_handler)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+        fake_response.text = "{}"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        await manager.call_tool("list_jobs", {}, auth_info=auth_info)
+
+        _, kwargs = manager._http_client.request.call_args
+        assert kwargs["headers"].get("Authorization") == "Bearer tok123"

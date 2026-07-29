@@ -71,6 +71,26 @@ class SSOProvider:
         """Whether a userinfo endpoint is configured."""
         return bool(self._userinfo_endpoint)
 
+    @property
+    def issuer(self) -> Optional[str]:
+        """The resolved OIDC issuer, if discovery has run and the IdP returned one."""
+        return self._issuer
+
+    @property
+    def authorization_endpoint(self) -> Optional[str]:
+        """The resolved authorization endpoint (discovery or manual override)."""
+        return self._authorization_endpoint
+
+    @property
+    def token_endpoint(self) -> Optional[str]:
+        """The resolved token endpoint (discovery or manual override)."""
+        return self._token_endpoint
+
+    @property
+    def jwks_uri(self) -> Optional[str]:
+        """The resolved JWKS URI (discovery or manual override)."""
+        return self._jwks_uri
+
     # ------------------------------------------------------------------
     # OIDC Discovery
     # ------------------------------------------------------------------

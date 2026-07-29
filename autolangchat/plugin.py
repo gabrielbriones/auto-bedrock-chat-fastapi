@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import secrets
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, Request, WebSocket
@@ -55,6 +55,33 @@ def _load_sso_imports():
     SSOTokenError = _SSOTokenError
     SSOValidationError = _SSOValidationError
     extract_user_id_from_sso_session = _extract_user_id
+
+
+# MCP imports are deferred — only loaded when mcp_enabled=True at runtime.
+# Install with the [mcp] extra to get the official mcp Python SDK.
+build_mcp_server = None  # type: ignore[assignment]
+build_mcp_session_manager = None  # type: ignore[assignment]
+build_protected_resource_routes = None  # type: ignore[assignment]
+build_authorization_server_metadata_route = None  # type: ignore[assignment]
+
+
+def _load_mcp_imports():
+    """Lazily import the MCP module; raises ImportError with a helpful message."""
+    global build_mcp_server, build_mcp_session_manager
+    global build_protected_resource_routes, build_authorization_server_metadata_route
+    if build_mcp_server is not None:
+        return  # already loaded
+    try:
+        from .mcp.discovery import build_authorization_server_metadata_route as _build_as_metadata_route
+        from .mcp.discovery import build_protected_resource_routes as _build_protected_resource_routes
+        from .mcp.server import build_mcp_server as _build_mcp_server
+        from .mcp.server import build_mcp_session_manager as _build_mcp_session_manager
+    except ImportError as exc:
+        raise ImportError("MCP dependencies are not installed. " "Install with: pip install autolangchat[mcp]") from exc
+    build_mcp_server = _build_mcp_server
+    build_mcp_session_manager = _build_mcp_session_manager
+    build_protected_resource_routes = _build_protected_resource_routes
+    build_authorization_server_metadata_route = _build_as_metadata_route
 
 
 logger = logging.getLogger(__name__)
@@ -217,6 +244,26 @@ class AutoLangChatPlugin:
             _load_sso_imports()
             self.sso_provider = SSOProvider(self.config)
             self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
+
+        # MCP (Model Context Protocol) server components (only when MCP is
+        # enabled). Pure tool provider over Streamable HTTP -- does not reuse
+        # chat_graph; MCP clients bring their own LLM/tool-calling loop.
+        # Built after the SSO block above so the MCP SSO auth path (tools/call
+        # recognizing an SSO session token presented as a Bearer token) can
+        # reuse ``self.sso_session_store`` -- see ``mcp/auth.py``.
+        self._mcp_server = None
+        self._mcp_session_manager = None
+        self._mcp_exit_stack: Optional[AsyncExitStack] = None
+        if self.config.mcp_enabled:
+            _load_mcp_imports()
+            self._mcp_server = build_mcp_server(
+                tools_generator,
+                self.tool_manager,
+                sso_session_store=self.sso_session_store,
+                sso_session_secret=self.config.sso_session_secret,
+                require_tool_auth=self.config.require_tool_auth,
+            )
+            self._mcp_session_manager = build_mcp_session_manager(self._mcp_server)
 
         # Shared KB store (created once, reused across requests)
         self._kb_store = None
@@ -723,6 +770,10 @@ class AutoLangChatPlugin:
         if self.config.sso_enabled:
             self._setup_sso_routes()
 
+        # MCP (Model Context Protocol) endpoint (only when MCP is enabled)
+        if self.config.mcp_enabled:
+            self._setup_mcp_routes()
+
         # Conversation REST endpoints (per-user, named, persisted
         # conversations). Only registered when a conversation store is
         # actually wired; otherwise every call would 500. Independent of
@@ -768,6 +819,59 @@ class AutoLangChatPlugin:
         if self.config.sso_enabled:
             logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
             logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
+        if self.config.mcp_enabled:
+            logger.info(f"  MCP: {self.config.mcp_endpoint}")
+
+    def _setup_mcp_routes(self):
+        """Mount the MCP (Model Context Protocol) Streamable HTTP endpoint.
+
+        Called by ``_setup_routes`` when ``config.mcp_enabled`` is True.
+        ``self._mcp_session_manager.handle_request`` is a raw ASGI callable
+        (``(scope, receive, send) -> None``); mounting it directly means
+        every HTTP method the Streamable HTTP transport needs (POST for
+        JSON-RPC, GET for the SSE stream, DELETE for session termination)
+        reaches it, matching how static files are mounted in
+        ``_setup_templates``.
+
+        The session manager's ``run()`` context (which starts its internal
+        task group) is entered during ``plugin.startup()`` — see
+        ``_do_startup`` — and exited during ``plugin.shutdown()``. Routes
+        must be mounted before that so the endpoint exists as soon as the
+        app starts serving traffic.
+
+        When SSO is also enabled, additionally mounts the RFC 9728
+        ``/.well-known/oauth-protected-resource`` and RFC 8414
+        ``/.well-known/oauth-authorization-server`` discovery routes so
+        spec-compliant MCP clients can auto-discover the IdP and perform
+        Authorization Code + PKCE themselves (see ``mcp/discovery.py``). The
+        actual login flow is unchanged — MCP clients use the existing
+        ``/chat/auth/sso/login`` web route and present the resulting
+        ``session_token`` as a Bearer token on MCP requests.
+
+        The protected-resource route needs an *absolute* public URL for
+        this endpoint (RFC 9728's ``resource`` field); if neither
+        ``sso_public_base_url`` nor ``api_base_url`` is configured, that
+        route is skipped (logged, not raised) rather than crashing plugin
+        startup with an ``AnyHttpUrl`` validation error on a bare relative
+        path. The AS-metadata route is unaffected — it doesn't depend on
+        this app's own URL, only on the IdP's resolved endpoints.
+        """
+        self.app.mount(self.config.mcp_endpoint, self._mcp_session_manager.handle_request)
+
+        if self.config.sso_enabled:
+            base_url = (self.config.sso_public_base_url or self.config.api_base_url or "").rstrip("/")
+            if base_url:
+                resource_url = f"{base_url}{self.config.mcp_endpoint}"
+                for route in build_protected_resource_routes(resource_url, self.sso_provider, self.config):
+                    self.app.router.routes.append(route)
+            else:
+                logger.warning(
+                    "Skipping /.well-known/oauth-protected-resource: neither "
+                    "sso_public_base_url nor api_base_url is configured, so no "
+                    "absolute resource URL can be resolved. Set "
+                    "AUTOCHAT_SSO_PUBLIC_BASE_URL or AUTOCHAT_API_BASE_URL to enable it."
+                )
+            self.app.router.routes.append(build_authorization_server_metadata_route(self.sso_provider, self.config))
 
     def _setup_sso_routes(self):
         """Register SSO HTTP endpoints on the FastAPI app.
@@ -1751,6 +1855,15 @@ class AutoLangChatPlugin:
 
             self._credibility_decay_task = asyncio.create_task(run_credibility_decay_loop(self._kb_store, self.config))
 
+        # 8. Start the MCP Streamable HTTP session manager's task group.
+        # ``run()`` is an async context manager that must stay entered for
+        # the lifetime of the app; ``_do_shutdown`` exits it via the same
+        # exit stack.
+        if self.config.mcp_enabled and self._mcp_session_manager is not None:
+            self._mcp_exit_stack = AsyncExitStack()
+            await self._mcp_exit_stack.enter_async_context(self._mcp_session_manager.run())
+            logger.info("MCP session manager started")
+
     async def _startup_open_feedback_store(self) -> None:
         """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
 
@@ -1881,6 +1994,11 @@ class AutoLangChatPlugin:
             await self._cancel_credibility_decay_task()
             await self.websocket_handler.shutdown()
             await self.tool_manager.shutdown()
+
+            if self._mcp_exit_stack is not None:
+                await self._mcp_exit_stack.aclose()
+                self._mcp_exit_stack = None
+                logger.info("MCP session manager stopped")
 
             if self._kb_store is not None:
                 self._kb_store.close()
