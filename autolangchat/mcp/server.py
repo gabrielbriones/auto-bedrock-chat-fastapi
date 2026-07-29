@@ -27,6 +27,7 @@ True; see ``AutoLangChatPlugin._setup_mcp_routes`` and ``_do_startup``)::
 import logging
 from typing import Any, Dict, List, Optional
 
+from ..exceptions import ToolError
 from ..graph.tools.generator import ToolsGenerator
 from ..graph.tools.manager import ToolManager
 from .auth import build_auth_info_from_headers
@@ -67,6 +68,7 @@ def build_mcp_server(
     name: str = "autolangchat",
     sso_session_store: Optional[Any] = None,
     sso_session_secret: Optional[str] = None,
+    require_tool_auth: bool = False,
 ) -> "Server":
     """Build an MCP ``Server`` wired to the existing tool-generation/execution stack.
 
@@ -90,6 +92,10 @@ def build_mcp_server(
         sso_session_secret: Signing secret for validating SSO session tokens
             (``config.sso_session_secret``). Required alongside
             ``sso_session_store`` for SSO recognition to take effect.
+        require_tool_auth: Mirrors ``config.require_tool_auth``. When True,
+            a ``tools/call`` request whose headers don't resolve to any
+            recognized auth type is rejected (``ToolError``, surfaced as an
+            MCP ``isError`` result) instead of executing unauthenticated.
     """
     server = Server(name)
 
@@ -111,6 +117,9 @@ def build_mcp_server(
                 sso_session_store=sso_session_store,
                 sso_session_secret=sso_session_secret,
             )
+
+        if require_tool_auth and auth_info is None:
+            raise ToolError("Authentication is required for MCP tool calls.")
 
         return await tool_manager.call_tool(tool_name, arguments, auth_info=auth_info)
 

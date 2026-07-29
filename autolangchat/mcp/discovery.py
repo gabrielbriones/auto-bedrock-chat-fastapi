@@ -6,8 +6,9 @@ PKCE themselves, with no credentials embedded in static client config:
 
 - ``/.well-known/oauth-protected-resource<mcp_endpoint>`` (RFC 9728): tells
   the client which authorization server(s) can issue tokens for this MCP
-  endpoint. Built directly from the official ``mcp`` SDK's own
-  ``create_protected_resource_routes`` helper — no custom serialization.
+  endpoint. The well-known path is derived via the official ``mcp`` SDK's
+  ``build_resource_metadata_url`` helper; the response body is served by
+  this module as a ``ProtectedResourceMetadata`` document.
 - ``/.well-known/oauth-authorization-server`` (RFC 8414): a minimal
   translation of whatever ``SSOProvider`` already resolved from the
   configured IdP's OIDC discovery document (or manual endpoint overrides),

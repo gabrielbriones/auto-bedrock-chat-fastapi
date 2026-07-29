@@ -133,6 +133,72 @@ class TestBuildMcpServer:
         assert "Unknown tool" in result.root.content[0].text
 
 
+class TestRequireToolAuth:
+    """Verifies ``require_tool_auth`` (mirrors ``config.require_tool_auth``)
+    rejects unauthenticated ``tools/call`` requests instead of silently
+    executing them (Copilot PR #130 review, High severity)."""
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_call_rejected_when_required(self):
+        generator = _make_generator()
+        tool_manager = _FakeToolManager()
+        server = build_mcp_server(generator, tool_manager, require_tool_auth=True)
+
+        handler = server.request_handlers[types.CallToolRequest]
+        request = types.CallToolRequest(params=types.CallToolRequestParams(name="list_jobs", arguments={}))
+        result = await handler(request)
+
+        assert result.root.isError is True
+        assert "Authentication is required" in result.root.content[0].text
+        tool_manager.call_tool.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_call_still_allowed_when_required(self):
+        from mcp.server.lowlevel.server import request_ctx
+        from mcp.shared.context import RequestContext
+
+        class _FakeHttpRequest:
+            def __init__(self, headers):
+                self.headers = headers
+
+        generator = _make_generator()
+        tool_manager = _FakeToolManager()
+        server = build_mcp_server(generator, tool_manager, require_tool_auth=True)
+        handler = server.request_handlers[types.CallToolRequest]
+        request = types.CallToolRequest(params=types.CallToolRequestParams(name="list_jobs", arguments={}))
+
+        token = request_ctx.set(
+            RequestContext(
+                request_id="1",
+                meta=None,
+                session=None,
+                lifespan_context=None,
+                request=_FakeHttpRequest({"Authorization": "Bearer tok123"}),
+            )
+        )
+        try:
+            result = await handler(request)
+        finally:
+            request_ctx.reset(token)
+
+        assert result.root.isError is False
+        tool_manager.call_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_call_allowed_when_not_required(self):
+        """Default (require_tool_auth=False) preserves pre-existing behavior."""
+        generator = _make_generator()
+        tool_manager = _FakeToolManager()
+        server = build_mcp_server(generator, tool_manager)
+
+        handler = server.request_handlers[types.CallToolRequest]
+        request = types.CallToolRequest(params=types.CallToolRequestParams(name="list_jobs", arguments={}))
+        result = await handler(request)
+
+        assert result.root.isError is False
+        tool_manager.call_tool.assert_awaited_once_with("list_jobs", {}, auth_info=None)
+
+
 class TestCallToolAuthWiring:
     """Verifies ``_call_tool`` extracts auth from the active MCP request context.
 

@@ -137,7 +137,7 @@ Exposes the same OpenAPI-derived tools already available to the LangGraph/Bedroc
 | Custom headers            | `X-Forward-<Name>`                                                                              | Forwarded verbatim as `<Name>` (prefix stripped)                                                                                                                                                                                                                                                                                                                                                            |
 | SSO                       | `Authorization: Bearer <session_token>`                                                         | Only recognized when `AUTOCHAT_SSO_ENABLED=true`. The `session_token` comes from the existing `/chat/auth/sso/login` web flow (unchanged) — the MCP layer swaps in the underlying IdP access token for the actual tool call. When enabled, `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` are also published so spec-compliant MCP clients can auto-discover the IdP |
 
-If none of the above match, the tool call still executes unauthenticated.
+If none of the above match, the tool call executes unauthenticated (unless `AUTOCHAT_REQUIRE_TOOL_AUTH=true`, in which case the request is rejected with an error instead).
 
 **Example MCP client configs** (VS Code `mcp.json` — see [Add and manage MCP servers](https://code.visualstudio.com/docs/agent-customization/mcp-servers) for other clients/formats):
 
@@ -205,7 +205,7 @@ If none of the above match, the tool call still executes unauthenticated.
 ```
 
 ```jsonc
-// Custom headers (forwarded as X-Tenant-Id, X-Region)
+// Custom headers (forwarded as Tenant-Id, Region)
 {
   "servers": {
     "my-api": {

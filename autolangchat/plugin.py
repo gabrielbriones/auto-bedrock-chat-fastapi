@@ -261,6 +261,7 @@ class AutoLangChatPlugin:
                 self.tool_manager,
                 sso_session_store=self.sso_session_store,
                 sso_session_secret=self.config.sso_session_secret,
+                require_tool_auth=self.config.require_tool_auth,
             )
             self._mcp_session_manager = build_mcp_session_manager(self._mcp_server)
 
