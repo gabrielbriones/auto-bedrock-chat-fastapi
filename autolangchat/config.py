@@ -231,6 +231,47 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    summarization_model_id: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_MODEL_ID",
+        description=(
+            "Bedrock model id used for AI summarization (see enable_ai_summarization). "
+            "When unset, falls back to the main chat model_id."
+        ),
+    )
+
+    summarization_temperature: Optional[float] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_TEMPERATURE",
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Sampling temperature for AI summarization LLM calls. When unset, "
+            "falls back to DEFAULT_SUMMARIZATION_TEMPERATURE (see defaults.py)."
+        ),
+    )
+
+    summarization_max_tokens: Optional[int] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_MAX_TOKENS",
+        gt=0,
+        description=(
+            "Maximum tokens for AI summarization LLM responses. When unset, " "falls back to the main chat max_tokens."
+        ),
+    )
+
+    summarization_top_p: Optional[float] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_TOP_P",
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Top-p sampling parameter for AI summarization LLM calls. Only applied "
+            "when no summarization temperature is in effect (Bedrock Converse rejects "
+            "both being set simultaneously)."
+        ),
+    )
+
     # Single-Message Truncation Configuration (Character-Based)
     single_msg_length_threshold: int = Field(
         default=DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
