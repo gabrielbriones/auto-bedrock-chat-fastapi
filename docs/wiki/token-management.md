@@ -126,7 +126,7 @@ AUTOCHAT_SUMMARIZATION_TOP_P=0.4
 
 - `AUTOCHAT_SUMMARIZATION_MODEL_ID` — falls back to `AUTOCHAT_MODEL_ID` when unset.
 - `AUTOCHAT_SUMMARIZATION_MAX_TOKENS` — falls back to `AUTOCHAT_MAX_TOKENS` when unset.
-- `AUTOCHAT_SUMMARIZATION_TEMPERATURE` — falls back to `DEFAULT_SUMMARIZATION_TEMPERATURE` (`0.7`) when unset.
+- `AUTOCHAT_SUMMARIZATION_TEMPERATURE` — when unset (and `AUTOCHAT_SUMMARIZATION_TOP_P` is also unset), falls back to `DEFAULT_SUMMARIZATION_TEMPERATURE` (`0.7`).
 - `AUTOCHAT_SUMMARIZATION_TOP_P` — only takes effect when no summarization temperature is in effect (an explicit `AUTOCHAT_SUMMARIZATION_TEMPERATURE` always wins), since Bedrock Converse rejects requests specifying both simultaneously.
 
 **AI Summarization defaults** (from `defaults.py`):

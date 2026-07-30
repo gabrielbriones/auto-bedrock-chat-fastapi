@@ -79,8 +79,8 @@ class TestPreprocessNodeAiSummarizationToggle:
 class TestPreprocessNodeSummarizationParams:
     @pytest.mark.asyncio
     async def test_distinct_summarization_params_are_used(self):
-        """When all four summarization_* fields are set, the summarizer LLM is
-        built from them instead of the main chat model/params."""
+        """When summarization overrides are set, the summarizer LLM is built from
+        them instead of the main chat model/params."""
         chat_config = _config(
             enable_ai_summarization=True,
             model_id="us.anthropic.claude-sonnet-5",

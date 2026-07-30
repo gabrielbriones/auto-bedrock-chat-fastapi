@@ -256,7 +256,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_SUMMARIZATION_MAX_TOKENS",
         gt=0,
         description=(
-            "Maximum tokens for AI summarization LLM responses. When unset, " "falls back to the main chat max_tokens."
+            "Maximum tokens for AI summarization LLM responses. When unset, falls back to the main chat max_tokens."
         ),
     )
 
