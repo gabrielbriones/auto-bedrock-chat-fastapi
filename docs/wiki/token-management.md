@@ -114,6 +114,21 @@ AUTOCHAT_SYSTEM_PROMPT="You are a helpful engineering assistant."
 3. If the summary fits within budget, it replaces the original message
 4. If the LLM fails or produces an over-budget result, it falls back to plain-text truncation
 
+**Separate model/params for summarization (optional):** by default, the summarizer reuses the main chat `model_id`/`max_tokens` and a fixed temperature. You can override any of these independently so summarization uses a cheaper/faster model or different sampling params than the main chat model:
+
+```bash
+# .env
+AUTOCHAT_SUMMARIZATION_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+AUTOCHAT_SUMMARIZATION_TEMPERATURE=0.2
+AUTOCHAT_SUMMARIZATION_MAX_TOKENS=512
+AUTOCHAT_SUMMARIZATION_TOP_P=0.4
+```
+
+- `AUTOCHAT_SUMMARIZATION_MODEL_ID` — falls back to `AUTOCHAT_MODEL_ID` when unset.
+- `AUTOCHAT_SUMMARIZATION_MAX_TOKENS` — falls back to `AUTOCHAT_MAX_TOKENS` when unset.
+- `AUTOCHAT_SUMMARIZATION_TEMPERATURE` — when unset (and `AUTOCHAT_SUMMARIZATION_TOP_P` is also unset), falls back to `DEFAULT_SUMMARIZATION_TEMPERATURE` (`0.7`).
+- `AUTOCHAT_SUMMARIZATION_TOP_P` — only takes effect when no summarization temperature is in effect (an explicit `AUTOCHAT_SUMMARIZATION_TEMPERATURE` always wins), since Bedrock Converse rejects requests specifying both simultaneously.
+
 **AI Summarization defaults** (from `defaults.py`):
 
 | Constant                            | Value | Description                           |

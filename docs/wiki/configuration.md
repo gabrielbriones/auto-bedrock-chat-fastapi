@@ -105,9 +105,13 @@ autolangchat_plugin = add_autolangchat(
 
 ### AI Summarization
 
-| Env Variable                       | Default | Description                                          |
-| ---------------------------------- | ------- | ---------------------------------------------------- |
-| `AUTOCHAT_ENABLE_AI_SUMMARIZATION` | `false` | Enable LLM-based summarization instead of truncation |
+| Env Variable                         | Default | Description                                                                                                                                                              |
+| ------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AUTOCHAT_ENABLE_AI_SUMMARIZATION`   | `false` | Enable LLM-based summarization instead of truncation                                                                                                                     |
+| `AUTOCHAT_SUMMARIZATION_MODEL_ID`    | `None`  | Bedrock model id for summarization LLM calls. Falls back to `AUTOCHAT_MODEL_ID` when unset                                                                               |
+| `AUTOCHAT_SUMMARIZATION_TEMPERATURE` | `None`  | Sampling temperature for summarization (0.0–1.0). When unset (and `AUTOCHAT_SUMMARIZATION_TOP_P` is also unset), falls back to `DEFAULT_SUMMARIZATION_TEMPERATURE` (0.7) |
+| `AUTOCHAT_SUMMARIZATION_MAX_TOKENS`  | `None`  | Max tokens for summarization responses. Falls back to `AUTOCHAT_MAX_TOKENS` when unset                                                                                   |
+| `AUTOCHAT_SUMMARIZATION_TOP_P`       | `None`  | Top-p sampling for summarization (0.0–1.0). Only applied when no summarization temperature is in effect                                                                  |
 
 ### Authentication
 
