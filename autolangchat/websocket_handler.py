@@ -328,7 +328,8 @@ class WebSocketChatHandler:
                     )
                     return
 
-            logger.info(f"Received user message: {user_message}")
+            logger.info("Received user message (%d chars)", len(user_message))
+            logger.debug("Received user message: %s", user_message)
 
             # Send typing indicator
             await self._send_message(
@@ -493,7 +494,8 @@ class WebSocketChatHandler:
             # Graph messages are dicts: {"role": "assistant", "content": "...", ...}
             content = final_msg.get("content") or ""
             final_response = final_msg
-            logger.info(f"Chat response ({len(content):,} chars): {content[:100]}")
+            logger.info("Chat response (%s chars)", f"{len(content):,}")
+            logger.debug("Chat response preview: %s", content[:100])
 
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata["model_id"] = effective_config.model_id

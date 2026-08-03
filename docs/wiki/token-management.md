@@ -56,7 +56,7 @@ preprocess_messages(history)
 > change truncation behavior, change `AUTOCHAT_MODEL_ID` instead — there is no
 > other lever.
 
-| Env Variable                                | Default (1M-token model) | Description                                       |
+| Setting                                     | Default (1M-token model) | Description                                       |
 | ------------------------------------------- | ------------------------ | ------------------------------------------------- |
 | `single_msg_length_threshold` (computed)    | `500000`                 | Chars that trigger Stage 1 per-message truncation |
 | `single_msg_truncation_target` (computed)   | `425000`                 | Target chars after Stage 1                        |

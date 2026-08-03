@@ -216,6 +216,10 @@ class TestGraphRoundTrip:
 
         assert result["messages"][-1]["content"] == "fallback answer"
         assert result["metadata"]["fallback_model_used"] is True
+        # Emergency re-truncation was attempted (and itself failed) before
+        # falling back to fallback_model -- the flag reflects that the safety
+        # net was engaged, not just whether its own retry call succeeded.
+        assert result["metadata"]["emergency_retruncation_applied"] is True
         assert call_count["n"] == 3
 
     @pytest.mark.asyncio
