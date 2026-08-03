@@ -162,7 +162,7 @@ flowchart LR
     U --> CR --> RAG --> PP --> CBC --> TC --> CBC --> Resp
 ```
 
-**Checkpointing:** Conversation state is persisted via LangGraph `MemorySaver` (Phase 1) or `AsyncPostgresSaver` (Phase 3), keyed by `session_id`.
+**Checkpointing:** Conversation state is persisted via LangGraph `MemorySaver` or `AsyncPostgresSaver`, keyed by `session_id`.
 
 ---
 
@@ -185,7 +185,7 @@ autolangchat/
 │   ├── graph.py                     # build_chat_graph(config, tool_manager) → CompiledGraph
 │   ├── state.py                     # ChatState(TypedDict)
 │   ├── routing.py                   # should_continue() edge function
-│   ├── checkpointer.py              # MemorySaver (Phase 1) / AsyncPostgresSaver (Phase 3)
+│   ├── checkpointer.py              # MemorySaver / AsyncPostgresSaver
 │   ├── nodes/
 │   │   ├── init_turn.py             # Turn initialization node
 │   │   ├── rag.py                   # Optional KB retrieval + enhanced system prompt injection

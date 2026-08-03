@@ -47,7 +47,7 @@ def load_module(module_name, relative_path, extra_modules=None):
         # a side effect of executing it. Leaving them in ``sys.modules`` creates
         # duplicate module objects that can later shadow the real package (e.g.
         # ``autolangchat.db.feedback_base``), breaking unrelated test modules
-        # collected afterwards (see XMGPLAT-10766).
+        # collected afterwards.
         for name in set(sys.modules) - pre_keys:
             if name == module_name or name.startswith("autolangchat"):
                 del sys.modules[name]

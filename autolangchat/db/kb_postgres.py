@@ -730,7 +730,7 @@ class PgVectorKBStore(BaseKBStore):
         }
 
     def adjust_credibility(self, doc_ids: list[str], delta: float, threshold: float) -> int:
-        """Adjust credibility scores for a set of source='feedback' documents (XMGPLAT-10940)."""
+        """Adjust credibility scores for a set of source='feedback' documents."""
         if not doc_ids:
             return 0
         with self._get_conn() as conn:
@@ -764,7 +764,7 @@ class PgVectorKBStore(BaseKBStore):
         return updated
 
     def apply_credibility_decay(self, decay_rate: float, threshold: float) -> tuple[int, int]:
-        """Decay credibility scores for source='feedback' documents (XMGPLAT-10933).
+        """Decay credibility scores for source='feedback' documents.
 
         Uses a single CTE UPDATE for efficiency.
         """
@@ -792,7 +792,7 @@ class PgVectorKBStore(BaseKBStore):
         return int(row[0]), int(row[1])
 
     def reset_credibility(self, doc_id: str) -> KBDocument:
-        """Reset credibility_score to 1.0 and removal_flagged to false (XMGPLAT-10933)."""
+        """Reset credibility_score to 1.0 and removal_flagged to false."""
         with self._get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(

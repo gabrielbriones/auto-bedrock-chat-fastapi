@@ -1,5 +1,5 @@
 """Tests for the ``GET /admin/_capabilities`` probe's ``token_usage_enabled``
-field (XMGPLAT-11085, Phase 1).
+field.
 
 Uses the same bare-plugin construction pattern as
 ``test_admin_token_routes.py``'s plugin-guard tests (``_make_bare_plugin``),

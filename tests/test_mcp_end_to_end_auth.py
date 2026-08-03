@@ -1,4 +1,4 @@
-"""End-to-end MCP auth-path tests (XMGPLAT-11065, Phase 7).
+"""End-to-end MCP auth-path tests.
 
 Unlike ``tests/test_mcp_auth.py`` (unit tests for header -> ``Credentials``
 mapping in isolation) and ``tests/test_mcp_server.py`` (adapter wiring with a

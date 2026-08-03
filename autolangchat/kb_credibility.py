@@ -1,6 +1,6 @@
 """Background credibility-decay task for KB synthesized articles.
 
-XMGPLAT-10933: Documents ingested via the synthesizer (``source='feedback'``)
+Documents ingested via the synthesizer (``source='feedback'``)
 have their ``credibility_score`` reduced on each decay cycle.  When the score
 falls to or below the configured threshold the document is flagged for removal
 so it is excluded from RAG queries by default.

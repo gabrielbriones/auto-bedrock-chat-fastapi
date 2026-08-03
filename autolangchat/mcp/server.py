@@ -88,7 +88,7 @@ def build_mcp_server(
             UI), enabling recognition of SSO session tokens presented as
             ``Authorization: Bearer <session_token>``. ``None`` (the
             default) disables SSO recognition — every Bearer token is then
-            treated as a plain bearer token, same as Phase 4.
+            treated as a plain bearer token.
         sso_session_secret: Signing secret for validating SSO session tokens
             (``config.sso_session_secret``). Required alongside
             ``sso_session_store`` for SSO recognition to take effect.

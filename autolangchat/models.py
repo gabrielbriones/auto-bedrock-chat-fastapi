@@ -550,7 +550,7 @@ class TokenTopUsersResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Conversation REST API models (XMGPLAT-10380)
+# Conversation REST API models
 # ---------------------------------------------------------------------------
 
 

@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -329,7 +328,7 @@ class WebSocketChatHandler:
                     )
                     return
 
-            logger.debug(f"Received user message: {user_message}")
+            logger.info(f"Received user message: {user_message}")
 
             # Send typing indicator
             await self._send_message(
@@ -358,7 +357,7 @@ class WebSocketChatHandler:
             )
 
             # ------------------------------------------------------------------
-            # Dynamic parameter overrides (XMGPLAT-9697).
+            # Dynamic parameter overrides.
             #
             # Priority: per-message overrides > per-session overrides > global
             # config. `override_mode: "session"` additionally persists the
@@ -471,7 +470,6 @@ class WebSocketChatHandler:
             # it forward from the checkpoint automatically (total=False
             # TypedDict pass-through), so no manual aget_state is needed.
             # ------------------------------------------------------------------
-            _turn_start = time.perf_counter()
             graph_state = await self.chat_graph.ainvoke(
                 {"user_message": user_message},
                 config={
@@ -486,7 +484,6 @@ class WebSocketChatHandler:
                     }
                 },
             )
-            _turn_latency_ms = (time.perf_counter() - _turn_start) * 1000
 
             # Extract the final assistant message from graph state
             graph_messages = graph_state.get("messages", [])
@@ -496,26 +493,11 @@ class WebSocketChatHandler:
             # Graph messages are dicts: {"role": "assistant", "content": "...", ...}
             content = final_msg.get("content") or ""
             final_response = final_msg
-
-            audit_logger = logging.getLogger("autochat.audit")
-            audit_logger.info(
-                "chat.turn",
-                extra={
-                    "action": "chat.turn",
-                    "turn_latency_ms": round(_turn_latency_ms, 1),
-                    "tool_call_rounds": graph_metadata.get("tool_call_rounds", 0),
-                    "total_tool_calls": graph_metadata.get("total_tool_calls", 0),
-                    "preprocessing_applied": graph_metadata.get("preprocessing_applied", False),
-                    "kb_chunks": len(kb_results) if kb_results else 0,
-                    "model_id": effective_config.model_id,
-                    "ts": datetime.now().astimezone().isoformat(),
-                },
-            )
-            logger.debug(f"Chat graph response ({len(content):,} chars): {content[:100]}")
+            logger.info(f"Chat response ({len(content):,} chars): {content[:100]}")
 
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata["model_id"] = effective_config.model_id
-            # Human-readable name for the "Powered by ..." chat header (XMGPLAT-9697).
+            # Human-readable name for the "Powered by ..." chat header.
             # Matches model_id above -- the *configured* model for this turn, not
             # necessarily whichever model actually answered (see NOTE near the
             # token-usage-store call below re: fallback_model retries).
@@ -1031,7 +1013,7 @@ class WebSocketChatHandler:
         )
 
     # ------------------------------------------------------------------
-    # Dynamic parameter overrides (XMGPLAT-9697)
+    # Dynamic parameter overrides
     # ------------------------------------------------------------------
 
     def _apply_config_overrides(

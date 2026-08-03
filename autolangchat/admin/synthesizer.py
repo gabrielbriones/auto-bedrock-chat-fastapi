@@ -407,7 +407,7 @@ class FeedbackSynthesizer:
             existing_doc = existing_docs[0] if existing_docs else None
 
             # ------------------------------------------------------------------
-            # T4: Prefer cited document IDs over tag-based lookup (XMGPLAT-10940).
+            # Prefer cited document IDs over tag-based lookup.
             # Collect document_id values from kb_sources_used across all entries,
             # count occurrences, and override existing_doc with the most-cited
             # document if it still exists in the KB.

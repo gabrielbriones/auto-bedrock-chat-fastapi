@@ -1,4 +1,4 @@
-"""Unit tests for conversation persistence in the WebSocket handler (XMGPLAT-10380).
+"""Unit tests for conversation persistence in the WebSocket handler.
 
 Covers ``WebSocketChatHandler``:
 

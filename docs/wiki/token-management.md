@@ -45,30 +45,38 @@ preprocess_messages(history)
 
 ## Configuration
 
-All thresholds are configurable via `.env` or code:
+> The five threshold/target settings below
+> (`AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD`, `AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET`,
+> `AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD`, `AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD`,
+> `AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET`) are **no longer configurable**. They are
+> computed automatically from `AUTOCHAT_MODEL_ID`'s `max_input_tokens` (via
+> `langchain_aws.data._profiles`), scaled proportionally from the package's
+> original defaults so a smaller-context model automatically gets a smaller
+> char budget instead of risking a Bedrock "Input is too long" overflow. To
+> change truncation behavior, change `AUTOCHAT_MODEL_ID` instead — there is no
+> other lever.
 
-| Env Variable                              | Default  | Description                                       |
-| ----------------------------------------- | -------- | ------------------------------------------------- |
-| `AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD`    | `500000` | Chars that trigger Stage 1 per-message truncation |
-| `AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET`   | `425000` | Target chars after Stage 1                        |
-| `AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD` | `650000` | Total history chars that trigger Stage 2          |
-| `AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD`   | `100000` | Per-message threshold during Stage 2              |
-| `AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET`  | `85000`  | Per-message target during Stage 2                 |
-| `AUTOCHAT_MAX_TRUNCATION_RECURSION`       | `3`      | Max recursion depth for safety-net halving        |
-| `AUTOCHAT_ENABLE_AI_SUMMARIZATION`        | `false`  | Use AI summarization instead of plain truncation  |
+| Env Variable                                | Default (1M-token model) | Description                                       |
+| ------------------------------------------- | ------------------------ | ------------------------------------------------- |
+| `single_msg_length_threshold` (computed)    | `500000`                 | Chars that trigger Stage 1 per-message truncation |
+| `single_msg_truncation_target` (computed)   | `425000`                 | Target chars after Stage 1                        |
+| `history_total_length_threshold` (computed) | `650000`                 | Total history chars that trigger Stage 2          |
+| `history_msg_length_threshold` (computed)   | `100000`                 | Per-message threshold during Stage 2              |
+| `history_msg_truncation_target` (computed)  | `85000`                  | Per-message target during Stage 2                 |
+| `AUTOCHAT_MAX_TRUNCATION_RECURSION`         | `3`                      | Max recursion depth for safety-net halving        |
+| `AUTOCHAT_ENABLE_AI_SUMMARIZATION`          | `false`                  | Use AI summarization instead of plain truncation  |
 
-### Example: Tighter Limits for Smaller Models
+The computed values scale linearly with the selected model's context window
+(`max_input_tokens / 1,000,000`). For example, a 200K-token model gets
+100000/85000/130000/20000/17000 respectively — 20% of the 1M-token defaults.
 
-```python
-autolangchat_plugin = add_autolangchat(
-    app,
-    single_msg_length_threshold=200_000,
-    single_msg_truncation_target=170_000,
-    history_total_length_threshold=300_000,
-    history_msg_length_threshold=50_000,
-    history_msg_truncation_target=42_500
-)
-```
+### Safety-net retry on context-window errors
+
+If a Bedrock call still fails with a context-window/"Input is too long" error
+despite the above (e.g. unusually dense JSON), `llm_call_node` retries once
+with all thresholds temporarily halved (`threshold_factor=0.5`) against the
+same model before falling back to `fallback_model` (if configured). See
+`autolangchat/graph/nodes/llm_call.py`.
 
 ---
 

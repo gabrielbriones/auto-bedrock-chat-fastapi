@@ -222,7 +222,7 @@ def register_admin_feedback_routes(
             comment=body.reviewer_comment,
         )
 
-        # Rated-feedback credibility signal (XMGPLAT-10940).
+        # Rated-feedback credibility signal.
         # Fires only when the admin explicitly APPROVES the entry for the first
         # time (PENDING_REVIEW → APPROVED). REJECTED entries represent
         # admin-invalidated feedback and must not adjust credibility — applying

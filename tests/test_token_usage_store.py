@@ -1,4 +1,4 @@
-"""Store-level unit tests for the token-usage backend (XMGPLAT-10746).
+"""Store-level unit tests for the token-usage backend.
 
 Covers the SQLite ``TokenUsageStore``:
 
@@ -62,7 +62,7 @@ def _package_stubs():
     Scoping the stubs to test execution (rather than installing them at
     module import time) keeps them out of ``sys.modules`` during
     collection, so they cannot shadow the real package for other test
-    modules collected later (see XMGPLAT-10766).
+    modules collected later.
     """
     stubs = install_package_stubs()
     saved = {name: sys.modules.get(name) for name in stubs}
@@ -174,7 +174,7 @@ async def test_duplicate_turn_id_is_silently_ignored():
 
 
 # ---------------------------------------------------------------------------
-# SQLite store — query methods (XMGPLAT-10748)
+# SQLite store — query methods
 # ---------------------------------------------------------------------------
 
 
@@ -569,7 +569,7 @@ async def test_postgres_duplicate_turn_id_does_not_overwrite():
 
 
 # ---------------------------------------------------------------------------
-# Postgres store — query methods (XMGPLAT-10748)
+# Postgres store — query methods
 # ---------------------------------------------------------------------------
 
 

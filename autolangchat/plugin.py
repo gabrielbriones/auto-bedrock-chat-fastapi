@@ -618,7 +618,7 @@ class AutoLangChatPlugin:
                                 f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
                             ),
                             "conversation_persistence_enabled": conversation_persistence_enabled,
-                            # Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+                            # Dynamic parameter overrides settings sidebar.
                             "enable_config_sidebar": bool(
                                 self.config.enable_config_sidebar and self.config.enable_dynamic_overrides
                             ),

@@ -1,4 +1,4 @@
-"""Tests for per-turn token-usage persistence in the WebSocket handler (XMGPLAT-10746).
+"""Tests for per-turn token-usage persistence in the WebSocket handler.
 
 Verifies that ``WebSocketChatHandler._handle_chat_message``:
 

@@ -1,4 +1,4 @@
-"""Phase 3 — persistence / checkpoint tests.
+"""Persistence / checkpoint tests.
 
 All tests use MemorySaver (no Postgres connection required) to verify:
   - Cross-invocation state accumulation via LangGraph checkpointer

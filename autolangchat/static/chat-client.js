@@ -33,7 +33,7 @@ class ChatClient {
         // assistant response so the input can be disabled mid-turn.
         this.awaitingResponse = false;
 
-        // Conversation sidebar (XMGPLAT-10380): activeConversationId is the
+        // Conversation sidebar: activeConversationId is the
         // LangGraph thread_id for whatever conversation this connection is
         // currently "in" — kept separate from any WebSocket session/connection
         // identifier. null until a conversation is created (first chat message)
@@ -49,7 +49,7 @@ class ChatClient {
         this.sidebarBackdrop = document.getElementById('sidebarBackdrop');
         this._setupConversationSidebarListeners();
 
-        // Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+        // Dynamic parameter overrides settings sidebar.
         this._configSidebarEnabled = !!window.CONFIG.enableConfigSidebar;
         this._allowedDynamicOverrides = window.CONFIG.allowedDynamicOverrides || null;
         this._activeConfigOverrides = {};
@@ -1202,7 +1202,7 @@ class ChatClient {
     }
 
     // ------------------------------------------------------------------
-    // Conversation sidebar (XMGPLAT-10380)
+    // Conversation sidebar
     // ------------------------------------------------------------------
 
     _setupConversationSidebarListeners() {
@@ -1403,7 +1403,7 @@ class ChatClient {
     }
 
     // ------------------------------------------------------------------
-    // Dynamic parameter overrides settings sidebar (XMGPLAT-9697)
+    // Dynamic parameter overrides settings sidebar
     // ------------------------------------------------------------------
 
     _setupConfigSidebarListeners() {

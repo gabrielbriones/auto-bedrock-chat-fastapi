@@ -1,4 +1,4 @@
-"""Unit tests for conversation auto-title generation (XMGPLAT-10380).
+"""Unit tests for conversation auto-title generation.
 
 Covers ``generate_conversation_title``:
 
