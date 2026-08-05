@@ -108,13 +108,14 @@ For a 600K character tool response (illustrative):
 ```bash
 # .env
 AUTOCHAT_ENABLE_AI_SUMMARIZATION=true   # opt-in
-AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD=500000
-AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET=425000
-AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD=650000
-AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD=100000
-AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET=85000
 AUTOCHAT_MAX_TRUNCATION_RECURSION=3
 ```
+
+> Update: the threshold/target env vars shown in earlier
+> versions of this deck (`AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD`, etc.) have
+> been removed. Thresholds are now computed automatically from
+> `AUTOCHAT_MODEL_ID`'s context window — see
+> [token-management.md](../wiki/token-management.md#configuration).
 
 ---
 

@@ -1,4 +1,4 @@
-"""Tests for ``AutoLangChatPlugin._setup_mcp_routes`` wiring (XMGPLAT-11065, Phase 5).
+"""Tests for ``AutoLangChatPlugin._setup_mcp_routes`` wiring.
 
 Uses the same bare-plugin construction pattern as
 ``test_admin_capabilities.py`` (``object.__new__(AutoLangChatPlugin)`` +

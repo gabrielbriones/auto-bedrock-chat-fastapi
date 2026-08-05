@@ -1,4 +1,4 @@
-"""XMGPLAT-9697 Phase 1 — dynamic parameter override config & validation tests.
+"""Dynamic parameter override config & validation tests.
 
 Covers the new `ChatConfig` fields (`enable_dynamic_overrides`,
 `allowed_dynamic_overrides`, `enable_config_sidebar`) and

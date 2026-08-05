@@ -1,10 +1,10 @@
-"""XMGPLAT-9697 Phase 3 — verify feature-toggle overrides propagate through
+"""Verify feature-toggle overrides propagate through
 LangGraph nodes via `config["configurable"]["chat_config"]` (not a shared
 `self.config` attribute).
 
 Both `preprocess_node` and `rag_node` already read `chat_config` fresh from
 `config["configurable"]` on every call, so passing the per-turn effective
-config built in `websocket_handler.py` (Phase 2) makes these toggles "just
+config built in `websocket_handler.py` makes these toggles "just
 work" -- this file is verification, not new plumbing. Tests mock
 `config["configurable"]["chat_config"]` directly per the plan, using a real
 `ChatConfig` (`.model_copy(update=...)`) rather than a hand-rolled stub, since
@@ -72,7 +72,6 @@ class TestPreprocessNodeAiSummarizationToggle:
 
 # ---------------------------------------------------------------------------
 # preprocess_node: summarization_model_id / temperature / max_tokens / top_p
-# (XMGPLAT-9992)
 # ---------------------------------------------------------------------------
 
 

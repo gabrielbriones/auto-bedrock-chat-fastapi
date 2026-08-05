@@ -1,4 +1,4 @@
-"""Per-request auth extraction for the MCP endpoint (XMGPLAT-11065, Phase 4).
+"""Per-request auth extraction for the MCP endpoint.
 
 Builds an ``AuthInfo`` (``Credentials`` + ``AuthenticationHandler``) from the
 raw HTTP headers of an incoming MCP request. Mirrors the same auth types
@@ -69,7 +69,7 @@ def _build_sso_credentials(
 
     Mirrors ``websocket_handler.py::_validate_sso_token_and_extract_user``'s
     credential-construction logic (minus the optional remote
-    ``auth_verification_endpoint`` call, which Phase 4's static auth types
+    ``auth_verification_endpoint`` call, static auth types
     don't perform either). Returns ``None`` if the token doesn't validate as
     an SSO session -- the caller falls back to treating it as a plain bearer
     token.

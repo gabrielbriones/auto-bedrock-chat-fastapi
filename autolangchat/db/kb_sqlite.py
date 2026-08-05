@@ -72,7 +72,7 @@ class SQLiteKBStore(BaseKBStore):
         schema_sql = (Path(__file__).resolve().parent / "sql" / "kb_schema_sqlite.sql").read_text()
         self.conn.executescript(schema_sql)
 
-        # Idempotent column migrations (XMGPLAT-10933).
+        # Idempotent column migrations.
         # ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` was added in SQLite
         # 3.37.0; use try/except to stay compatible with older versions.
         _column_migrations = [
@@ -916,7 +916,7 @@ class SQLiteKBStore(BaseKBStore):
 
     @_locked
     def adjust_credibility(self, doc_ids: list[str], delta: float, threshold: float) -> int:
-        """Adjust credibility scores for a set of source='feedback' documents (XMGPLAT-10940)."""
+        """Adjust credibility scores for a set of source='feedback' documents."""
         if not doc_ids:
             return 0
         placeholders = ",".join("?" * len(doc_ids))
@@ -969,7 +969,7 @@ class SQLiteKBStore(BaseKBStore):
 
     @_locked
     def reset_credibility(self, doc_id: str) -> KBDocument:
-        """Reset credibility_score to 1.0 and removal_flagged to 0 (XMGPLAT-10933)."""
+        """Reset credibility_score to 1.0 and removal_flagged to 0."""
         cursor = self.conn.cursor()
         cursor.execute(
             "UPDATE documents SET credibility_score = 1.0, removal_flagged = 0 WHERE id = ?",

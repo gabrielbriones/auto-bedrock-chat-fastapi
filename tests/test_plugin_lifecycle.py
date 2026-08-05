@@ -1,4 +1,4 @@
-"""Unit tests for AutoLangChatPlugin.startup()/shutdown() idempotency (XMGPLAT-10682).
+"""Unit tests for AutoLangChatPlugin.startup()/shutdown() idempotency.
 
 These tests build a minimal AutoLangChatPlugin instance without running
 __init__ (which requires a full FastAPI app, validated ChatConfig, and
@@ -20,7 +20,7 @@ import pytest
 # ``autolangchat``/``autolangchat.db`` (among others) with bare stub packages
 # in ``sys.modules`` while loading a single submodule in isolation. On some
 # collection orders those stubs are left behind instead of being restored to
-# the real package (see XMGPLAT-10766), so a later plain
+# the real package, so a later plain
 # ``from autolangchat.plugin import ...`` here can pick up the stub and fail
 # with ImportError. Only these two specific entries are ever left stubbed;
 # drop them (if they are indeed bare stubs, i.e. have no ``__spec__``) so
@@ -189,7 +189,7 @@ async def test_startup_after_shutdown_restarts(patch_checkpointer):
 
 
 # ---------------------------------------------------------------------------
-# MCP session manager lifecycle (XMGPLAT-11065)
+# MCP session manager lifecycle
 # ---------------------------------------------------------------------------
 
 
@@ -256,7 +256,7 @@ async def test_mcp_session_manager_not_entered_when_disabled(patch_checkpointer)
 
 
 # ---------------------------------------------------------------------------
-# Conversation persistence: MemorySaver degraded-mode warning (XMGPLAT-10380)
+# Conversation persistence: MemorySaver degraded-mode warning
 # ---------------------------------------------------------------------------
 
 

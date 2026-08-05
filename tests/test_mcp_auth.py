@@ -1,9 +1,9 @@
-"""Tests for MCP per-request auth extraction (XMGPLAT-11065, Phases 4-5).
+"""Tests for MCP per-request auth extraction.
 
 Verifies ``autolangchat/mcp/auth.py`` maps incoming HTTP headers to the same
 ``Credentials``/``AuthInfo`` shapes already used by the WebSocket ``auth``
-message flow: the four "static" (stateless) auth types (Phase 4), plus
-recognizing an SSO session token presented as a Bearer token (Phase 5).
+message flow: the four "static" (stateless) auth types, plus
+recognizing an SSO session token presented as a Bearer token.
 """
 
 import base64
@@ -119,7 +119,7 @@ class _FakeSSOSessionStore:
 
 
 class TestSSOSessionTokenRecognition:
-    """Bearer-presented SSO session tokens (XMGPLAT-11065 Phase 5)."""
+    """Bearer-presented SSO session tokens."""
 
     def test_valid_sso_session_token_builds_sso_credentials(self):
         store = _FakeSSOSessionStore()

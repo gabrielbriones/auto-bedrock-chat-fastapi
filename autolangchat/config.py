@@ -9,18 +9,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
     DEFAULT_ENABLE_AI_SUMMARIZATION,
-    DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
-    DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
-    DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
     DEFAULT_MAX_CONVERSATION_MESSAGES,
     DEFAULT_MAX_SESSIONS,
     DEFAULT_MAX_TOOL_CALLS,
     DEFAULT_MAX_TRUNCATION_RECURSION,
     DEFAULT_PRESERVE_SYSTEM_MESSAGE,
     DEFAULT_SESSION_TIMEOUT,
-    DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
-    DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
     DEFAULT_TIMEOUT,
+    HISTORY_MSG_LENGTH_THRESHOLD_FRACTION,
+    HISTORY_MSG_TRUNCATION_TARGET_FRACTION,
+    HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION,
+    SINGLE_MSG_LENGTH_THRESHOLD_FRACTION,
+    SINGLE_MSG_TRUNCATION_TARGET_FRACTION,
 )
 from .exceptions import ConfigurationError
 
@@ -41,13 +41,12 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 # ---------------------------------------------------------------------------
-# Dynamic Parameter Overrides (XMGPLAT-9697)
+# Dynamic Parameter Overrides
 # ---------------------------------------------------------------------------
 # Parameters end users may override per-message or per-session via WebSocket
 # metadata, gated by `enable_dynamic_overrides` and the `allowed_dynamic_overrides`
 # allowlist (see ChatConfig.validate_overrides()). `max_tool_calls` and
-# `preserve_system_message` are intentionally excluded for now -- see
-# docs/plans/XMGPLAT-9697-dynamic-parameter-overrides.md for why.
+# `preserve_system_message` are intentionally excluded for now
 OVERRIDABLE_LLM_PARAMS = frozenset({"model_id", "temperature", "max_tokens", "top_p"})
 OVERRIDABLE_FEATURE_TOGGLES = frozenset(
     {"enable_ai_summarization", "enable_rag", "kb_top_k_results", "kb_similarity_threshold"}
@@ -272,63 +271,6 @@ class ChatConfig(BaseSettings):
         ),
     )
 
-    # Single-Message Truncation Configuration (Character-Based)
-    single_msg_length_threshold: int = Field(
-        default=DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
-        alias="AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD",
-        gt=0,
-        description=(
-            "Single-message truncation threshold in characters. "
-            "Messages exceeding this size are truncated (plain text) or summarized (AI). "
-            "Default: 500K chars (~125K tokens). "
-            "AI summarization chunk size is derived as half of this value."
-        ),
-    )
-
-    single_msg_truncation_target: int = Field(
-        default=DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
-        alias="AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET",
-        gt=0,
-        description=(
-            "Target size after single-message truncation in characters (85% of threshold). "
-            "Default: 425K chars (~106K tokens)."
-        ),
-    )
-
-    # History Truncation Configuration (Character-Based)
-    history_total_length_threshold: int = Field(
-        default=DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
-        alias="AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD",
-        gt=0,
-        description=(
-            "Total conversation history threshold in characters. "
-            "When the sum of all message sizes exceeds this, history truncation is triggered. "
-            "Default: 650K chars (~163K-217K tokens depending on content type)."
-        ),
-    )
-
-    history_msg_length_threshold: int = Field(
-        default=DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
-        alias="AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD",
-        gt=0,
-        description=(
-            "Per-message threshold during history truncation in characters. "
-            "Messages exceeding this size are truncated during history-level processing. "
-            "Default: 100K chars (~25K tokens)."
-        ),
-    )
-
-    history_msg_truncation_target: int = Field(
-        default=DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
-        alias="AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET",
-        gt=0,
-        description=(
-            "Per-message target during history truncation in characters "
-            "(85% of history_msg_length_threshold). "
-            "Default: 85K chars (~21K tokens)."
-        ),
-    )
-
     max_truncation_recursion: int = Field(
         default=DEFAULT_MAX_TRUNCATION_RECURSION,
         alias="AUTOCHAT_MAX_TRUNCATION_RECURSION",
@@ -340,15 +282,6 @@ class ChatConfig(BaseSettings):
             "re-runs with halved thresholds, up to this many times. Default: 3."
         ),
     )
-
-    # NOTE: Legacy tool_result_* settings (AUTOCHAT_TOOL_RESULT_NEW_RESPONSE_THRESHOLD,
-    # AUTOCHAT_TOOL_RESULT_NEW_RESPONSE_TARGET, AUTOCHAT_TOOL_RESULT_HISTORY_THRESHOLD,
-    # AUTOCHAT_TOOL_RESULT_HISTORY_TARGET) have been removed in Task 3.6.
-    # Use the generalized settings instead:
-    #   new_response_threshold → single_msg_length_threshold
-    #   new_response_target    → single_msg_truncation_target
-    #   history_msg_threshold  → history_msg_length_threshold
-    #   history_msg_target     → history_msg_truncation_target
 
     timeout: int = Field(
         default=DEFAULT_TIMEOUT,
@@ -951,7 +884,7 @@ class ChatConfig(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # LangGraph Checkpoint (Phase 3)
+    # LangGraph Checkpoint
     # ------------------------------------------------------------------
 
     checkpoint_postgres_url: Optional[str] = Field(
@@ -1153,8 +1086,7 @@ class ChatConfig(BaseSettings):
         description=(
             "Enable the background credibility-decay task for synthesized KB articles. "
             "When disabled (default) all articles keep their credibility_score indefinitely "
-            "and must be removed manually. Set to true to activate automatic aging "
-            "(XMGPLAT-10933)."
+            "and must be removed manually. Set to true to activate automatic aging."
         ),
     )
 
@@ -1163,7 +1095,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_DECAY_RATE",
         gt=0.0,
         lt=1.0,
-        description="Amount subtracted from credibility_score per decay cycle for synthesized articles (XMGPLAT-10933).",
+        description="Amount subtracted from credibility_score per decay cycle for synthesized articles.",
     )
 
     kb_credibility_removal_threshold: float = Field(
@@ -1171,20 +1103,20 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_REMOVAL_THRESHOLD",
         ge=0.0,
         le=1.0,
-        description="credibility_score at or below which a synthesized article is flagged for removal (XMGPLAT-10933).",
+        description="credibility_score at or below which a synthesized article is flagged for removal.",
     )
 
     kb_credibility_decay_interval_hours: int = Field(
         default=168,
         alias="AUTOCHAT_KB_CREDIBILITY_DECAY_INTERVAL_HOURS",
         gt=0,
-        description="How often (in hours) the credibility decay background task runs. Default: 168 h (1 week) (XMGPLAT-10933).",
+        description="How often (in hours) the credibility decay background task runs. Default: 168 h (1 week).",
     )
 
     kb_credibility_citation_boost_enabled: bool = Field(
         default=False,
         alias="AUTOCHAT_KB_CREDIBILITY_CITATION_BOOST_ENABLED",
-        description="Enable citation-boost signal: each time a feedback document is cited in a RAG response its credibility_score increases by kb_credibility_citation_boost (XMGPLAT-10940).",
+        description="Enable citation-boost signal: each time a feedback document is cited in a RAG response its credibility_score increases by kb_credibility_citation_boost.",
     )
 
     kb_credibility_citation_boost: float = Field(
@@ -1192,13 +1124,13 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_CITATION_BOOST",
         ge=0.0,
         le=1.0,
-        description="Amount added to credibility_score each time a feedback document is cited in a RAG response (XMGPLAT-10940).",
+        description="Amount added to credibility_score each time a feedback document is cited in a RAG response.",
     )
 
     kb_credibility_feedback_signal_enabled: bool = Field(
         default=False,
         alias="AUTOCHAT_KB_CREDIBILITY_FEEDBACK_SIGNAL_ENABLED",
-        description="Enable rated-feedback credibility adjustment: when an admin first reviews a feedback entry, cited feedback documents are boosted or penalised (XMGPLAT-10940).",
+        description="Enable rated-feedback credibility adjustment: when an admin first reviews a feedback entry, cited feedback documents are boosted or penalised.",
     )
 
     kb_credibility_positive_delta: float = Field(
@@ -1206,7 +1138,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_POSITIVE_DELTA",
         ge=0.0,
         le=1.0,
-        description="Amount added to credibility_score for feedback documents cited by a positively-rated, admin-approved feedback entry (XMGPLAT-10940).",
+        description="Amount added to credibility_score for feedback documents cited by a positively-rated, admin-approved feedback entry.",
     )
 
     kb_credibility_negative_delta: float = Field(
@@ -1214,7 +1146,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_NEGATIVE_DELTA",
         ge=0.0,
         le=1.0,
-        description="Amount subtracted from credibility_score for feedback documents cited by a negatively-rated, admin-approved feedback entry (XMGPLAT-10940).",
+        description="Amount subtracted from credibility_score for feedback documents cited by a negatively-rated, admin-approved feedback entry.",
     )
 
     model_config = SettingsConfigDict(
@@ -1291,31 +1223,6 @@ class ChatConfig(BaseSettings):
             raise ValueError(
                 f"available_models contains unrecognized model id(s): {unknown} "
                 "(see langchain_aws.data._profiles._PROFILES for the supported set)."
-            )
-        return v
-
-    @field_validator("single_msg_truncation_target")
-    @classmethod
-    def validate_single_msg_truncation_target(cls, v, info):
-        """Validate single_msg_truncation_target < single_msg_length_threshold"""
-        # Access threshold from info.data (already validated fields)
-        threshold = info.data.get("single_msg_length_threshold")
-        if threshold is not None and v >= threshold:
-            raise ValueError(
-                f"single_msg_truncation_target ({v:,}) must be less than "
-                f"single_msg_length_threshold ({threshold:,})"
-            )
-        return v
-
-    @field_validator("history_msg_truncation_target")
-    @classmethod
-    def validate_history_msg_truncation_target(cls, v, info):
-        """Validate history_msg_truncation_target < history_msg_length_threshold"""
-        threshold = info.data.get("history_msg_length_threshold")
-        if threshold is not None and v >= threshold:
-            raise ValueError(
-                f"history_msg_truncation_target ({v:,}) must be less than "
-                f"history_msg_length_threshold ({threshold:,})"
             )
         return v
 
@@ -1520,6 +1427,57 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
         resolved_model_id = model_id or self.model_id
         return _PROFILES.get(resolved_model_id, {}).get("name", resolved_model_id)
 
+    def _scaled_truncation_threshold(self, fraction: float) -> int:
+        """Compute a truncation threshold in characters as a fraction of the
+        selected model's max_input_tokens.
+
+        There is no static fallback value: the threshold is purely
+        ``fraction * _PROFILES[self.model_id]["max_input_tokens"]``, so a
+        model with a smaller context window gets a proportionally smaller
+        absolute char budget, and a model with a larger one gets a larger
+        budget -- entirely determined by the selected model, not a
+        hardcoded default (XMGPLAT-11175). ``model_id`` is guaranteed to be
+        a key in ``_PROFILES`` with a ``max_input_tokens`` entry (enforced
+        by ``validate_model_id_is_supported``).
+        """
+        max_input_tokens = _PROFILES[self.model_id]["max_input_tokens"]
+        return round(fraction * max_input_tokens)
+
+    @property
+    def single_msg_length_threshold(self) -> int:
+        """Single-message truncation threshold in characters, derived from the
+        selected model's max_input_tokens. Not configurable via env var or
+        constructor kwarg."""
+        return self._scaled_truncation_threshold(SINGLE_MSG_LENGTH_THRESHOLD_FRACTION)
+
+    @property
+    def single_msg_truncation_target(self) -> int:
+        """Target size after single-message truncation, in characters.
+        Derived from the selected model's max_input_tokens. Not configurable
+        via env var or constructor kwarg."""
+        return self._scaled_truncation_threshold(SINGLE_MSG_TRUNCATION_TARGET_FRACTION)
+
+    @property
+    def history_total_length_threshold(self) -> int:
+        """Total conversation history threshold in characters, derived from
+        the selected model's max_input_tokens. Not configurable via env var
+        or constructor kwarg."""
+        return self._scaled_truncation_threshold(HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION)
+
+    @property
+    def history_msg_length_threshold(self) -> int:
+        """Per-message threshold during history truncation, in characters.
+        Derived from the selected model's max_input_tokens. Not configurable
+        via env var or constructor kwarg."""
+        return self._scaled_truncation_threshold(HISTORY_MSG_LENGTH_THRESHOLD_FRACTION)
+
+    @property
+    def history_msg_truncation_target(self) -> int:
+        """Per-message target during history truncation, in characters.
+        Derived from the selected model's max_input_tokens. Not configurable
+        via env var or constructor kwarg."""
+        return self._scaled_truncation_threshold(HISTORY_MSG_TRUNCATION_TARGET_FRACTION)
+
     def validate_overrides(self, overrides: Dict[str, Any]) -> "tuple[Dict[str, Any], List[str]]":
         """Validate and filter a dict of proposed dynamic parameter overrides.
 
@@ -1669,18 +1627,11 @@ def load_config(
                 if not isinstance(max_msg_val, int) or max_msg_val <= 0:
                     raise ConfigurationError("max_conversation_messages must be a positive integer")
 
-            # Validate truncation target < threshold relationships
-            if "single_msg_truncation_target" in overrides and "single_msg_length_threshold" in overrides:
-                if overrides["single_msg_truncation_target"] >= overrides["single_msg_length_threshold"]:
-                    raise ConfigurationError(
-                        "single_msg_truncation_target must be less than single_msg_length_threshold"
-                    )
-
-            if "history_msg_truncation_target" in overrides and "history_msg_length_threshold" in overrides:
-                if overrides["history_msg_truncation_target"] >= overrides["history_msg_length_threshold"]:
-                    raise ConfigurationError(
-                        "history_msg_truncation_target must be less than history_msg_length_threshold"
-                    )
+            # NOTE: single_msg_length_threshold, single_msg_truncation_target,
+            # history_total_length_threshold, history_msg_length_threshold, and
+            # history_msg_truncation_target are no longer configurable fields
+            # they are computed properties derived from the
+            # model's context window, so no override validation is needed here.
 
             # Validate max_truncation_recursion
             if "max_truncation_recursion" in overrides:

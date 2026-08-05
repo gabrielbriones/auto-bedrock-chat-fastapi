@@ -74,7 +74,7 @@ autolangchat_plugin = add_autolangchat(
 
 > `model_id`, `fallback_model`, and every entry in `AUTOCHAT_AVAILABLE_MODELS` must be a model ID known to langchain-aws (`langchain_aws.data._profiles._PROFILES`) — the server refuses to start otherwise. The sidebar's dropdown shows each model's human-readable `_PROFILES[...]["name"]`; the backend continues to use the raw `model_id` internally. The `temperature` and `top_p` sliders are shown or hidden together based on the selected model's `_PROFILES[...]["temperature"]` flag (there's no separate `top_p` flag, and models that disable temperature sampling generally don't accept `top_p` either). The `max_tokens` control's upper bound is capped to the selected model's `_PROFILES[...]["max_output_tokens"]`; switching models or resetting to defaults clamps the current value down (and persists the clamped value) if it would otherwise exceed the new model's limit. The `kb_top_k_results` and `kb_similarity_threshold` controls are only shown while `enable_rag` is on.
 >
-> Overridable parameters: `model_id`, `temperature`, `max_tokens`, `top_p`, `enable_ai_summarization`, `enable_rag`, `kb_top_k_results`, `kb_similarity_threshold`. `max_tool_calls` and `preserve_system_message` are intentionally excluded for now — see [XMGPLAT-9697-dynamic-parameter-overrides.md](../plans/XMGPLAT-9697-dynamic-parameter-overrides.md).
+> Overridable parameters: `model_id`, `temperature`, `max_tokens`, `top_p`, `enable_ai_summarization`, `enable_rag`, `kb_top_k_results`, `kb_similarity_threshold`. `max_tool_calls` and `preserve_system_message` are intentionally excluded for now.
 
 ### Session Management
 
@@ -94,14 +94,21 @@ autolangchat_plugin = add_autolangchat(
 
 ### Token Budget / Truncation
 
-| Env Variable                              | Default  | Description                               |
-| ----------------------------------------- | -------- | ----------------------------------------- |
-| `AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD`    | `500000` | Chars that trigger per-message truncation |
-| `AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET`   | `425000` | Target chars after per-message truncation |
-| `AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD` | `650000` | Total history chars that trigger Stage 2  |
-| `AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD`   | `100000` | Per-message threshold in Stage 2          |
-| `AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET`  | `85000`  | Per-message target in Stage 2             |
-| `AUTOCHAT_MAX_TRUNCATION_RECURSION`       | `3`      | Max recursion for safety-net halving      |
+> These thresholds are **no longer configurable** via env
+> var — they are computed automatically from `AUTOCHAT_MODEL_ID`'s
+> `max_input_tokens` (via `langchain_aws.data._profiles`), scaled
+> proportionally from the values below (tuned for a 1,000,000-token model).
+> To change truncation behavior, change `AUTOCHAT_MODEL_ID` instead. See
+> [token-management.md](token-management.md#configuration) for details.
+
+| Setting (computed, not an env var)  | Default (1M-token model) | Description                                             |
+| ----------------------------------- | ------------------------ | ------------------------------------------------------- |
+| `single_msg_length_threshold`       | `500000`                 | Chars that trigger per-message truncation               |
+| `single_msg_truncation_target`      | `425000`                 | Target chars after per-message truncation               |
+| `history_total_length_threshold`    | `650000`                 | Total history chars that trigger Stage 2                |
+| `history_msg_length_threshold`      | `100000`                 | Per-message threshold in Stage 2                        |
+| `history_msg_truncation_target`     | `85000`                  | Per-message target in Stage 2                           |
+| `AUTOCHAT_MAX_TRUNCATION_RECURSION` | `3`                      | Max recursion for safety-net halving (still an env var) |
 
 ### AI Summarization
 

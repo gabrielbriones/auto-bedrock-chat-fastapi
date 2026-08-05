@@ -35,7 +35,7 @@ ON chunks USING hnsw (embedding vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS idx_chunks_fts ON chunks USING gin(content_tsv);
 
--- Credibility tracking (added XMGPLAT-10933)
+-- Credibility tracking
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS
     credibility_score REAL NOT NULL DEFAULT 1.0
         CHECK (credibility_score BETWEEN 0.0 AND 1.0);

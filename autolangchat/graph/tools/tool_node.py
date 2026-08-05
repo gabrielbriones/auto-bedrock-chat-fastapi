@@ -1,6 +1,6 @@
 """Async tool execution node for the LangGraph chat graph.
 
-Replaces the Phase 1 stub with real HTTP execution via ``ToolManager``.
+Real HTTP execution via ``ToolManager``.
 
 Message format
 --------------

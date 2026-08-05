@@ -10,10 +10,6 @@ def should_continue(state: ChatState) -> Literal["tools", "__end__"]:
 
     Returns ``"tools"`` when the last assistant message contains tool_calls
     that must be executed, ``"__end__"`` otherwise.
-
-    Phase 1 note: tool execution is stubbed out.  This function is wired but
-    the ``tools`` node always routes back to ``__end__``.  Full ToolNode
-    integration is Phase 2.
     """
     messages = state.get("messages", [])
     if not messages:

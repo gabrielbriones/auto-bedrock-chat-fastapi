@@ -1,4 +1,4 @@
-"""Tests for the credibility-related admin KB routes (XMGPLAT-10933).
+"""Tests for the credibility-related admin KB routes.
 
 Covers:
 - GET /admin/kb/documents?removal_flagged=true/false filter

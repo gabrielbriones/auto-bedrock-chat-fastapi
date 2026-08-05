@@ -1,4 +1,4 @@
-"""Unit tests for the conversation REST API (XMGPLAT-10380).
+"""Unit tests for the conversation REST API.
 
 Covers ``register_conversation_routes`` end-to-end through a real FastAPI
 ``TestClient``:

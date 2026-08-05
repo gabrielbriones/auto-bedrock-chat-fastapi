@@ -1,4 +1,4 @@
-"""Phase 1 — preprocessing node tests.
+"""Preprocessing node tests.
 
 Tests the preprocess_node (and indirectly MessagePreprocessor) through
 the full graph so we exercise the preprocess → END shortcut when the LLM

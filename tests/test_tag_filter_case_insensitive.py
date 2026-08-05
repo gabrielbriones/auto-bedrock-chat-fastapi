@@ -1,4 +1,4 @@
-"""Tag filter case-insensitivity (XMGPLAT-10976).
+"""Tag filter case-insensitivity.
 
 The Admin Panel's tags filter must match regardless of case (e.g. typing
 "Perf" should match a stored tag of "perf"). Covers both the feedback

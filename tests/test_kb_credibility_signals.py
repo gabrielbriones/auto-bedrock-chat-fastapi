@@ -1,10 +1,10 @@
-"""Unit tests for the KB credibility feedback signals (XMGPLAT-10940).
+"""Unit tests for the KB credibility feedback signals.
 
 Covers:
-- adjust_credibility on SQLiteKBStore (T5)
-- document_id in kb_sources (T1)
-- rated-feedback PATCH handler (T3)
-- synthesizer cited-doc-ID path (T4 / Phase 5)
+- adjust_credibility on SQLiteKBStore
+- document_id in kb_sources
+- rated-feedback PATCH handler
+- synthesizer cited-doc-ID path
 """
 
 from __future__ import annotations
@@ -464,7 +464,7 @@ class TestRatedFeedbackCredibilitySignal:
 
 
 # ===========================================================================
-# T4 — Synthesizer cited-doc-ID path (Phase 5)
+# Synthesizer cited-doc-ID path
 # ===========================================================================
 
 

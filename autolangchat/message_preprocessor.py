@@ -23,12 +23,7 @@ if TYPE_CHECKING:
 
 from .defaults import (
     DEFAULT_ENABLE_AI_SUMMARIZATION,
-    DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
-    DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
-    DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
     DEFAULT_MAX_TRUNCATION_RECURSION,
-    DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
-    DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
     DEFAULT_SUMMARIZATION_MIN_CHUNKS,
     MIN_PROPORTIONAL_BUDGET,
     TRUNCATION_HEAD_RATIO,
@@ -247,35 +242,20 @@ class MessagePreprocessor:
 
     def __init__(
         self,
-        config: ChatConfig | None = None,
-        history_msg_threshold: int | None = None,
-        history_msg_target: int | None = None,
-        single_msg_threshold: int | None = None,
-        single_msg_target: int | None = None,
+        config: ChatConfig,
         llm_client: Any = None,
     ):
         """Initialize the message preprocessor.
 
         Args:
-            config: Optional ``ChatConfig`` instance.  When provided,
-                truncation thresholds are read from it (the generalized
-                ``single_msg_length_threshold`` /
-                ``history_msg_length_threshold`` settings).
-                ``None`` disables AI summarization and uses the explicit
-                threshold arguments (backward compat).
+            config: ``ChatConfig`` instance (or any object exposing the same
+                truncation-threshold attributes -- e.g. test doubles).
+                Truncation thresholds are read directly from it: they are
+                derived purely from the selected model's context window,
+                with no static fallback default (XMGPLAT-11175).
             llm_client: Optional LLM transport client for AI
                 summarization.  ``None`` disables AI summarization --
                 plain-text fallback is used instead.
-            history_msg_threshold: **Deprecated** -- use
-                ``config.history_msg_length_threshold`` instead.  Kept for
-                backward compatibility; ignored when *config* is
-                provided.
-            history_msg_target: **Deprecated** -- use
-                ``config.history_msg_truncation_target``.
-            single_msg_threshold: **Deprecated** -- use
-                ``config.single_msg_length_threshold``.
-            single_msg_target: **Deprecated** -- use
-                ``config.single_msg_truncation_target``.
         """
         self.config = config
         self.llm_client = llm_client
@@ -283,52 +263,20 @@ class MessagePreprocessor:
         self._system_prompt: Optional[str] = None
         self._user_query: Optional[str] = None
 
-        # Derive truncation thresholds from the unified config settings.
-        # Legacy constructor params are honoured only when no config is
-        # provided (backward compat for callers that haven't migrated).
-        if config is not None:
-            # Prefer get_system_prompt() (returns the effective/generated prompt)
-            # over the raw system_prompt attribute (which may be None when the
-            # prompt is auto-generated from tools count, etc.).
-            if hasattr(config, "get_system_prompt"):
-                self._system_prompt = config.get_system_prompt() or None
-            else:
-                self._system_prompt = getattr(config, "system_prompt", None)
-            self.history_msg_threshold = getattr(
-                config, "history_msg_length_threshold", DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD
-            )
-            self.history_msg_target = getattr(
-                config, "history_msg_truncation_target", DEFAULT_HISTORY_MSG_TRUNCATION_TARGET
-            )
-            self.single_msg_threshold = getattr(
-                config, "single_msg_length_threshold", DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD
-            )
-            self.single_msg_target = getattr(
-                config, "single_msg_truncation_target", DEFAULT_SINGLE_MSG_TRUNCATION_TARGET
-            )
-            self.history_total_threshold = getattr(
-                config, "history_total_length_threshold", DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD
-            )
-            self.max_truncation_recursion = getattr(
-                config, "max_truncation_recursion", DEFAULT_MAX_TRUNCATION_RECURSION
-            )
-            self.enable_ai_summarization = getattr(config, "enable_ai_summarization", DEFAULT_ENABLE_AI_SUMMARIZATION)
+        # Prefer get_system_prompt() (returns the effective/generated prompt)
+        # over the raw system_prompt attribute (which may be None when the
+        # prompt is auto-generated from tools count, etc.).
+        if hasattr(config, "get_system_prompt"):
+            self._system_prompt = config.get_system_prompt() or None
         else:
-            self.history_msg_threshold = (
-                history_msg_threshold if history_msg_threshold is not None else DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD
-            )
-            self.history_msg_target = (
-                history_msg_target if history_msg_target is not None else DEFAULT_HISTORY_MSG_TRUNCATION_TARGET
-            )
-            self.single_msg_threshold = (
-                single_msg_threshold if single_msg_threshold is not None else DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD
-            )
-            self.single_msg_target = (
-                single_msg_target if single_msg_target is not None else DEFAULT_SINGLE_MSG_TRUNCATION_TARGET
-            )
-            self.history_total_threshold = DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD
-            self.max_truncation_recursion = DEFAULT_MAX_TRUNCATION_RECURSION
-            self.enable_ai_summarization = DEFAULT_ENABLE_AI_SUMMARIZATION
+            self._system_prompt = getattr(config, "system_prompt", None)
+        self.history_msg_threshold = config.history_msg_length_threshold
+        self.history_msg_target = config.history_msg_truncation_target
+        self.single_msg_threshold = config.single_msg_length_threshold
+        self.single_msg_target = config.single_msg_truncation_target
+        self.history_total_threshold = config.history_total_length_threshold
+        self.max_truncation_recursion = getattr(config, "max_truncation_recursion", DEFAULT_MAX_TRUNCATION_RECURSION)
+        self.enable_ai_summarization = getattr(config, "enable_ai_summarization", DEFAULT_ENABLE_AI_SUMMARIZATION)
 
     @property
     def ai_enabled(self) -> bool:

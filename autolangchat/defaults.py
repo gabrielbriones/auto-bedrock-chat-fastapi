@@ -18,15 +18,21 @@ DEFAULT_ENABLE_AI_SUMMARIZATION = False
 DEFAULT_SUMMARIZATION_MIN_CHUNKS = 3
 DEFAULT_SUMMARIZATION_TEMPERATURE = 0.7
 
-# ── Single-Message Truncation (Character-Based) ─────────────────────────
-DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD = 500_000
-DEFAULT_SINGLE_MSG_TRUNCATION_TARGET = 425_000
-
-# ── History Truncation (Character-Based) ─────────────────────────────────
-DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD = 650_000
-DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD = 100_000
-DEFAULT_HISTORY_MSG_TRUNCATION_TARGET = 85_000
 DEFAULT_MAX_TRUNCATION_RECURSION = 3
+
+# ── Single-Message / History Truncation (fraction of model's max_input_tokens) ──
+# Truncation thresholds have no static/fallback default -- they are computed
+# directly from the selected model's max_input_tokens (see
+# langchain_aws.data._profiles): threshold_chars = FRACTION * max_input_tokens.
+# A model with a smaller context window gets a proportionally smaller
+# absolute char budget, so a Bedrock "Input is too long" overflow can't
+# happen from an over-generous static threshold (XMGPLAT-11175). See
+# ChatConfig._scaled_truncation_threshold().
+SINGLE_MSG_LENGTH_THRESHOLD_FRACTION = 0.5
+SINGLE_MSG_TRUNCATION_TARGET_FRACTION = 0.425
+HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION = 0.65
+HISTORY_MSG_LENGTH_THRESHOLD_FRACTION = 0.1
+HISTORY_MSG_TRUNCATION_TARGET_FRACTION = 0.085
 
 # ── Plain-Text Truncation Ratios ────────────────────────────────────────
 TRUNCATION_HEAD_RATIO = 0.8
