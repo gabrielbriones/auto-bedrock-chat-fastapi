@@ -111,6 +111,28 @@ async def test_missing_id_token_cookie_returns_none():
 
 
 @pytest.mark.asyncio
+async def test_missing_access_token_cookie_returns_none():
+    # Without an access_token, validate_id_token's at_hash (access-token
+    # binding) check is silently skipped -- require it here so the
+    # silent-cookie path never validates more weakly than the normal
+    # callback flow (which always has one from the token exchange).
+    config = _make_config()
+    sso_provider = MagicMock()
+    plugin = _make_bare_plugin(config, sso_provider=sso_provider)
+    request = _FakeRequest(
+        {
+            f"{COOKIE_PREFIX}.LastAuthUser": "someuser",
+            f"{COOKIE_PREFIX}.someuser.idToken": "id-tok",
+        }
+    )
+
+    result = await AutoLangChatPlugin._try_silent_external_idp_cookie_auth(plugin, request)
+
+    assert result is None
+    sso_provider.discover.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_valid_cognito_cookie_mints_session_token():
     config = _make_config()
     sso_provider = MagicMock()
@@ -270,3 +292,64 @@ async def test_resolve_sso_session_expired_own_session_falls_back():
 
     assert (session, new_token) == (None, None)
     plugin._try_silent_external_idp_cookie_auth.assert_awaited_once_with(request)
+
+
+# ---------------------------------------------------------------------------
+# _safe_return_to — open-redirect / UI-subtree-escape guard for the SSO
+# `next` param.
+# ---------------------------------------------------------------------------
+
+
+def _make_plugin_for_return_to(ui_endpoint="/chat/ui"):
+    return _make_bare_plugin(_make_config(ui_endpoint=ui_endpoint))
+
+
+def test_safe_return_to_none_when_missing():
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, None) is None
+    assert AutoLangChatPlugin._safe_return_to(plugin, "") is None
+
+
+def test_safe_return_to_accepts_exact_ui_endpoint():
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui") == "/chat/ui"
+
+
+def test_safe_return_to_accepts_ui_subpath_with_query():
+    plugin = _make_plugin_for_return_to()
+    value = "/chat/ui?prompt=health-check&JOB_ID=abc123"
+    assert AutoLangChatPlugin._safe_return_to(plugin, value) == value
+
+
+def test_safe_return_to_rejects_absolute_url():
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "https://evil.com/chat/ui") is None
+
+
+def test_safe_return_to_rejects_protocol_relative_url():
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "//evil.com/chat/ui") is None
+
+
+def test_safe_return_to_rejects_backslash_prefix():
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "\\\\evil.com/chat/ui") is None
+
+
+def test_safe_return_to_rejects_other_paths():
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/admin/dashboard") is None
+
+
+def test_safe_return_to_rejects_dot_segment_traversal_out_of_ui_subtree():
+    # Raw string starts with the UI prefix, but normalizes (as a browser
+    # would resolve the redirected Location) to a path outside it.
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui/../../admin") is None
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui/../../../evil") is None
+
+
+def test_safe_return_to_accepts_dot_segments_that_stay_within_ui_subtree():
+    plugin = _make_plugin_for_return_to()
+    # "/chat/ui/foo/../bar" normalizes to "/chat/ui/bar" -- still in-subtree.
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui/foo/../bar") == "/chat/ui/foo/../bar"

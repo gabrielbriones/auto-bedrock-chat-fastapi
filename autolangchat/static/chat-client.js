@@ -1392,6 +1392,12 @@ class ChatClient {
     // Show a "still working" indicator and poll (by re-issuing
     // conversation_load) until the pending turn resolves, instead of
     // leaving the conversation looking silently stuck.
+    //
+    // Each poll re-requests conversation_load, whose conversation_loaded
+    // reply routes right back through this same method — so the attempt
+    // counter must only be reset when we *start* watching a (still) new
+    // pending conversation, never on every intermediate reply, or
+    // MAX_ATTEMPTS in _pollPendingConversation would never be reached.
     _handleConversationPendingState(conversationId, messages) {
         if (this._pendingPollTimer) {
             clearTimeout(this._pendingPollTimer);
@@ -1399,10 +1405,15 @@ class ChatClient {
         }
         if (!this._isConversationPending(messages)) {
             this.hideTypingIndicator();
+            this._pendingPollAttempts = 0;
+            this._pendingConversationId = null;
             return;
         }
         this.showTypingIndicator('Still working on a previous request...');
-        this._pendingPollAttempts = 0;
+        if (this._pendingConversationId !== conversationId) {
+            this._pendingConversationId = conversationId;
+            this._pendingPollAttempts = 0;
+        }
         this._pollPendingConversation(conversationId);
     }
 

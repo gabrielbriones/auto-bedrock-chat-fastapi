@@ -226,7 +226,7 @@ AUTOCHAT_PRESET_PROMPTS_FILE=/etc/myapp/prompts.yaml
 A preset prompt can be triggered directly from a URL, so an external tool or notification can send someone a link that opens the chat UI, pre-fills a prompt's variables, and sends it automatically — no manual clicking required.
 
 ```
-https://your-app.example.com/chat?prompt=health-check&JOB_ID=abc123
+https://your-app.example.com/chat/ui?prompt=health-check&JOB_ID=abc123
 ```
 
 | Query Param   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |

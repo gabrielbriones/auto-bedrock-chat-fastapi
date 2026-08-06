@@ -5,10 +5,12 @@ import atexit
 import html
 import logging
 import os
+import posixpath
 import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -924,6 +926,14 @@ class AutoLangChatPlugin:
         endpoint are allowed. This rejects absolute URLs, protocol-relative
         URLs (``//evil.com``), and any value containing a scheme, which
         together prevent an open-redirect via a crafted ``next`` value.
+
+        The prefix check is done against the *normalized* path (dot-segments
+        collapsed via ``posixpath.normpath``), not the raw string — browsers
+        normalize ``..`` segments when resolving a redirect's ``Location``,
+        so a raw value like ``/chat/ui/../../admin`` would otherwise pass a
+        naive ``str.startswith(ui_endpoint)`` check while actually
+        navigating outside the UI subtree once resolved client-side.
+
         Returns ``None`` when ``next_param`` is missing or fails validation
         (falls back to the plain chat UI root).
         """
@@ -931,8 +941,11 @@ class AutoLangChatPlugin:
             return None
         if "://" in next_param or next_param.startswith("//") or next_param.startswith("\\"):
             return None
+        if not next_param.startswith("/"):
+            return None
         ui_endpoint = self.config.ui_endpoint
-        if next_param != ui_endpoint and not next_param.startswith((f"{ui_endpoint}/", f"{ui_endpoint}?")):
+        normalized_path = posixpath.normpath(urlsplit(next_param).path)
+        if normalized_path != ui_endpoint and not normalized_path.startswith(f"{ui_endpoint}/"):
             return None
         return next_param
 
@@ -1021,6 +1034,16 @@ class AutoLangChatPlugin:
         if not id_token:
             return None
         access_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.accessToken")
+        if not access_token:
+            # The normal SSO callback path always has an access_token from
+            # the token exchange response, and its presence lets
+            # validate_id_token verify the OIDC `at_hash` claim (binding the
+            # ID token to this specific access token). Requiring it here
+            # too keeps the silent-cookie path at the same validation
+            # strength — real Cognito CookieStorage writes all three
+            # tokens together, so this should never reject a genuine
+            # external session.
+            return None
         refresh_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.refreshToken")
 
         _load_sso_imports()
