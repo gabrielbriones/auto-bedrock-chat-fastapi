@@ -539,20 +539,38 @@ class WebSocketChatHandler:
                 "kb_sources": response_metadata.get("kb_sources", []),
             }
 
-            # Send response to client
-            await self._send_message(
-                websocket,
-                {
-                    "type": "ai_response",
-                    "message_id": message_id,
-                    "message": final_response.get("content") or "",
-                    "tool_calls": final_response.get("tool_calls", []),
-                    "tool_results": final_response.get("tool_results", []),
-                    "timestamp": datetime.now().isoformat(),
-                    "metadata": response_metadata,
-                    "conversation_id": conversation_id,
-                },
-            )
+            # Send response to client. This can fail if the connection has
+            # dropped mid-turn (e.g. a network/proxy reconnect while the
+            # multi-round tool-calling loop was running) — the turn's
+            # messages are already checkpointed by the graph invocation
+            # above regardless of whether this send succeeds, so a failure
+            # here must not skip the bookkeeping below (record_turn, title
+            # generation, token usage) or the conversation would be left
+            # with a stale updated_at/title/message_count even though the
+            # answer is fully persisted and viewable once reloaded.
+            try:
+                await self._send_message(
+                    websocket,
+                    {
+                        "type": "ai_response",
+                        "message_id": message_id,
+                        "message": final_response.get("content") or "",
+                        "tool_calls": final_response.get("tool_calls", []),
+                        "tool_results": final_response.get("tool_results", []),
+                        "timestamp": datetime.now().isoformat(),
+                        "metadata": response_metadata,
+                        "conversation_id": conversation_id,
+                    },
+                    log_errors=False,
+                )
+            except WebSocketError:
+                logger.warning(
+                    "Could not deliver ai_response to a closed connection (session=%s, "
+                    "conversation_id=%s) — turn is already checkpointed; continuing with "
+                    "post-turn bookkeeping.",
+                    session.session_id,
+                    conversation_id,
+                )
 
             # Persist the turn against the conversation metadata store
             # (best-effort, mirrors the token-usage persistence below — the
@@ -1976,13 +1994,24 @@ class WebSocketChatHandler:
         )
         return True
 
-    async def _send_message(self, websocket: WebSocket, message: Dict[str, Any]):
-        """Send message to WebSocket client"""
+    async def _send_message(self, websocket: WebSocket, message: Dict[str, Any], log_errors: bool = True):
+        """Send message to WebSocket client.
+
+        Args:
+            websocket: The client connection to send to.
+            message: JSON-serializable payload to send.
+            log_errors: When ``True`` (default), a send failure is logged at
+                ERROR here before being re-raised as ``WebSocketError``. Set
+                to ``False`` when the caller already logs a more specific,
+                context-rich message for this failure (e.g. including
+                session/conversation ids) so the failure isn't logged twice.
+        """
 
         try:
             await websocket.send_json(message)
         except Exception as e:
-            logger.error(f"Failed to send message: {str(e)}")
+            if log_errors:
+                logger.error(f"Failed to send message: {str(e)}")
             raise WebSocketError(f"Failed to send message: {str(e)}")
 
     async def _send_error(self, websocket: WebSocket, error_message: str):

@@ -131,7 +131,15 @@ function ssoLogin() {
     if (btn) btn.disabled = true;
     if (btnText) btnText.textContent = 'Redirecting…';
     if (spinner) spinner.style.display = 'inline-block';
-    window.location.href = window.CONFIG.ssoLoginUrl || '/chat/auth/sso/login';
+
+    // Preserve the current page's querystring (e.g. a deep-link
+    // ?prompt=<id>&VAR=value...) across the SSO redirect round trip by
+    // passing it as `next`. The server validates this is a same-site path
+    // before using it as the post-login redirect target.
+    const loginUrl = window.CONFIG.ssoLoginUrl || '/chat/auth/sso/login';
+    const returnTo = window.location.pathname + window.location.search;
+    const separator = loginUrl.includes('?') ? '&' : '?';
+    window.location.href = loginUrl + separator + 'next=' + encodeURIComponent(returnTo);
 }
 
 function updateAuthFields() {

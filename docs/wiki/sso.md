@@ -102,14 +102,15 @@ Provide **either** a discovery URL (recommended) **or** individual endpoint URLs
 
 ### Optional Settings
 
-| Parameter / Env Var                                    | Default                  | Description                                                                                           |
-| ------------------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `sso_provider` / `AUTOCHAT_SSO_PROVIDER`               | `None`                   | Provider hint for preset defaults: `cognito`, `okta`, `azure_ad`, `auth0`, `keycloak`, `generic`      |
-| `sso_client_secret` / `AUTOCHAT_SSO_CLIENT_SECRET`     | `None`                   | Client secret for confidential clients (public clients with PKCE don't need this)                     |
-| `sso_scopes` / `AUTOCHAT_SSO_SCOPES`                   | `"openid profile email"` | Space-separated OAuth2 scopes to request                                                              |
-| `sso_callback_path` / `AUTOCHAT_SSO_CALLBACK_PATH`     | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                              |
-| `sso_public_base_url` / `AUTOCHAT_SSO_PUBLIC_BASE_URL` | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url)) |
-| `sso_session_ttl` / `AUTOCHAT_SSO_SESSION_TTL`         | `3600`                   | SSO session lifetime in seconds                                                                       |
+| Parameter / Env Var                                                          | Default                  | Description                                                                                                              |
+| ---------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `sso_provider` / `AUTOCHAT_SSO_PROVIDER`                                     | `None`                   | Provider hint for preset defaults: `cognito`, `okta`, `azure_ad`, `auth0`, `keycloak`, `generic`                         |
+| `sso_client_secret` / `AUTOCHAT_SSO_CLIENT_SECRET`                           | `None`                   | Client secret for confidential clients (public clients with PKCE don't need this)                                        |
+| `sso_scopes` / `AUTOCHAT_SSO_SCOPES`                                         | `"openid profile email"` | Space-separated OAuth2 scopes to request                                                                                 |
+| `sso_callback_path` / `AUTOCHAT_SSO_CALLBACK_PATH`                           | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                                                 |
+| `sso_public_base_url` / `AUTOCHAT_SSO_PUBLIC_BASE_URL`                       | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url))                    |
+| `sso_session_ttl` / `AUTOCHAT_SSO_SESSION_TTL`                               | `3600`                   | SSO session lifetime in seconds                                                                                          |
+| `sso_trust_external_idp_cookies` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES` | `False`                  | Opt-in silent-SSO shortcut — see [Silent SSO from an External IdP Cookie](#silent-sso-from-an-external-idp-cookie) below |
 
 ---
 
@@ -150,6 +151,28 @@ The SSO session stores:
 | `refresh_token`   | Can be used to obtain new access tokens before expiry     |
 | `id_token_claims` | Decoded claims from the ID token                          |
 | `user_info`       | User profile from the userinfo endpoint (if available)    |
+
+---
+
+## Silent SSO from an External IdP Cookie
+
+**Off by default** (`sso_trust_external_idp_cookies=False` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES`). This is a UX shortcut for a specific deployment shape: another internal app, on a related subdomain, deliberately shares an active Cognito session with this app via cookies (not the Cognito JS SDK's localStorage default) scoped to a shared parent domain, and registers the **exact same** Cognito App Client ID as this app's own `sso_client_id`.
+
+When enabled, `GET /chat/ui` looks for:
+
+```
+CognitoIdentityServiceProvider.<sso_client_id>.LastAuthUser
+CognitoIdentityServiceProvider.<sso_client_id>.<LastAuthUser>.idToken
+CognitoIdentityServiceProvider.<sso_client_id>.<LastAuthUser>.accessToken
+CognitoIdentityServiceProvider.<sso_client_id>.<LastAuthUser>.refreshToken
+```
+
+If present, the `idToken` is validated with the **exact same** checks as a normal SSO callback (`SSOProvider.validate_id_token`: JWKS signature, issuer, `audience=sso_client_id`, expiry). Only on success is a session minted (`sso_session_store.create_session(...)`) and set as this app's own `sso_session_token` cookie — skipping the IdP redirect round trip entirely. Any failure (cookies absent, token expired, wrong audience/issuer) is silent and falls through to the normal "Login with SSO" flow; this is purely a shortcut, never an alternate authentication mechanism.
+
+**Do not enable this unless you've confirmed both:**
+
+1. The calling app's Cognito SDK is explicitly configured with `CookieStorage` (not its localStorage default) and a `Domain` attribute that covers this app's origin — otherwise the cookies simply won't arrive here and the feature is a no-op.
+2. The calling app registers the **same App Client ID** as this app's `sso_client_id`. A different App Client ID fails the `audience` check in `validate_id_token` and safely does nothing — but that's a safety net, not something to rely on as the actual access-control boundary. Treat "same App Client ID" as a deliberate trust decision between the two apps, not an incidental detail.
 
 ---
 
