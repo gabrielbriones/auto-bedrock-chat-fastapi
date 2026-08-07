@@ -131,7 +131,7 @@ class TestManualUrlOverrides:
 
 
 class TestPublicEndpointProperties:
-    """Public read-only accessors for resolved endpoints (XMGPLAT-11065 Phase 5).
+    """Public read-only accessors for resolved endpoints.
 
     Added so the MCP discovery routes (``mcp/discovery.py``) can build RFC
     8414/9728 metadata without reaching into ``SSOProvider`` internals.

@@ -39,6 +39,7 @@ from langchain_core.runnables import RunnableConfig
 from ...config import MODEL_ID_REGION_PREFIXES, split_model_id
 from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
+from ...message_preprocessor import MessagePreprocessor
 from ..state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,12 @@ _CONTEXT_WINDOW_ERROR_CODES = {
     "ValidationException",
     "ServiceUnavailableException",
 }
+# Multiplier applied to all truncation thresholds when retrying after a
+# context-window error (see MessagePreprocessor.preprocess_messages'
+# threshold_factor). 0.5 halves every threshold/target for one aggressive
+# re-truncation pass before falling back to a different model.
+_EMERGENCY_TRUNCATION_THRESHOLD_FACTOR = 0.5
+
 _CONTEXT_WINDOW_PHRASES = (
     "too many tokens",
     "input is too long",
@@ -478,11 +485,18 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         Chunks are forwarded to ``state["on_progress"]`` while the model
         generates, so the client sees incremental typing indicators.
 
-    Fallback model:
-        If the primary call raises a context-window error and
-        ``chat_config.fallback_model`` is set, the node retries once with
-        the fallback model and records ``"fallback_model_used": True`` in
-        metadata.
+    Context-window error recovery (two safety nets, in order):
+        1. Emergency re-truncation: the conversation is re-preprocessed
+           with ``threshold_factor=0.5`` (halving every truncation
+           threshold/target) and retried once against the *same* model.
+           Sets ``metadata["emergency_retruncation_applied"] = True`` as
+           soon as re-truncation runs, regardless of whether the retry
+           call itself then succeeds (if it doesn't, safety net 2 still
+           runs and this flag stays ``True``).
+        2. Fallback model: if re-truncation still fails and
+           ``chat_config.fallback_model`` is set, the node retries once
+           more with the fallback model and records
+           ``metadata["fallback_model_used"] = True``.
 
     Token usage:
         Surfaced from ``AIMessage.usage_metadata`` into
@@ -508,9 +522,41 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         ai_msg = await _invoke_with_streaming(llm, lc_messages, on_progress)
         metadata["fallback_model_used"] = False
     except Exception as exc:
-        if fallback_model and _is_context_window_error(exc):
+        if not _is_context_window_error(exc):
+            raise
+
+        # --- Safety net 1: emergency re-truncation, same model ---
+        # Re-run preprocessing with all thresholds halved (threshold_factor)
+        # and retry the primary model once before switching models.
+        logger.warning(
+            "Context-window error on %s; retrying with emergency re-truncation "
+            "(threshold_factor=%s) before considering a fallback model",
+            primary_model,
+            _EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
+        )
+        try:
+            retruncated = await MessagePreprocessor(config=chat_config).preprocess_messages(
+                messages=list(messages),
+                on_progress=on_progress,
+                threshold_factor=_EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
+            )
+            # Mark the safety net as applied as soon as re-truncation runs --
+            # regardless of whether the subsequent retry call itself succeeds
+            # (a failed retry still falls back to safety net 2 having gone
+            # through this path, which callers need to be able to observe).
+            metadata["emergency_retruncation_applied"] = True
+            llm = _build_llm(primary_model, chat_config)
+            ai_msg = await _invoke_with_streaming(llm, _to_langchain_messages(retruncated), on_progress)
+            metadata["fallback_model_used"] = False
+        except Exception as retry_exc:
+            if not (fallback_model and _is_context_window_error(retry_exc)):
+                raise ContextWindowExceededError(
+                    f"Primary model ({primary_model}) failed even after emergency re-truncation"
+                ) from retry_exc
+
+            # --- Safety net 2: fallback model ---
             logger.warning(
-                "Context-window error on %s; retrying with fallback model %s",
+                "Emergency re-truncation insufficient on %s; retrying with fallback model %s",
                 primary_model,
                 fallback_model,
             )
@@ -521,7 +567,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 metadata["fallback_model"] = fallback_model
             except Exception as fb_exc:
                 raise ContextWindowExceededError(
-                    f"Both primary ({primary_model}) and fallback ({fallback_model}) models failed"
+                    f"Primary ({primary_model}), emergency re-truncation, and fallback "
+                    f"({fallback_model}) models all failed"
                 ) from fb_exc
         elif _requires_inference_profile(exc) and (
             profile_model_id := _retry_model_id_with_inference_profile(primary_model, chat_config)

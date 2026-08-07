@@ -1150,7 +1150,7 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
-   Conversation sidebar (XMGPLAT-10380)
+   Conversation sidebar
    ---------------------------------------------------------------------------
    Desktop: a card to the left of .chat-container inside .app-layout, shown/
    hidden as a whole via the ".hidden" class (feature disabled or user not
@@ -1333,7 +1333,7 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
-   Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+   Dynamic parameter overrides settings sidebar.
 
    Unlike .conversation-sidebar (permanently docked on desktop, drawer-only on
    mobile), this sidebar is *always* an off-canvas drawer regardless of

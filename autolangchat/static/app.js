@@ -88,9 +88,42 @@ document.addEventListener('DOMContentLoaded', function() {
             window.chatClient = new ChatClient();
         }
     } else {
+        // Auth is required — check for an auto-auth hint in the deep-link
+        // querystring (`?auth_method=sso`, e.g. set by a service that
+        // constructs this URL) before showing the modal.
+        //
+        // For `sso`: automates clicking the existing "Login with SSO"
+        // button — it does NOT bypass authentication, it just saves the
+        // user a click. No credentials travel through the URL; `ssoLogin()`
+        // only redirects to the already-configured IdP login endpoint,
+        // exactly as a manual click would.
+        //
+        // For any other supported auth type (bearer_token, basic_auth,
+        // api_key, oauth2_client_credentials, custom): only pre-selects
+        // that option in the dropdown so the right fields are visible —
+        // credential VALUES are deliberately never accepted via the URL
+        // or headers, since that would leak secrets into browser history,
+        // proxy/access logs, and the Referer header. The user must still
+        // type and submit those credentials themselves.
+        const deepLinkParams = new URLSearchParams(window.location.search);
+        const requestedAuthMethod = deepLinkParams.get('auth_method');
+        const enabledAuthTypes = (window.CONFIG.supportedAuthTypes || []).filter(
+            t => !(t === 'sso' && !window.CONFIG.ssoEnabled)
+        );
+
         // Auth is required, keep modal visible
         authModal.classList.remove('hidden');
         initializeAuthModal();
+
+        if (requestedAuthMethod === 'sso' && window.CONFIG.ssoEnabled && enabledAuthTypes.includes('sso')) {
+            ssoLogin();
+        } else if (requestedAuthMethod && enabledAuthTypes.includes(requestedAuthMethod)) {
+            const authTypeSelect = document.getElementById('authType');
+            if (authTypeSelect) {
+                authTypeSelect.value = requestedAuthMethod;
+                updateAuthFields();
+            }
+        }
     }
 });
 

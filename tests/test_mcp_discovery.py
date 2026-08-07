@@ -1,4 +1,4 @@
-"""Tests for MCP OAuth discovery metadata endpoints (XMGPLAT-11065, Phase 5).
+"""Tests for MCP OAuth discovery metadata endpoints.
 
 Verifies ``autolangchat/mcp/discovery.py`` builds the RFC 9728
 ``/.well-known/oauth-protected-resource`` and RFC 8414

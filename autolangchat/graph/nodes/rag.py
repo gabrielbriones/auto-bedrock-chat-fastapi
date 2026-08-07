@@ -140,13 +140,15 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
                 if _close_after:
                     kb_store.close()
 
-            logger.info(
-                "RAG retrieval: %d chunk(s) (threshold=%.2f)",
-                len(results),
-                chat_config.kb_similarity_threshold,
-            )
             if results:
-                logger.debug("Top result score: %.4f", results[0]["similarity_score"])
+                logger.info(
+                    "RAG retrieval: %d chunk(s) (threshold=%.2f)",
+                    len(results),
+                    chat_config.kb_similarity_threshold,
+                )
+                logger.info("Top result score: %.4f", results[0]["similarity_score"])
+            else:
+                logger.debug("RAG retrieval: no results (threshold=%.2f)", chat_config.kb_similarity_threshold)
             kb_results = results or []
 
         except Exception as exc:

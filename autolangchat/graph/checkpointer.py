@@ -1,7 +1,7 @@
 """LangGraph checkpoint factory.
 
-Phase 1/2: MemorySaver — in-process, no persistence.
-Phase 3:   AsyncPostgresSaver backed by an AsyncConnectionPool.
+MemorySaver — in-process, no persistence.
+AsyncPostgresSaver backed by an AsyncConnectionPool.
 
 Usage
 -----

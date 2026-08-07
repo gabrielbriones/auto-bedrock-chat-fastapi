@@ -14,7 +14,7 @@ Usage
         }},
     )
 
-Graph topology (Phase 2)
+Graph topology
 ------------------------
 
     START → init_turn → rag → preprocess → llm → citation_boost → END
@@ -23,7 +23,7 @@ Graph topology (Phase 2)
                                                 ↓             |
                                           (loops back to llm) ─┘
 
-Phase 3 swaps MemorySaver for AsyncPostgresSaver.
+MemorySaver can be swapped for AsyncPostgresSaver.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def build_chat_graph(
 
     builder.add_edge("citation_boost", END)
 
-    # Checkpointer: MemorySaver for Phase 1/2; Postgres (AsyncPostgresSaver) in Phase 3.
+    # Checkpointer: MemorySaver by default; can be swapped for Postgres (AsyncPostgresSaver).
     # The pool is created closed here and opened in the FastAPI startup event via
     # open_checkpointer().
     postgres_url = getattr(config, "checkpoint_postgres_url", None)

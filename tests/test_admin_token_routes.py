@@ -1,4 +1,4 @@
-"""Tests for the Admin Token Usage Analytics HTTP routes (XMGPLAT-10748).
+"""Tests for the Admin Token Usage Analytics HTTP routes.
 
 Covers:
 

@@ -1,4 +1,4 @@
-"""Phase 1 — AUTOCHAT_* environment variable tests.
+"""AUTOCHAT_* environment variable tests.
 
 Verifies that ChatConfig reads from AUTOCHAT_* env vars (not BEDROCK_*),
 and that old BEDROCK_* vars are ignored.
@@ -74,7 +74,7 @@ class TestAutochatEnvVarPrefix:
 
     def test_token_usage_enabled_defaults_to_false(self):
         """token_usage_enabled is opt-in (default off) so existing deployments
-        don't get surprise writes (XMGPLAT-10746)."""
+        don't get surprise writes."""
         config = _load_config()
         assert config.token_usage_enabled is False
 
@@ -149,7 +149,7 @@ class TestAutochatEnvVarPrefix:
 
 
 class TestSummarizationEnvVars:
-    """XMGPLAT-9992 -- separate model_id/temperature/max_tokens/top_p for the
+    """Separate model_id/temperature/max_tokens/top_p for the
     AI summarizer, independent of the main chat config."""
 
     def test_summarization_fields_default_to_none(self):

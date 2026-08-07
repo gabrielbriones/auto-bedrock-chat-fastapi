@@ -33,7 +33,7 @@ class ChatClient {
         // assistant response so the input can be disabled mid-turn.
         this.awaitingResponse = false;
 
-        // Conversation sidebar (XMGPLAT-10380): activeConversationId is the
+        // Conversation sidebar: activeConversationId is the
         // LangGraph thread_id for whatever conversation this connection is
         // currently "in" — kept separate from any WebSocket session/connection
         // identifier. null until a conversation is created (first chat message)
@@ -41,6 +41,13 @@ class ChatClient {
         this._conversationSidebarEnabled = !!window.CONFIG.conversationPersistenceEnabled;
         this.activeConversationId = null;
         this.conversations = [];
+        // True while a first turn was sent but we haven't yet learned its
+        // conversation_id (either because the server hasn't replied yet, or
+        // because the connection dropped mid-turn before it could). Used to
+        // auto-select the recovered conversation on reconnect instead of
+        // leaving the sidebar with nothing selected — see
+        // _maybeRecoverPendingConversation().
+        this._awaitingConversationId = false;
         this.conversationSidebar = document.getElementById('conversationSidebar');
         this.conversationList = document.getElementById('conversationList');
         this.newChatButton = document.getElementById('newChatButton');
@@ -49,7 +56,7 @@ class ChatClient {
         this.sidebarBackdrop = document.getElementById('sidebarBackdrop');
         this._setupConversationSidebarListeners();
 
-        // Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+        // Dynamic parameter overrides settings sidebar.
         this._configSidebarEnabled = !!window.CONFIG.enableConfigSidebar;
         this._allowedDynamicOverrides = window.CONFIG.allowedDynamicOverrides || null;
         this._activeConfigOverrides = {};
@@ -62,6 +69,13 @@ class ChatClient {
         this.configOverrideBadge = document.getElementById('configOverrideBadge');
         this.modelIdDisplay = document.getElementById('modelIdDisplay');
         this._setupConfigSidebarListeners();
+
+        // Deep-link support: ?prompt=<id>&VAR=value... lets an external
+        // link pre-fill (and, by default, auto-send) a preset prompt once
+        // the chat becomes usable. Parsed once from the initial URL and
+        // applied at most once per page load — see _applyDeepLink().
+        this._deepLink = this._parseDeepLink();
+        this._deepLinkApplied = false;
 
         this.setupEventListeners();
         this._renderVariablesSection();
@@ -152,6 +166,12 @@ class ChatClient {
             this.connecting = false;
             this.updateConnectionStatus(false);
             this.awaitingResponse = false;
+            // A response the client was waiting on can no longer arrive on
+            // this (now closed) connection — don't leave the spinner/typing
+            // text stuck forever. If the turn actually completes server-side,
+            // it'll be picked up via _maybeRecoverPendingConversation() once
+            // the reconnect's conversation_list arrives.
+            this.hideTypingIndicator();
             this.messageInput.disabled = true;
             this.messageInput.placeholder = 'Type your message...';
             this.messageInput.classList.remove('input-locked');
@@ -204,6 +224,7 @@ class ChatClient {
         this.sendButton.disabled = false;
         this._renderPresetButtons();
         this._updatePresetButtonStates();
+        this._applyDeepLink();
     }
 
     _disablePresetButtons() {
@@ -423,8 +444,94 @@ class ChatClient {
     _sendPresetMessage(text) {
         if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.addMessage('user', text);
+        if (!this.activeConversationId) this._awaitingConversationId = true;
         this.ws.send(JSON.stringify({ type: 'chat', message: text }));
         this._lockInputForResponse();
+    }
+
+    // Parse ?prompt=<id>&VAR=value...&autosend=0 from the initial page URL.
+    // Returns null when no `prompt` param is present. `autosend` defaults
+    // to true (send immediately once variables validate); pass `autosend=0`
+    // or `autosend=false` to only pre-fill the variable inputs instead.
+    _parseDeepLink() {
+        const params = new URLSearchParams(window.location.search);
+        const promptId = params.get('prompt');
+        if (!promptId) return null;
+
+        const autosendParam = params.get('autosend');
+        const values = {};
+        params.forEach((value, key) => {
+            if (key === 'prompt' || key === 'autosend') return;
+            values[key] = value;
+        });
+
+        return {
+            promptId,
+            values,
+            autosend: !(autosendParam === '0' || autosendParam === 'false'),
+        };
+    }
+
+    // Apply a parsed deep link (see _parseDeepLink) once the chat is usable.
+    // Fills any variable inputs matching querystring keys, then auto-sends
+    // the matching preset prompt if all its required variables are valid
+    // (unless autosend was explicitly disabled). Runs at most once per page
+    // load — enableInput() can be called again (e.g. on reconnect) but the
+    // deep link must not be re-applied/re-sent each time.
+    _applyDeepLink() {
+        if (this._deepLinkApplied || !this._deepLink) return;
+        this._deepLinkApplied = true;
+
+        const prompt = (window.CONFIG.presetPrompts || []).find(p => p.id === this._deepLink.promptId);
+        if (!prompt) {
+            console.warn(`Preset prompt deep link: unknown prompt id "${this._deepLink.promptId}"`);
+            return;
+        }
+
+        Object.entries(this._deepLink.values).forEach(([name, value]) => {
+            const el = document.getElementById(`var_${name}`);
+            if (!el) return;
+            const def = this._variableDefs[name];
+            if (def && def.input_type === 'checkbox') {
+                el.checked = value === 'true' || value === '1';
+            } else {
+                el.value = value;
+            }
+        });
+        this._updatePresetButtonStates();
+
+        if (!this._deepLink.autosend) return;
+
+        const requiredVars = this._getPlaceholders(prompt.template || '');
+        const allValid = requiredVars.every(name => this._validateVar(name, this._getVarValue(name)));
+        if (allValid) {
+            this._handlePresetClick(prompt);
+            // Scrub the deep-link params from the address bar now that the
+            // preset has actually been sent. Otherwise, if a subsequent
+            // navigation happens (e.g. an SSO login redirect round trip that
+            // lands back on this same URL via the preserved `next` param),
+            // the reloaded page would parse the same ?prompt=...&VAR=...
+            // querystring again and auto-send the exact same message a
+            // second time as a duplicate, orphaned turn.
+            this._clearDeepLinkFromUrl();
+        } else {
+            console.warn(
+                'Preset prompt deep link: required variable(s) missing or invalid, not auto-sending',
+                requiredVars
+            );
+        }
+    }
+
+    _clearDeepLinkFromUrl() {
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('prompt');
+            url.searchParams.delete('autosend');
+            Object.keys(this._deepLink.values).forEach(name => url.searchParams.delete(name));
+            window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+        } catch (e) {
+            console.warn('Could not clean up deep-link query string:', e);
+        }
     }
 
     _recoverAuthSubmitButton() {
@@ -533,6 +640,7 @@ class ChatClient {
         this.addMessage('user', message);
 
         // Send to server
+        if (!this.activeConversationId) this._awaitingConversationId = true;
         this.ws.send(JSON.stringify({
             type: 'chat',
             message: message
@@ -657,6 +765,7 @@ class ChatClient {
                     this.activeConversationId = data.conversation_id;
                     this._renderConversationList();
                 }
+                this._awaitingConversationId = false;
                 if (data.metadata && data.metadata.rejected_overrides && data.metadata.rejected_overrides.length) {
                     console.warn('Rejected config overrides:', data.metadata.rejected_overrides);
                 }
@@ -675,18 +784,22 @@ class ChatClient {
             case 'conversation_list':
                 this.conversations = data.conversations || [];
                 this._renderConversationList();
+                this._maybeRecoverPendingConversation();
                 break;
 
             case 'conversation_created':
                 this.activeConversationId = data.conversation_id;
+                this._awaitingConversationId = false;
                 this._upsertConversationInList({ id: data.conversation_id, title: null });
                 break;
 
             case 'conversation_loaded':
                 this.activeConversationId = data.conversation_id;
+                this._awaitingConversationId = false;
                 this._renderConversationHistory(data.messages || []);
                 this._renderConversationList();
                 this._closeSidebarDrawer();
+                this._handleConversationPendingState(data.conversation_id, data.messages || []);
                 break;
 
             case 'conversation_deleted':
@@ -1202,7 +1315,7 @@ class ChatClient {
     }
 
     // ------------------------------------------------------------------
-    // Conversation sidebar (XMGPLAT-10380)
+    // Conversation sidebar
     // ------------------------------------------------------------------
 
     _setupConversationSidebarListeners() {
@@ -1260,6 +1373,67 @@ class ChatClient {
         }
     }
 
+    // A conversation's last message is either a tool result awaiting the
+    // next LLM call, or an assistant message that only issued tool_calls
+    // (no final text yet) — in both cases the turn hasn't produced a final
+    // answer. This happens when the connection that started the turn was
+    // lost mid-flight (e.g. a network/proxy reconnect during a long
+    // multi-round tool-calling loop): the graph invocation keeps running
+    // server-side and checkpoints progressively, but there's no live
+    // socket to deliver the eventual ai_response to.
+    _isConversationPending(messages) {
+        if (!messages || !messages.length) return false;
+        const last = messages[messages.length - 1];
+        if (last.role === 'tool') return true;
+        if (last.role === 'assistant' && Array.isArray(last.tool_calls) && last.tool_calls.length > 0) return true;
+        return false;
+    }
+
+    // Show a "still working" indicator and poll (by re-issuing
+    // conversation_load) until the pending turn resolves, instead of
+    // leaving the conversation looking silently stuck.
+    //
+    // Each poll re-requests conversation_load, whose conversation_loaded
+    // reply routes right back through this same method — so the attempt
+    // counter must only be reset when we *start* watching a (still) new
+    // pending conversation, never on every intermediate reply, or
+    // MAX_ATTEMPTS in _pollPendingConversation would never be reached.
+    _handleConversationPendingState(conversationId, messages) {
+        if (this._pendingPollTimer) {
+            clearTimeout(this._pendingPollTimer);
+            this._pendingPollTimer = null;
+        }
+        if (!this._isConversationPending(messages)) {
+            this.hideTypingIndicator();
+            this._pendingPollAttempts = 0;
+            this._pendingConversationId = null;
+            return;
+        }
+        this.showTypingIndicator('Still working on a previous request...');
+        if (this._pendingConversationId !== conversationId) {
+            this._pendingConversationId = conversationId;
+            this._pendingPollAttempts = 0;
+        }
+        this._pollPendingConversation(conversationId);
+    }
+
+    _pollPendingConversation(conversationId) {
+        const MAX_ATTEMPTS = 20; // ~2 minutes at 6s intervals
+        const POLL_INTERVAL_MS = 6000;
+        this._pendingPollTimer = setTimeout(() => {
+            this._pendingPollAttempts += 1;
+            // Stop polling if the user navigated elsewhere or the socket dropped.
+            if (this.activeConversationId !== conversationId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+            if (this._pendingPollAttempts > MAX_ATTEMPTS) {
+                this.hideTypingIndicator();
+                return;
+            }
+            this.ws.send(JSON.stringify({ type: 'conversation_load', conversation_id: conversationId }));
+        }, POLL_INTERVAL_MS);
+    }
+
     requestConversationList() {
         if (!this._conversationSidebarEnabled || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({ type: 'conversation_list' }));
@@ -1269,9 +1443,30 @@ class ChatClient {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({ type: 'conversation_new' }));
         this.activeConversationId = null;
+        // Explicit user intent to start blank — don't let a later reconnect
+        // auto-recover a stale pending turn back into view over this.
+        this._awaitingConversationId = false;
         this._clearChatArea();
         this._renderConversationList();
         this._closeSidebarDrawer();
+    }
+
+    // If a first turn was sent but the connection dropped before its
+    // conversation_id could be learned (see _awaitingConversationId), the
+    // turn still completes and persists server-side — but this tab has no
+    // way to know its id. Once a reconnect's conversation_list arrives with
+    // nothing selected, auto-select the most-recently-updated conversation
+    // so the recovered response is shown without the user having to
+    // manually switch conversations to find it.
+    _maybeRecoverPendingConversation() {
+        if (!this._awaitingConversationId || this.activeConversationId || !this.conversations.length) return;
+        this._awaitingConversationId = false;
+        const mostRecent = [...this.conversations].sort((a, b) =>
+            (b.updated_at || '').localeCompare(a.updated_at || '')
+        )[0];
+        if (mostRecent) {
+            this.loadConversation(mostRecent.id, /* force */ true);
+        }
     }
 
     loadConversation(conversationId, force = false) {
@@ -1403,7 +1598,7 @@ class ChatClient {
     }
 
     // ------------------------------------------------------------------
-    // Dynamic parameter overrides settings sidebar (XMGPLAT-9697)
+    // Dynamic parameter overrides settings sidebar
     // ------------------------------------------------------------------
 
     _setupConfigSidebarListeners() {

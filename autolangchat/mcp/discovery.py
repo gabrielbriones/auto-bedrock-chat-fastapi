@@ -1,4 +1,4 @@
-"""OAuth discovery metadata endpoints for the MCP SSO auth path (Phase 5).
+"""OAuth discovery metadata endpoints for the MCP SSO auth path.
 
 Publishes the two well-known metadata documents spec-compliant MCP clients
 need to auto-discover the configured IdP and perform Authorization Code +

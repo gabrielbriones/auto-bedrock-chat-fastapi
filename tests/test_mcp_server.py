@@ -1,4 +1,4 @@
-"""Tests for the MCP (Model Context Protocol) server adapter (XMGPLAT-11065).
+"""Tests for the MCP (Model Context Protocol) server adapter.
 
 Verifies the ``ToolsGenerator``/``ToolManager`` -> MCP ``tools/list`` /
 ``tools/call`` mapping in ``autolangchat/mcp/server.py``. Requires the

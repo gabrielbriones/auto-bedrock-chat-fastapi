@@ -1,4 +1,4 @@
-"""Phase 2 — OpenAPI → tool generation tests.
+"""OpenAPI → tool generation tests.
 
 Verifies that ``ToolsGenerator.generate_tools_desc()`` produces the correct
 OpenAI-style schema dict at construction time, and that
