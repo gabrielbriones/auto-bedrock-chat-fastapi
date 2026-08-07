@@ -174,6 +174,7 @@ class SSOSessionStore:
         self,
         state: str,
         code_verifier: str,
+        return_to: Optional[str] = None,
         ttl: int = _PENDING_DEFAULT_TTL,
     ) -> None:
         """Store a pending OAuth2 state / PKCE code-verifier pair.
@@ -181,10 +182,16 @@ class SSOSessionStore:
         Args:
             state: The opaque state parameter sent to the IdP.
             code_verifier: The PKCE code verifier for this auth attempt.
+            return_to: Optional same-site path to redirect to once the
+                callback completes (e.g. a chat UI URL carrying a deep-link
+                querystring), instead of the plain chat UI root. Must
+                already be validated by the caller — this store does not
+                re-validate it.
             ttl: Time-to-live in seconds (default 5 minutes).
         """
         self._pending[state] = {
             "code_verifier": code_verifier,
+            "return_to": return_to,
             "expires_at": time.time() + ttl,
         }
 
@@ -197,23 +204,19 @@ class SSOSessionStore:
             if expired:
                 logger.debug("Cleanup removed %d expired pending auth states", len(expired))
 
-    def get_pending(self, state: str) -> Optional[str]:
-        """Retrieve the code verifier for a pending auth state.
+    def pop_pending(self, state: str) -> Optional[Dict[str, Any]]:
+        """Atomically retrieve and remove a pending auth entry (one-time use).
 
-        Returns ``None`` if the state is unknown or has expired.
+        Returns a dict with ``code_verifier`` and ``return_to`` (the latter
+        may be ``None``), or ``None`` if the state is unknown or expired.
         """
-        entry = self._pending.get(state)
+        entry = self._pending.pop(state, None)
         if entry is None:
             return None
         if time.time() > entry["expires_at"]:
-            del self._pending[state]
             logger.debug("Pending auth state expired: %s", state)
             return None
-        return entry["code_verifier"]
-
-    def delete_pending(self, state: str) -> None:
-        """Remove a pending auth entry (one-time use enforcement)."""
-        self._pending.pop(state, None)
+        return {"code_verifier": entry["code_verifier"], "return_to": entry.get("return_to")}
 
     # ------------------------------------------------------------------
     # Session token (JWT) helpers

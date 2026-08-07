@@ -5,12 +5,14 @@ import atexit
 import html
 import logging
 import os
+import posixpath
 import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import unquote, urlsplit
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -213,6 +215,10 @@ class AutoLangChatPlugin:
         if not self._preset_variables:
             self._preset_variables = self._infer_variables_from_templates()
 
+        # Give every preset prompt a stable, unique id so it can be targeted
+        # by a deep-link query string (?prompt=<id>&VAR=value...).
+        self._assign_preset_prompt_ids()
+
         # Setup logging configuration
         _setup_logging(self.config)
 
@@ -379,6 +385,35 @@ class AutoLangChatPlugin:
 
         return list(seen.values())
 
+    def _assign_preset_prompt_ids(self) -> None:
+        """Ensure every preset prompt has a stable, unique ``id``.
+
+        The ``id`` is what deep-link query strings (``?prompt=<id>``) use to
+        select a preset prompt from the client, so it must be predictable
+        and stable across restarts. When a prompt dict already defines an
+        ``id`` (e.g. set explicitly in the YAML file), it is kept as-is.
+        Otherwise one is derived by slugifying the ``label``. Collisions
+        (duplicate explicit ids, or duplicate slugs from identical/similar
+        labels) are disambiguated with a numeric suffix.
+        """
+        used_ids: set[str] = set()
+        for prompt in self._preset_prompts:
+            raw_id = str(prompt.get("id") or "").strip()
+            base_id = raw_id or self._slugify(prompt.get("label", "prompt"))
+            candidate = base_id
+            suffix = 2
+            while candidate in used_ids:
+                candidate = f"{base_id}-{suffix}"
+                suffix += 1
+            used_ids.add(candidate)
+            prompt["id"] = candidate
+
+    @staticmethod
+    def _slugify(text: str) -> str:
+        """Convert a label into a URL/query-string-safe slug (lowercase, hyphenated)."""
+        slug = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+        return slug or "prompt"
+
     def _setup_templates(self):
         """Setup Jinja2 templates for UI and mount static files"""
 
@@ -506,30 +541,25 @@ class AutoLangChatPlugin:
                     sso_user_display = ""
                     sso_user_id: Optional[str] = None
                     sso_authenticated = False
-                    if self.config.sso_enabled and self.sso_session_store:
-                        _load_sso_imports()
-                        session_token = request.cookies.get("sso_session_token")
-                        if session_token:
-                            session_id = type(self.sso_session_store).validate_session_token(
-                                session_token,
-                                self.config.sso_session_secret,
-                            )
-                            if session_id:
-                                session = self.sso_session_store.get_session(session_id)
-                                if session:
-                                    sso_authenticated = True
-                                    user_info = session.get("user_info", {})
-                                    claims = session.get("id_token_claims", {})
-                                    # Canonical identity — same precedence as WS handler
-                                    # so allowlist checks match what session.user_id holds.
-                                    sso_user_id = extract_user_id_from_sso_session(user_info, claims)
-                                    # Display name is presentation-only; kept separate.
-                                    sso_user_display = (
-                                        user_info.get("email")
-                                        or claims.get("email")
-                                        or user_info.get("username")
-                                        or claims.get("cognito:username", "")
-                                    )
+                    # Set below only when a silent external-IdP-cookie session was
+                    # just minted (see _try_silent_external_idp_cookie_auth) — the
+                    # response must carry this as a new sso_session_token cookie so
+                    # subsequent requests (including the WebSocket handshake) see it.
+                    session, new_sso_session_token = await self._resolve_sso_session(request)
+                    if session:
+                        sso_authenticated = True
+                        user_info = session.get("user_info", {})
+                        claims = session.get("id_token_claims", {})
+                        # Canonical identity — same precedence as WS handler
+                        # so allowlist checks match what session.user_id holds.
+                        sso_user_id = extract_user_id_from_sso_session(user_info, claims)
+                        # Display name is presentation-only; kept separate.
+                        sso_user_display = (
+                            user_info.get("email")
+                            or claims.get("email")
+                            or user_info.get("username")
+                            or claims.get("cognito:username", "")
+                        )
 
                     # Feedback rendering gate (server-side, feature-only).
                     #
@@ -586,7 +616,7 @@ class AutoLangChatPlugin:
                         self.config.conversation_persistence_enabled and self._conversation_store is not None
                     )
 
-                    return self.templates.TemplateResponse(
+                    response = self.templates.TemplateResponse(
                         request,
                         "chat.html",
                         context={
@@ -643,6 +673,22 @@ class AutoLangChatPlugin:
                             },
                         },
                     )
+                    if new_sso_session_token:
+                        # A silent external-IdP-cookie session was just minted for
+                        # this render — persist it exactly like a normal SSO
+                        # callback does, so subsequent requests (WebSocket
+                        # handshake included) are already authenticated.
+                        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+                        is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+                        response.set_cookie(
+                            key="sso_session_token",
+                            value=new_sso_session_token,
+                            httponly=True,
+                            samesite="lax",
+                            secure=is_secure,
+                            max_age=self.config.sso_session_ttl,
+                        )
+                    return response
                 except Exception as e:
                     logger.error(f"Template rendering failed: {str(e)}")
                     return HTMLResponse(
@@ -873,6 +919,159 @@ class AutoLangChatPlugin:
                 )
             self.app.router.routes.append(build_authorization_server_metadata_route(self.sso_provider, self.config))
 
+    def _safe_return_to(self, next_param: Optional[str]) -> Optional[str]:
+        """Validate a client-supplied post-SSO-login redirect target.
+
+        Only same-site, relative paths under this app's own chat UI
+        endpoint are allowed. This rejects absolute URLs, protocol-relative
+        URLs (``//evil.com``), and any value containing a scheme, which
+        together prevent an open-redirect via a crafted ``next`` value.
+
+        The prefix check is done against the *decoded and normalized* path
+        (percent-encoding decoded, then dot-segments collapsed via
+        ``posixpath.normpath``), not the raw string — browsers normalize
+        ``..`` segments (including percent-encoded variants like ``%2e%2e``,
+        per the WHATWG URL spec's dot-segment handling) when resolving a
+        redirect's ``Location``, so a raw value like
+        ``/chat/ui/../../admin`` or ``/chat/ui/%2e%2e/%2e%2e/admin`` would
+        otherwise pass a naive ``str.startswith(ui_endpoint)`` check while
+        actually navigating outside the UI subtree once resolved
+        client-side.
+
+        Returns ``None`` when ``next_param`` is missing or fails validation
+        (falls back to the plain chat UI root).
+        """
+        if not next_param:
+            return None
+        if "://" in next_param or next_param.startswith("//") or next_param.startswith("\\"):
+            return None
+        if not next_param.startswith("/"):
+            return None
+        ui_endpoint = self.config.ui_endpoint
+        decoded_path = unquote(urlsplit(next_param).path)
+        normalized_path = posixpath.normpath(decoded_path)
+        if normalized_path != ui_endpoint and not normalized_path.startswith(f"{ui_endpoint}/"):
+            return None
+        return next_param
+
+    async def _resolve_sso_session(self, request: Request) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Resolve the SSO session (if any) that applies to this request.
+
+        Checks the request's own ``sso_session_token`` HttpOnly cookie
+        first. If that doesn't yield a live session and
+        ``config.sso_trust_external_idp_cookies`` is enabled, falls back to
+        minting one from a shared external IdP cookie — see
+        ``_try_silent_external_idp_cookie_auth``.
+
+        Returns:
+            A ``(session, new_session_token)`` tuple:
+
+            - ``session``: the session dict, or ``None`` if unauthenticated.
+            - ``new_session_token``: only set when a *new* session was just
+              minted via the silent external-cookie path — the caller must
+              persist it as a fresh ``sso_session_token`` response cookie.
+              ``None`` when the session came from the request's own
+              existing cookie (nothing new to persist), or when there is no
+              session at all.
+        """
+        if not self.config.sso_enabled or not self.sso_session_store:
+            return None, None
+
+        _load_sso_imports()
+        session_token = request.cookies.get("sso_session_token")
+        if session_token:
+            session_id = type(self.sso_session_store).validate_session_token(
+                session_token,
+                self.config.sso_session_secret,
+            )
+            if session_id:
+                session = self.sso_session_store.get_session(session_id)
+                if session:
+                    return session, None
+
+        if self.config.sso_trust_external_idp_cookies:
+            result = await self._try_silent_external_idp_cookie_auth(request)
+            if result:
+                new_session_token, session = result
+                return session, new_session_token
+
+        return None, None
+
+    async def _try_silent_external_idp_cookie_auth(self, request: Request) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """Best-effort: mint our own SSO session from an external Cognito IdP cookie.
+
+        Opt-in via ``config.sso_trust_external_idp_cookies`` (default off) —
+        see that field's docstring for the full trust-boundary explanation.
+        Looks for the exact cookie names Amazon Cognito's JS SDK writes when
+        it's configured with ``CookieStorage`` (not its localStorage
+        default): ``CognitoIdentityServiceProvider.<client_id>.LastAuthUser``
+        to find the active username, then the matching
+        ``...<username>.idToken`` / ``...accessToken`` / ``...refreshToken``.
+
+        The ID token is put through the exact same validation as a normal
+        SSO callback (JWKS signature, issuer, audience=our own
+        ``sso_client_id``, expiry) via ``SSOProvider.validate_id_token`` —
+        this is what makes it safe to trust a token this app never
+        requested itself: it only succeeds if the token was issued to the
+        SAME registered App Client as this app's own SSO config, by the
+        SAME issuer. A token minted for a different App Client/issuer fails
+        audience/issuer validation and this silently returns ``None``.
+
+        Returns:
+            A ``(session_token, session)`` tuple if a valid external session
+            was found and adopted — ``session_token`` in the same format
+            ``generate_session_token`` returns after a normal callback, and
+            ``session`` the freshly created session dict (returned directly
+            so the caller doesn't need to decode ``session_token`` again to
+            look it back up). Otherwise ``None`` (caller falls through to
+            the normal SSO login redirect).
+        """
+        if not self.config.sso_trust_external_idp_cookies or not self.config.sso_client_id:
+            return None
+
+        client_id = self.config.sso_client_id
+        cookie_prefix = f"CognitoIdentityServiceProvider.{client_id}"
+        last_auth_user = request.cookies.get(f"{cookie_prefix}.LastAuthUser")
+        if not last_auth_user:
+            return None
+
+        id_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.idToken")
+        if not id_token:
+            return None
+        access_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.accessToken")
+        if not access_token:
+            # The normal SSO callback path always has an access_token from
+            # the token exchange response, and its presence lets
+            # validate_id_token verify the OIDC `at_hash` claim (binding the
+            # ID token to this specific access token). Requiring it here
+            # too keeps the silent-cookie path at the same validation
+            # strength — real Cognito CookieStorage writes all three
+            # tokens together, so this should never reject a genuine
+            # external session.
+            return None
+        refresh_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.refreshToken")
+
+        _load_sso_imports()
+        try:
+            await self.sso_provider.discover()
+            id_token_claims = await self.sso_provider.validate_id_token(id_token, access_token=access_token)
+        except (SSODiscoveryError, SSOValidationError) as exc:
+            logger.debug("Silent external IdP cookie auth declined: %s", exc)
+            return None
+
+        tokens = {"id_token": id_token, "access_token": access_token, "refresh_token": refresh_token}
+        session_id = self.sso_session_store.create_session(
+            tokens=tokens,
+            user_info={},
+            id_token_claims=id_token_claims,
+        )
+        logger.info("Silent SSO session established from external IdP cookie (session=%s)", session_id)
+        session_token = self.sso_session_store.generate_session_token(
+            session_id=session_id,
+            sso_session_secret=self.config.sso_session_secret,
+        )
+        return session_token, self.sso_session_store.get_session(session_id)
+
     def _setup_sso_routes(self):
         """Register SSO HTTP endpoints on the FastAPI app.
 
@@ -884,12 +1083,20 @@ class AutoLangChatPlugin:
         sso_login_url = f"{self.config.chat_endpoint}/auth/sso/login"
 
         @self.app.get(sso_login_url)
-        async def sso_login():
+        async def sso_login(next: Optional[str] = Query(default=None)):  # noqa: B008
             """Initiate the OAuth2 Authorization Code + PKCE flow.
 
             Generates a cryptographically random ``state`` and ``code_verifier``,
             stores them in the pending auth store, then redirects the browser
             to the IdP authorization URL.
+
+            The optional ``next`` query parameter lets the caller request a
+            post-login redirect back to a specific chat UI URL (e.g. one
+            carrying a deep-link ``?prompt=...`` querystring) instead of the
+            bare chat root. It is validated against open-redirect abuse
+            (must be a same-site relative path under the chat UI endpoint)
+            before being stored server-side alongside the PKCE state — never
+            trust it directly as a redirect target.
             """
             try:
                 await self.sso_provider.discover()
@@ -902,7 +1109,8 @@ class AutoLangChatPlugin:
 
             state = secrets.token_urlsafe(32)
             auth_url, code_verifier = self.sso_provider.build_authorization_url(state=state)
-            self.sso_session_store.store_pending(state, code_verifier)
+            return_to = self._safe_return_to(next)
+            self.sso_session_store.store_pending(state, code_verifier, return_to=return_to)
 
             logger.debug("SSO login initiated, redirecting to IdP (state=%s)", state[:8])
             return RedirectResponse(url=auth_url, status_code=302)
@@ -943,8 +1151,8 @@ class AutoLangChatPlugin:
                 )
 
             # Validate state (CSRF protection) — one-time use
-            code_verifier = self.sso_session_store.get_pending(state)
-            if code_verifier is None:
+            pending = self.sso_session_store.pop_pending(state)
+            if pending is None:
                 logger.warning("SSO callback received unknown or expired state: %s", state[:8])
                 return HTMLResponse(
                     content=(
@@ -955,8 +1163,8 @@ class AutoLangChatPlugin:
                     ),
                     status_code=400,
                 )
-            # Consume pending entry (one-time use)
-            self.sso_session_store.delete_pending(state)
+            code_verifier = pending["code_verifier"]
+            return_to = pending["return_to"]
 
             # Exchange authorization code for tokens
             try:
@@ -1036,7 +1244,7 @@ class AutoLangChatPlugin:
             forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
             is_secure = forwarded_proto == "https" or request.url.scheme == "https"
 
-            response = RedirectResponse(url=self.config.ui_endpoint, status_code=302)
+            response = RedirectResponse(url=return_to or self.config.ui_endpoint, status_code=302)
             response.set_cookie(
                 key="sso_session_token",
                 value=session_token,
@@ -1791,8 +1999,72 @@ class AutoLangChatPlugin:
                 self._started = False
                 raise
 
+    def _disable_uvicorn_ws_keepalive(self) -> None:
+        """Best-effort: disable uvicorn's low-level WebSocket ping/pong keepalive
+        for the currently running server process.
+
+        Uvicorn's default ``ws_ping_interval``/``ws_ping_timeout`` (20s/20s) is a
+        control-frame liveness check entirely independent of application-level
+        WebSocket traffic. Under event-loop scheduling jitter during long
+        multi-round agentic chat turns (many concurrent tool calls, LLM
+        streaming, etc.), the scheduled pong can be missed even though
+        ordinary chat data is flowing the whole time — uvicorn then force
+        closes the connection, and the browser silently opens a second
+        WebSocket mid-turn with no visibility into the first one's
+        in-progress conversation state.
+
+        This is normally only controllable via ``uvicorn.run(...)`` kwargs or
+        ``--ws-ping-interval``/``--ws-ping-timeout`` CLI flags at server
+        startup — settings the *host* application chooses, not this plugin.
+        A bare ``uvicorn app:app`` CLI invocation in particular never runs
+        any of the host's own startup code, so the host can't reliably fix
+        this for every possible launch method either. Since this plugin has
+        no control over how its host process was launched, it instead
+        patches the *live* ``uvicorn.Config`` object(s) directly during
+        plugin startup: `uvicorn.Server`/each per-connection WebSocket
+        protocol instance holds a reference to (not a copy of) that Config
+        and re-reads ``ws_ping_interval``/``ws_ping_timeout`` fresh for every
+        new connection, so mutating it now takes effect for all connections
+        accepted afterward — see uvicorn's ``WSProtocol.__init__`` /
+        ``start_keepalive()``, which only schedules the ping when
+        ``ping_interval is not None and ping_interval > 0``.
+
+        Best-effort object-graph introspection (uvicorn exposes no public
+        registry of live Config instances) — any failure here (non-uvicorn
+        ASGI server, internal API changes, etc.) is silently swallowed so it
+        never blocks or breaks startup; the worst case is simply that
+        uvicorn's default keepalive stays active for this run.
+        """
+        try:
+            import gc
+
+            import uvicorn
+
+            patched = 0
+            for obj in gc.get_objects():
+                if isinstance(obj, uvicorn.Config) and (obj.ws_ping_interval or obj.ws_ping_timeout):
+                    obj.ws_ping_interval = None
+                    obj.ws_ping_timeout = None
+                    patched += 1
+            if patched:
+                logger.info(
+                    "Disabled uvicorn WebSocket ping/pong keepalive on %d live Config "
+                    "object(s) to prevent mid-turn WebSocket reconnects during long chat turns.",
+                    patched,
+                )
+        except Exception:
+            logger.debug(
+                "Could not patch uvicorn ws_ping settings (non-uvicorn server, or introspection failed)",
+                exc_info=True,
+            )
+
     async def _do_startup(self) -> None:
         """Perform the actual startup work. Only called once, guarded by ``startup()``."""
+        # 0. Best-effort: disable uvicorn's WS ping/pong keepalive process-wide —
+        # see _disable_uvicorn_ws_keepalive's docstring for why this can't be
+        # done reliably from a host app's own uvicorn.run(...)/CLI invocation.
+        self._disable_uvicorn_ws_keepalive()
+
         # 1. Open the LangGraph checkpointer pool + schema
         from .graph.checkpointer import open_checkpointer as _open_cp
 
