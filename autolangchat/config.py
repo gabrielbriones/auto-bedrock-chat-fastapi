@@ -1429,31 +1429,6 @@ class ChatConfig(BaseSettings):
             )
         return normalized
 
-    @field_validator("single_msg_truncation_target")
-    @classmethod
-    def validate_single_msg_truncation_target(cls, v, info):
-        """Validate single_msg_truncation_target < single_msg_length_threshold"""
-        # Access threshold from info.data (already validated fields)
-        threshold = info.data.get("single_msg_length_threshold")
-        if threshold is not None and v >= threshold:
-            raise ValueError(
-                f"single_msg_truncation_target ({v:,}) must be less than "
-                f"single_msg_length_threshold ({threshold:,})"
-            )
-        return v
-
-    @field_validator("history_msg_truncation_target")
-    @classmethod
-    def validate_history_msg_truncation_target(cls, v, info):
-        """Validate history_msg_truncation_target < history_msg_length_threshold"""
-        threshold = info.data.get("history_msg_length_threshold")
-        if threshold is not None and v >= threshold:
-            raise ValueError(
-                f"history_msg_truncation_target ({v:,}) must be less than "
-                f"history_msg_length_threshold ({threshold:,})"
-            )
-        return v
-
     @field_validator("sso_provider")
     @classmethod
     def validate_sso_provider(cls, v):

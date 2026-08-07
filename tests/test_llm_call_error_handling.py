@@ -172,12 +172,17 @@ class TestLLMCallNodeErrorPaths:
         working_llm = MagicMock()
         working_llm.ainvoke = AsyncMock(return_value=_ai_message())
 
+        # A context-window error goes through emergency re-truncation on the
+        # primary model first; only when that retry also overflows does the
+        # fallback model get used. Hence three clients: primary, re-truncated
+        # primary, fallback.
         with patch(
             "autolangchat.graph.nodes.llm_call._build_llm",
-            side_effect=[failing_llm, working_llm],
+            side_effect=[failing_llm, failing_llm, working_llm],
         ):
             result = await llm_call_node(_state(), _runnable_config(chat_config))
 
+        assert result["metadata"]["emergency_retruncation_applied"] is True
         assert result["metadata"]["fallback_model_used"] is True
         assert result["metadata"]["fallback_model"] == chat_config.fallback_model
 
