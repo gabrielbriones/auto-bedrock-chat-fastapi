@@ -74,6 +74,25 @@ _CONTEXT_WINDOW_PHRASES = (
 # Bedrock itself reports this (see `_retry_model_id_with_inference_profile`).
 _INFERENCE_PROFILE_REQUIRED_PHRASE = "on-demand throughput isn't supported"
 
+# Bedrock Converse stopReason values that represent a normal, expected end of
+# generation -- the model finished its answer ("end_turn") or is pausing to
+# make a tool call ("tool_use"). Any other stopReason ("max_tokens",
+# "stop_sequence", "content_filtered", "guardrail_intervened", etc.) means
+# generation was cut short for a reason the caller didn't ask for, which is
+# worth a WARNING so it's visible in logs without having to inspect
+# graph_result["metadata"]["stop_reason"] directly (XMGPLAT-11208).
+_EXPECTED_STOP_REASONS = {"end_turn", "tool_use"}
+
+# Shown to the end user in place of a blank message when a model exhausts its
+# entire max_tokens budget without emitting any visible text -- e.g.
+# reasoning-style models (claude-sonnet-5) spending the whole budget on
+# hidden reasoning. Without this, the turn silently looks like the assistant
+# said nothing (XMGPLAT-11208).
+_TRUNCATED_EMPTY_RESPONSE_MESSAGE = (
+    "I wasn't able to generate a response before running out of output tokens. "
+    "Please try increasing the max tokens setting and asking again."
+)
+
 # AWS region prefix (e.g. "us-east-1") -> Bedrock cross-region
 # inference-profile prefix. Falls back to "us" (the broadest-coverage,
 # most commonly available profile) for regions not covered here -- see
@@ -311,15 +330,17 @@ def _from_langchain_message(ai_msg: Any) -> Dict:
             "output_tokens": ai_msg.usage_metadata.get("output_tokens"),
         }
 
+    response_metadata = getattr(ai_msg, "response_metadata", {}) or {}
+
     return {
         "role": "assistant",
         "content": content,
         "tool_calls": tool_calls,
         "metadata": {
             "message_id": str(uuid.uuid4()),
-            "model_id": getattr(ai_msg, "response_metadata", {}).get("modelId")
-            or getattr(ai_msg, "response_metadata", {}).get("model_id"),
+            "model_id": response_metadata.get("modelId") or response_metadata.get("model_id"),
             "usage": usage,
+            "stop_reason": response_metadata.get("stopReason"),
             "timestamp": datetime.now().isoformat(),
         },
     }
@@ -501,6 +522,25 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     Token usage:
         Surfaced from ``AIMessage.usage_metadata`` into
         ``metadata["usage"]``.
+
+    Stop reason:
+        Bedrock Converse's ``response_metadata["stopReason"]`` (e.g.
+        ``end_turn``, ``max_tokens``, ``tool_use``) is surfaced into the
+        top-level ``metadata["stop_reason"]`` so callers can distinguish a
+        genuine empty response from a truncated one (XMGPLAT-11208). A
+        stop_reason other than ``end_turn``/``tool_use`` is logged at
+        WARNING level.
+
+    Truncated empty response:
+        If ``stop_reason == "max_tokens"`` and the model produced no visible
+        text and no tool calls (e.g. a reasoning-style model that spent its
+        entire budget on hidden reasoning), the empty ``content`` is
+        replaced with a user-facing placeholder message and
+        ``metadata["truncated_empty_response"] = True`` is set so callers
+        can detect the substitution without string-matching the placeholder
+        text. Scoped to ``max_tokens`` only -- other stop reasons that can
+        also leave content empty (e.g. ``content_filtered``,
+        ``guardrail_intervened``) are left untouched.
     """
     messages: List[Dict] = state.get("messages", [])
     metadata: Dict = dict(state.get("metadata") or {})
@@ -655,5 +695,36 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
 
     # Update model_id with the actual model used (may differ if fallback was triggered)
     metadata["model_id"] = response_dict.get("metadata", {}).get("model_id") or primary_model
+
+    # Surface the last call's Bedrock Converse stopReason so callers (e.g.
+    # Workload Analyzer's Stage 2 report generator) can distinguish a genuine
+    # empty response from a truncated one (XMGPLAT-11208), instead of always
+    # seeing "unknown". Overwritten each round so it reflects the final call.
+    stop_reason = response_dict.get("metadata", {}).get("stop_reason")
+    metadata["stop_reason"] = stop_reason
+    if stop_reason and stop_reason not in _EXPECTED_STOP_REASONS:
+        logger.warning(
+            "LLM call for model %s ended with unexpected stop_reason=%s (expected one of %s)",
+            metadata["model_id"],
+            stop_reason,
+            sorted(_EXPECTED_STOP_REASONS),
+        )
+
+    # Reasoning-style models (e.g. claude-sonnet-5) can exhaust their entire
+    # max_tokens budget on hidden reasoning before emitting any visible text,
+    # leaving `content` empty with no indication to the end user of what
+    # happened -- it looks like the assistant simply said nothing. Surface a
+    # friendly placeholder instead of silently returning an empty message.
+    # Scoped narrowly to max_tokens -- other stop reasons that can also leave
+    # content empty (e.g. content_filtered, guardrail_intervened) are left
+    # alone rather than guessing at a matching explanation for each.
+    if stop_reason == "max_tokens" and not response_dict.get("content") and not response_dict.get("tool_calls"):
+        logger.info(
+            "Model %s produced no visible text before exhausting max_tokens; substituting a "
+            "user-facing placeholder message for the empty response",
+            metadata["model_id"],
+        )
+        response_dict["content"] = _TRUNCATED_EMPTY_RESPONSE_MESSAGE
+        metadata["truncated_empty_response"] = True
 
     return {"messages": list(messages) + [response_dict], "metadata": metadata}
