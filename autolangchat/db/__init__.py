@@ -370,13 +370,19 @@ def create_user_settings_store(config: "ChatConfig") -> Optional[BaseUserSetting
         return None
 
     if _uses_postgres(config):
-        connection_url = config.conversation_postgres_url or config.feedback_postgres_url or config.kb_postgres_url
+        connection_url = (
+            config.conversation_postgres_url
+            or config.feedback_postgres_url
+            or config.token_usage_postgres_url
+            or config.kb_postgres_url
+        )
         if not connection_url:
             logger.warning(
                 "User settings persistence needs the Postgres backend (the other "
                 "stores use it) but no connection URL is available "
                 "(AUTOCHAT_CONVERSATION_POSTGRES_URL, AUTOCHAT_FEEDBACK_POSTGRES_URL, "
-                "AUTOCHAT_KB_POSTGRES_URL); user settings persistence disabled."
+                "AUTOCHAT_TOKEN_USAGE_POSTGRES_URL, AUTOCHAT_KB_POSTGRES_URL); "
+                "user settings persistence disabled."
             )
             return None
         try:
@@ -391,12 +397,18 @@ def create_user_settings_store(config: "ChatConfig") -> Optional[BaseUserSetting
             )
             return None
 
-    db_path = config.conversation_db_path or config.feedback_database_path or config.kb_database_path
+    db_path = (
+        config.conversation_db_path
+        or config.feedback_database_path
+        or config.token_usage_database_path
+        or config.kb_database_path
+    )
     if not db_path:
         logger.warning(
             "User settings persistence needs a SQLite database but none of "
-            "AUTOCHAT_CONVERSATION_DB_PATH, AUTOCHAT_FEEDBACK_DATABASE_PATH, or "
-            "KB_DATABASE_PATH is set; user settings persistence disabled."
+            "AUTOCHAT_CONVERSATION_DB_PATH, AUTOCHAT_FEEDBACK_DATABASE_PATH, "
+            "AUTOCHAT_TOKEN_USAGE_DATABASE_PATH, or KB_DATABASE_PATH is set; "
+            "user settings persistence disabled."
         )
         return None
     return SQLiteUserSettingsStore(db_path=db_path)

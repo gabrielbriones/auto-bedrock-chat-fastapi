@@ -1748,10 +1748,12 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
     def get_override_defaults(self) -> Dict[str, Any]:
         """Return the current global value of every overridable parameter.
 
-        Used by the settings sidebar (so its controls start at the actual
-        effective defaults rather than an arbitrary client-side fallback) and
-        as the default document stored for a user's first ``user_settings``
-        row / on ``config_reset``.
+        Used by the settings sidebar so its controls start at the actual
+        effective defaults rather than an arbitrary client-side fallback, and
+        as the baseline the client diffs ``active_overrides`` against for the
+        override badge count. These values are *not* written to a user's
+        ``user_settings`` row: rows are created empty and only ever hold the
+        parameters the user actually changed.
         """
         return {
             "model_id": self.model_id,

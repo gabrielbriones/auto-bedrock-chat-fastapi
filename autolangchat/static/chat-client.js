@@ -1984,12 +1984,20 @@ class ChatClient {
                 const option = document.createElement('li');
                 option.className = 'config-model-option';
                 option.setAttribute('role', 'menuitem');
+                option.tabIndex = 0;
                 option.dataset.modelId = model.id;
                 option.textContent = model.name;
                 if (model.id === currentModel) option.classList.add('selected');
                 option.addEventListener('click', (event) => {
                     event.stopPropagation();
                     selectModel(model.id, model.name);
+                });
+                option.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        selectModel(model.id, model.name);
+                    }
                 });
                 flyout.appendChild(option);
             });
@@ -2012,6 +2020,7 @@ class ChatClient {
             familyItem.className = 'config-model-family-item';
             familyItem.setAttribute('role', 'menuitem');
             familyItem.setAttribute('aria-haspopup', 'true');
+            familyItem.tabIndex = 0;
             familyItem.dataset.provider = group.provider;
             if ((group.models || []).some((model) => model.id === currentModel)) {
                 familyItem.classList.add('current-family');
@@ -2025,12 +2034,24 @@ class ChatClient {
             familyItem.appendChild(name);
             familyItem.appendChild(arrow);
             // Hover opens the side flyout (desktop mouse UX); click/tap does
-            // the same so touch and keyboard users -- who can't "hover" --
-            // can still reach the model list.
+            // the same for touch, and Enter/Space/ArrowRight below covers
+            // keyboard users -- neither of whom can "hover".
             familyItem.addEventListener('mouseenter', () => openFlyoutForFamily(familyItem, group));
             familyItem.addEventListener('click', (event) => {
                 event.stopPropagation();
                 openFlyoutForFamily(familyItem, group);
+            });
+            // Enter/Space opens the flyout; ArrowRight does the same and moves
+            // focus straight onto the first model so the list is reachable
+            // without a pointer.
+            familyItem.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowRight') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openFlyoutForFamily(familyItem, group);
+                    const firstOption = flyout.querySelector('.config-model-option');
+                    if (firstOption) firstOption.focus();
+                }
             });
             familyList.appendChild(familyItem);
         });
@@ -2137,10 +2158,10 @@ class ChatClient {
 
         if (this.configOverrideBadge) {
             // Count only settings whose value actually differs from the global
-            // default -- the server tracks an entry for every persisted
-            // parameter (a freshly created user_settings row holds all of
-            // them at their default values), so a raw key count would show
-            // "8" for a user who has changed nothing.
+            // default: `active_overrides` can still carry a key whose value
+            // equals the default (the user moved a control and then put it
+            // back without sending `config_reset`), so a raw key count would
+            // overstate how many settings are actually customised.
             const defaults = window.CONFIG.overrideDefaults || {};
             const count = Object.entries(this._activeConfigOverrides).filter(
                 ([key, value]) => !this._valueEqualsDefault(value, defaults[key]),

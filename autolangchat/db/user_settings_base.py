@@ -6,8 +6,10 @@ Concrete backends live in:
 * :mod:`autolangchat.db.user_settings_sqlite` (zero-config default)
 * :mod:`autolangchat.db.user_settings_postgres` (production)
 
-Use :func:`autolangchat.db.create_user_settings_store` to build the backend
-selected by ``ChatConfig.user_settings_storage_type``.
+Use :func:`autolangchat.db.create_user_settings_store` to build the backend.
+There is deliberately no user-settings-specific storage-type setting: the
+backend is inferred from whichever database the app's sibling stores
+(conversation / feedback / token usage / knowledge base) already use.
 
 This store persists the chat configuration a user picked in the Settings
 sidebar (``model_id``, ``temperature``, ``max_tokens``, ``top_p``,
@@ -90,7 +92,7 @@ class BaseUserSettingsStore(ABC):
         """Remove ``user_id``'s settings row.
 
         Idempotent: deleting settings that don't exist is not an error.
-        Note that ``config_reset`` resets the row to the default payload via
+        Note that ``config_reset`` empties the row (stores ``{}``) via
         :meth:`set_settings` rather than deleting it; this method exists for
         account cleanup.
         """
