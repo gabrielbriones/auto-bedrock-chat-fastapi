@@ -24,16 +24,19 @@ from .db import (
     BaseFeedbackStore,
     BaseKBStore,
     BaseTokenUsageStore,
+    BaseUserSettingsStore,
     FeedbackAuthorizer,
 )
 from .exceptions import (
     ConversationNotFoundError,
     FeedbackError,
     InvalidStatusTransitionError,
+    ModelInvocationError,
     UnauthorizedFeedbackError,
     WebSocketError,
 )
 from .graph.tools.manager import AuthInfo
+from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
 
@@ -85,6 +88,7 @@ class WebSocketChatHandler:
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
         token_usage_store: Optional[BaseTokenUsageStore] = None,
         conversation_store: Optional[BaseConversationStore] = None,
+        user_settings_store: Optional[BaseUserSettingsStore] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -99,6 +103,7 @@ class WebSocketChatHandler:
         )
         self.token_usage_store = token_usage_store
         self.conversation_store = conversation_store
+        self.user_settings_store = user_settings_store
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -206,6 +211,10 @@ class WebSocketChatHandler:
                     "timestamp": datetime.now().isoformat(),
                 },
             )
+
+            # Restore the user's persisted settings-sidebar configuration (if
+            # any) before the first turn. No-op for anonymous connections.
+            await self._hydrate_user_settings(websocket)
 
             # Main message handling loop
             await self._message_loop(websocket)
@@ -630,8 +639,18 @@ class WebSocketChatHandler:
             logger.error(f"Error processing chat message: {str(e)}")
             self._total_errors += 1
 
-            # Send error to user
-            error_response = self._create_error_response(str(e))
+            # Send error to user. ModelInvocationError (raised by
+            # graph/nodes/llm_call.py when Bedrock rejects a specific model's
+            # request) carries a specific, actionable reason -- surface it
+            # verbatim rather than flattening it into _create_error_response()'s
+            # generic "model" bucket ("I'm having trouble with the AI model.
+            # Please try again in a moment."), which hides exactly the detail
+            # (e.g. "requires a cross-region inference profile ID") a user
+            # picking a model from the settings sidebar needs to see.
+            if isinstance(e, ModelInvocationError):
+                error_response = f"⚠️ {e}"
+            else:
+                error_response = self._create_error_response(str(e))
             await self._send_message(
                 websocket,
                 {
@@ -1095,6 +1114,11 @@ class WebSocketChatHandler:
             session.metadata.get("config_overrides", {}),
         )
 
+        # Only session-scoped overrides are persisted -- a per-message
+        # override is deliberately transient.
+        if override_mode == "session":
+            await self._persist_user_settings(session, session.metadata.get("config_overrides", {}))
+
         await self._send_message(
             websocket,
             {
@@ -1110,6 +1134,10 @@ class WebSocketChatHandler:
         """Handle a ``config_reset`` message: clear all session-level dynamic
         parameter overrides, reverting subsequent turns to global config
         defaults. Responds with ``config_updated`` (empty active overrides).
+
+        For authenticated users with settings persistence enabled the stored
+        row is emptied rather than deleted, so the next connect reads an
+        existing "no overrides" row instead of racing a missing one.
         """
         session = await self.session_manager.get_session(websocket)
         if not session:
@@ -1117,6 +1145,8 @@ class WebSocketChatHandler:
             return
 
         session.metadata.pop("config_overrides", None)
+
+        await self._persist_user_settings(session, {})
 
         await self._send_message(
             websocket,
@@ -1128,6 +1158,104 @@ class WebSocketChatHandler:
                 "timestamp": datetime.now().isoformat(),
             },
         )
+
+    # ------------------------------------------------------------------
+    # Persisted per-user settings (XMGPLAT-11193)
+    # ------------------------------------------------------------------
+
+    def _user_settings_persistence_active(self, session: ChatSession) -> bool:
+        """Return True when ``session``'s config overrides should be persisted.
+
+        Requires the feature to be enabled, dynamic overrides to be usable at
+        all, an actual :class:`BaseUserSettingsStore` to be wired, *and* an
+        authenticated ``user_id``. Anonymous connections and misconfigured or
+        degraded deployments (flag enabled but the store failed to open) keep
+        today's in-memory, session-scoped behaviour.
+        """
+        return bool(
+            self.config.user_settings_persistence_enabled
+            and self.config.enable_dynamic_overrides
+            and self.user_settings_store is not None
+            and session.user_id
+        )
+
+    async def _hydrate_user_settings(self, websocket: WebSocket) -> None:
+        """Load the connecting user's persisted settings into the session.
+
+        The row is created empty on first login (race safe — several tabs can
+        connect at once) and only ever holds the parameters the user actually
+        changed: storing a snapshot of the global defaults instead would pin
+        every user to the values that happened to be configured the day they
+        first logged in, so a later ``AUTOCHAT_MAX_TOKENS`` / ``AUTOCHAT_MODEL_ID``
+        change would never reach them.
+
+        The stored document is reconciled against the *current* config (a model
+        that is no longer available, or a ``max_tokens`` above the selected
+        model's cap, is dropped and reported rather than raising), written
+        back, and pushed to the client so the sidebar renders the user's
+        persisted values instead of ``override_defaults``.
+
+        A store failure must never block chat: it is logged and the session
+        falls back to the in-memory, session-scoped behaviour.
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session or not self._user_settings_persistence_active(session):
+            return
+
+        try:
+            row = await self.user_settings_store.get_or_create_settings(session.user_id)
+        except Exception:
+            logger.warning(
+                "Failed to load persisted settings for user %s; falling back to session-only overrides.",
+                session.user_id,
+                exc_info=True,
+            )
+            return
+
+        stored = row.get("settings") or {}
+        valid_overrides, rejection_reasons = self.config.validate_overrides(stored)
+
+        if valid_overrides:
+            session.metadata["config_overrides"] = dict(valid_overrides)
+
+        # Persist the reconciled document so stale/invalid keys don't come
+        # back on every connect.
+        if valid_overrides != stored:
+            logger.info(
+                "Reconciled persisted settings for user %s: dropped %s",
+                session.user_id,
+                rejection_reasons,
+            )
+            await self._persist_user_settings(session, valid_overrides)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "config_updated",
+                "active_overrides": session.metadata.get("config_overrides", {}),
+                "applied_overrides": valid_overrides,
+                "rejected_overrides": rejection_reasons,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _persist_user_settings(self, session: ChatSession, settings: Dict[str, Any]) -> None:
+        """Write ``settings`` to the user's row, swallowing store failures.
+
+        No-op for anonymous sessions and when persistence is disabled or the
+        store is unavailable — settings persistence is best-effort and must
+        never fail a chat turn or a sidebar update.
+        """
+        if not self._user_settings_persistence_active(session):
+            return
+        try:
+            await self.user_settings_store.set_settings(session.user_id, settings)
+        except Exception:
+            logger.warning(
+                "Failed to persist settings for user %s; the change applies to this session only.",
+                session.user_id,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Conversation management (per-user, named, persisted conversations)
@@ -1277,15 +1405,17 @@ class WebSocketChatHandler:
         except ImportError:
             return None
 
-        kwargs: Dict[str, Any] = {
-            "model": self.config.conversation_title_model_id or self.config.model_id,
-            "region_name": self.config.aws_region,
+        model_id = self.config.conversation_title_model_id or self.config.model_id
+        kwargs = build_bedrock_kwargs(
+            model_id,
+            self.config,
             # Titles are short (5-8 words); keep the cap small.
-            "max_tokens": 60,
-        }
-        if self.config.aws_access_key_id and self.config.aws_secret_access_key:
-            kwargs["aws_access_key_id"] = self.config.aws_access_key_id
-            kwargs["aws_secret_access_key"] = self.config.aws_secret_access_key
+            max_tokens=60,
+            # Titles don't benefit from sampling tweaks, and passing them
+            # would break models that reject temperature/top_p.
+            temperature=None,
+            top_p=None,
+        )
 
         try:
             return ChatBedrockConverse(**kwargs)
@@ -2030,7 +2160,15 @@ class WebSocketChatHandler:
         return client.host if client else "unknown"
 
     def _create_error_response(self, error_message: str) -> str:
-        """Create user-friendly error response"""
+        """Create user-friendly error response.
+
+        Note: model-specific failures raised as ``ModelInvocationError`` are
+        handled separately (and more specifically) in the ``except`` block
+        in ``_handle_chat_message`` -- this generic "model" bucket only
+        catches everything else that happens to mention "model" in its
+        message, so it still surfaces the actual error text rather than
+        fully hiding it behind a one-size-fits-all phrase.
+        """
 
         if "timeout" in error_message.lower():
             return "I'm taking longer than usual to respond. Please try again."
@@ -2039,7 +2177,7 @@ class WebSocketChatHandler:
         elif "access denied" in error_message.lower():
             return "I don't have access to that model or service. Please contact support."
         elif "model" in error_message.lower():
-            return "I'm having trouble with the AI model. Please try again in a moment."
+            return f"I'm having trouble with the AI model: {error_message}. Please try again in a moment."
         else:
             return f"I encountered an error: {error_message}. Please try again."
 

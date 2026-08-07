@@ -4806,4 +4806,4 @@ sso = ["PyJWT", "passlib"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "c550d0c4f55eea5dfd77963286897f553799d3a27daa45a7319280d2e9b38ad4"
+content-hash = "41a2df1c6ef03a85955a11c59ba6062c1ffdd8a620fce8ed712cce1715f74cde"
