@@ -13,11 +13,14 @@ plugin:
   :mod:`.token_usage_postgres` — per-turn token-usage storage.
 * :mod:`.conversation_base`, :mod:`.conversation_sqlite`,
   :mod:`.conversation_postgres` — per-user conversation metadata storage.
+* :mod:`.user_settings_base`, :mod:`.user_settings_sqlite`,
+  :mod:`.user_settings_postgres` — per-user chat settings storage.
 
-The four factory functions exported here — :func:`create_kb_store`,
-:func:`create_feedback_store`, :func:`create_token_usage_store`, and
-:func:`create_conversation_store` — instantiate the backend selected by the
-matching ``ChatConfig.*_storage_type`` field.
+The five factory functions exported here — :func:`create_kb_store`,
+:func:`create_feedback_store`, :func:`create_token_usage_store`,
+:func:`create_conversation_store`, and :func:`create_user_settings_store` —
+instantiate the backend selected by the matching
+``ChatConfig.*_storage_type`` field.
 
 The in-memory SSO session store remains at the top-level
 :mod:`autolangchat.sso.sso_session_store` module because it is a
@@ -43,6 +46,8 @@ from .kb_base import BaseKBStore
 from .kb_sqlite import SQLiteKBStore
 from .token_usage_base import BaseTokenUsageStore
 from .token_usage_sqlite import SQLiteTokenUsageStore
+from .user_settings_base import BaseUserSettingsStore
+from .user_settings_sqlite import SQLiteUserSettingsStore
 
 try:  # optional [postgres] extra
     from .conversation_postgres import PostgresConversationStore
@@ -63,6 +68,11 @@ try:  # optional [postgres] extra
     from .token_usage_postgres import PostgresTokenUsageStore
 except ImportError:  # pragma: no cover
     PostgresTokenUsageStore = None  # type: ignore[assignment,misc]
+
+try:  # optional [postgres] extra
+    from .user_settings_postgres import PostgresUserSettingsStore
+except ImportError:  # pragma: no cover
+    PostgresUserSettingsStore = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from ..config import ChatConfig
@@ -315,6 +325,95 @@ def create_conversation_store(config: "ChatConfig") -> Optional[BaseConversation
     return None
 
 
+# ---------------------------------------------------------------------------
+# User settings store factory
+# ---------------------------------------------------------------------------
+
+
+def _uses_postgres(config: "ChatConfig") -> bool:
+    """Whether the app's other stores already run on Postgres.
+
+    The ``user_settings`` table is one small row per user and always lives
+    alongside the existing stores, so there is deliberately no
+    user-settings-specific backend/URL/path setting: the backend is whatever
+    the enabled sibling stores are already using.
+    """
+    siblings = (
+        (config.conversation_persistence_enabled, config.conversation_storage_type, "postgres"),
+        (config.feedback_enabled, config.feedback_storage_type, "postgres"),
+        (config.token_usage_enabled, config.token_usage_storage_type, "postgres"),
+        (True, config.kb_storage_type, "pgvector"),
+    )
+    return any(
+        enabled and (storage_type or "").lower() == postgres_value for enabled, storage_type, postgres_value in siblings
+    )
+
+
+def create_user_settings_store(config: "ChatConfig") -> Optional[BaseUserSettingsStore]:
+    """Build the user-settings store for the database the app already uses.
+
+    Both the backend (see :func:`_uses_postgres`) and its connection URL /
+    file path are resolved from the sibling stores' settings, so enabling
+    persistence needs no extra configuration.
+
+    Returns ``None`` when user-settings persistence is disabled or when no
+    usable backend can be built in the current environment (missing
+    connection URL, missing optional dependency). Such cases are logged at
+    WARNING so deployments don't fail to boot just because settings
+    persistence is unavailable — the WebSocket handler simply falls back to
+    today's in-memory, session-scoped ``config_overrides`` behaviour.
+
+    The caller is responsible for awaiting :meth:`BaseUserSettingsStore.open`
+    on the returned instance and for closing it on shutdown.
+    """
+    if not config.user_settings_persistence_enabled:
+        return None
+
+    if _uses_postgres(config):
+        connection_url = (
+            config.conversation_postgres_url
+            or config.feedback_postgres_url
+            or config.token_usage_postgres_url
+            or config.kb_postgres_url
+        )
+        if not connection_url:
+            logger.warning(
+                "User settings persistence needs the Postgres backend (the other "
+                "stores use it) but no connection URL is available "
+                "(AUTOCHAT_CONVERSATION_POSTGRES_URL, AUTOCHAT_FEEDBACK_POSTGRES_URL, "
+                "AUTOCHAT_TOKEN_USAGE_POSTGRES_URL, AUTOCHAT_KB_POSTGRES_URL); "
+                "user settings persistence disabled."
+            )
+            return None
+        try:
+            from .user_settings_postgres import PostgresUserSettingsStore
+
+            return PostgresUserSettingsStore(connection_url=connection_url)
+        except ImportError:
+            logger.warning(
+                "User settings persistence needs the Postgres backend but the "
+                "[postgres] extra is not installed; user settings persistence disabled.",
+                exc_info=True,
+            )
+            return None
+
+    db_path = (
+        config.conversation_db_path
+        or config.feedback_database_path
+        or config.token_usage_database_path
+        or config.kb_database_path
+    )
+    if not db_path:
+        logger.warning(
+            "User settings persistence needs a SQLite database but none of "
+            "AUTOCHAT_CONVERSATION_DB_PATH, AUTOCHAT_FEEDBACK_DATABASE_PATH, "
+            "AUTOCHAT_TOKEN_USAGE_DATABASE_PATH, or KB_DATABASE_PATH is set; "
+            "user settings persistence disabled."
+        )
+        return None
+    return SQLiteUserSettingsStore(db_path=db_path)
+
+
 __all__ = [
     "AllowlistFeedbackAuthorizer",
     "AuthenticatedUserAuthorizer",
@@ -322,17 +421,21 @@ __all__ = [
     "BaseFeedbackStore",
     "BaseKBStore",
     "BaseTokenUsageStore",
+    "BaseUserSettingsStore",
     "FeedbackAuthorizer",
     "PgVectorKBStore",
     "PostgresConversationStore",
     "PostgresFeedbackStore",
     "PostgresTokenUsageStore",
+    "PostgresUserSettingsStore",
     "SQLiteConversationStore",
     "SQLiteFeedbackStore",
     "SQLiteKBStore",
     "SQLiteTokenUsageStore",
+    "SQLiteUserSettingsStore",
     "create_conversation_store",
     "create_feedback_store",
     "create_kb_store",
     "create_token_usage_store",
+    "create_user_settings_store",
 ]

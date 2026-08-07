@@ -23,6 +23,7 @@ from .exceptions import AutoLangChatError
 from .graph.graph import build_chat_graph
 from .graph.tools.generator import ToolsGenerator
 from .graph.tools.manager import ToolManager
+from .model_capabilities import build_bedrock_kwargs
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
 from .websocket_handler import WebSocketChatHandler
@@ -325,6 +326,17 @@ class AutoLangChatPlugin:
         logger.debug("Checking conversation store configuration and initializing...")
         self._conversation_store = create_conversation_store(self.config)
 
+        # Per-user settings store. Constructed eagerly so the WebSocket
+        # handler can be wired immediately; the connection pool / SQLite file
+        # is opened in the FastAPI startup event below and closed during
+        # shutdown. Backend selection (sqlite vs postgres) and configuration
+        # validation live in the factory. Persists the Settings-sidebar
+        # config_overrides for authenticated users only.
+        from .db import create_user_settings_store
+
+        logger.debug("Checking user settings store configuration and initializing...")
+        self._user_settings_store = create_user_settings_store(self.config)
+
         # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
@@ -351,6 +363,7 @@ class AutoLangChatPlugin:
             feedback_authorizer=self._feedback_authorizer,
             token_usage_store=self._token_usage_store,
             conversation_store=self._conversation_store,
+            user_settings_store=self._user_settings_store,
         )
 
         # Setup templates for UI
@@ -441,17 +454,14 @@ class AutoLangChatPlugin:
                 from langchain_core.messages import HumanMessage
 
                 _llm = ChatBedrockConverse(
-                    model=self.config.model_id,
-                    region_name=self.config.aws_region,
-                    max_tokens=10,
-                    **(
-                        {
-                            "aws_access_key_id": self.config.aws_access_key_id,
-                            "aws_secret_access_key": self.config.aws_secret_access_key,
-                        }
-                        if self.config.aws_access_key_id and self.config.aws_secret_access_key
-                        else {}
-                    ),
+                    **build_bedrock_kwargs(
+                        self.config.model_id,
+                        self.config,
+                        # The probe only needs to prove the model answers.
+                        max_tokens=10,
+                        temperature=None,
+                        top_p=None,
+                    )
                 )
                 await _llm.ainvoke([HumanMessage(content="Hello")])
                 llm_status = {
@@ -654,23 +664,18 @@ class AutoLangChatPlugin:
                             ),
                             "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,
                             # Model choices for the sidebar's model_id dropdown, sourced from
-                            # AUTOCHAT_AVAILABLE_MODELS (falls back to a built-in default list).
-                            # Each entry is {"id": model_id, "name": display_name} -- the UI only
-                            # ever renders "name"; the backend keeps using "id" (model_id).
+                            # AUTOCHAT_AVAILABLE_MODELS (falls back to the full langchain-aws
+                            # catalog). Each entry is {"id": model_id, "name": display_name,
+                            # ...} -- the UI only ever renders "name"; the backend keeps using
+                            # "id" (model_id). The grouped variant drives the two-level
+                            # provider -> model dropdown; the flat list is still used for
+                            # per-model capability lookups by id.
                             "available_models": self.config.get_available_models_for_ui(),
+                            "available_model_groups": self.config.get_available_models_grouped_for_ui(),
                             # Current global values for every overridable parameter, so the
                             # sidebar's controls start at the actual effective defaults rather
                             # than an arbitrary client-side fallback.
-                            "override_defaults": {
-                                "model_id": self.config.model_id,
-                                "temperature": self.config.temperature,
-                                "max_tokens": self.config.max_tokens,
-                                "top_p": self.config.top_p,
-                                "enable_ai_summarization": self.config.enable_ai_summarization,
-                                "enable_rag": self.config.enable_rag,
-                                "kb_top_k_results": self.config.kb_top_k_results,
-                                "kb_similarity_threshold": self.config.kb_similarity_threshold,
-                            },
+                            "override_defaults": self.config.get_override_defaults(),
                         },
                     )
                     if new_sso_session_token:
@@ -2065,6 +2070,9 @@ class AutoLangChatPlugin:
         # done reliably from a host app's own uvicorn.run(...)/CLI invocation.
         self._disable_uvicorn_ws_keepalive()
 
+        # 0. Narrow the sidebar model catalog to what Bedrock actually offers here
+        await self._startup_discover_models()
+
         # 1. Open the LangGraph checkpointer pool + schema
         from .graph.checkpointer import open_checkpointer as _open_cp
 
@@ -2121,6 +2129,9 @@ class AutoLangChatPlugin:
         await self._startup_open_conversation_store()
         self._warn_if_memory_saver_with_conversation_persistence()
 
+        # 6b. Open the user-settings-store connection pool
+        await self._startup_open_user_settings_store()
+
         # 7. Schedule KB credibility decay background task (opt-in)
         if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
             from .kb_credibility import run_credibility_decay_loop
@@ -2135,6 +2146,50 @@ class AutoLangChatPlugin:
             self._mcp_exit_stack = AsyncExitStack()
             await self._mcp_exit_stack.enter_async_context(self._mcp_session_manager.run())
             logger.info("MCP session manager started")
+
+    async def _startup_discover_models(self) -> None:
+        """Filter the sidebar model catalog down to what this account can invoke.
+
+        ``DEFAULT_AVAILABLE_MODELS`` comes from langchain-aws's static profile
+        table, which lists models that may not exist in this account/region --
+        selecting one fails with "The provided model identifier is invalid"
+        (XMGPLAT-11193). Ask the Bedrock control plane once and intersect.
+
+        Never raises: ``discover_invocable_model_ids()`` returns ``None`` on
+        any failure, which leaves the catalog unfiltered exactly as it behaved
+        before discovery existed.
+        """
+        if not getattr(self.config, "model_discovery_enabled", False):
+            logger.debug("Bedrock model discovery disabled; using the static model catalog.")
+            return
+
+        from .model_capabilities import discover_invocable_model_ids
+
+        before = len(self.config.get_available_models())
+        invocable = await discover_invocable_model_ids(self.config)
+        if invocable is None:
+            return
+
+        self.config.set_invocable_model_ids(invocable)
+        after = len(self.config.get_available_models())
+        logger.info(
+            "Bedrock model discovery: %d of %d catalog model(s) invocable in %s",
+            after,
+            before,
+            self.config.aws_region,
+        )
+        if before > after:
+            logger.debug(
+                "Model discovery dropped %d model(s) not offered in this account/region.",
+                before - after,
+            )
+        if self.config.model_id not in invocable:
+            logger.warning(
+                "Configured model '%s' is not listed as invocable in %s; it remains "
+                "selected and may fail at call time.",
+                self.config.model_id,
+                self.config.aws_region,
+            )
 
     async def _startup_open_feedback_store(self) -> None:
         """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
@@ -2217,6 +2272,34 @@ class AutoLangChatPlugin:
             self._conversation_store = None
             self.websocket_handler.conversation_store = None
 
+    async def _startup_open_user_settings_store(self) -> None:
+        """Open the UserSettingsStore; on failure, close the partial resource and disable the feature.
+
+        ``UserSettingsStore.open()`` opens the underlying connection pool /
+        SQLite file before applying the schema, so a schema-bootstrap
+        exception can leave resources partially open. Without an explicit
+        ``close()`` the connection would leak for the lifetime of the
+        process. A store failure must never block chat — the WebSocket
+        handler simply falls back to session-scoped, in-memory overrides.
+        """
+        if self._user_settings_store is None:
+            return
+        try:
+            await self._user_settings_store.open()
+            logger.info("UserSettingsStore opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open UserSettingsStore: %s; disabling user settings persistence.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._user_settings_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened UserSettingsStore")
+            self._user_settings_store = None
+            self.websocket_handler.user_settings_store = None
+
     def _warn_if_memory_saver_with_conversation_persistence(self) -> None:
         """Log a one-time degraded-mode warning for MemorySaver + conversation persistence.
 
@@ -2287,6 +2370,10 @@ class AutoLangChatPlugin:
             if self._conversation_store is not None:
                 await self._conversation_store.close()
                 self._conversation_store = None
+
+            if self._user_settings_store is not None:
+                await self._user_settings_store.close()
+                self._user_settings_store = None
 
             from .graph.checkpointer import close_checkpointer as _close_cp
 

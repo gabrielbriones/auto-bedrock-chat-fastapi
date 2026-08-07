@@ -126,6 +126,7 @@
             enableConfigSidebar: {{ 'true' if enable_config_sidebar else 'false' }},
             allowedDynamicOverrides: {{ allowed_dynamic_overrides | tojson }},
             availableModels: {{ available_models | tojson }},
+            availableModelGroups: {{ available_model_groups | default([], true) | tojson }},
             overrideDefaults: {{ override_defaults | tojson }},
         };
     </script>

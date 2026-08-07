@@ -1477,6 +1477,124 @@ body {
     width: 100%;
 }
 
+/* ---------------------------------------------------------------------------
+   Family -> model picker (settings sidebar model_id control)
+   A single trigger button opens a family ("Anthropic", "OpenAI", "xAI", ...)
+   menu; hovering (or tapping) a family opens a SECOND menu docked to its
+   side listing that family's models. Both menus are built/positioned in JS
+   (see _buildModelPicker in chat-client.js) as `position: fixed` elements
+   appended to <body>, so they float above everything and aren't clipped by
+   the scrollable .config-sidebar-body.
+   --------------------------------------------------------------------------- */
+
+.config-model-picker {
+    position: relative;
+}
+
+.config-model-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #cbd5e0;
+    border-radius: 6px;
+    background: #fff;
+    color: #2d3748;
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.config-model-trigger:hover {
+    border-color: #a0aec0;
+}
+
+.config-model-trigger-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.config-model-trigger-caret {
+    flex: none;
+    color: #718096;
+    font-size: 0.75rem;
+}
+
+.config-model-menu,
+.config-model-flyout {
+    position: fixed;
+    z-index: 1000;
+    min-width: 180px;
+    max-height: 280px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #cbd5e0;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.config-model-menu[hidden],
+.config-model-flyout[hidden] {
+    display: none;
+}
+
+.config-model-family-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.config-model-family-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    font-size: 0.88rem;
+    color: #2d3748;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.config-model-family-item:hover,
+.config-model-family-item.open {
+    background: #edf2f7;
+}
+
+.config-model-family-item.current-family {
+    font-weight: 600;
+}
+
+.config-model-family-arrow {
+    flex: none;
+    color: #a0aec0;
+    font-size: 0.7rem;
+}
+
+.config-model-option {
+    padding: 8px 12px;
+    font-size: 0.86rem;
+    color: #2d3748;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.config-model-option:hover {
+    background: #edf2f7;
+}
+
+.config-model-option.selected {
+    font-weight: 600;
+    color: #3182ce;
+    background: #ebf8ff;
+}
+
 .config-toggle-row {
     display: flex;
     align-items: center;

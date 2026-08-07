@@ -56,6 +56,24 @@ class ModelError(AutoLangChatError):
     pass
 
 
+class ModelInvocationError(ModelError):
+    """Raised when Bedrock rejects a request for a specific model (e.g. an
+    unsupported parameter combination, a model that requires a cross-region
+    inference profile ID instead of the bare model ID, an output-token cap
+    violation, ...).
+
+    Carries the ``model_id`` and the raw ``reason`` (the underlying
+    exception's message) separately from the human-readable ``str(self)``,
+    so callers -- e.g. the WebSocket error handler -- can build a
+    user-facing message without re-parsing text.
+    """
+
+    def __init__(self, message: str, *, model_id: str, reason: str):
+        super().__init__(message)
+        self.model_id = model_id
+        self.reason = reason
+
+
 class ToolError(AutoLangChatError):
     """Raised when there's an issue with tool operations"""
 
