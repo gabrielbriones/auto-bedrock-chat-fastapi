@@ -10,7 +10,7 @@ import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -927,12 +927,16 @@ class AutoLangChatPlugin:
         URLs (``//evil.com``), and any value containing a scheme, which
         together prevent an open-redirect via a crafted ``next`` value.
 
-        The prefix check is done against the *normalized* path (dot-segments
-        collapsed via ``posixpath.normpath``), not the raw string — browsers
-        normalize ``..`` segments when resolving a redirect's ``Location``,
-        so a raw value like ``/chat/ui/../../admin`` would otherwise pass a
-        naive ``str.startswith(ui_endpoint)`` check while actually
-        navigating outside the UI subtree once resolved client-side.
+        The prefix check is done against the *decoded and normalized* path
+        (percent-encoding decoded, then dot-segments collapsed via
+        ``posixpath.normpath``), not the raw string — browsers normalize
+        ``..`` segments (including percent-encoded variants like ``%2e%2e``,
+        per the WHATWG URL spec's dot-segment handling) when resolving a
+        redirect's ``Location``, so a raw value like
+        ``/chat/ui/../../admin`` or ``/chat/ui/%2e%2e/%2e%2e/admin`` would
+        otherwise pass a naive ``str.startswith(ui_endpoint)`` check while
+        actually navigating outside the UI subtree once resolved
+        client-side.
 
         Returns ``None`` when ``next_param`` is missing or fails validation
         (falls back to the plain chat UI root).
@@ -944,7 +948,8 @@ class AutoLangChatPlugin:
         if not next_param.startswith("/"):
             return None
         ui_endpoint = self.config.ui_endpoint
-        normalized_path = posixpath.normpath(urlsplit(next_param).path)
+        decoded_path = unquote(urlsplit(next_param).path)
+        normalized_path = posixpath.normpath(decoded_path)
         if normalized_path != ui_endpoint and not normalized_path.startswith(f"{ui_endpoint}/"):
             return None
         return next_param

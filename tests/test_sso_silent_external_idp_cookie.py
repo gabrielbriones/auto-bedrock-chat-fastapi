@@ -349,6 +349,16 @@ def test_safe_return_to_rejects_dot_segment_traversal_out_of_ui_subtree():
     assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui/../../../evil") is None
 
 
+def test_safe_return_to_rejects_percent_encoded_dot_segment_traversal():
+    # "%2e%2e" is a double-dot path segment per the WHATWG URL spec, so
+    # browsers normalize it exactly like a literal ".." when resolving the
+    # redirected Location -- the raw string starting with the UI prefix
+    # must not be enough to pass validation.
+    plugin = _make_plugin_for_return_to()
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui/%2e%2e/%2e%2e/admin") is None
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui/%2e./%2e./evil") is None
+
+
 def test_safe_return_to_accepts_dot_segments_that_stay_within_ui_subtree():
     plugin = _make_plugin_for_return_to()
     # "/chat/ui/foo/../bar" normalizes to "/chat/ui/bar" -- still in-subtree.
