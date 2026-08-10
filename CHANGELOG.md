@@ -2,6 +2,72 @@
 
 <!-- version list -->
 
+## v3.0.0 (2026-08-10)
+
+### Bug Fixes
+
+- Address Copilot PR review comments (pending-poll counter reset, next-param path traversal,
+  silent-auth access_token requirement, doc URL)
+  ([`488fea8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/488fea89f8efd7cac46df061259c797593cb3c73))
+
+- Address Copilot PR review comments (retruncation flag timing, log PII leak, doc table header)
+  ([`2f6a44c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2f6a44c3ced7de02947fa066ace870344dd401e8))
+
+- Address Copilot PR review comments (string concat, docstring, docs fallback wording)
+  ([`e760907`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e7609070d35ebce204e5a56396b6f07d6a4a1e98))
+
+- Decode percent-encoded dot-segments in _safe_return_to before normalizing
+  ([`45f862b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/45f862bebfa949947c272b234dc7c880e6559139))
+
+- Move stop_reason out of token-totals table, correct type to string (Copilot PR review)
+  ([`090aaa4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/090aaa4fd8a7395de1242dcbe37a9056ce965204))
+
+- Scale truncation thresholds to model context window, remove static config (XMGPLAT-11175)
+  ([`831b1a8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/831b1a8e295d03ad641a5a3c1aba99bc2e90f333))
+
+- **chat**: Address PR review on user settings persistence
+  ([`e9d5a13`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e9d5a13e71e59480c5125cb6f35f528d27032dab))
+
+- **chat**: Repair bad main merge and refresh the lock file
+  ([`65b018b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/65b018bf71f21f52ef8192d59fb141473f240e16))
+
+- **chat**: Surface Bedrock stopReason in graph and websocket metadata (XMGPLAT-11208)
+  ([`218d1bc`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/218d1bc3233e8650f40befb09cb4766ef48b4ef8))
+
+- **mcp**: Enforce require_tool_auth on tools/call, fix stale docs
+  ([`5049658`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5049658e1764442e791ceeefb10aa83663997781))
+
+### Chores
+
+- **deps**: Force mcp version <2.0.0
+  ([`d75bc18`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d75bc188a8297d5d51041c217b9c4582ef381fb3))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`4ec2a83`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/4ec2a839fe80808718710d7f669812f7ccb62768))
+
+- **deps**: Update python-minor-patch
+  ([`85338c3`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/85338c31ce8f1d7b4a8e381faa2362dd4636f6b3))
+
+### Documentation
+
+- Fix MD049 emphasis-style lint errors in configuration wiki
+  ([`9836f52`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/9836f52cbf62bcb12849cf8c3959cefca9ca297a))
+
+### Features
+
+- **chat**: Persist per-user settings and add per-model Bedrock handling
+  ([`54d4410`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/54d4410053009d1692cf1644013d0c98da1b83e7))
+
+- **mcp**: Add MCP server support
+  ([`a436399`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a4363990f7c54bb484309afd13e440a4ae9bc4c9))
+
+- **sso**: Auto-authenticate from deep-link query string and shared IdP cookies
+  ([`af17594`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/af17594f2ab0ba2120e7b033b0762ff1e268b44e))
+
+- **summarization**: Support separate model/params for AI summarizer
+  ([`45a7c47`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/45a7c47e008dd4409ff6e69716100cd14607227c))
+
+
 ## v2.1.0 (2026-07-20)
 
 ### Bug Fixes
