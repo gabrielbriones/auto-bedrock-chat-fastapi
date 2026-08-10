@@ -32,6 +32,7 @@ server in CI, mirroring the ``tests/test_token_usage_store.py`` approach):
       backend's SQL.
 """
 
+import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -160,6 +161,37 @@ async def test_delete_all_conversations_returns_deleted_count():
         assert await store.get_conversation_count("alice") == 0
         # Bob's conversation is untouched.
         assert await store.get_conversation_count("bob") == 1
+    finally:
+        await store.close()
+
+
+async def test_delete_conversations_removes_only_owned_ids():
+    store = await _open_store()
+    try:
+        await store.create_conversation("c1", "alice")
+        await store.create_conversation("c2", "alice")
+        await store.create_conversation("c3", "alice")
+        await store.create_conversation("c4", "bob")
+
+        # "c4" belongs to bob and "never-existed" doesn't exist — both
+        # should be silently ignored, not raise.
+        deleted = await store.delete_conversations("alice", ["c1", "c2", "c4", "never-existed"])
+
+        assert sorted(deleted) == ["c1", "c2"]
+        assert await store.get_conversation("c1") is None
+        assert await store.get_conversation("c2") is None
+        assert await store.get_conversation("c3") is not None
+        assert await store.get_conversation("c4") is not None
+    finally:
+        await store.close()
+
+
+async def test_delete_conversations_empty_list_is_a_noop():
+    store = await _open_store()
+    try:
+        await store.create_conversation("c1", "alice")
+        assert await store.delete_conversations("alice", []) == []
+        assert await store.get_conversation("c1") is not None
     finally:
         await store.close()
 
@@ -405,6 +437,17 @@ class _FakeConversationCursor:
                 self.rowcount = 0
             return
 
+        if "id = ANY(" in sql:
+            user_id, conversation_ids = params
+            to_delete = [
+                conv_id for conv_id, r in self._rows.items() if r[1] == user_id and conv_id in conversation_ids
+            ]
+            for conv_id in to_delete:
+                del self._rows[conv_id]
+            self.rowcount = len(to_delete)
+            self._result = [(conv_id,) for conv_id in to_delete]
+            return
+
         if sql.strip().startswith("DELETE FROM conversations WHERE user_id = %s"):
             (user_id,) = params
             to_delete = [conv_id for conv_id, r in self._rows.items() if r[1] == user_id]
@@ -559,6 +602,48 @@ async def test_postgres_delete_all_conversations_returns_deleted_count():
     assert deleted == 2
     assert await store.get_conversation_count("alice") == 0
     assert await store.get_conversation_count("bob") == 1
+
+
+async def test_postgres_delete_conversations_removes_only_owned_ids():
+    store = _make_postgres_store()
+    # Real UUIDs: `conversations.id` is a `UUID` column, and the store
+    # filters out anything Postgres couldn't cast.
+    c1, c2, c3, c4, missing = (str(uuid.uuid4()) for _ in range(5))
+    await store.create_conversation(c1, "alice")
+    await store.create_conversation(c2, "alice")
+    await store.create_conversation(c3, "alice")
+    await store.create_conversation(c4, "bob")
+
+    deleted = await store.delete_conversations("alice", [c1, c2, c4, missing])
+
+    assert sorted(deleted) == sorted([c1, c2])
+    assert await store.get_conversation(c1) is None
+    assert await store.get_conversation(c2) is None
+    assert await store.get_conversation(c3) is not None
+    assert await store.get_conversation(c4) is not None
+
+
+async def test_postgres_delete_conversations_skips_non_uuid_ids():
+    """A non-UUID id must be skipped like any other unknown id — passing it
+    through would abort the whole DELETE with `invalid input syntax for type
+    uuid`, losing the deletions the user actually asked for."""
+    store = _make_postgres_store()
+    c1 = str(uuid.uuid4())
+    await store.create_conversation(c1, "alice")
+
+    assert await store.delete_conversations("alice", ["not-a-uuid"]) == []
+    assert await store.get_conversation(c1) is not None
+
+    assert await store.delete_conversations("alice", ["not-a-uuid", c1]) == [c1]
+    assert await store.get_conversation(c1) is None
+
+
+async def test_postgres_delete_conversations_empty_list_is_a_noop():
+    store = _make_postgres_store()
+    c1 = str(uuid.uuid4())
+    await store.create_conversation(c1, "alice")
+    assert await store.delete_conversations("alice", []) == []
+    assert await store.get_conversation(c1) is not None
 
 
 async def test_postgres_list_conversations_pagination_and_ordering():

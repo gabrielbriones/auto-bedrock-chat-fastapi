@@ -269,6 +269,34 @@ class SQLiteConversationStore(BaseConversationStore):
                 self._conn.rollback()
                 raise
 
+    async def delete_conversations(self, user_id: str, conversation_ids: List[str]) -> List[str]:
+        if not conversation_ids:
+            return []
+        return await asyncio.to_thread(self._delete_bulk_sync, user_id, conversation_ids)
+
+    def _delete_bulk_sync(self, user_id: str, conversation_ids: List[str]) -> List[str]:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        placeholders = ", ".join("?" for _ in conversation_ids)
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    f"SELECT id FROM conversations WHERE user_id = ? AND id IN ({placeholders})",
+                    (user_id, *conversation_ids),
+                )
+                owned_ids = [row[0] for row in cur.fetchall()]
+                if owned_ids:
+                    owned_placeholders = ", ".join("?" for _ in owned_ids)
+                    self._conn.execute(
+                        f"DELETE FROM conversations WHERE user_id = ? AND id IN ({owned_placeholders})",
+                        (user_id, *owned_ids),
+                    )
+                self._conn.commit()
+                return owned_ids
+            except Exception:
+                self._conn.rollback()
+                raise
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
