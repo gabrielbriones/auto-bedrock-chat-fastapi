@@ -12,6 +12,7 @@ Covers the two failure paths added for the "only Claude Sonnet 5 works" bug:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,12 +56,12 @@ def _runnable_config(chat_config):
     return {"configurable": {"chat_config": chat_config}}
 
 
-def _ai_message(content: str = "hello"):
+def _ai_message(content: str = "hello", stop_reason: str | None = None):
     msg = MagicMock()
     msg.content = content
     msg.tool_calls = []
     msg.usage_metadata = None
-    msg.response_metadata = {}
+    msg.response_metadata = {"stopReason": stop_reason} if stop_reason else {}
     return msg
 
 
@@ -195,6 +196,120 @@ class TestLLMCallNodeErrorPaths:
         with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=failing_llm):
             with pytest.raises(ContextWindowExceededError):
                 await llm_call_node(_state(), _runnable_config(chat_config))
+
+
+class TestStopReasonMetadata:
+    """XMGPLAT-11208: Bedrock Converse's response_metadata["stopReason"] must
+    be surfaced into graph_result["metadata"]["stop_reason"] so callers (e.g.
+    Workload Analyzer's Stage 2 report generator) can distinguish a genuine
+    empty response from a truncated one."""
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_is_surfaced_into_top_level_metadata(self):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(stop_reason="max_tokens"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            result = await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert result["metadata"]["stop_reason"] == "max_tokens"
+        assert result["messages"][-1]["metadata"]["stop_reason"] == "max_tokens"
+
+    @pytest.mark.asyncio
+    async def test_missing_stop_reason_surfaces_as_none(self):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message())
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            result = await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert result["metadata"]["stop_reason"] is None
+
+    @pytest.mark.asyncio
+    async def test_anomalous_stop_reason_logs_a_warning(self, caplog):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(stop_reason="max_tokens"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            with caplog.at_level(logging.WARNING, logger="autolangchat.graph.nodes.llm_call"):
+                await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert any("max_tokens" in record.message for record in caplog.records)
+        assert all(record.levelno == logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_expected_stop_reasons_do_not_log_a_warning(self, caplog):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(stop_reason="end_turn"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            with caplog.at_level(logging.WARNING, logger="autolangchat.graph.nodes.llm_call"):
+                await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert caplog.records == []
+
+
+class TestTruncatedEmptyResponseFallback:
+    """XMGPLAT-11208 follow-up: a model can exhaust its entire max_tokens
+    budget on hidden reasoning before emitting any visible text (observed
+    with reasoning-style models like claude-sonnet-5), returning an empty
+    message with no indication to the end user of what happened. When that
+    happens, the empty content is replaced with a friendly explanation."""
+
+    @pytest.mark.asyncio
+    async def test_empty_response_with_max_tokens_gets_a_friendly_message(self):
+        from autolangchat.graph.nodes.llm_call import _TRUNCATED_EMPTY_RESPONSE_MESSAGE
+
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(content="", stop_reason="max_tokens"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            result = await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert result["messages"][-1]["content"] == _TRUNCATED_EMPTY_RESPONSE_MESSAGE
+        assert result["metadata"]["truncated_empty_response"] is True
+
+    @pytest.mark.asyncio
+    async def test_empty_response_fallback_logs_at_info_level(self, caplog):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(content="", stop_reason="max_tokens"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            with caplog.at_level(logging.INFO, logger="autolangchat.graph.nodes.llm_call"):
+                await llm_call_node(_state(), _runnable_config(chat_config))
+
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert any("placeholder" in record.message for record in info_records)
+
+    @pytest.mark.asyncio
+    async def test_non_empty_response_with_max_tokens_is_left_untouched(self):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(content="partial answer", stop_reason="max_tokens"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            result = await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert result["messages"][-1]["content"] == "partial answer"
+        assert "truncated_empty_response" not in result["metadata"]
+
+    @pytest.mark.asyncio
+    async def test_empty_response_with_normal_stop_reason_is_left_untouched(self):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message(content="", stop_reason="end_turn"))
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            result = await llm_call_node(_state(), _runnable_config(chat_config))
+
+        assert result["messages"][-1]["content"] == ""
+        assert "truncated_empty_response" not in result["metadata"]
 
 
 class TestUnexecutedToolCallDetection:

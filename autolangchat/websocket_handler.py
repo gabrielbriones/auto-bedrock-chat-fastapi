@@ -523,6 +523,8 @@ class WebSocketChatHandler:
                 response_metadata["input_tokens"] = graph_metadata["input_tokens"]
             if graph_metadata.get("output_tokens") is not None:
                 response_metadata["output_tokens"] = graph_metadata["output_tokens"]
+            if graph_metadata.get("stop_reason") is not None:
+                response_metadata["stop_reason"] = graph_metadata["stop_reason"]
             if kb_results:
                 response_metadata["kb_used"] = True
                 response_metadata["kb_chunks"] = len(kb_results)
