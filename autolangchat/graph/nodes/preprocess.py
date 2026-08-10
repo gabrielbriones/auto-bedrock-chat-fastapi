@@ -45,22 +45,43 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
         return {}
 
     # Wire up the LLM directly when AI summarization is enabled.
-    # A summarizer-specific config copy is used: fixed temperature, no tools,
-    # and no top_p (avoids Claude ValidationException when temperature is set).
+    # A summarizer-specific config copy is used: separate model_id/temperature/
+    # max_tokens/top_p overrides (falling back to the main chat config when
+    # unset), no tools, and top_p only when no temperature is in effect
+    # (avoids Claude ValidationException when both are set).
     llm_client = None
     if getattr(chat_config, "enable_ai_summarization", False):
+        # Precedence: an explicit summarization_temperature always wins (top_p
+        # dropped). Otherwise, an explicit summarization_top_p is honored with
+        # no temperature. Only when neither is configured do we fall back to
+        # the fixed DEFAULT_SUMMARIZATION_TEMPERATURE (temperature, no top_p).
+        if chat_config.summarization_temperature is not None:
+            resolved_temperature = chat_config.summarization_temperature
+            resolved_top_p = None
+        elif chat_config.summarization_top_p is not None:
+            resolved_temperature = None
+            resolved_top_p = chat_config.summarization_top_p
+        else:
+            resolved_temperature = DEFAULT_SUMMARIZATION_TEMPERATURE
+            resolved_top_p = None
+
         summarizer_config = chat_config.model_copy(
             update={
-                "temperature": DEFAULT_SUMMARIZATION_TEMPERATURE,
-                "top_p": None,
+                "model_id": chat_config.summarization_model_id or chat_config.model_id,
+                "max_tokens": chat_config.summarization_max_tokens or chat_config.max_tokens,
+                "temperature": resolved_temperature,
+                "top_p": resolved_top_p,
                 "langchain_tools": None,
             }
         )
         llm_client = _build_llm(summarizer_config.model_id, summarizer_config)
         logger.debug(
-            "preprocess_node: AI summarization enabled — LLM client built (model=%s, temperature=%.2f)",
+            "preprocess_node: AI summarization enabled — LLM client built "
+            "(model=%s, temperature=%s, max_tokens=%s, top_p=%s)",
             summarizer_config.model_id,
-            DEFAULT_SUMMARIZATION_TEMPERATURE,
+            resolved_temperature,
+            summarizer_config.max_tokens,
+            summarizer_config.top_p,
         )
 
     preprocessor = MessagePreprocessor(config=chat_config, llm_client=llm_client)

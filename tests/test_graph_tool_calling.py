@@ -1,4 +1,4 @@
-"""Phase 2 — graph tool calling tests.
+"""Graph tool calling tests.
 
 Tests the full multi-round tool loop:
     preprocess → llm (tool_calls) → tools_execution → llm (final answer) → END

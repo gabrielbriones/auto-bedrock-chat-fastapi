@@ -1,26 +1,27 @@
 """Configuration management for autolangchat"""
 
+import logging
 import os
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
     DEFAULT_ENABLE_AI_SUMMARIZATION,
-    DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
-    DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
-    DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
     DEFAULT_MAX_CONVERSATION_MESSAGES,
     DEFAULT_MAX_SESSIONS,
     DEFAULT_MAX_TOOL_CALLS,
     DEFAULT_MAX_TRUNCATION_RECURSION,
     DEFAULT_PRESERVE_SYSTEM_MESSAGE,
     DEFAULT_SESSION_TIMEOUT,
-    DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
-    DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
     DEFAULT_TIMEOUT,
+    HISTORY_MSG_LENGTH_THRESHOLD_FRACTION,
+    HISTORY_MSG_TRUNCATION_TARGET_FRACTION,
+    HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION,
+    SINGLE_MSG_LENGTH_THRESHOLD_FRACTION,
+    SINGLE_MSG_TRUNCATION_TARGET_FRACTION,
 )
 from .exceptions import ConfigurationError
 
@@ -40,30 +41,103 @@ except ImportError as exc:  # pragma: no cover
         "langchain-aws is required to validate Bedrock model profiles. " "Install with: pip install langchain-aws"
     ) from exc
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
-# Dynamic Parameter Overrides (XMGPLAT-9697)
+# Dynamic Parameter Overrides
 # ---------------------------------------------------------------------------
 # Parameters end users may override per-message or per-session via WebSocket
 # metadata, gated by `enable_dynamic_overrides` and the `allowed_dynamic_overrides`
 # allowlist (see ChatConfig.validate_overrides()). `max_tool_calls` and
-# `preserve_system_message` are intentionally excluded for now -- see
-# docs/plans/XMGPLAT-9697-dynamic-parameter-overrides.md for why.
+# `preserve_system_message` are intentionally excluded for now
 OVERRIDABLE_LLM_PARAMS = frozenset({"model_id", "temperature", "max_tokens", "top_p"})
 OVERRIDABLE_FEATURE_TOGGLES = frozenset(
     {"enable_ai_summarization", "enable_rag", "kb_top_k_results", "kb_similarity_threshold"}
 )
 OVERRIDABLE_PARAMS = OVERRIDABLE_LLM_PARAMS | OVERRIDABLE_FEATURE_TOGGLES
+# ---------------------------------------------------------------------------
+# Model catalog (settings sidebar model_id dropdown)
+# ---------------------------------------------------------------------------
+# Bedrock cross-region inference-profile prefixes. A model id may be either a
+# bare foundation-model id ("anthropic.claude-opus-4-8") or one of these
+# prefixed inference-profile ids ("us.anthropic.claude-opus-4-8"). The prefix
+# is stripped when deriving the provider so both forms group together; the
+# profile's display name already disambiguates the region ("Claude Opus 4.8
+# (US)" vs "Claude Opus 4.8").
+MODEL_ID_REGION_PREFIXES = frozenset({"us", "eu", "au", "jp", "global"})
+
+# Human-readable labels for the provider segment of a Bedrock model id, used as
+# the first level of the grouped model dropdown. Unknown providers fall back to
+# a title-cased version of the raw segment, so a newly-added vendor still shows
+# up (just without a curated label).
+PROVIDER_DISPLAY_NAMES = {
+    "ai21": "AI21 Labs",
+    "amazon": "Amazon",
+    "anthropic": "Anthropic",
+    "cohere": "Cohere",
+    "deepseek": "DeepSeek",
+    "google": "Google",
+    "meta": "Meta",
+    "minimax": "MiniMax",
+    "mistral": "Mistral AI",
+    "moonshot": "Moonshot AI",
+    "moonshotai": "Moonshot AI",
+    "nvidia": "NVIDIA",
+    "openai": "OpenAI",
+    "qwen": "Qwen",
+    "stability": "Stability AI",
+    "writer": "Writer",
+    "xai": "xAI",
+    "zai": "Z.ai",
+}
+
+
+def split_model_id(model_id: str) -> "tuple[Optional[str], str]":
+    """Split a Bedrock model id into ``(region_prefix, provider_key)``.
+
+    ``region_prefix`` is ``None`` for bare foundation-model ids::
+
+        "us.anthropic.claude-opus-4-8" -> ("us", "anthropic")
+        "anthropic.claude-opus-4-8"    -> (None, "anthropic")
+        "openai.gpt-5.5"               -> (None, "openai")
+    """
+    parts = model_id.split(".")
+    if len(parts) > 2 and parts[0] in MODEL_ID_REGION_PREFIXES:
+        return parts[0], parts[1]
+    return None, parts[0]
+
+
+def get_model_provider(model_id: str) -> str:
+    """Human-readable provider label for ``model_id`` (e.g. ``"Anthropic"``)."""
+    _region, provider_key = split_model_id(model_id)
+    return PROVIDER_DISPLAY_NAMES.get(provider_key, provider_key.replace("-", " ").title())
+
+
+def _build_default_available_models() -> List[str]:
+    """Full langchain-aws model catalog, for the sidebar's model_id dropdown.
+
+    Derived from ``_PROFILES`` rather than hand-maintained so the dropdown
+    tracks whatever the installed ``langchain-aws`` release supports. Models
+    without ``tool_calling`` are excluded: the chat graph always binds the
+    generated API tools to the LLM, so a model that can't call tools would
+    fail (or silently ignore every tool) once selected.
+
+    Some of these ids (e.g. bare foundation-model ids for newer models like
+    Llama 3.3 70B Instruct) are only invokable through a cross-region
+    inference profile id, not the bare id -- rather than hand-maintaining a
+    denylist of which ones (Bedrock's supported set changes over time, and
+    _PROFILES doesn't expose this as a flag), ``_build_llm()`` in
+    graph/nodes/llm_call.py detects that failure at call time from Bedrock's
+    own error message and retries once with an inference-profile-prefixed id.
+
+    Hosts that want a narrower list still set ``AUTOCHAT_AVAILABLE_MODELS``.
+    """
+    return sorted(model_id for model_id, profile in _PROFILES.items() if profile.get("tool_calling"))
+
 
 # Built-in fallback for the settings sidebar's model_id dropdown, used when
 # `AUTOCHAT_AVAILABLE_MODELS` isn't set (see `ChatConfig.get_available_models()`).
-DEFAULT_AVAILABLE_MODELS = [
-    "us.anthropic.claude-sonnet-5",
-    "us.anthropic.claude-sonnet-4-6",
-    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-    "us.anthropic.claude-opus-4-8",
-    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "openai.gpt-oss-safeguard-120b",
-]
+DEFAULT_AVAILABLE_MODELS = _build_default_available_models()
 
 
 def _get_env_file() -> str:
@@ -104,10 +178,16 @@ class ChatConfig(BaseSettings):
     )
 
     max_tokens: int = Field(
-        default=4096,
+        default=8192,
         alias="AUTOCHAT_MAX_TOKENS",
         gt=0,
-        description="Maximum tokens in model response",
+        description=(
+            "Maximum tokens in model response. Raised from 4096 to 8192: long "
+            "multi-round tool-calling turns combined with verbose structured-"
+            "output prompts could exhaust the lower budget before any visible "
+            "text was emitted, producing an empty (0 chars, 0 tool_calls) final "
+            "answer with response_metadata stopReason='max_tokens'."
+        ),
     )
 
     top_p: float = Field(
@@ -150,10 +230,48 @@ class ChatConfig(BaseSettings):
         description=(
             "Comma-separated list of model IDs offered in the settings sidebar's "
             "model_id dropdown (dynamic parameter overrides). When unset, falls back "
-            "to a built-in default list -- see DEFAULT_AVAILABLE_MODELS in config.py "
-            "and ChatConfig.get_available_models()."
+            "to the full tool-calling-capable langchain-aws catalog -- see "
+            "DEFAULT_AVAILABLE_MODELS in config.py and ChatConfig.get_available_models()."
         ),
     )
+
+    providers: Optional[List[str]] = Field(
+        default=None,
+        alias="AUTOCHAT_PROVIDERS",
+        description=(
+            "Comma-separated allowlist of model providers (e.g. "
+            "AUTOCHAT_PROVIDERS=Anthropic,Meta,OpenAI) to offer in the settings sidebar's "
+            "model_id dropdown. When set, ChatConfig.get_available_models() is filtered to "
+            "only include models whose provider (see get_model_provider()) matches one of "
+            "these names -- matched case-insensitively against the provider labels derived "
+            "from langchain_aws.data._profiles._PROFILES. Combines with "
+            "AUTOCHAT_AVAILABLE_MODELS: the provider filter is applied on top of whichever "
+            "model list is in effect (the available_models override, or the full "
+            "DEFAULT_AVAILABLE_MODELS catalog). When unset, models from all providers are "
+            "offered."
+        ),
+    )
+
+    model_discovery_enabled: bool = Field(
+        default=True,
+        alias="AUTOCHAT_MODEL_DISCOVERY_ENABLED",
+        description=(
+            "Filter the settings sidebar's model_id dropdown down to models this AWS "
+            "account can actually invoke in this region, by querying the Bedrock control "
+            "plane (ListFoundationModels + ListInferenceProfiles) once at startup. The "
+            "static langchain-aws profile catalog lists models that may not exist in a "
+            "given account/region -- selecting one fails with 'The provided model "
+            "identifier is invalid'. Requires bedrock:ListFoundationModels (and, for "
+            "region-prefixed inference-profile ids, bedrock:ListInferenceProfiles). "
+            "Degrades safely: if the calls fail, are denied or time out, the unfiltered "
+            "static catalog is used. Set to false to skip the startup calls entirely."
+        ),
+    )
+
+    # Populated at startup by AutoLangChatPlugin via set_invocable_model_ids()
+    # when model_discovery_enabled is on. ``None`` means "discovery didn't run
+    # or failed" and is deliberately distinct from an empty set.
+    _invocable_model_ids: Optional[set] = PrivateAttr(default=None)
 
     # System Configuration
     system_prompt: Optional[str] = Field(
@@ -231,60 +349,44 @@ class ChatConfig(BaseSettings):
         ),
     )
 
-    # Single-Message Truncation Configuration (Character-Based)
-    single_msg_length_threshold: int = Field(
-        default=DEFAULT_SINGLE_MSG_LENGTH_THRESHOLD,
-        alias="AUTOCHAT_SINGLE_MSG_LENGTH_THRESHOLD",
-        gt=0,
+    summarization_model_id: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_MODEL_ID",
         description=(
-            "Single-message truncation threshold in characters. "
-            "Messages exceeding this size are truncated (plain text) or summarized (AI). "
-            "Default: 500K chars (~125K tokens). "
-            "AI summarization chunk size is derived as half of this value."
+            "Bedrock model id used for AI summarization (see enable_ai_summarization). "
+            "When unset, falls back to the main chat model_id."
         ),
     )
 
-    single_msg_truncation_target: int = Field(
-        default=DEFAULT_SINGLE_MSG_TRUNCATION_TARGET,
-        alias="AUTOCHAT_SINGLE_MSG_TRUNCATION_TARGET",
-        gt=0,
+    summarization_temperature: Optional[float] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_TEMPERATURE",
+        ge=0.0,
+        le=1.0,
         description=(
-            "Target size after single-message truncation in characters (85% of threshold). "
-            "Default: 425K chars (~106K tokens)."
+            "Sampling temperature for AI summarization LLM calls. When unset, "
+            "falls back to DEFAULT_SUMMARIZATION_TEMPERATURE (see defaults.py)."
         ),
     )
 
-    # History Truncation Configuration (Character-Based)
-    history_total_length_threshold: int = Field(
-        default=DEFAULT_HISTORY_TOTAL_LENGTH_THRESHOLD,
-        alias="AUTOCHAT_HISTORY_TOTAL_LENGTH_THRESHOLD",
+    summarization_max_tokens: Optional[int] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_MAX_TOKENS",
         gt=0,
         description=(
-            "Total conversation history threshold in characters. "
-            "When the sum of all message sizes exceeds this, history truncation is triggered. "
-            "Default: 650K chars (~163K-217K tokens depending on content type)."
+            "Maximum tokens for AI summarization LLM responses. When unset, falls back to the main chat max_tokens."
         ),
     )
 
-    history_msg_length_threshold: int = Field(
-        default=DEFAULT_HISTORY_MSG_LENGTH_THRESHOLD,
-        alias="AUTOCHAT_HISTORY_MSG_LENGTH_THRESHOLD",
-        gt=0,
+    summarization_top_p: Optional[float] = Field(
+        default=None,
+        alias="AUTOCHAT_SUMMARIZATION_TOP_P",
+        ge=0.0,
+        le=1.0,
         description=(
-            "Per-message threshold during history truncation in characters. "
-            "Messages exceeding this size are truncated during history-level processing. "
-            "Default: 100K chars (~25K tokens)."
-        ),
-    )
-
-    history_msg_truncation_target: int = Field(
-        default=DEFAULT_HISTORY_MSG_TRUNCATION_TARGET,
-        alias="AUTOCHAT_HISTORY_MSG_TRUNCATION_TARGET",
-        gt=0,
-        description=(
-            "Per-message target during history truncation in characters "
-            "(85% of history_msg_length_threshold). "
-            "Default: 85K chars (~21K tokens)."
+            "Top-p sampling parameter for AI summarization LLM calls. Only applied "
+            "when no summarization temperature is in effect (Bedrock Converse rejects "
+            "both being set simultaneously)."
         ),
     )
 
@@ -299,15 +401,6 @@ class ChatConfig(BaseSettings):
             "re-runs with halved thresholds, up to this many times. Default: 3."
         ),
     )
-
-    # NOTE: Legacy tool_result_* settings (AUTOCHAT_TOOL_RESULT_NEW_RESPONSE_THRESHOLD,
-    # AUTOCHAT_TOOL_RESULT_NEW_RESPONSE_TARGET, AUTOCHAT_TOOL_RESULT_HISTORY_THRESHOLD,
-    # AUTOCHAT_TOOL_RESULT_HISTORY_TARGET) have been removed in Task 3.6.
-    # Use the generalized settings instead:
-    #   new_response_threshold → single_msg_length_threshold
-    #   new_response_target    → single_msg_truncation_target
-    #   history_msg_threshold  → history_msg_length_threshold
-    #   history_msg_target     → history_msg_truncation_target
 
     timeout: int = Field(
         default=DEFAULT_TIMEOUT,
@@ -395,7 +488,8 @@ class ChatConfig(BaseSettings):
         description=(
             "Preset prompt buttons displayed in the chat UI. Each entry should have 'label' (button text) "
             "and 'template' (prompt text). Use {{JOB_ID}} as a placeholder for a job ID. "
-            "Optional 'description' field shown as a tooltip."
+            "Optional 'description' field shown as a tooltip. Optional 'id' field is a stable identifier "
+            "used by deep-link query strings (?prompt=<id>); auto-generated by slugifying 'label' when omitted."
         ),
     )
 
@@ -569,6 +663,34 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_SSO_SESSION_TTL",
         gt=0,
         description="SSO session duration in seconds before requiring re-authentication",
+    )
+
+    sso_trust_external_idp_cookies: bool = Field(
+        default=False,
+        alias="AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES",
+        description=(
+            "Opt-in: silently establish an SSO session from an existing Cognito "
+            "IdP session cookie set by ANOTHER app that shares this app's exact "
+            "SSO App Client ID (e.g. a sibling internal tool on a related "
+            "subdomain that deliberately configured its Cognito SDK to store "
+            "tokens in cookies scoped to a shared parent domain). When enabled, "
+            "the chat UI page load looks for "
+            "'CognitoIdentityServiceProvider.<sso_client_id>.LastAuthUser' and "
+            "the matching '...idToken'/'...accessToken'/'...refreshToken' "
+            "cookies; if present, the ID token is validated exactly like a "
+            "normal SSO callback (JWKS signature, issuer, audience, expiry) "
+            "before an session is created, skipping the IdP redirect round "
+            "trip entirely. Falls through silently to the normal SSO login "
+            "flow if the cookies are absent or the token fails validation — "
+            "this is a UX shortcut, never a fallback authentication path. "
+            "Leave disabled unless you have explicitly confirmed (a) the "
+            "calling app's Cognito SDK is configured to write these as "
+            "cookies (not the SDK's localStorage default) with a Domain "
+            "attribute covering this app's origin, and (b) it uses the SAME "
+            "App Client ID as sso_client_id — a different App Client ID "
+            "would fail audience validation and safely do nothing, but "
+            "should not be relied upon as the enforcement point."
+        ),
     )
 
     # Logging Configuration
@@ -910,7 +1032,32 @@ class ChatConfig(BaseSettings):
     )
 
     # ------------------------------------------------------------------
-    # LangGraph Checkpoint (Phase 3)
+    # User Settings Storage Backend
+    # ------------------------------------------------------------------
+
+    user_settings_persistence_enabled: bool = Field(
+        default=True,
+        alias="AUTOCHAT_USER_SETTINGS_PERSISTENCE_ENABLED",
+        description=(
+            "Master switch for persisting each user's Settings-sidebar "
+            "configuration (model_id, temperature, max_tokens, ...). When "
+            "True, the plugin calls ``db.create_user_settings_store(config)`` "
+            "to build a ``BaseUserSettingsStore`` implementation, hydrates "
+            "``session.metadata['config_overrides']`` from it on authenticated "
+            "connect, and writes back on every ``config_update`` / "
+            "``config_reset``. Requires ``enable_dynamic_overrides``. "
+            "This is the only user-settings setting: the backend, connection "
+            "URL and file path are all inferred from whichever database the "
+            "app already uses (see ``db.create_user_settings_store``). "
+            "Anonymous (unauthenticated) sessions are never persisted. If no "
+            "usable backend can be built at runtime (missing connection URL, "
+            "missing optional dependency, etc.), the feature is silently "
+            "disabled rather than crashing the app."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # LangGraph Checkpoint
     # ------------------------------------------------------------------
 
     checkpoint_postgres_url: Optional[str] = Field(
@@ -987,6 +1134,29 @@ class ChatConfig(BaseSettings):
             "The IdP must populate ``groups`` (or ``cognito:groups`` / "
             "``roles``) in the userinfo or ID-token claims."
         ),
+    )
+
+    # ------------------------------------------------------------------
+    # MCP Server
+    # ------------------------------------------------------------------
+
+    mcp_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_MCP_ENABLED",
+        description=(
+            "Master switch for the MCP (Model Context Protocol) Streamable "
+            "HTTP endpoint. When False, the endpoint is not registered so "
+            "unauthorized callers receive a clean 404. Exposes the same "
+            "OpenAPI-derived tools (via ``ToolsGenerator``/``ToolManager``) "
+            "to MCP clients (Claude Desktop, VS Code Copilot, etc.) without "
+            "going through the Bedrock/LangGraph chat loop."
+        ),
+    )
+
+    mcp_endpoint: str = Field(
+        default="/chat/mcp",
+        alias="AUTOCHAT_MCP_ENDPOINT",
+        description="Endpoint path for the MCP Streamable HTTP server, mounted when mcp_enabled is True.",
     )
 
     kb_embedding_dimensions: int = Field(
@@ -1089,8 +1259,7 @@ class ChatConfig(BaseSettings):
         description=(
             "Enable the background credibility-decay task for synthesized KB articles. "
             "When disabled (default) all articles keep their credibility_score indefinitely "
-            "and must be removed manually. Set to true to activate automatic aging "
-            "(XMGPLAT-10933)."
+            "and must be removed manually. Set to true to activate automatic aging."
         ),
     )
 
@@ -1099,7 +1268,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_DECAY_RATE",
         gt=0.0,
         lt=1.0,
-        description="Amount subtracted from credibility_score per decay cycle for synthesized articles (XMGPLAT-10933).",
+        description="Amount subtracted from credibility_score per decay cycle for synthesized articles.",
     )
 
     kb_credibility_removal_threshold: float = Field(
@@ -1107,20 +1276,20 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_REMOVAL_THRESHOLD",
         ge=0.0,
         le=1.0,
-        description="credibility_score at or below which a synthesized article is flagged for removal (XMGPLAT-10933).",
+        description="credibility_score at or below which a synthesized article is flagged for removal.",
     )
 
     kb_credibility_decay_interval_hours: int = Field(
         default=168,
         alias="AUTOCHAT_KB_CREDIBILITY_DECAY_INTERVAL_HOURS",
         gt=0,
-        description="How often (in hours) the credibility decay background task runs. Default: 168 h (1 week) (XMGPLAT-10933).",
+        description="How often (in hours) the credibility decay background task runs. Default: 168 h (1 week).",
     )
 
     kb_credibility_citation_boost_enabled: bool = Field(
         default=False,
         alias="AUTOCHAT_KB_CREDIBILITY_CITATION_BOOST_ENABLED",
-        description="Enable citation-boost signal: each time a feedback document is cited in a RAG response its credibility_score increases by kb_credibility_citation_boost (XMGPLAT-10940).",
+        description="Enable citation-boost signal: each time a feedback document is cited in a RAG response its credibility_score increases by kb_credibility_citation_boost.",
     )
 
     kb_credibility_citation_boost: float = Field(
@@ -1128,13 +1297,13 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_CITATION_BOOST",
         ge=0.0,
         le=1.0,
-        description="Amount added to credibility_score each time a feedback document is cited in a RAG response (XMGPLAT-10940).",
+        description="Amount added to credibility_score each time a feedback document is cited in a RAG response.",
     )
 
     kb_credibility_feedback_signal_enabled: bool = Field(
         default=False,
         alias="AUTOCHAT_KB_CREDIBILITY_FEEDBACK_SIGNAL_ENABLED",
-        description="Enable rated-feedback credibility adjustment: when an admin first reviews a feedback entry, cited feedback documents are boosted or penalised (XMGPLAT-10940).",
+        description="Enable rated-feedback credibility adjustment: when an admin first reviews a feedback entry, cited feedback documents are boosted or penalised.",
     )
 
     kb_credibility_positive_delta: float = Field(
@@ -1142,7 +1311,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_POSITIVE_DELTA",
         ge=0.0,
         le=1.0,
-        description="Amount added to credibility_score for feedback documents cited by a positively-rated, admin-approved feedback entry (XMGPLAT-10940).",
+        description="Amount added to credibility_score for feedback documents cited by a positively-rated, admin-approved feedback entry.",
     )
 
     kb_credibility_negative_delta: float = Field(
@@ -1150,7 +1319,7 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_KB_CREDIBILITY_NEGATIVE_DELTA",
         ge=0.0,
         le=1.0,
-        description="Amount subtracted from credibility_score for feedback documents cited by a negatively-rated, admin-approved feedback entry (XMGPLAT-10940).",
+        description="Amount subtracted from credibility_score for feedback documents cited by a negatively-rated, admin-approved feedback entry.",
     )
 
     model_config = SettingsConfigDict(
@@ -1169,6 +1338,7 @@ class ChatConfig(BaseSettings):
         "feedback_authorized_users",
         "allowed_dynamic_overrides",
         "available_models",
+        "providers",
         mode="before",
     )
     @classmethod
@@ -1230,30 +1400,34 @@ class ChatConfig(BaseSettings):
             )
         return v
 
-    @field_validator("single_msg_truncation_target")
+    @field_validator("providers")
     @classmethod
-    def validate_single_msg_truncation_target(cls, v, info):
-        """Validate single_msg_truncation_target < single_msg_length_threshold"""
-        # Access threshold from info.data (already validated fields)
-        threshold = info.data.get("single_msg_length_threshold")
-        if threshold is not None and v >= threshold:
-            raise ValueError(
-                f"single_msg_truncation_target ({v:,}) must be less than "
-                f"single_msg_length_threshold ({threshold:,})"
-            )
-        return v
+    def validate_providers_are_known(cls, v):
+        """Validate and normalize provider names against the known catalog.
 
-    @field_validator("history_msg_truncation_target")
-    @classmethod
-    def validate_history_msg_truncation_target(cls, v, info):
-        """Validate history_msg_truncation_target < history_msg_length_threshold"""
-        threshold = info.data.get("history_msg_length_threshold")
-        if threshold is not None and v >= threshold:
+        Matches each entry case-insensitively against the provider labels
+        derived from ``_PROFILES`` (via ``get_model_provider()``) and
+        normalizes it to that label's canonical casing, so
+        ``AUTOCHAT_PROVIDERS=anthropic,META`` behaves the same as
+        ``AUTOCHAT_PROVIDERS=Anthropic,Meta``.
+        """
+        if v is None or not _PROFILES:
+            return v
+        known = {get_model_provider(model_id) for model_id in _PROFILES}
+        known_lookup = {name.lower(): name for name in known}
+        normalized: List[str] = []
+        unknown: List[str] = []
+        for name in v:
+            canonical = known_lookup.get(name.strip().lower())
+            if canonical is None:
+                unknown.append(name)
+            else:
+                normalized.append(canonical)
+        if unknown:
             raise ValueError(
-                f"history_msg_truncation_target ({v:,}) must be less than "
-                f"history_msg_length_threshold ({threshold:,})"
+                f"providers contains unrecognized provider name(s): {unknown} " f"(known providers: {sorted(known)})"
             )
-        return v
+        return normalized
 
     @field_validator("sso_provider")
     @classmethod
@@ -1400,19 +1574,58 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
             "top_p": self.top_p,
         }
 
+    def set_invocable_model_ids(self, model_ids: Optional[set]) -> None:
+        """Record the set of model ids Bedrock reports as addressable here.
+
+        Called once from ``AutoLangChatPlugin`` startup with the result of
+        :func:`~autolangchat.model_discovery.discover_invocable_model_ids`.
+        Passing ``None`` (discovery disabled or failed) restores the
+        unfiltered behaviour.
+        """
+        self._invocable_model_ids = model_ids
+
     def get_available_models(self) -> List[str]:
         """Model IDs to offer in the settings sidebar's model_id dropdown.
 
         Returns ``available_models`` when explicitly configured (via
         ``AUTOCHAT_AVAILABLE_MODELS``), otherwise falls back to
-        ``DEFAULT_AVAILABLE_MODELS``.
+        ``DEFAULT_AVAILABLE_MODELS`` -- the full tool-calling-capable
+        langchain-aws catalog (see ``_build_default_available_models()``).
+
+        When ``providers`` is configured (via ``AUTOCHAT_PROVIDERS``), the
+        resulting list is further filtered down to only models whose
+        provider (``get_model_provider()``) is in that allowlist.
+
+        Finally, when startup model discovery ran successfully (see
+        ``model_discovery_enabled`` and ``set_invocable_model_ids()``), the
+        list is intersected with the ids Bedrock actually offers in this
+        account/region, so the dropdown can't advertise a model that fails
+        with "The provided model identifier is invalid". If that intersection
+        would be empty the filter is skipped -- an empty dropdown is worse
+        than an optimistic one, and it almost certainly means discovery
+        returned something unexpected rather than that no model works.
         """
-        return self.available_models or DEFAULT_AVAILABLE_MODELS
+        models = self.available_models or DEFAULT_AVAILABLE_MODELS
+        if self.providers:
+            allowed_providers = set(self.providers)
+            models = [m for m in models if get_model_provider(m) in allowed_providers]
+
+        if self._invocable_model_ids is not None:
+            invocable = [m for m in models if m in self._invocable_model_ids]
+            if invocable:
+                models = invocable
+            else:
+                logger.warning(
+                    "Bedrock model discovery matched none of the %d configured model(s); "
+                    "leaving the catalog unfiltered.",
+                    len(models),
+                )
+        return models
 
     def get_available_models_for_ui(self) -> List[Dict[str, Any]]:
         """``get_available_models()``, paired with each model's human-readable
-        display name and ``temperature``-support flag from ``_PROFILES``, for
-        rendering in the settings sidebar.
+        display name, provider label and ``temperature``-support flag from
+        ``_PROFILES``, for rendering in the settings sidebar.
 
         The UI only ever sees ``name`` for display; the backend keeps using
         the raw ``id`` (``model_id``) for everything else. The currently
@@ -1441,10 +1654,35 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
             {
                 "id": model_id,
                 "name": _PROFILES.get(model_id, {}).get("name", model_id),
+                "provider": get_model_provider(model_id),
                 "supports_temperature": _PROFILES.get(model_id, {}).get("temperature", True),
                 "max_output_tokens": _PROFILES.get(model_id, {}).get("max_output_tokens"),
             }
             for model_id in model_ids
+        ]
+
+    def get_available_models_grouped_for_ui(self) -> List[Dict[str, Any]]:
+        """``get_available_models_for_ui()``, grouped by provider for the
+        two-level model dropdown (provider ``<optgroup>`` -> model ``<option>``).
+
+        Returns ``[{"provider": "Anthropic", "models": [<ui entries>]}, ...]``,
+        providers sorted alphabetically and models sorted by display name
+        within each provider. The provider holding the currently configured
+        ``model_id`` is listed first so the active model is easy to find.
+        """
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for model in self.get_available_models_for_ui():
+            groups.setdefault(model["provider"], []).append(model)
+
+        current_provider = get_model_provider(self.model_id)
+        ordered_providers = sorted(groups, key=lambda p: (p != current_provider, p.lower()))
+
+        return [
+            {
+                "provider": provider,
+                "models": sorted(groups[provider], key=lambda m: m["name"]),
+            }
+            for provider in ordered_providers
         ]
 
     def get_model_display_name(self, model_id: Optional[str] = None) -> str:
@@ -1455,6 +1693,78 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
         """
         resolved_model_id = model_id or self.model_id
         return _PROFILES.get(resolved_model_id, {}).get("name", resolved_model_id)
+
+    def _scaled_truncation_threshold(self, fraction: float) -> int:
+        """Compute a truncation threshold in characters as a fraction of the
+        selected model's max_input_tokens.
+
+        There is no static fallback value: the threshold is purely
+        ``fraction * _PROFILES[self.model_id]["max_input_tokens"]``, so a
+        model with a smaller context window gets a proportionally smaller
+        absolute char budget, and a model with a larger one gets a larger
+        budget -- entirely determined by the selected model, not a
+        hardcoded default (XMGPLAT-11175). ``model_id`` is guaranteed to be
+        a key in ``_PROFILES`` with a ``max_input_tokens`` entry (enforced
+        by ``validate_model_id_is_supported``).
+        """
+        max_input_tokens = _PROFILES[self.model_id]["max_input_tokens"]
+        return round(fraction * max_input_tokens)
+
+    @property
+    def single_msg_length_threshold(self) -> int:
+        """Single-message truncation threshold in characters, derived from the
+        selected model's max_input_tokens. Not configurable via env var or
+        constructor kwarg."""
+        return self._scaled_truncation_threshold(SINGLE_MSG_LENGTH_THRESHOLD_FRACTION)
+
+    @property
+    def single_msg_truncation_target(self) -> int:
+        """Target size after single-message truncation, in characters.
+        Derived from the selected model's max_input_tokens. Not configurable
+        via env var or constructor kwarg."""
+        return self._scaled_truncation_threshold(SINGLE_MSG_TRUNCATION_TARGET_FRACTION)
+
+    @property
+    def history_total_length_threshold(self) -> int:
+        """Total conversation history threshold in characters, derived from
+        the selected model's max_input_tokens. Not configurable via env var
+        or constructor kwarg."""
+        return self._scaled_truncation_threshold(HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION)
+
+    @property
+    def history_msg_length_threshold(self) -> int:
+        """Per-message threshold during history truncation, in characters.
+        Derived from the selected model's max_input_tokens. Not configurable
+        via env var or constructor kwarg."""
+        return self._scaled_truncation_threshold(HISTORY_MSG_LENGTH_THRESHOLD_FRACTION)
+
+    @property
+    def history_msg_truncation_target(self) -> int:
+        """Per-message target during history truncation, in characters.
+        Derived from the selected model's max_input_tokens. Not configurable
+        via env var or constructor kwarg."""
+        return self._scaled_truncation_threshold(HISTORY_MSG_TRUNCATION_TARGET_FRACTION)
+
+    def get_override_defaults(self) -> Dict[str, Any]:
+        """Return the current global value of every overridable parameter.
+
+        Used by the settings sidebar so its controls start at the actual
+        effective defaults rather than an arbitrary client-side fallback, and
+        as the baseline the client diffs ``active_overrides`` against for the
+        override badge count. These values are *not* written to a user's
+        ``user_settings`` row: rows are created empty and only ever hold the
+        parameters the user actually changed.
+        """
+        return {
+            "model_id": self.model_id,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "top_p": self.top_p,
+            "enable_ai_summarization": self.enable_ai_summarization,
+            "enable_rag": self.enable_rag,
+            "kb_top_k_results": self.kb_top_k_results,
+            "kb_similarity_threshold": self.kb_similarity_threshold,
+        }
 
     def validate_overrides(self, overrides: Dict[str, Any]) -> "tuple[Dict[str, Any], List[str]]":
         """Validate and filter a dict of proposed dynamic parameter overrides.
@@ -1605,18 +1915,11 @@ def load_config(
                 if not isinstance(max_msg_val, int) or max_msg_val <= 0:
                     raise ConfigurationError("max_conversation_messages must be a positive integer")
 
-            # Validate truncation target < threshold relationships
-            if "single_msg_truncation_target" in overrides and "single_msg_length_threshold" in overrides:
-                if overrides["single_msg_truncation_target"] >= overrides["single_msg_length_threshold"]:
-                    raise ConfigurationError(
-                        "single_msg_truncation_target must be less than single_msg_length_threshold"
-                    )
-
-            if "history_msg_truncation_target" in overrides and "history_msg_length_threshold" in overrides:
-                if overrides["history_msg_truncation_target"] >= overrides["history_msg_length_threshold"]:
-                    raise ConfigurationError(
-                        "history_msg_truncation_target must be less than history_msg_length_threshold"
-                    )
+            # NOTE: single_msg_length_threshold, single_msg_truncation_target,
+            # history_total_length_threshold, history_msg_length_threshold, and
+            # history_msg_truncation_target are no longer configurable fields
+            # they are computed properties derived from the
+            # model's context window, so no override validation is needed here.
 
             # Validate max_truncation_recursion
             if "max_truncation_recursion" in overrides:
@@ -1704,6 +2007,8 @@ def validate_config(config: ChatConfig) -> None:
         raise ConfigurationError("Feedback max history context cannot be negative")
 
     endpoints = [config.chat_endpoint, config.websocket_endpoint, config.ui_endpoint]
+    if config.mcp_enabled:
+        endpoints.append(config.mcp_endpoint)
     # Validate endpoint paths don't conflict
     if len(set(endpoints)) != len(endpoints):
         raise ConfigurationError("Chat endpoints cannot have duplicate paths")

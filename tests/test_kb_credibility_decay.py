@@ -1,4 +1,4 @@
-"""Unit tests for the KB credibility decay task (XMGPLAT-10933).
+"""Unit tests for the KB credibility decay task.
 
 Tests apply_credibility_decay and reset_credibility on a real in-memory
 SQLiteKBStore so the SQL logic is exercised without mocking.

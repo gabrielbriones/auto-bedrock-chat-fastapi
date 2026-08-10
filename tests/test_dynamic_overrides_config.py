@@ -1,4 +1,4 @@
-"""XMGPLAT-9697 Phase 1 — dynamic parameter override config & validation tests.
+"""Dynamic parameter override config & validation tests.
 
 Covers the new `ChatConfig` fields (`enable_dynamic_overrides`,
 `allowed_dynamic_overrides`, `enable_config_sidebar`) and
@@ -67,6 +67,91 @@ class TestDynamicOverrideConfigFields:
         assert config.available_models == ["us.anthropic.claude-sonnet-5", "us.anthropic.claude-opus-4-8"]
         assert config.get_available_models() == ["us.anthropic.claude-sonnet-5", "us.anthropic.claude-opus-4-8"]
 
+    def test_providers_defaults_to_none(self):
+        config = _load_config()
+        assert config.providers is None
+
+    def test_providers_from_env_var_comma_separated_and_normalized(self):
+        config = _load_config(AUTOCHAT_PROVIDERS="anthropic,OpenAI")
+        assert config.providers == ["Anthropic", "OpenAI"]
+
+    def test_providers_filters_get_available_models(self):
+        import autolangchat.config as config_module
+
+        config = _load_config(AUTOCHAT_PROVIDERS="Anthropic")
+        models = config.get_available_models()
+        assert len(models) > 0
+        assert all(config_module.get_model_provider(m) == "Anthropic" for m in models)
+
+    def test_providers_filters_available_models_override(self):
+        config = _load_config(
+            AUTOCHAT_PROVIDERS="Anthropic",
+            AUTOCHAT_AVAILABLE_MODELS="us.anthropic.claude-sonnet-5,openai.gpt-oss-120b-1:0",
+        )
+        assert config.get_available_models() == ["us.anthropic.claude-sonnet-5"]
+
+    def test_unknown_provider_rejected_at_construction(self):
+        with pytest.raises(ValidationError, match="unrecognized provider name"):
+            _load_config(AUTOCHAT_PROVIDERS="Anthropic,NotARealProvider")
+
+
+class TestModelCatalog:
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("us.anthropic.claude-sonnet-5", ("us", "anthropic")),
+            ("anthropic.claude-sonnet-5", (None, "anthropic")),
+            ("openai.gpt-oss-120b-1:0", (None, "openai")),
+        ],
+    )
+    def test_split_model_id(self, model_id, expected):
+        import autolangchat.config as config_module
+
+        assert config_module.split_model_id(model_id) == expected
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("us.anthropic.claude-sonnet-5", "Anthropic"),
+            ("openai.gpt-oss-120b-1:0", "OpenAI"),
+            ("acme-labs.example-model", "Acme Labs"),
+        ],
+    )
+    def test_get_model_provider(self, model_id, expected):
+        import autolangchat.config as config_module
+
+        assert config_module.get_model_provider(model_id) == expected
+
+    def test_build_default_available_models_filters_and_sorts_tool_calling_profiles(self, monkeypatch):
+        import autolangchat.config as config_module
+
+        monkeypatch.setattr(
+            config_module,
+            "_PROFILES",
+            {
+                "provider.zeta": {"tool_calling": True},
+                "provider.no-tools": {"tool_calling": False},
+                "provider.unspecified": {},
+                "provider.alpha": {"tool_calling": True},
+            },
+        )
+
+        assert config_module._build_default_available_models() == ["provider.alpha", "provider.zeta"]
+
+    def test_grouped_models_put_current_provider_first_and_sort_models(self):
+        config = _load_config(
+            AUTOCHAT_MODEL_ID="openai.gpt-oss-120b-1:0",
+            AUTOCHAT_AVAILABLE_MODELS=("us.anthropic.claude-sonnet-5," "us.anthropic.claude-opus-4-8"),
+        )
+
+        groups = config.get_available_models_grouped_for_ui()
+
+        assert [group["provider"] for group in groups] == ["OpenAI", "Anthropic"]
+        assert [model["name"] for model in groups[1]["models"]] == [
+            "Claude Opus 4.8 (US)",
+            "Claude Sonnet 5 (US)",
+        ]
+
 
 class TestModelProfileRestriction:
     """model_id, fallback_model, and available_models must be known
@@ -96,12 +181,14 @@ class TestModelProfileRestriction:
         assert {
             "id": "us.anthropic.claude-sonnet-5",
             "name": "Claude Sonnet 5 (US)",
+            "provider": "Anthropic",
             "supports_temperature": False,
             "max_output_tokens": 128000,
         } in ui_models
         assert {
             "id": "us.anthropic.claude-opus-4-8",
             "name": "Claude Opus 4.8 (US)",
+            "provider": "Anthropic",
             "supports_temperature": False,
             "max_output_tokens": 128000,
         } in ui_models
@@ -116,6 +203,7 @@ class TestModelProfileRestriction:
         assert {
             "id": "openai.gpt-oss-120b-1:0",
             "name": "gpt-oss-120b",
+            "provider": "OpenAI",
             "supports_temperature": True,
             "max_output_tokens": 16384,
         } in ui_models

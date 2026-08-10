@@ -1,4 +1,4 @@
-"""Unit tests for AutoLangChatPlugin.startup()/shutdown() idempotency (XMGPLAT-10682).
+"""Unit tests for AutoLangChatPlugin.startup()/shutdown() idempotency.
 
 These tests build a minimal AutoLangChatPlugin instance without running
 __init__ (which requires a full FastAPI app, validated ChatConfig, and
@@ -20,7 +20,7 @@ import pytest
 # ``autolangchat``/``autolangchat.db`` (among others) with bare stub packages
 # in ``sys.modules`` while loading a single submodule in isolation. On some
 # collection orders those stubs are left behind instead of being restored to
-# the real package (see XMGPLAT-10766), so a later plain
+# the real package, so a later plain
 # ``from autolangchat.plugin import ...`` here can pick up the stub and fail
 # with ImportError. Only these two specific entries are ever left stubbed;
 # drop them (if they are indeed bare stubs, i.e. have no ``__spec__``) so
@@ -47,10 +47,14 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
     plugin._feedback_store = None
     plugin._token_usage_store = None
     plugin._conversation_store = None
+    plugin._user_settings_store = None
+    plugin._mcp_session_manager = None
+    plugin._mcp_exit_stack = None
     plugin.config = SimpleNamespace(
         checkpoint_ttl_seconds=3600,
         kb_credibility_decay_enabled=False,
         kb_allow_empty=True,
+        mcp_enabled=False,
     )
     plugin.chat_graph = SimpleNamespace(checkpointer=MagicMock(name="checkpointer"))
     plugin.websocket_handler = SimpleNamespace(shutdown=AsyncMock(), feedback_store=None)
@@ -186,7 +190,74 @@ async def test_startup_after_shutdown_restarts(patch_checkpointer):
 
 
 # ---------------------------------------------------------------------------
-# Conversation persistence: MemorySaver degraded-mode warning (XMGPLAT-10380)
+# MCP session manager lifecycle
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_mcp_session_manager():
+    """A fake StreamableHTTPSessionManager-like object tracking run() enter/exit."""
+    from contextlib import asynccontextmanager
+
+    state = SimpleNamespace(entered=False, exited=False)
+
+    @asynccontextmanager
+    async def run():
+        state.entered = True
+        try:
+            yield
+        finally:
+            state.exited = True
+
+    return SimpleNamespace(run=run, _state=state)
+
+
+async def test_startup_enters_mcp_session_manager_when_enabled(patch_checkpointer):
+    session_manager = _make_fake_mcp_session_manager()
+    plugin = _make_plugin(_mcp_session_manager=session_manager)
+    plugin.config.mcp_enabled = True
+    before = asyncio.all_tasks()
+
+    await plugin.startup()
+
+    assert session_manager._state.entered is True
+    assert session_manager._state.exited is False
+    assert plugin._mcp_exit_stack is not None
+
+    await _cancel_new_tasks(before)
+    await plugin.shutdown()
+
+
+async def test_shutdown_exits_mcp_session_manager_when_enabled(patch_checkpointer):
+    session_manager = _make_fake_mcp_session_manager()
+    plugin = _make_plugin(_mcp_session_manager=session_manager)
+    plugin.config.mcp_enabled = True
+    before = asyncio.all_tasks()
+    await plugin.startup()
+
+    await plugin.shutdown()
+
+    assert session_manager._state.exited is True
+    assert plugin._mcp_exit_stack is None
+
+    await _cancel_new_tasks(before)
+
+
+async def test_mcp_session_manager_not_entered_when_disabled(patch_checkpointer):
+    session_manager = _make_fake_mcp_session_manager()
+    plugin = _make_plugin(_mcp_session_manager=session_manager)
+    before = asyncio.all_tasks()
+
+    await plugin.startup()
+
+    assert session_manager._state.entered is False
+    assert plugin._mcp_exit_stack is None
+
+    await _cancel_new_tasks(before)
+    await plugin.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Conversation persistence: MemorySaver degraded-mode warning
 # ---------------------------------------------------------------------------
 
 

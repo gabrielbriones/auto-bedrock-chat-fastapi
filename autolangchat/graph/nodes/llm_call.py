@@ -10,10 +10,20 @@ receives typing indicators while the LLM is generating.
 
 Fallback model: if the primary model raises a context-window error,
 the node retries once with config.fallback_model (if configured).
+
+Inference-profile retry: some models can only be invoked through a
+cross-region inference profile id (e.g. a "us."-prefixed id), not the bare
+foundation-model id. Bedrock's own ValidationException says so explicitly
+("... retry your request with the ID or ARN of an inference profile that
+contains this model"), so rather than hardcoding which model ids are
+affected (Bedrock's supported set changes over time), the node detects that
+specific error and retries once with a region-prefixed id derived from
+config.aws_region.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -26,7 +36,10 @@ except ImportError:  # pragma: no cover
 
 from langchain_core.runnables import RunnableConfig
 
-from ...exceptions import ContextWindowExceededError
+from ...config import MODEL_ID_REGION_PREFIXES, split_model_id
+from ...exceptions import ContextWindowExceededError, ModelInvocationError
+from ...message_preprocessor import MessagePreprocessor
+from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
 from ..state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -36,12 +49,77 @@ _CONTEXT_WINDOW_ERROR_CODES = {
     "ValidationException",
     "ServiceUnavailableException",
 }
+# Multiplier applied to all truncation thresholds when retrying after a
+# context-window error (see MessagePreprocessor.preprocess_messages'
+# threshold_factor). 0.5 halves every threshold/target for one aggressive
+# re-truncation pass before falling back to a different model.
+_EMERGENCY_TRUNCATION_THRESHOLD_FACTOR = 0.5
+
 _CONTEXT_WINDOW_PHRASES = (
     "too many tokens",
     "input is too long",
     "context length exceeded",
     "maximum context",
 )
+
+# Substring seen in Bedrock's ValidationException message when a model can
+# only be invoked through a cross-region inference profile ID (e.g. a
+# "us."-prefixed id) rather than the bare foundation-model id -- e.g.
+# "Invocation of model ID meta.llama3-3-70b-instruct-v1:0 with on-demand
+# throughput isn't supported. Retry your request with the ID or ARN of an
+# inference profile that contains this model." This isn't specific to any
+# one model/provider -- which ids are affected changes as Bedrock rolls out
+# new models, and _PROFILES has no flag for it -- so rather than maintaining
+# a denylist, `llm_call_node` retries once with a region-prefixed id whenever
+# Bedrock itself reports this (see `_retry_model_id_with_inference_profile`).
+_INFERENCE_PROFILE_REQUIRED_PHRASE = "on-demand throughput isn't supported"
+
+# Bedrock Converse stopReason values that represent a normal, expected end of
+# generation -- the model finished its answer ("end_turn") or is pausing to
+# make a tool call ("tool_use"). Any other stopReason ("max_tokens",
+# "stop_sequence", "content_filtered", "guardrail_intervened", etc.) means
+# generation was cut short for a reason the caller didn't ask for, which is
+# worth a WARNING so it's visible in logs without having to inspect
+# graph_result["metadata"]["stop_reason"] directly (XMGPLAT-11208).
+_EXPECTED_STOP_REASONS = {"end_turn", "tool_use"}
+
+# Shown to the end user in place of a blank message when a model exhausts its
+# entire max_tokens budget without emitting any visible text -- e.g.
+# reasoning-style models (claude-sonnet-5) spending the whole budget on
+# hidden reasoning. Without this, the turn silently looks like the assistant
+# said nothing (XMGPLAT-11208).
+_TRUNCATED_EMPTY_RESPONSE_MESSAGE = (
+    "I wasn't able to generate a response before running out of output tokens. "
+    "Please try increasing the max tokens setting and asking again."
+)
+
+# AWS region prefix (e.g. "us-east-1") -> Bedrock cross-region
+# inference-profile prefix. Falls back to "us" (the broadest-coverage,
+# most commonly available profile) for regions not covered here -- see
+# `_infer_profile_prefix_for_region`.
+_REGION_TO_PROFILE_PREFIX = {
+    "us": "us",
+    "eu": "eu",
+    "ap-northeast": "jp",
+    "ap-southeast-2": "au",
+}
+
+# Bedrock's real error text uses a typographic right single quotation mark
+# (U+2019, "isn\u2019t") rather than a plain ASCII apostrophe (U+0027,
+# "isn't") -- unlike our hardcoded constant above, which was written with a
+# plain apostrophe. Without normalizing, the substring check below silently
+# never matches against a real Bedrock exception, so the inference-profile
+# retry never fires (it only "worked" against test fixtures that happened to
+# use the same plain apostrophe). Normalize both sides to ASCII before
+# comparing so either quote style matches.
+_APOSTROPHE_VARIANTS = ("\u2019", "\u2018", "`")
+
+
+def _normalize_apostrophes(text: str) -> str:
+    """Replace typographic apostrophe variants with a plain ASCII ``'``."""
+    for variant in _APOSTROPHE_VARIANTS:
+        text = text.replace(variant, "'")
+    return text
 
 
 def _is_context_window_error(exc: Exception) -> bool:
@@ -50,11 +128,154 @@ def _is_context_window_error(exc: Exception) -> bool:
     return any(phrase in msg for phrase in _CONTEXT_WINDOW_PHRASES)
 
 
+def _requires_inference_profile(exc: Exception) -> bool:
+    """Return True when Bedrock rejected the request because this model can
+    only be invoked through a cross-region inference profile id."""
+    return _INFERENCE_PROFILE_REQUIRED_PHRASE in _normalize_apostrophes(str(exc).lower())
+
+
+def _infer_profile_prefix_for_region(aws_region: Optional[str]) -> str:
+    """Best-guess Bedrock inference-profile prefix ("us", "eu", "jp", "au")
+    for a given AWS region string, e.g. "us-east-1" -> "us". Defaults to
+    "us" -- the broadest-coverage profile -- when the region is unset or
+    isn't one of the handful of prefixes we know about."""
+    region = (aws_region or "").lower()
+    for region_prefix, profile_prefix in _REGION_TO_PROFILE_PREFIX.items():
+        if region.startswith(region_prefix):
+            return profile_prefix
+    return "us"
+
+
+def _retry_model_id_with_inference_profile(model_id: str, chat_config: Any) -> Optional[str]:
+    """Return a region-prefixed retry id for ``model_id`` (e.g.
+    "meta.llama3-3-70b-instruct-v1:0" -> "us.meta.llama3-3-70b-instruct-v1:0"),
+    or ``None`` if ``model_id`` already carries a recognized region prefix
+    (nothing left to retry with)."""
+    region_prefix, _provider_key = split_model_id(model_id)
+    if region_prefix in MODEL_ID_REGION_PREFIXES:
+        return None
+    prefix = _infer_profile_prefix_for_region(getattr(chat_config, "aws_region", None))
+    return f"{prefix}.{model_id}"
+
+
+def _extract_json_object(text: str) -> Any:
+    """Best-effort ``json.loads`` of ``text``, tolerating leading/trailing
+    prose around a single JSON object/array (some models wrap a tool-call
+    attempt in a sentence or code fence instead of returning bare JSON).
+
+    Returns ``None`` when no JSON object/array could be parsed.
+    """
+    stripped = text.strip().strip("`").strip()
+    for candidate in (stripped, text):
+        try:
+            return json.loads(candidate)
+        except (ValueError, TypeError):
+            pass
+    start = min((i for i in (stripped.find("{"), stripped.find("[")) if i != -1), default=-1)
+    end = max(stripped.rfind("}"), stripped.rfind("]"))
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(stripped[start : end + 1])
+    except (ValueError, TypeError):
+        return None
+
+
+def _coerce_tool_args(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    """Pull the argument mapping out of a text-emitted tool call, tolerating
+    both the ``parameters`` (Llama/Bedrock) and ``arguments`` (OpenAI) keys
+    and an arguments value that is itself a JSON *string* rather than an
+    object. Returns ``{}`` when nothing usable is present -- a tool call with
+    no arguments is still a valid call.
+    """
+    args = candidate.get("parameters")
+    if args is None:
+        args = candidate.get("arguments")
+    if isinstance(args, str):
+        decoded = _extract_json_object(args)
+        args = decoded if isinstance(decoded, dict) else {}
+    return args if isinstance(args, dict) else {}
+
+
+def _recover_tool_calls_from_text(content: Any, tool_names: set) -> List[Dict[str, Any]]:
+    """Recover tool calls that the model emitted as plain response *text*
+    instead of Bedrock returning them as structured ``toolUse`` blocks.
+
+    Meta's Llama models are fine-tuned to emit tool calls as bare JSON --
+    ``{"type": "function", "name": "download_file", "parameters": {...}}`` --
+    and Bedrock's Converse implementation does not reliably translate that
+    into a ``toolUse`` content block. When it doesn't, ``AIMessage.tool_calls``
+    stays empty, ``routing.should_continue()`` ends the turn, and the raw JSON
+    is shown to the user as if it were the final answer (XMGPLAT-11193).
+
+    This is the same recovery the pre-LangGraph ``LlamaParser`` performed with
+    a regex over the raw completion; it is reinstated here as a provider-
+    agnostic fallback on top of the Converse API. Only called when
+    ``tool_calls`` is already empty and tools were bound for this turn.
+
+    Matching is deliberately narrow -- the parsed object (or an item of a
+    parsed list) must be a dict whose ``name`` matches one of the tools
+    actually bound for this call, and it must carry a
+    ``parameters``/``arguments`` key or an explicit ``"type": "function"``
+    marker -- so a model legitimately discussing or returning JSON that merely
+    mentions a tool by name isn't misread as a call.
+
+    Returns LangChain-style tool-call dicts (``name``/``args``/``id``/``type``),
+    or an empty list when nothing recoverable is found.
+    """
+    if not isinstance(content, str) or not tool_names:
+        return []
+    parsed = _extract_json_object(content)
+    candidates = parsed if isinstance(parsed, list) else [parsed]
+    recovered: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        name = candidate.get("name")
+        if name not in tool_names:
+            continue
+        if not (candidate.get("type") == "function" or "parameters" in candidate or "arguments" in candidate):
+            continue
+        recovered.append(
+            {
+                "name": name,
+                "args": _coerce_tool_args(candidate),
+                "id": f"recovered-{uuid.uuid4()}",
+                "type": "tool_call",
+            }
+        )
+    return recovered
+
+
+def _wrap_model_invocation_error(model_id: str, exc: Exception, chat_config: Any) -> ModelInvocationError:
+    """Wrap a raw Bedrock/langchain-aws exception into a ``ModelInvocationError``
+    with a clear, specific, user-facing message -- instead of letting a bare
+    ``ValidationException`` bubble up to be flattened into the generic
+    "I'm having trouble with the AI model" bucket in
+    ``AutoLangChatWebSocketHandler._create_error_response()``.
+    """
+    display_name = (
+        chat_config.get_model_display_name(model_id) if hasattr(chat_config, "get_model_display_name") else model_id
+    )
+    reason = str(exc)
+    hint = ""
+    if _INFERENCE_PROFILE_REQUIRED_PHRASE in _normalize_apostrophes(reason.lower()):
+        hint = (
+            " This model can only be invoked through a cross-region inference "
+            "profile ID (e.g. a 'us.' prefix), not the bare model ID -- it "
+            "should be removed from AUTOCHAT_AVAILABLE_MODELS / the settings "
+            "sidebar catalog until a working profile ID is available."
+        )
+    message = f"Model '{display_name}' ({model_id}) rejected the request: {reason}.{hint}"
+    return ModelInvocationError(message, model_id=model_id, reason=reason)
+
+
 def _to_langchain_messages(message_dicts: List[Dict]) -> List[Any]:
     """Convert internal dict messages to LangChain BaseMessage objects."""
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     lc_messages = []
+
     for msg in message_dicts:
         role = msg.get("role", "user")
         content = msg.get("content", "")
@@ -109,15 +330,17 @@ def _from_langchain_message(ai_msg: Any) -> Dict:
             "output_tokens": ai_msg.usage_metadata.get("output_tokens"),
         }
 
+    response_metadata = getattr(ai_msg, "response_metadata", {}) or {}
+
     return {
         "role": "assistant",
         "content": content,
         "tool_calls": tool_calls,
         "metadata": {
             "message_id": str(uuid.uuid4()),
-            "model_id": getattr(ai_msg, "response_metadata", {}).get("modelId")
-            or getattr(ai_msg, "response_metadata", {}).get("model_id"),
+            "model_id": response_metadata.get("modelId") or response_metadata.get("model_id"),
             "usage": usage,
+            "stop_reason": response_metadata.get("stopReason"),
             "timestamp": datetime.now().isoformat(),
         },
     }
@@ -126,55 +349,43 @@ def _from_langchain_message(ai_msg: Any) -> Dict:
 def _build_llm(model_id: str, chat_config: Any):
     """Construct a ChatBedrockConverse instance for the given model_id.
 
-    Claude via Bedrock Converse API rejects requests that specify both
-    ``temperature`` and ``top_p`` simultaneously.  We only pass ``top_p``
-    when ``temperature`` is not explicitly configured (i.e., is None).
+    Parameter selection is delegated to
+    :func:`~autolangchat.model_capabilities.build_bedrock_kwargs`, which drops
+    parameters the model doesn't support (e.g. ``temperature``/``top_p`` for
+    reasoning models) and clamps ``max_tokens`` to the model's output cap, so
+    every model in the catalog is usable and not just Claude Sonnet 5.
 
-    When ``chat_config.langchain_tools`` is populated, the LLM is bound
-    with those tools so the model can request tool calls.
+    When ``chat_config.langchain_tools`` is populated and the model supports
+    tool calling, the LLM is bound with those tools so the model can request
+    tool calls.
     """
     if ChatBedrockConverse is None:
         raise ImportError("langchain-aws is required. Install with: pip install langchain-aws")
-    temperature = getattr(chat_config, "temperature", None)
-    top_p = getattr(chat_config, "top_p", None)
 
-    kwargs: Dict[str, Any] = {
-        "model": model_id,
-        "region_name": chat_config.aws_region,
-        "max_tokens": chat_config.max_tokens,
-    }
-    # Pass only one of temperature / top_p to avoid ValidationException
-    if temperature is not None:
-        kwargs["temperature"] = temperature
-    elif top_p is not None:
-        kwargs["top_p"] = top_p
-
-    logger.debug("Building ChatBedrockConverse: args=%s", kwargs)
-
-    # Explicit credentials override the boto3 credential chain when set
-    aws_access_key_id = getattr(chat_config, "aws_access_key_id", None)
-    aws_secret_access_key = getattr(chat_config, "aws_secret_access_key", None)
-    if aws_access_key_id and aws_secret_access_key:
-        kwargs["aws_access_key_id"] = aws_access_key_id
-        kwargs["aws_secret_access_key"] = aws_secret_access_key
     # Set a generous read timeout on the underlying boto3 client so that
     # large-output requests (e.g. max_tokens=8192) don't hit the default 60s
-    # botocore limit.  The floor of 300s covers even the slowest generation
-    # runs; chat_config.timeout (default 30s) is intentionally ignored here
-    # because it governs tool-call HTTP timeouts, not Bedrock generation time.
-    try:
-        from botocore.config import Config as BotocoreConfig
+    # botocore limit.  chat_config.timeout (default 30s) is intentionally
+    # only a floor input here because it governs tool-call HTTP timeouts, not
+    # Bedrock generation time.
+    kwargs = build_bedrock_kwargs(
+        model_id,
+        chat_config,
+        read_timeout=getattr(chat_config, "timeout", None) or DEFAULT_READ_TIMEOUT,
+    )
 
-        _read_timeout = max(300, getattr(chat_config, "timeout", 300))
-        kwargs["config"] = BotocoreConfig(read_timeout=_read_timeout, retries={"max_attempts": 1})
-    except ImportError:
-        pass  # botocore not available (shouldn't happen with langchain-aws)
+    logger.debug("Building ChatBedrockConverse: args=%s", kwargs)
 
     llm = ChatBedrockConverse(**kwargs)
 
     # Bind tools from config if available (enables tool-call requests)
     lc_tools = getattr(chat_config, "langchain_tools", None)
-    if lc_tools:
+    if lc_tools and not supports_tool_calling(model_id):
+        logger.warning(
+            "Model '%s' does not support tool calling; skipping bind_tools for %d tool(s)",
+            model_id,
+            len(lc_tools),
+        )
+    elif lc_tools:
         try:
             llm = llm.bind_tools(lc_tools)
             logger.debug("LLM bound with %d tool(s)", len(lc_tools))
@@ -295,15 +506,41 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         Chunks are forwarded to ``state["on_progress"]`` while the model
         generates, so the client sees incremental typing indicators.
 
-    Fallback model:
-        If the primary call raises a context-window error and
-        ``chat_config.fallback_model`` is set, the node retries once with
-        the fallback model and records ``"fallback_model_used": True`` in
-        metadata.
+    Context-window error recovery (two safety nets, in order):
+        1. Emergency re-truncation: the conversation is re-preprocessed
+           with ``threshold_factor=0.5`` (halving every truncation
+           threshold/target) and retried once against the *same* model.
+           Sets ``metadata["emergency_retruncation_applied"] = True`` as
+           soon as re-truncation runs, regardless of whether the retry
+           call itself then succeeds (if it doesn't, safety net 2 still
+           runs and this flag stays ``True``).
+        2. Fallback model: if re-truncation still fails and
+           ``chat_config.fallback_model`` is set, the node retries once
+           more with the fallback model and records
+           ``metadata["fallback_model_used"] = True``.
 
     Token usage:
         Surfaced from ``AIMessage.usage_metadata`` into
         ``metadata["usage"]``.
+
+    Stop reason:
+        Bedrock Converse's ``response_metadata["stopReason"]`` (e.g.
+        ``end_turn``, ``max_tokens``, ``tool_use``) is surfaced into the
+        top-level ``metadata["stop_reason"]`` so callers can distinguish a
+        genuine empty response from a truncated one (XMGPLAT-11208). A
+        stop_reason other than ``end_turn``/``tool_use`` is logged at
+        WARNING level.
+
+    Truncated empty response:
+        If ``stop_reason == "max_tokens"`` and the model produced no visible
+        text and no tool calls (e.g. a reasoning-style model that spent its
+        entire budget on hidden reasoning), the empty ``content`` is
+        replaced with a user-facing placeholder message and
+        ``metadata["truncated_empty_response"] = True`` is set so callers
+        can detect the substitution without string-matching the placeholder
+        text. Scoped to ``max_tokens`` only -- other stop reasons that can
+        also leave content empty (e.g. ``content_filtered``,
+        ``guardrail_intervened``) are left untouched.
     """
     messages: List[Dict] = state.get("messages", [])
     metadata: Dict = dict(state.get("metadata") or {})
@@ -325,25 +562,112 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         ai_msg = await _invoke_with_streaming(llm, lc_messages, on_progress)
         metadata["fallback_model_used"] = False
     except Exception as exc:
-        if fallback_model and _is_context_window_error(exc):
+        if _is_context_window_error(exc):
+            # --- Safety net 1: emergency re-truncation, same model ---
+            # Re-run preprocessing with all thresholds halved (threshold_factor)
+            # and retry the primary model once before switching models.
             logger.warning(
-                "Context-window error on %s; retrying with fallback model %s",
+                "Context-window error on %s; retrying with emergency re-truncation "
+                "(threshold_factor=%s) before considering a fallback model",
                 primary_model,
-                fallback_model,
+                _EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
             )
             try:
-                llm_fb = _build_llm(fallback_model, chat_config)
-                ai_msg = await _invoke_with_streaming(llm_fb, lc_messages, on_progress)
-                metadata["fallback_model_used"] = True
-                metadata["fallback_model"] = fallback_model
-            except Exception as fb_exc:
-                raise ContextWindowExceededError(
-                    f"Both primary ({primary_model}) and fallback ({fallback_model}) models failed"
-                ) from fb_exc
+                retruncated = await MessagePreprocessor(config=chat_config).preprocess_messages(
+                    messages=list(messages),
+                    on_progress=on_progress,
+                    threshold_factor=_EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
+                )
+                # Mark the safety net as applied as soon as re-truncation runs --
+                # regardless of whether the subsequent retry call itself succeeds
+                # (a failed retry still falls back to safety net 2 having gone
+                # through this path, which callers need to be able to observe).
+                metadata["emergency_retruncation_applied"] = True
+                llm = _build_llm(primary_model, chat_config)
+                ai_msg = await _invoke_with_streaming(llm, _to_langchain_messages(retruncated), on_progress)
+                metadata["fallback_model_used"] = False
+            except Exception as retry_exc:
+                if not (fallback_model and _is_context_window_error(retry_exc)):
+                    raise ContextWindowExceededError(
+                        f"Primary model ({primary_model}) failed even after emergency re-truncation"
+                    ) from retry_exc
+
+                # --- Safety net 2: fallback model ---
+                logger.warning(
+                    "Emergency re-truncation insufficient on %s; retrying with fallback model %s",
+                    primary_model,
+                    fallback_model,
+                )
+                try:
+                    llm_fb = _build_llm(fallback_model, chat_config)
+                    ai_msg = await _invoke_with_streaming(llm_fb, lc_messages, on_progress)
+                    metadata["fallback_model_used"] = True
+                    metadata["fallback_model"] = fallback_model
+                except Exception as fb_exc:
+                    raise ContextWindowExceededError(
+                        f"Primary ({primary_model}), emergency re-truncation, and fallback "
+                        f"({fallback_model}) models all failed"
+                    ) from fb_exc
+        elif _requires_inference_profile(exc) and (
+            profile_model_id := _retry_model_id_with_inference_profile(primary_model, chat_config)
+        ):
+            # Bedrock rejected the bare model id and told us to use a
+            # cross-region inference profile id instead -- retry once with
+            # one derived from chat_config.aws_region, rather than failing
+            # outright or requiring every such model to be manually
+            # allow/deny-listed ahead of time.
+            logger.warning(
+                "%s requires a cross-region inference profile; retrying as %s",
+                primary_model,
+                profile_model_id,
+            )
+            try:
+                llm_profile = _build_llm(profile_model_id, chat_config)
+                ai_msg = await _invoke_with_streaming(llm_profile, lc_messages, on_progress)
+                metadata["fallback_model_used"] = False
+                metadata["inference_profile_model_id"] = profile_model_id
+            except Exception as profile_exc:
+                logger.error(
+                    "Inference-profile retry also failed for %s (tried %s): %s",
+                    primary_model,
+                    profile_model_id,
+                    profile_exc,
+                )
+                raise _wrap_model_invocation_error(primary_model, profile_exc, chat_config) from profile_exc
         else:
-            raise
+            logger.error("LLM call failed for model %s: %s", primary_model, exc)
+            raise _wrap_model_invocation_error(primary_model, exc, chat_config) from exc
 
     response_dict = _from_langchain_message(ai_msg)
+
+    # Some models (notably Meta Llama, XMGPLAT-11193) emit a tool call as
+    # plain response text -- `{"type": "function", "name": "download_file",
+    # "parameters": {...}}` -- instead of Bedrock returning it as a structured
+    # toolUse block. `tool_calls` then stays empty, routing.should_continue()
+    # ends the turn, and the raw JSON is shown to the user as if it were the
+    # answer. Recover the call here so the graph routes to the tools node,
+    # which is what the pre-LangGraph LlamaParser did via regex.
+    if not response_dict.get("tool_calls"):
+        bound_tool_names = {getattr(t, "name", None) for t in (getattr(chat_config, "langchain_tools", None) or [])}
+        bound_tool_names.discard(None)
+        recovered = _recover_tool_calls_from_text(response_dict.get("content"), bound_tool_names)
+        if recovered:
+            effective_model_id = metadata.get("inference_profile_model_id") or (
+                metadata.get("fallback_model") if metadata.get("fallback_model_used") else primary_model
+            )
+            logger.warning(
+                "Model %s emitted %d tool call(s) as plain text instead of structured toolUse "
+                "block(s); recovering: %s",
+                effective_model_id,
+                len(recovered),
+                [tc["name"] for tc in recovered],
+            )
+            response_dict["tool_calls"] = recovered
+            # Drop the raw JSON from the visible answer -- it is the call, not
+            # prose, and replaying it as assistant text would confuse the next
+            # turn now that a real tool_call carries the same information.
+            response_dict["content"] = ""
+            metadata["recovered_text_tool_calls"] = metadata.get("recovered_text_tool_calls", 0) + len(recovered)
 
     if logger.isEnabledFor(logging.DEBUG):
         content_len, preview = _generate_message_preview(response_dict.get("content", ""))
@@ -371,5 +695,36 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
 
     # Update model_id with the actual model used (may differ if fallback was triggered)
     metadata["model_id"] = response_dict.get("metadata", {}).get("model_id") or primary_model
+
+    # Surface the last call's Bedrock Converse stopReason so callers (e.g.
+    # Workload Analyzer's Stage 2 report generator) can distinguish a genuine
+    # empty response from a truncated one (XMGPLAT-11208), instead of always
+    # seeing "unknown". Overwritten each round so it reflects the final call.
+    stop_reason = response_dict.get("metadata", {}).get("stop_reason")
+    metadata["stop_reason"] = stop_reason
+    if stop_reason and stop_reason not in _EXPECTED_STOP_REASONS:
+        logger.warning(
+            "LLM call for model %s ended with unexpected stop_reason=%s (expected one of %s)",
+            metadata["model_id"],
+            stop_reason,
+            sorted(_EXPECTED_STOP_REASONS),
+        )
+
+    # Reasoning-style models (e.g. claude-sonnet-5) can exhaust their entire
+    # max_tokens budget on hidden reasoning before emitting any visible text,
+    # leaving `content` empty with no indication to the end user of what
+    # happened -- it looks like the assistant simply said nothing. Surface a
+    # friendly placeholder instead of silently returning an empty message.
+    # Scoped narrowly to max_tokens -- other stop reasons that can also leave
+    # content empty (e.g. content_filtered, guardrail_intervened) are left
+    # alone rather than guessing at a matching explanation for each.
+    if stop_reason == "max_tokens" and not response_dict.get("content") and not response_dict.get("tool_calls"):
+        logger.info(
+            "Model %s produced no visible text before exhausting max_tokens; substituting a "
+            "user-facing placeholder message for the empty response",
+            metadata["model_id"],
+        )
+        response_dict["content"] = _TRUNCATED_EMPTY_RESPONSE_MESSAGE
+        metadata["truncated_empty_response"] = True
 
     return {"messages": list(messages) + [response_dict], "metadata": metadata}

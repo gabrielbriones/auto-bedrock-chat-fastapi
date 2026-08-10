@@ -47,10 +47,15 @@ psycopg = {version = ">=3.1.0", optional = true, extras = ["pool"]}
 psycopg-binary = {version = ">=3.1.0", optional = true}
 pgvector = {version = ">=0.2.0", optional = true}
 langgraph-checkpoint-postgres = {version = ">=2.0.0", optional = true}
+mcp = {version = ">=1.0.0,<2.0.0", optional = true}
 
 # LangGraph / LangChain (core graph orchestration — required for autolangchat)
 langgraph = ">=0.2.0"
-langchain-aws = ">=0.2.0"
+# Floor pinned to 1.6.2: the settings-sidebar model catalog is derived from
+# `langchain_aws.data._profiles._PROFILES`, and older releases (e.g. 1.5.1) lack
+# newer profiles such as `us.anthropic.claude-sonnet-5` — which the default
+# `model_id` validator then rejects at startup.
+langchain-aws = ">=1.6.2"
 langchain-core = ">=0.3.0"
 
 [tool.semantic_release]
@@ -76,6 +81,7 @@ patch_tags = ["fix", "perf"]
 [tool.poetry.extras]
 sso = ["PyJWT", "passlib"]
 postgres = ["psycopg", "psycopg-binary", "pgvector", "langgraph-checkpoint-postgres"]
+mcp = ["mcp"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0.0"

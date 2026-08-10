@@ -5,12 +5,14 @@ import atexit
 import html
 import logging
 import os
+import posixpath
 import re
 import secrets
-from contextlib import asynccontextmanager
-from typing import Any, Callable, Optional
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import unquote, urlsplit
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,6 +23,7 @@ from .exceptions import AutoLangChatError
 from .graph.graph import build_chat_graph
 from .graph.tools.generator import ToolsGenerator
 from .graph.tools.manager import ToolManager
+from .model_capabilities import build_bedrock_kwargs
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
 from .websocket_handler import WebSocketChatHandler
@@ -55,6 +58,33 @@ def _load_sso_imports():
     SSOTokenError = _SSOTokenError
     SSOValidationError = _SSOValidationError
     extract_user_id_from_sso_session = _extract_user_id
+
+
+# MCP imports are deferred — only loaded when mcp_enabled=True at runtime.
+# Install with the [mcp] extra to get the official mcp Python SDK.
+build_mcp_server = None  # type: ignore[assignment]
+build_mcp_session_manager = None  # type: ignore[assignment]
+build_protected_resource_routes = None  # type: ignore[assignment]
+build_authorization_server_metadata_route = None  # type: ignore[assignment]
+
+
+def _load_mcp_imports():
+    """Lazily import the MCP module; raises ImportError with a helpful message."""
+    global build_mcp_server, build_mcp_session_manager
+    global build_protected_resource_routes, build_authorization_server_metadata_route
+    if build_mcp_server is not None:
+        return  # already loaded
+    try:
+        from .mcp.discovery import build_authorization_server_metadata_route as _build_as_metadata_route
+        from .mcp.discovery import build_protected_resource_routes as _build_protected_resource_routes
+        from .mcp.server import build_mcp_server as _build_mcp_server
+        from .mcp.server import build_mcp_session_manager as _build_mcp_session_manager
+    except ImportError as exc:
+        raise ImportError("MCP dependencies are not installed. " "Install with: pip install autolangchat[mcp]") from exc
+    build_mcp_server = _build_mcp_server
+    build_mcp_session_manager = _build_mcp_session_manager
+    build_protected_resource_routes = _build_protected_resource_routes
+    build_authorization_server_metadata_route = _build_as_metadata_route
 
 
 logger = logging.getLogger(__name__)
@@ -186,6 +216,10 @@ class AutoLangChatPlugin:
         if not self._preset_variables:
             self._preset_variables = self._infer_variables_from_templates()
 
+        # Give every preset prompt a stable, unique id so it can be targeted
+        # by a deep-link query string (?prompt=<id>&VAR=value...).
+        self._assign_preset_prompt_ids()
+
         # Setup logging configuration
         _setup_logging(self.config)
 
@@ -217,6 +251,26 @@ class AutoLangChatPlugin:
             _load_sso_imports()
             self.sso_provider = SSOProvider(self.config)
             self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
+
+        # MCP (Model Context Protocol) server components (only when MCP is
+        # enabled). Pure tool provider over Streamable HTTP -- does not reuse
+        # chat_graph; MCP clients bring their own LLM/tool-calling loop.
+        # Built after the SSO block above so the MCP SSO auth path (tools/call
+        # recognizing an SSO session token presented as a Bearer token) can
+        # reuse ``self.sso_session_store`` -- see ``mcp/auth.py``.
+        self._mcp_server = None
+        self._mcp_session_manager = None
+        self._mcp_exit_stack: Optional[AsyncExitStack] = None
+        if self.config.mcp_enabled:
+            _load_mcp_imports()
+            self._mcp_server = build_mcp_server(
+                tools_generator,
+                self.tool_manager,
+                sso_session_store=self.sso_session_store,
+                sso_session_secret=self.config.sso_session_secret,
+                require_tool_auth=self.config.require_tool_auth,
+            )
+            self._mcp_session_manager = build_mcp_session_manager(self._mcp_server)
 
         # Shared KB store (created once, reused across requests)
         self._kb_store = None
@@ -272,6 +326,17 @@ class AutoLangChatPlugin:
         logger.debug("Checking conversation store configuration and initializing...")
         self._conversation_store = create_conversation_store(self.config)
 
+        # Per-user settings store. Constructed eagerly so the WebSocket
+        # handler can be wired immediately; the connection pool / SQLite file
+        # is opened in the FastAPI startup event below and closed during
+        # shutdown. Backend selection (sqlite vs postgres) and configuration
+        # validation live in the factory. Persists the Settings-sidebar
+        # config_overrides for authenticated users only.
+        from .db import create_user_settings_store
+
+        logger.debug("Checking user settings store configuration and initializing...")
+        self._user_settings_store = create_user_settings_store(self.config)
+
         # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
@@ -298,6 +363,7 @@ class AutoLangChatPlugin:
             feedback_authorizer=self._feedback_authorizer,
             token_usage_store=self._token_usage_store,
             conversation_store=self._conversation_store,
+            user_settings_store=self._user_settings_store,
         )
 
         # Setup templates for UI
@@ -332,6 +398,35 @@ class AutoLangChatPlugin:
 
         return list(seen.values())
 
+    def _assign_preset_prompt_ids(self) -> None:
+        """Ensure every preset prompt has a stable, unique ``id``.
+
+        The ``id`` is what deep-link query strings (``?prompt=<id>``) use to
+        select a preset prompt from the client, so it must be predictable
+        and stable across restarts. When a prompt dict already defines an
+        ``id`` (e.g. set explicitly in the YAML file), it is kept as-is.
+        Otherwise one is derived by slugifying the ``label``. Collisions
+        (duplicate explicit ids, or duplicate slugs from identical/similar
+        labels) are disambiguated with a numeric suffix.
+        """
+        used_ids: set[str] = set()
+        for prompt in self._preset_prompts:
+            raw_id = str(prompt.get("id") or "").strip()
+            base_id = raw_id or self._slugify(prompt.get("label", "prompt"))
+            candidate = base_id
+            suffix = 2
+            while candidate in used_ids:
+                candidate = f"{base_id}-{suffix}"
+                suffix += 1
+            used_ids.add(candidate)
+            prompt["id"] = candidate
+
+    @staticmethod
+    def _slugify(text: str) -> str:
+        """Convert a label into a URL/query-string-safe slug (lowercase, hyphenated)."""
+        slug = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+        return slug or "prompt"
+
     def _setup_templates(self):
         """Setup Jinja2 templates for UI and mount static files"""
 
@@ -359,17 +454,14 @@ class AutoLangChatPlugin:
                 from langchain_core.messages import HumanMessage
 
                 _llm = ChatBedrockConverse(
-                    model=self.config.model_id,
-                    region_name=self.config.aws_region,
-                    max_tokens=10,
-                    **(
-                        {
-                            "aws_access_key_id": self.config.aws_access_key_id,
-                            "aws_secret_access_key": self.config.aws_secret_access_key,
-                        }
-                        if self.config.aws_access_key_id and self.config.aws_secret_access_key
-                        else {}
-                    ),
+                    **build_bedrock_kwargs(
+                        self.config.model_id,
+                        self.config,
+                        # The probe only needs to prove the model answers.
+                        max_tokens=10,
+                        temperature=None,
+                        top_p=None,
+                    )
                 )
                 await _llm.ainvoke([HumanMessage(content="Hello")])
                 llm_status = {
@@ -459,30 +551,25 @@ class AutoLangChatPlugin:
                     sso_user_display = ""
                     sso_user_id: Optional[str] = None
                     sso_authenticated = False
-                    if self.config.sso_enabled and self.sso_session_store:
-                        _load_sso_imports()
-                        session_token = request.cookies.get("sso_session_token")
-                        if session_token:
-                            session_id = type(self.sso_session_store).validate_session_token(
-                                session_token,
-                                self.config.sso_session_secret,
-                            )
-                            if session_id:
-                                session = self.sso_session_store.get_session(session_id)
-                                if session:
-                                    sso_authenticated = True
-                                    user_info = session.get("user_info", {})
-                                    claims = session.get("id_token_claims", {})
-                                    # Canonical identity — same precedence as WS handler
-                                    # so allowlist checks match what session.user_id holds.
-                                    sso_user_id = extract_user_id_from_sso_session(user_info, claims)
-                                    # Display name is presentation-only; kept separate.
-                                    sso_user_display = (
-                                        user_info.get("email")
-                                        or claims.get("email")
-                                        or user_info.get("username")
-                                        or claims.get("cognito:username", "")
-                                    )
+                    # Set below only when a silent external-IdP-cookie session was
+                    # just minted (see _try_silent_external_idp_cookie_auth) — the
+                    # response must carry this as a new sso_session_token cookie so
+                    # subsequent requests (including the WebSocket handshake) see it.
+                    session, new_sso_session_token = await self._resolve_sso_session(request)
+                    if session:
+                        sso_authenticated = True
+                        user_info = session.get("user_info", {})
+                        claims = session.get("id_token_claims", {})
+                        # Canonical identity — same precedence as WS handler
+                        # so allowlist checks match what session.user_id holds.
+                        sso_user_id = extract_user_id_from_sso_session(user_info, claims)
+                        # Display name is presentation-only; kept separate.
+                        sso_user_display = (
+                            user_info.get("email")
+                            or claims.get("email")
+                            or user_info.get("username")
+                            or claims.get("cognito:username", "")
+                        )
 
                     # Feedback rendering gate (server-side, feature-only).
                     #
@@ -539,7 +626,7 @@ class AutoLangChatPlugin:
                         self.config.conversation_persistence_enabled and self._conversation_store is not None
                     )
 
-                    return self.templates.TemplateResponse(
+                    response = self.templates.TemplateResponse(
                         request,
                         "chat.html",
                         context={
@@ -571,31 +658,42 @@ class AutoLangChatPlugin:
                                 f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
                             ),
                             "conversation_persistence_enabled": conversation_persistence_enabled,
-                            # Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+                            # Dynamic parameter overrides settings sidebar.
                             "enable_config_sidebar": bool(
                                 self.config.enable_config_sidebar and self.config.enable_dynamic_overrides
                             ),
                             "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,
                             # Model choices for the sidebar's model_id dropdown, sourced from
-                            # AUTOCHAT_AVAILABLE_MODELS (falls back to a built-in default list).
-                            # Each entry is {"id": model_id, "name": display_name} -- the UI only
-                            # ever renders "name"; the backend keeps using "id" (model_id).
+                            # AUTOCHAT_AVAILABLE_MODELS (falls back to the full langchain-aws
+                            # catalog). Each entry is {"id": model_id, "name": display_name,
+                            # ...} -- the UI only ever renders "name"; the backend keeps using
+                            # "id" (model_id). The grouped variant drives the two-level
+                            # provider -> model dropdown; the flat list is still used for
+                            # per-model capability lookups by id.
                             "available_models": self.config.get_available_models_for_ui(),
+                            "available_model_groups": self.config.get_available_models_grouped_for_ui(),
                             # Current global values for every overridable parameter, so the
                             # sidebar's controls start at the actual effective defaults rather
                             # than an arbitrary client-side fallback.
-                            "override_defaults": {
-                                "model_id": self.config.model_id,
-                                "temperature": self.config.temperature,
-                                "max_tokens": self.config.max_tokens,
-                                "top_p": self.config.top_p,
-                                "enable_ai_summarization": self.config.enable_ai_summarization,
-                                "enable_rag": self.config.enable_rag,
-                                "kb_top_k_results": self.config.kb_top_k_results,
-                                "kb_similarity_threshold": self.config.kb_similarity_threshold,
-                            },
+                            "override_defaults": self.config.get_override_defaults(),
                         },
                     )
+                    if new_sso_session_token:
+                        # A silent external-IdP-cookie session was just minted for
+                        # this render — persist it exactly like a normal SSO
+                        # callback does, so subsequent requests (WebSocket
+                        # handshake included) are already authenticated.
+                        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+                        is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+                        response.set_cookie(
+                            key="sso_session_token",
+                            value=new_sso_session_token,
+                            httponly=True,
+                            samesite="lax",
+                            secure=is_secure,
+                            max_age=self.config.sso_session_ttl,
+                        )
+                    return response
                 except Exception as e:
                     logger.error(f"Template rendering failed: {str(e)}")
                     return HTMLResponse(
@@ -723,6 +821,10 @@ class AutoLangChatPlugin:
         if self.config.sso_enabled:
             self._setup_sso_routes()
 
+        # MCP (Model Context Protocol) endpoint (only when MCP is enabled)
+        if self.config.mcp_enabled:
+            self._setup_mcp_routes()
+
         # Conversation REST endpoints (per-user, named, persisted
         # conversations). Only registered when a conversation store is
         # actually wired; otherwise every call would 500. Independent of
@@ -768,6 +870,212 @@ class AutoLangChatPlugin:
         if self.config.sso_enabled:
             logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
             logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
+        if self.config.mcp_enabled:
+            logger.info(f"  MCP: {self.config.mcp_endpoint}")
+
+    def _setup_mcp_routes(self):
+        """Mount the MCP (Model Context Protocol) Streamable HTTP endpoint.
+
+        Called by ``_setup_routes`` when ``config.mcp_enabled`` is True.
+        ``self._mcp_session_manager.handle_request`` is a raw ASGI callable
+        (``(scope, receive, send) -> None``); mounting it directly means
+        every HTTP method the Streamable HTTP transport needs (POST for
+        JSON-RPC, GET for the SSE stream, DELETE for session termination)
+        reaches it, matching how static files are mounted in
+        ``_setup_templates``.
+
+        The session manager's ``run()`` context (which starts its internal
+        task group) is entered during ``plugin.startup()`` — see
+        ``_do_startup`` — and exited during ``plugin.shutdown()``. Routes
+        must be mounted before that so the endpoint exists as soon as the
+        app starts serving traffic.
+
+        When SSO is also enabled, additionally mounts the RFC 9728
+        ``/.well-known/oauth-protected-resource`` and RFC 8414
+        ``/.well-known/oauth-authorization-server`` discovery routes so
+        spec-compliant MCP clients can auto-discover the IdP and perform
+        Authorization Code + PKCE themselves (see ``mcp/discovery.py``). The
+        actual login flow is unchanged — MCP clients use the existing
+        ``/chat/auth/sso/login`` web route and present the resulting
+        ``session_token`` as a Bearer token on MCP requests.
+
+        The protected-resource route needs an *absolute* public URL for
+        this endpoint (RFC 9728's ``resource`` field); if neither
+        ``sso_public_base_url`` nor ``api_base_url`` is configured, that
+        route is skipped (logged, not raised) rather than crashing plugin
+        startup with an ``AnyHttpUrl`` validation error on a bare relative
+        path. The AS-metadata route is unaffected — it doesn't depend on
+        this app's own URL, only on the IdP's resolved endpoints.
+        """
+        self.app.mount(self.config.mcp_endpoint, self._mcp_session_manager.handle_request)
+
+        if self.config.sso_enabled:
+            base_url = (self.config.sso_public_base_url or self.config.api_base_url or "").rstrip("/")
+            if base_url:
+                resource_url = f"{base_url}{self.config.mcp_endpoint}"
+                for route in build_protected_resource_routes(resource_url, self.sso_provider, self.config):
+                    self.app.router.routes.append(route)
+            else:
+                logger.warning(
+                    "Skipping /.well-known/oauth-protected-resource: neither "
+                    "sso_public_base_url nor api_base_url is configured, so no "
+                    "absolute resource URL can be resolved. Set "
+                    "AUTOCHAT_SSO_PUBLIC_BASE_URL or AUTOCHAT_API_BASE_URL to enable it."
+                )
+            self.app.router.routes.append(build_authorization_server_metadata_route(self.sso_provider, self.config))
+
+    def _safe_return_to(self, next_param: Optional[str]) -> Optional[str]:
+        """Validate a client-supplied post-SSO-login redirect target.
+
+        Only same-site, relative paths under this app's own chat UI
+        endpoint are allowed. This rejects absolute URLs, protocol-relative
+        URLs (``//evil.com``), and any value containing a scheme, which
+        together prevent an open-redirect via a crafted ``next`` value.
+
+        The prefix check is done against the *decoded and normalized* path
+        (percent-encoding decoded, then dot-segments collapsed via
+        ``posixpath.normpath``), not the raw string — browsers normalize
+        ``..`` segments (including percent-encoded variants like ``%2e%2e``,
+        per the WHATWG URL spec's dot-segment handling) when resolving a
+        redirect's ``Location``, so a raw value like
+        ``/chat/ui/../../admin`` or ``/chat/ui/%2e%2e/%2e%2e/admin`` would
+        otherwise pass a naive ``str.startswith(ui_endpoint)`` check while
+        actually navigating outside the UI subtree once resolved
+        client-side.
+
+        Returns ``None`` when ``next_param`` is missing or fails validation
+        (falls back to the plain chat UI root).
+        """
+        if not next_param:
+            return None
+        if "://" in next_param or next_param.startswith("//") or next_param.startswith("\\"):
+            return None
+        if not next_param.startswith("/"):
+            return None
+        ui_endpoint = self.config.ui_endpoint
+        decoded_path = unquote(urlsplit(next_param).path)
+        normalized_path = posixpath.normpath(decoded_path)
+        if normalized_path != ui_endpoint and not normalized_path.startswith(f"{ui_endpoint}/"):
+            return None
+        return next_param
+
+    async def _resolve_sso_session(self, request: Request) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Resolve the SSO session (if any) that applies to this request.
+
+        Checks the request's own ``sso_session_token`` HttpOnly cookie
+        first. If that doesn't yield a live session and
+        ``config.sso_trust_external_idp_cookies`` is enabled, falls back to
+        minting one from a shared external IdP cookie — see
+        ``_try_silent_external_idp_cookie_auth``.
+
+        Returns:
+            A ``(session, new_session_token)`` tuple:
+
+            - ``session``: the session dict, or ``None`` if unauthenticated.
+            - ``new_session_token``: only set when a *new* session was just
+              minted via the silent external-cookie path — the caller must
+              persist it as a fresh ``sso_session_token`` response cookie.
+              ``None`` when the session came from the request's own
+              existing cookie (nothing new to persist), or when there is no
+              session at all.
+        """
+        if not self.config.sso_enabled or not self.sso_session_store:
+            return None, None
+
+        _load_sso_imports()
+        session_token = request.cookies.get("sso_session_token")
+        if session_token:
+            session_id = type(self.sso_session_store).validate_session_token(
+                session_token,
+                self.config.sso_session_secret,
+            )
+            if session_id:
+                session = self.sso_session_store.get_session(session_id)
+                if session:
+                    return session, None
+
+        if self.config.sso_trust_external_idp_cookies:
+            result = await self._try_silent_external_idp_cookie_auth(request)
+            if result:
+                new_session_token, session = result
+                return session, new_session_token
+
+        return None, None
+
+    async def _try_silent_external_idp_cookie_auth(self, request: Request) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """Best-effort: mint our own SSO session from an external Cognito IdP cookie.
+
+        Opt-in via ``config.sso_trust_external_idp_cookies`` (default off) —
+        see that field's docstring for the full trust-boundary explanation.
+        Looks for the exact cookie names Amazon Cognito's JS SDK writes when
+        it's configured with ``CookieStorage`` (not its localStorage
+        default): ``CognitoIdentityServiceProvider.<client_id>.LastAuthUser``
+        to find the active username, then the matching
+        ``...<username>.idToken`` / ``...accessToken`` / ``...refreshToken``.
+
+        The ID token is put through the exact same validation as a normal
+        SSO callback (JWKS signature, issuer, audience=our own
+        ``sso_client_id``, expiry) via ``SSOProvider.validate_id_token`` —
+        this is what makes it safe to trust a token this app never
+        requested itself: it only succeeds if the token was issued to the
+        SAME registered App Client as this app's own SSO config, by the
+        SAME issuer. A token minted for a different App Client/issuer fails
+        audience/issuer validation and this silently returns ``None``.
+
+        Returns:
+            A ``(session_token, session)`` tuple if a valid external session
+            was found and adopted — ``session_token`` in the same format
+            ``generate_session_token`` returns after a normal callback, and
+            ``session`` the freshly created session dict (returned directly
+            so the caller doesn't need to decode ``session_token`` again to
+            look it back up). Otherwise ``None`` (caller falls through to
+            the normal SSO login redirect).
+        """
+        if not self.config.sso_trust_external_idp_cookies or not self.config.sso_client_id:
+            return None
+
+        client_id = self.config.sso_client_id
+        cookie_prefix = f"CognitoIdentityServiceProvider.{client_id}"
+        last_auth_user = request.cookies.get(f"{cookie_prefix}.LastAuthUser")
+        if not last_auth_user:
+            return None
+
+        id_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.idToken")
+        if not id_token:
+            return None
+        access_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.accessToken")
+        if not access_token:
+            # The normal SSO callback path always has an access_token from
+            # the token exchange response, and its presence lets
+            # validate_id_token verify the OIDC `at_hash` claim (binding the
+            # ID token to this specific access token). Requiring it here
+            # too keeps the silent-cookie path at the same validation
+            # strength — real Cognito CookieStorage writes all three
+            # tokens together, so this should never reject a genuine
+            # external session.
+            return None
+        refresh_token = request.cookies.get(f"{cookie_prefix}.{last_auth_user}.refreshToken")
+
+        _load_sso_imports()
+        try:
+            await self.sso_provider.discover()
+            id_token_claims = await self.sso_provider.validate_id_token(id_token, access_token=access_token)
+        except (SSODiscoveryError, SSOValidationError) as exc:
+            logger.debug("Silent external IdP cookie auth declined: %s", exc)
+            return None
+
+        tokens = {"id_token": id_token, "access_token": access_token, "refresh_token": refresh_token}
+        session_id = self.sso_session_store.create_session(
+            tokens=tokens,
+            user_info={},
+            id_token_claims=id_token_claims,
+        )
+        logger.info("Silent SSO session established from external IdP cookie (session=%s)", session_id)
+        session_token = self.sso_session_store.generate_session_token(
+            session_id=session_id,
+            sso_session_secret=self.config.sso_session_secret,
+        )
+        return session_token, self.sso_session_store.get_session(session_id)
 
     def _setup_sso_routes(self):
         """Register SSO HTTP endpoints on the FastAPI app.
@@ -780,12 +1088,20 @@ class AutoLangChatPlugin:
         sso_login_url = f"{self.config.chat_endpoint}/auth/sso/login"
 
         @self.app.get(sso_login_url)
-        async def sso_login():
+        async def sso_login(next: Optional[str] = Query(default=None)):  # noqa: B008
             """Initiate the OAuth2 Authorization Code + PKCE flow.
 
             Generates a cryptographically random ``state`` and ``code_verifier``,
             stores them in the pending auth store, then redirects the browser
             to the IdP authorization URL.
+
+            The optional ``next`` query parameter lets the caller request a
+            post-login redirect back to a specific chat UI URL (e.g. one
+            carrying a deep-link ``?prompt=...`` querystring) instead of the
+            bare chat root. It is validated against open-redirect abuse
+            (must be a same-site relative path under the chat UI endpoint)
+            before being stored server-side alongside the PKCE state — never
+            trust it directly as a redirect target.
             """
             try:
                 await self.sso_provider.discover()
@@ -798,7 +1114,8 @@ class AutoLangChatPlugin:
 
             state = secrets.token_urlsafe(32)
             auth_url, code_verifier = self.sso_provider.build_authorization_url(state=state)
-            self.sso_session_store.store_pending(state, code_verifier)
+            return_to = self._safe_return_to(next)
+            self.sso_session_store.store_pending(state, code_verifier, return_to=return_to)
 
             logger.debug("SSO login initiated, redirecting to IdP (state=%s)", state[:8])
             return RedirectResponse(url=auth_url, status_code=302)
@@ -839,8 +1156,8 @@ class AutoLangChatPlugin:
                 )
 
             # Validate state (CSRF protection) — one-time use
-            code_verifier = self.sso_session_store.get_pending(state)
-            if code_verifier is None:
+            pending = self.sso_session_store.pop_pending(state)
+            if pending is None:
                 logger.warning("SSO callback received unknown or expired state: %s", state[:8])
                 return HTMLResponse(
                     content=(
@@ -851,8 +1168,8 @@ class AutoLangChatPlugin:
                     ),
                     status_code=400,
                 )
-            # Consume pending entry (one-time use)
-            self.sso_session_store.delete_pending(state)
+            code_verifier = pending["code_verifier"]
+            return_to = pending["return_to"]
 
             # Exchange authorization code for tokens
             try:
@@ -932,7 +1249,7 @@ class AutoLangChatPlugin:
             forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
             is_secure = forwarded_proto == "https" or request.url.scheme == "https"
 
-            response = RedirectResponse(url=self.config.ui_endpoint, status_code=302)
+            response = RedirectResponse(url=return_to or self.config.ui_endpoint, status_code=302)
             response.set_cookie(
                 key="sso_session_token",
                 value=session_token,
@@ -1687,8 +2004,75 @@ class AutoLangChatPlugin:
                 self._started = False
                 raise
 
+    def _disable_uvicorn_ws_keepalive(self) -> None:
+        """Best-effort: disable uvicorn's low-level WebSocket ping/pong keepalive
+        for the currently running server process.
+
+        Uvicorn's default ``ws_ping_interval``/``ws_ping_timeout`` (20s/20s) is a
+        control-frame liveness check entirely independent of application-level
+        WebSocket traffic. Under event-loop scheduling jitter during long
+        multi-round agentic chat turns (many concurrent tool calls, LLM
+        streaming, etc.), the scheduled pong can be missed even though
+        ordinary chat data is flowing the whole time — uvicorn then force
+        closes the connection, and the browser silently opens a second
+        WebSocket mid-turn with no visibility into the first one's
+        in-progress conversation state.
+
+        This is normally only controllable via ``uvicorn.run(...)`` kwargs or
+        ``--ws-ping-interval``/``--ws-ping-timeout`` CLI flags at server
+        startup — settings the *host* application chooses, not this plugin.
+        A bare ``uvicorn app:app`` CLI invocation in particular never runs
+        any of the host's own startup code, so the host can't reliably fix
+        this for every possible launch method either. Since this plugin has
+        no control over how its host process was launched, it instead
+        patches the *live* ``uvicorn.Config`` object(s) directly during
+        plugin startup: `uvicorn.Server`/each per-connection WebSocket
+        protocol instance holds a reference to (not a copy of) that Config
+        and re-reads ``ws_ping_interval``/``ws_ping_timeout`` fresh for every
+        new connection, so mutating it now takes effect for all connections
+        accepted afterward — see uvicorn's ``WSProtocol.__init__`` /
+        ``start_keepalive()``, which only schedules the ping when
+        ``ping_interval is not None and ping_interval > 0``.
+
+        Best-effort object-graph introspection (uvicorn exposes no public
+        registry of live Config instances) — any failure here (non-uvicorn
+        ASGI server, internal API changes, etc.) is silently swallowed so it
+        never blocks or breaks startup; the worst case is simply that
+        uvicorn's default keepalive stays active for this run.
+        """
+        try:
+            import gc
+
+            import uvicorn
+
+            patched = 0
+            for obj in gc.get_objects():
+                if isinstance(obj, uvicorn.Config) and (obj.ws_ping_interval or obj.ws_ping_timeout):
+                    obj.ws_ping_interval = None
+                    obj.ws_ping_timeout = None
+                    patched += 1
+            if patched:
+                logger.info(
+                    "Disabled uvicorn WebSocket ping/pong keepalive on %d live Config "
+                    "object(s) to prevent mid-turn WebSocket reconnects during long chat turns.",
+                    patched,
+                )
+        except Exception:
+            logger.debug(
+                "Could not patch uvicorn ws_ping settings (non-uvicorn server, or introspection failed)",
+                exc_info=True,
+            )
+
     async def _do_startup(self) -> None:
         """Perform the actual startup work. Only called once, guarded by ``startup()``."""
+        # 0. Best-effort: disable uvicorn's WS ping/pong keepalive process-wide —
+        # see _disable_uvicorn_ws_keepalive's docstring for why this can't be
+        # done reliably from a host app's own uvicorn.run(...)/CLI invocation.
+        self._disable_uvicorn_ws_keepalive()
+
+        # 0. Narrow the sidebar model catalog to what Bedrock actually offers here
+        await self._startup_discover_models()
+
         # 1. Open the LangGraph checkpointer pool + schema
         from .graph.checkpointer import open_checkpointer as _open_cp
 
@@ -1745,11 +2129,67 @@ class AutoLangChatPlugin:
         await self._startup_open_conversation_store()
         self._warn_if_memory_saver_with_conversation_persistence()
 
+        # 6b. Open the user-settings-store connection pool
+        await self._startup_open_user_settings_store()
+
         # 7. Schedule KB credibility decay background task (opt-in)
         if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
             from .kb_credibility import run_credibility_decay_loop
 
             self._credibility_decay_task = asyncio.create_task(run_credibility_decay_loop(self._kb_store, self.config))
+
+        # 8. Start the MCP Streamable HTTP session manager's task group.
+        # ``run()`` is an async context manager that must stay entered for
+        # the lifetime of the app; ``_do_shutdown`` exits it via the same
+        # exit stack.
+        if self.config.mcp_enabled and self._mcp_session_manager is not None:
+            self._mcp_exit_stack = AsyncExitStack()
+            await self._mcp_exit_stack.enter_async_context(self._mcp_session_manager.run())
+            logger.info("MCP session manager started")
+
+    async def _startup_discover_models(self) -> None:
+        """Filter the sidebar model catalog down to what this account can invoke.
+
+        ``DEFAULT_AVAILABLE_MODELS`` comes from langchain-aws's static profile
+        table, which lists models that may not exist in this account/region --
+        selecting one fails with "The provided model identifier is invalid"
+        (XMGPLAT-11193). Ask the Bedrock control plane once and intersect.
+
+        Never raises: ``discover_invocable_model_ids()`` returns ``None`` on
+        any failure, which leaves the catalog unfiltered exactly as it behaved
+        before discovery existed.
+        """
+        if not getattr(self.config, "model_discovery_enabled", False):
+            logger.debug("Bedrock model discovery disabled; using the static model catalog.")
+            return
+
+        from .model_capabilities import discover_invocable_model_ids
+
+        before = len(self.config.get_available_models())
+        invocable = await discover_invocable_model_ids(self.config)
+        if invocable is None:
+            return
+
+        self.config.set_invocable_model_ids(invocable)
+        after = len(self.config.get_available_models())
+        logger.info(
+            "Bedrock model discovery: %d of %d catalog model(s) invocable in %s",
+            after,
+            before,
+            self.config.aws_region,
+        )
+        if before > after:
+            logger.debug(
+                "Model discovery dropped %d model(s) not offered in this account/region.",
+                before - after,
+            )
+        if self.config.model_id not in invocable:
+            logger.warning(
+                "Configured model '%s' is not listed as invocable in %s; it remains "
+                "selected and may fail at call time.",
+                self.config.model_id,
+                self.config.aws_region,
+            )
 
     async def _startup_open_feedback_store(self) -> None:
         """Open the FeedbackStore pool; on failure, close the partial pool and disable the feature.
@@ -1832,6 +2272,34 @@ class AutoLangChatPlugin:
             self._conversation_store = None
             self.websocket_handler.conversation_store = None
 
+    async def _startup_open_user_settings_store(self) -> None:
+        """Open the UserSettingsStore; on failure, close the partial resource and disable the feature.
+
+        ``UserSettingsStore.open()`` opens the underlying connection pool /
+        SQLite file before applying the schema, so a schema-bootstrap
+        exception can leave resources partially open. Without an explicit
+        ``close()`` the connection would leak for the lifetime of the
+        process. A store failure must never block chat — the WebSocket
+        handler simply falls back to session-scoped, in-memory overrides.
+        """
+        if self._user_settings_store is None:
+            return
+        try:
+            await self._user_settings_store.open()
+            logger.info("UserSettingsStore opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open UserSettingsStore: %s; disabling user settings persistence.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._user_settings_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened UserSettingsStore")
+            self._user_settings_store = None
+            self.websocket_handler.user_settings_store = None
+
     def _warn_if_memory_saver_with_conversation_persistence(self) -> None:
         """Log a one-time degraded-mode warning for MemorySaver + conversation persistence.
 
@@ -1882,6 +2350,11 @@ class AutoLangChatPlugin:
             await self.websocket_handler.shutdown()
             await self.tool_manager.shutdown()
 
+            if self._mcp_exit_stack is not None:
+                await self._mcp_exit_stack.aclose()
+                self._mcp_exit_stack = None
+                logger.info("MCP session manager stopped")
+
             if self._kb_store is not None:
                 self._kb_store.close()
                 self._kb_store = None
@@ -1897,6 +2370,10 @@ class AutoLangChatPlugin:
             if self._conversation_store is not None:
                 await self._conversation_store.close()
                 self._conversation_store = None
+
+            if self._user_settings_store is not None:
+                await self._user_settings_store.close()
+                self._user_settings_store = None
 
             from .graph.checkpointer import close_checkpointer as _close_cp
 

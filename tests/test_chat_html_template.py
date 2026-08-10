@@ -1,4 +1,4 @@
-"""XMGPLAT-9697 Phase 4 — chat.html dynamic-overrides sidebar template tests.
+"""chat.html dynamic-overrides sidebar template tests.
 
 Renders the real `chat.html` template (via a plain jinja2 Environment, with a
 stub `url_for` global standing in for FastAPI's Jinja2Templates context

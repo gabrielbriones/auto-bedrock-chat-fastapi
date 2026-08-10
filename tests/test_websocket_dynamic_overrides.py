@@ -1,4 +1,4 @@
-"""XMGPLAT-9697 Phase 2 — WebSocket dynamic parameter override tests.
+"""WebSocket dynamic parameter override tests.
 
 Covers `config_overrides`/`override_mode` on `chat` messages, the
 `config_update`/`config_reset` message types, merge priority (per-message >
@@ -112,7 +112,7 @@ class TestChatMessageOverrides:
         assert session.metadata.get("config_overrides", {}) == {}
 
     def test_message_mode_override_does_not_leak_into_next_turn(self):
-        """XMGPLAT-9697 Phase 3 regression test: a one-shot (`override_mode:
+        """Regression test: a one-shot (`override_mode:
         "message"`) override must not affect turn N+1 -- the effective config
         is rebuilt fresh from the untouched global `self.config` every turn."""
         handler, session = _make_handler()
@@ -190,7 +190,7 @@ class TestChatMessageOverrides:
         assert effective_config.temperature == 0.7
 
     def test_disabled_feature_gate_ignores_stale_session_overrides(self):
-        """Regression test (Copilot PR review, XMGPLAT-9697): a pre-existing
+        """Regression test: a pre-existing
         session override must not be re-applied when enable_dynamic_overrides
         is off, even though _apply_config_overrides() itself never writes new
         overrides while disabled. Simulates a stale/pre-existing
@@ -225,7 +225,7 @@ class TestChatMessageOverrides:
 
 
 class TestMalformedOverridePayloads:
-    """Regression tests (Copilot PR review, XMGPLAT-9697): config_overrides and
+    """Regression test: config_overrides and
     override_mode come directly from untrusted WebSocket JSON. A malformed
     payload must be rejected gracefully (with a clear reason) rather than
     raising -- which would otherwise abort the entire chat turn, not just the
@@ -352,6 +352,6 @@ class TestSessionOverridesResetOnReconnect:
     def test_new_session_has_no_config_overrides(self):
         """A fresh ChatSession (as created on (re)connect) starts with empty
         metadata, so session-level overrides from a prior connection do not
-        carry over (XMGPLAT-9697 v1 design: in-memory only, see plan Notes)."""
+        carry over (in-memory only)."""
         session = ChatSession(session_id="new-session", websocket=MagicMock())
         assert session.metadata.get("config_overrides", {}) == {}

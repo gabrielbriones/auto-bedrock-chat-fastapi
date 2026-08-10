@@ -1,4 +1,4 @@
-"""Phase 1 — basic graph round-trip tests.
+"""Basic graph round-trip tests.
 
 Tests the full graph pipeline (preprocess → llm → END) using a mocked
 ChatBedrockConverse so no real AWS credentials are needed.
@@ -180,7 +180,8 @@ class TestGraphRoundTrip:
 
     @pytest.mark.asyncio
     async def test_fallback_model_on_context_window_error(self, fake_config):
-        """Node retries with fallback_model when primary raises a context-window error."""
+        """Node retries with fallback_model when primary raises a context-window
+        error and the emergency re-truncation retry (same model) also fails."""
         fake_config.fallback_model = "us.anthropic.claude-3-haiku"
         fallback_response = _make_ai_message("fallback answer")
 
@@ -189,12 +190,13 @@ class TestGraphRoundTrip:
         def side_effect(*args, **kwargs):
             call_count["n"] += 1
             inst = MagicMock()
-            if call_count["n"] == 1:
-                # First call: primary model → context window error
+            if call_count["n"] <= 2:
+                # Call 1: primary model -> context window error.
+                # Call 2: emergency re-truncation retry (same model) -> still fails.
                 inst.ainvoke = AsyncMock(side_effect=Exception("input is too long for the model"))
                 inst.astream = _make_empty_astream()
             else:
-                # Second call: fallback model → success
+                # Call 3: fallback model -> success
                 inst.ainvoke = AsyncMock(return_value=fallback_response)
                 inst.astream = _make_empty_astream()
             return inst
@@ -214,6 +216,51 @@ class TestGraphRoundTrip:
 
         assert result["messages"][-1]["content"] == "fallback answer"
         assert result["metadata"]["fallback_model_used"] is True
+        # Emergency re-truncation was attempted (and itself failed) before
+        # falling back to fallback_model -- the flag reflects that the safety
+        # net was engaged, not just whether its own retry call succeeded.
+        assert result["metadata"]["emergency_retruncation_applied"] is True
+        assert call_count["n"] == 3
+
+    @pytest.mark.asyncio
+    async def test_emergency_retruncation_recovers_without_fallback(self, fake_config):
+        """Node recovers via emergency re-truncation (same model) when the
+        first attempt raises a context-window error, without needing a
+        fallback_model at all."""
+        fake_config.fallback_model = None
+        recovered_response = _make_ai_message("recovered answer")
+
+        call_count = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            inst = MagicMock()
+            if call_count["n"] == 1:
+                # First call: primary model -> context window error
+                inst.ainvoke = AsyncMock(side_effect=Exception("input is too long for the model"))
+                inst.astream = _make_empty_astream()
+            else:
+                # Second call: emergency re-truncation retry (same model) -> success
+                inst.ainvoke = AsyncMock(return_value=recovered_response)
+                inst.astream = _make_empty_astream()
+            return inst
+
+        with patch(
+            "autolangchat.graph.nodes.llm_call.ChatBedrockConverse",
+            side_effect=side_effect,
+        ):
+            graph = build_chat_graph(fake_config)
+            result = await graph.ainvoke(
+                {
+                    "messages": [{"role": "user", "content": "very long message"}],
+                    "metadata": {},
+                },
+                config={"configurable": {"thread_id": "test-session-retruncation"}},
+            )
+
+        assert result["messages"][-1]["content"] == "recovered answer"
+        assert result["metadata"]["fallback_model_used"] is False
+        assert result["metadata"]["emergency_retruncation_applied"] is True
         assert call_count["n"] == 2
 
 

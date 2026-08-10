@@ -1,4 +1,4 @@
-"""Unit tests for the conversation metadata store (XMGPLAT-10380).
+"""Unit tests for the conversation metadata store.
 
 Covers ``SQLiteConversationStore``:
 

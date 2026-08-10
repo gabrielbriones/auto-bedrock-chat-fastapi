@@ -33,7 +33,7 @@ class ChatClient {
         // assistant response so the input can be disabled mid-turn.
         this.awaitingResponse = false;
 
-        // Conversation sidebar (XMGPLAT-10380): activeConversationId is the
+        // Conversation sidebar: activeConversationId is the
         // LangGraph thread_id for whatever conversation this connection is
         // currently "in" — kept separate from any WebSocket session/connection
         // identifier. null until a conversation is created (first chat message)
@@ -41,6 +41,13 @@ class ChatClient {
         this._conversationSidebarEnabled = !!window.CONFIG.conversationPersistenceEnabled;
         this.activeConversationId = null;
         this.conversations = [];
+        // True while a first turn was sent but we haven't yet learned its
+        // conversation_id (either because the server hasn't replied yet, or
+        // because the connection dropped mid-turn before it could). Used to
+        // auto-select the recovered conversation on reconnect instead of
+        // leaving the sidebar with nothing selected — see
+        // _maybeRecoverPendingConversation().
+        this._awaitingConversationId = false;
         this.conversationSidebar = document.getElementById('conversationSidebar');
         this.conversationList = document.getElementById('conversationList');
         this.newChatButton = document.getElementById('newChatButton');
@@ -49,7 +56,7 @@ class ChatClient {
         this.sidebarBackdrop = document.getElementById('sidebarBackdrop');
         this._setupConversationSidebarListeners();
 
-        // Dynamic parameter overrides settings sidebar (XMGPLAT-9697).
+        // Dynamic parameter overrides settings sidebar.
         this._configSidebarEnabled = !!window.CONFIG.enableConfigSidebar;
         this._allowedDynamicOverrides = window.CONFIG.allowedDynamicOverrides || null;
         this._activeConfigOverrides = {};
@@ -62,6 +69,13 @@ class ChatClient {
         this.configOverrideBadge = document.getElementById('configOverrideBadge');
         this.modelIdDisplay = document.getElementById('modelIdDisplay');
         this._setupConfigSidebarListeners();
+
+        // Deep-link support: ?prompt=<id>&VAR=value... lets an external
+        // link pre-fill (and, by default, auto-send) a preset prompt once
+        // the chat becomes usable. Parsed once from the initial URL and
+        // applied at most once per page load — see _applyDeepLink().
+        this._deepLink = this._parseDeepLink();
+        this._deepLinkApplied = false;
 
         this.setupEventListeners();
         this._renderVariablesSection();
@@ -152,6 +166,12 @@ class ChatClient {
             this.connecting = false;
             this.updateConnectionStatus(false);
             this.awaitingResponse = false;
+            // A response the client was waiting on can no longer arrive on
+            // this (now closed) connection — don't leave the spinner/typing
+            // text stuck forever. If the turn actually completes server-side,
+            // it'll be picked up via _maybeRecoverPendingConversation() once
+            // the reconnect's conversation_list arrives.
+            this.hideTypingIndicator();
             this.messageInput.disabled = true;
             this.messageInput.placeholder = 'Type your message...';
             this.messageInput.classList.remove('input-locked');
@@ -204,6 +224,7 @@ class ChatClient {
         this.sendButton.disabled = false;
         this._renderPresetButtons();
         this._updatePresetButtonStates();
+        this._applyDeepLink();
     }
 
     _disablePresetButtons() {
@@ -423,8 +444,94 @@ class ChatClient {
     _sendPresetMessage(text) {
         if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.addMessage('user', text);
+        if (!this.activeConversationId) this._awaitingConversationId = true;
         this.ws.send(JSON.stringify({ type: 'chat', message: text }));
         this._lockInputForResponse();
+    }
+
+    // Parse ?prompt=<id>&VAR=value...&autosend=0 from the initial page URL.
+    // Returns null when no `prompt` param is present. `autosend` defaults
+    // to true (send immediately once variables validate); pass `autosend=0`
+    // or `autosend=false` to only pre-fill the variable inputs instead.
+    _parseDeepLink() {
+        const params = new URLSearchParams(window.location.search);
+        const promptId = params.get('prompt');
+        if (!promptId) return null;
+
+        const autosendParam = params.get('autosend');
+        const values = {};
+        params.forEach((value, key) => {
+            if (key === 'prompt' || key === 'autosend') return;
+            values[key] = value;
+        });
+
+        return {
+            promptId,
+            values,
+            autosend: !(autosendParam === '0' || autosendParam === 'false'),
+        };
+    }
+
+    // Apply a parsed deep link (see _parseDeepLink) once the chat is usable.
+    // Fills any variable inputs matching querystring keys, then auto-sends
+    // the matching preset prompt if all its required variables are valid
+    // (unless autosend was explicitly disabled). Runs at most once per page
+    // load — enableInput() can be called again (e.g. on reconnect) but the
+    // deep link must not be re-applied/re-sent each time.
+    _applyDeepLink() {
+        if (this._deepLinkApplied || !this._deepLink) return;
+        this._deepLinkApplied = true;
+
+        const prompt = (window.CONFIG.presetPrompts || []).find(p => p.id === this._deepLink.promptId);
+        if (!prompt) {
+            console.warn(`Preset prompt deep link: unknown prompt id "${this._deepLink.promptId}"`);
+            return;
+        }
+
+        Object.entries(this._deepLink.values).forEach(([name, value]) => {
+            const el = document.getElementById(`var_${name}`);
+            if (!el) return;
+            const def = this._variableDefs[name];
+            if (def && def.input_type === 'checkbox') {
+                el.checked = value === 'true' || value === '1';
+            } else {
+                el.value = value;
+            }
+        });
+        this._updatePresetButtonStates();
+
+        if (!this._deepLink.autosend) return;
+
+        const requiredVars = this._getPlaceholders(prompt.template || '');
+        const allValid = requiredVars.every(name => this._validateVar(name, this._getVarValue(name)));
+        if (allValid) {
+            this._handlePresetClick(prompt);
+            // Scrub the deep-link params from the address bar now that the
+            // preset has actually been sent. Otherwise, if a subsequent
+            // navigation happens (e.g. an SSO login redirect round trip that
+            // lands back on this same URL via the preserved `next` param),
+            // the reloaded page would parse the same ?prompt=...&VAR=...
+            // querystring again and auto-send the exact same message a
+            // second time as a duplicate, orphaned turn.
+            this._clearDeepLinkFromUrl();
+        } else {
+            console.warn(
+                'Preset prompt deep link: required variable(s) missing or invalid, not auto-sending',
+                requiredVars
+            );
+        }
+    }
+
+    _clearDeepLinkFromUrl() {
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('prompt');
+            url.searchParams.delete('autosend');
+            Object.keys(this._deepLink.values).forEach(name => url.searchParams.delete(name));
+            window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+        } catch (e) {
+            console.warn('Could not clean up deep-link query string:', e);
+        }
     }
 
     _recoverAuthSubmitButton() {
@@ -533,6 +640,7 @@ class ChatClient {
         this.addMessage('user', message);
 
         // Send to server
+        if (!this.activeConversationId) this._awaitingConversationId = true;
         this.ws.send(JSON.stringify({
             type: 'chat',
             message: message
@@ -657,6 +765,7 @@ class ChatClient {
                     this.activeConversationId = data.conversation_id;
                     this._renderConversationList();
                 }
+                this._awaitingConversationId = false;
                 if (data.metadata && data.metadata.rejected_overrides && data.metadata.rejected_overrides.length) {
                     console.warn('Rejected config overrides:', data.metadata.rejected_overrides);
                 }
@@ -675,18 +784,22 @@ class ChatClient {
             case 'conversation_list':
                 this.conversations = data.conversations || [];
                 this._renderConversationList();
+                this._maybeRecoverPendingConversation();
                 break;
 
             case 'conversation_created':
                 this.activeConversationId = data.conversation_id;
+                this._awaitingConversationId = false;
                 this._upsertConversationInList({ id: data.conversation_id, title: null });
                 break;
 
             case 'conversation_loaded':
                 this.activeConversationId = data.conversation_id;
+                this._awaitingConversationId = false;
                 this._renderConversationHistory(data.messages || []);
                 this._renderConversationList();
                 this._closeSidebarDrawer();
+                this._handleConversationPendingState(data.conversation_id, data.messages || []);
                 break;
 
             case 'conversation_deleted':
@@ -1202,7 +1315,7 @@ class ChatClient {
     }
 
     // ------------------------------------------------------------------
-    // Conversation sidebar (XMGPLAT-10380)
+    // Conversation sidebar
     // ------------------------------------------------------------------
 
     _setupConversationSidebarListeners() {
@@ -1260,6 +1373,67 @@ class ChatClient {
         }
     }
 
+    // A conversation's last message is either a tool result awaiting the
+    // next LLM call, or an assistant message that only issued tool_calls
+    // (no final text yet) — in both cases the turn hasn't produced a final
+    // answer. This happens when the connection that started the turn was
+    // lost mid-flight (e.g. a network/proxy reconnect during a long
+    // multi-round tool-calling loop): the graph invocation keeps running
+    // server-side and checkpoints progressively, but there's no live
+    // socket to deliver the eventual ai_response to.
+    _isConversationPending(messages) {
+        if (!messages || !messages.length) return false;
+        const last = messages[messages.length - 1];
+        if (last.role === 'tool') return true;
+        if (last.role === 'assistant' && Array.isArray(last.tool_calls) && last.tool_calls.length > 0) return true;
+        return false;
+    }
+
+    // Show a "still working" indicator and poll (by re-issuing
+    // conversation_load) until the pending turn resolves, instead of
+    // leaving the conversation looking silently stuck.
+    //
+    // Each poll re-requests conversation_load, whose conversation_loaded
+    // reply routes right back through this same method — so the attempt
+    // counter must only be reset when we *start* watching a (still) new
+    // pending conversation, never on every intermediate reply, or
+    // MAX_ATTEMPTS in _pollPendingConversation would never be reached.
+    _handleConversationPendingState(conversationId, messages) {
+        if (this._pendingPollTimer) {
+            clearTimeout(this._pendingPollTimer);
+            this._pendingPollTimer = null;
+        }
+        if (!this._isConversationPending(messages)) {
+            this.hideTypingIndicator();
+            this._pendingPollAttempts = 0;
+            this._pendingConversationId = null;
+            return;
+        }
+        this.showTypingIndicator('Still working on a previous request...');
+        if (this._pendingConversationId !== conversationId) {
+            this._pendingConversationId = conversationId;
+            this._pendingPollAttempts = 0;
+        }
+        this._pollPendingConversation(conversationId);
+    }
+
+    _pollPendingConversation(conversationId) {
+        const MAX_ATTEMPTS = 20; // ~2 minutes at 6s intervals
+        const POLL_INTERVAL_MS = 6000;
+        this._pendingPollTimer = setTimeout(() => {
+            this._pendingPollAttempts += 1;
+            // Stop polling if the user navigated elsewhere or the socket dropped.
+            if (this.activeConversationId !== conversationId || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+            if (this._pendingPollAttempts > MAX_ATTEMPTS) {
+                this.hideTypingIndicator();
+                return;
+            }
+            this.ws.send(JSON.stringify({ type: 'conversation_load', conversation_id: conversationId }));
+        }, POLL_INTERVAL_MS);
+    }
+
     requestConversationList() {
         if (!this._conversationSidebarEnabled || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({ type: 'conversation_list' }));
@@ -1269,9 +1443,30 @@ class ChatClient {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({ type: 'conversation_new' }));
         this.activeConversationId = null;
+        // Explicit user intent to start blank — don't let a later reconnect
+        // auto-recover a stale pending turn back into view over this.
+        this._awaitingConversationId = false;
         this._clearChatArea();
         this._renderConversationList();
         this._closeSidebarDrawer();
+    }
+
+    // If a first turn was sent but the connection dropped before its
+    // conversation_id could be learned (see _awaitingConversationId), the
+    // turn still completes and persists server-side — but this tab has no
+    // way to know its id. Once a reconnect's conversation_list arrives with
+    // nothing selected, auto-select the most-recently-updated conversation
+    // so the recovered response is shown without the user having to
+    // manually switch conversations to find it.
+    _maybeRecoverPendingConversation() {
+        if (!this._awaitingConversationId || this.activeConversationId || !this.conversations.length) return;
+        this._awaitingConversationId = false;
+        const mostRecent = [...this.conversations].sort((a, b) =>
+            (b.updated_at || '').localeCompare(a.updated_at || '')
+        )[0];
+        if (mostRecent) {
+            this.loadConversation(mostRecent.id, /* force */ true);
+        }
     }
 
     loadConversation(conversationId, force = false) {
@@ -1403,7 +1598,7 @@ class ChatClient {
     }
 
     // ------------------------------------------------------------------
-    // Dynamic parameter overrides settings sidebar (XMGPLAT-9697)
+    // Dynamic parameter overrides settings sidebar
     // ------------------------------------------------------------------
 
     _setupConfigSidebarListeners() {
@@ -1564,28 +1759,19 @@ class ChatClient {
             label.appendChild(valueSpan);
             row.appendChild(label);
 
-            let input;
             if (field.type === 'select') {
-                input = document.createElement('select');
-                // field.options entries are {id, name} objects from the server
-                // (ChatConfig.get_available_models_for_ui()) -- the dropdown shows
-                // the human-readable "name" but sends the raw "id" (model_id) back.
-                // The server always includes the currently configured model_id, so
-                // no client-side "ensure present" merging is needed here.
-                const currentModel = (window.CONFIG.overrideDefaults || {}).model_id || window.CONFIG.modelId;
-                field.options.forEach((opt) => {
-                    const optionEl = document.createElement('option');
-                    optionEl.value = opt.id;
-                    optionEl.textContent = opt.name;
-                    input.appendChild(optionEl);
-                });
-                input.value = currentModel || (field.options[0] && field.options[0].id) || '';
-                input.addEventListener('change', () => {
-                    this._sendConfigUpdate(field.key, input.value);
-                    this._updateTemperatureControlsVisibility(input.value);
-                    this._updateMaxTokensCapForModel(input.value);
-                });
-            } else if (field.type === 'range') {
+                // Family -> model picker: a single trigger button that opens a
+                // flyout menu. The menu lists providers (families); hovering
+                // (or tapping) a family opens a SECOND menu docked to its side
+                // listing that family's models, instead of dumping every model
+                // from every provider into one giant flat list/dropdown.
+                row.appendChild(this._buildModelPicker(field));
+                this.configSidebarBody.appendChild(row);
+                return;
+            }
+
+            let input;
+            if (field.type === 'range') {
                 input = document.createElement('input');
                 input.type = 'range';
                 input.min = field.min;
@@ -1692,6 +1878,261 @@ class ChatClient {
         }
     }
 
+    /** Return provider groups from the current server, with a flat-list
+     * fallback for compatibility with older template contexts. */
+    _getAvailableModelGroups(flatOptions) {
+        const configuredGroups = window.CONFIG.availableModelGroups || [];
+        if (configuredGroups.length) return configuredGroups;
+
+        const groups = new Map();
+        (flatOptions || []).forEach((model) => {
+            const provider = model.provider || 'Models';
+            if (!groups.has(provider)) groups.set(provider, []);
+            groups.get(provider).push(model);
+        });
+        return Array.from(groups, ([provider, models]) => ({ provider, models }));
+    }
+
+    /** Build the family -> model picker: a single trigger button plus two
+     * portal menus (appended to `document.body`, not the row itself, so they
+     * aren't clipped by the scrollable `.config-sidebar-body`):
+     *   - `this._modelMenuEl` -- the family ("Anthropic", "OpenAI", "xAI", ...)
+     *     list, opened by clicking the trigger.
+     *   - `this._modelFlyoutEl` -- a SECOND menu docked to the side of
+     *     whichever family item is hovered/tapped, listing that family's
+     *     models. Only one flyout element is reused across families.
+     * Both are `position: fixed` and positioned from `getBoundingClientRect()`
+     * of their anchor each time they open, so they track the trigger/family
+     * item regardless of where the sidebar is scrolled to. */
+    _buildModelPicker(field) {
+        const currentModel = (window.CONFIG.overrideDefaults || {}).model_id || window.CONFIG.modelId;
+        const groups = this._getAvailableModelGroups(field.options);
+
+        // Re-rendering the sidebar (shouldn't normally happen more than once,
+        // but stay idempotent) must not leave stale portal elements behind.
+        if (this._modelMenuEl) this._modelMenuEl.remove();
+        if (this._modelFlyoutEl) this._modelFlyoutEl.remove();
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'config-model-picker';
+
+        const trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.id = `override_${field.key}`;
+        trigger.className = 'config-model-trigger';
+        trigger.setAttribute('aria-haspopup', 'true');
+        trigger.setAttribute('aria-expanded', 'false');
+        const triggerLabel = document.createElement('span');
+        triggerLabel.className = 'config-model-trigger-label';
+        triggerLabel.textContent = this._modelIdToName(currentModel);
+        const triggerCaret = document.createElement('span');
+        triggerCaret.className = 'config-model-trigger-caret';
+        triggerCaret.textContent = '\u25BE';
+        trigger.appendChild(triggerLabel);
+        trigger.appendChild(triggerCaret);
+        wrapper.appendChild(trigger);
+
+        const menu = document.createElement('div');
+        menu.className = 'config-model-menu';
+        menu.hidden = true;
+        const familyList = document.createElement('ul');
+        familyList.className = 'config-model-family-list';
+        familyList.setAttribute('role', 'menu');
+        menu.appendChild(familyList);
+
+        const flyout = document.createElement('ul');
+        flyout.className = 'config-model-flyout';
+        flyout.setAttribute('role', 'menu');
+        flyout.hidden = true;
+
+        document.body.appendChild(menu);
+        document.body.appendChild(flyout);
+        this._modelMenuEl = menu;
+        this._modelFlyoutEl = flyout;
+        this._modelTriggerEl = trigger;
+        this._modelTriggerLabelEl = triggerLabel;
+
+        const cancelHideFlyout = () => {
+            if (this._modelFlyoutHideTimer) {
+                clearTimeout(this._modelFlyoutHideTimer);
+                this._modelFlyoutHideTimer = null;
+            }
+        };
+        const scheduleHideFlyout = () => {
+            cancelHideFlyout();
+            this._modelFlyoutHideTimer = setTimeout(() => { flyout.hidden = true; }, 200);
+        };
+        flyout.addEventListener('mouseenter', cancelHideFlyout);
+        flyout.addEventListener('mouseleave', scheduleHideFlyout);
+
+        const selectModel = (modelId, modelName) => {
+            triggerLabel.textContent = modelName;
+            this._sendConfigUpdate(field.key, modelId);
+            this._updateTemperatureControlsVisibility(modelId);
+            this._updateMaxTokensCapForModel(modelId);
+            this._closeModelMenu();
+        };
+
+        const openFlyoutForFamily = (familyItem, group) => {
+            cancelHideFlyout();
+            familyList.querySelectorAll('.config-model-family-item').forEach((el) => {
+                el.classList.toggle('open', el === familyItem);
+            });
+
+            flyout.innerHTML = '';
+            (group.models || []).forEach((model) => {
+                const option = document.createElement('li');
+                option.className = 'config-model-option';
+                option.setAttribute('role', 'menuitem');
+                option.tabIndex = 0;
+                option.dataset.modelId = model.id;
+                option.textContent = model.name;
+                if (model.id === currentModel) option.classList.add('selected');
+                option.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    selectModel(model.id, model.name);
+                });
+                option.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        selectModel(model.id, model.name);
+                    }
+                });
+                flyout.appendChild(option);
+            });
+
+            // Dock the flyout to the SIDE of the family menu, at the same
+            // height as the hovered/tapped family row (`right` rather than
+            // `left`, since the config sidebar -- and this menu -- sit at the
+            // right edge of the viewport, so the flyout must open leftward to
+            // stay on-screen).
+            const menuRect = menu.getBoundingClientRect();
+            const itemRect = familyItem.getBoundingClientRect();
+            flyout.style.top = `${itemRect.top}px`;
+            flyout.style.right = `${window.innerWidth - menuRect.left + 4}px`;
+            flyout.hidden = false;
+        };
+
+        familyList.innerHTML = '';
+        groups.forEach((group) => {
+            const familyItem = document.createElement('li');
+            familyItem.className = 'config-model-family-item';
+            familyItem.setAttribute('role', 'menuitem');
+            familyItem.setAttribute('aria-haspopup', 'true');
+            familyItem.tabIndex = 0;
+            familyItem.dataset.provider = group.provider;
+            if ((group.models || []).some((model) => model.id === currentModel)) {
+                familyItem.classList.add('current-family');
+            }
+            const name = document.createElement('span');
+            name.className = 'config-model-family-name';
+            name.textContent = group.provider;
+            const arrow = document.createElement('span');
+            arrow.className = 'config-model-family-arrow';
+            arrow.textContent = '\u25B8';
+            familyItem.appendChild(name);
+            familyItem.appendChild(arrow);
+            // Hover opens the side flyout (desktop mouse UX); click/tap does
+            // the same for touch, and Enter/Space/ArrowRight below covers
+            // keyboard users -- neither of whom can "hover".
+            familyItem.addEventListener('mouseenter', () => openFlyoutForFamily(familyItem, group));
+            familyItem.addEventListener('click', (event) => {
+                event.stopPropagation();
+                openFlyoutForFamily(familyItem, group);
+            });
+            // Enter/Space opens the flyout; ArrowRight does the same and moves
+            // focus straight onto the first model so the list is reachable
+            // without a pointer.
+            familyItem.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowRight') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openFlyoutForFamily(familyItem, group);
+                    const firstOption = flyout.querySelector('.config-model-option');
+                    if (firstOption) firstOption.focus();
+                }
+            });
+            familyList.appendChild(familyItem);
+        });
+
+        trigger.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (!menu.hidden) {
+                this._closeModelMenu();
+                return;
+            }
+            const rect = trigger.getBoundingClientRect();
+            menu.style.top = `${rect.bottom + 4}px`;
+            menu.style.right = `${window.innerWidth - rect.right}px`;
+            menu.style.minWidth = `${rect.width}px`;
+            menu.hidden = false;
+            trigger.setAttribute('aria-expanded', 'true');
+
+            // Open straight to the current model's family flyout so it's
+            // visible without the user having to hunt for it first.
+            const currentFamilyItem = familyList.querySelector('.config-model-family-item.current-family');
+            const currentGroup = groups.find((group) => group.provider === (currentFamilyItem && currentFamilyItem.dataset.provider));
+            if (currentFamilyItem && currentGroup) {
+                openFlyoutForFamily(currentFamilyItem, currentGroup);
+            }
+        });
+
+        if (!this._modelMenuGlobalListenersBound) {
+            this._modelMenuGlobalListenersBound = true;
+            document.addEventListener('click', (event) => {
+                if (!this._modelMenuEl || this._modelMenuEl.hidden) return;
+                const target = event.target;
+                if (this._modelMenuEl.contains(target) || this._modelFlyoutEl.contains(target)
+                    || (this._modelTriggerEl && this._modelTriggerEl.contains(target))) {
+                    return;
+                }
+                this._closeModelMenu();
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') this._closeModelMenu();
+            });
+        }
+        // The menus are `position: fixed` against the viewport, not the
+        // scrollable sidebar body -- close them on scroll rather than let
+        // them drift away from their anchor.
+        this.configSidebarBody.addEventListener('scroll', () => this._closeModelMenu());
+
+        return wrapper;
+    }
+
+    /** Close the family menu and its side model flyout, if open. */
+    _closeModelMenu() {
+        if (this._modelMenuEl) {
+            this._modelMenuEl.hidden = true;
+            this._modelMenuEl.querySelectorAll('.config-model-family-item.open').forEach((el) => el.classList.remove('open'));
+        }
+        if (this._modelFlyoutEl) this._modelFlyoutEl.hidden = true;
+        if (this._modelTriggerEl) this._modelTriggerEl.setAttribute('aria-expanded', 'false');
+    }
+
+    /** Keep the trigger label and family highlight aligned with a
+     * server-confirmed model override or reset. */
+    _syncModelSelectors(modelId) {
+        if (!modelId) return;
+        if (this._modelTriggerLabelEl) {
+            this._modelTriggerLabelEl.textContent = this._modelIdToName(modelId);
+        }
+        if (this._modelMenuEl) {
+            const groups = this._getAvailableModelGroups(window.CONFIG.availableModels || []);
+            this._modelMenuEl.querySelectorAll('.config-model-family-item').forEach((el) => {
+                const group = groups.find((candidate) => candidate.provider === el.dataset.provider);
+                const isCurrentFamily = !!group && (group.models || []).some((model) => model.id === modelId);
+                el.classList.toggle('current-family', isCurrentFamily);
+            });
+        }
+        if (this._modelFlyoutEl && !this._modelFlyoutEl.hidden) {
+            this._modelFlyoutEl.querySelectorAll('.config-model-option').forEach((el) => {
+                el.classList.toggle('selected', el.dataset.modelId === modelId);
+            });
+        }
+    }
+
     _sendConfigUpdate(key, value) {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({
@@ -1716,7 +2157,15 @@ class ChatClient {
         }
 
         if (this.configOverrideBadge) {
-            const count = Object.keys(this._activeConfigOverrides).length;
+            // Count only settings whose value actually differs from the global
+            // default: `active_overrides` can still carry a key whose value
+            // equals the default (the user moved a control and then put it
+            // back without sending `config_reset`), so a raw key count would
+            // overstate how many settings are actually customised.
+            const defaults = window.CONFIG.overrideDefaults || {};
+            const count = Object.entries(this._activeConfigOverrides).filter(
+                ([key, value]) => !this._valueEqualsDefault(value, defaults[key]),
+            ).length;
             this.configOverrideBadge.textContent = String(count);
             this.configOverrideBadge.classList.toggle('hidden', count === 0);
         }
@@ -1731,6 +2180,20 @@ class ChatClient {
             this.configSidebarBody.querySelectorAll('.config-control-row').forEach((row) => {
                 const key = row.dataset.overrideKey;
                 const isOverridden = Object.prototype.hasOwnProperty.call(this._activeConfigOverrides, key);
+                const defaultValue = (window.CONFIG.overrideDefaults || {})[key];
+
+                if (key === 'model_id') {
+                    // The family/model flyout picker isn't a plain
+                    // <select>/<input> -- its trigger label and family
+                    // highlight are kept in sync via _syncModelSelectors()
+                    // below (called once, after this loop, with the
+                    // resulting effective model_id). Only the "overridden"
+                    // highlight is handled here.
+                    const value = this._activeConfigOverrides.model_id;
+                    row.classList.toggle('overridden', isOverridden && !this._valueEqualsDefault(value, defaultValue));
+                    return;
+                }
+
                 const input = row.querySelector('select, input');
                 if (!input) return;
 
@@ -1748,7 +2211,6 @@ class ChatClient {
                     // to its default value should drop the highlight even
                     // though the server is technically still tracking an
                     // override for this key.
-                    const defaultValue = (window.CONFIG.overrideDefaults || {})[key];
                     row.classList.toggle('overridden', !this._valueEqualsDefault(value, defaultValue));
                 } else {
                     // Not (or no longer) overridden -- reset the control back to the
@@ -1757,11 +2219,8 @@ class ChatClient {
                     // actually update the UI, not just clear server-side state).
                     row.classList.remove('overridden');
                     const field = ChatClient.DYNAMIC_OVERRIDE_FIELDS.find((f) => f.key === key);
-                    const defaultValue = (window.CONFIG.overrideDefaults || {})[key];
                     if (input.type === 'checkbox') {
                         input.checked = !!defaultValue;
-                    } else if (field && field.type === 'select') {
-                        input.value = defaultValue || (field.options && field.options[0] && field.options[0].id) || '';
                     } else {
                         input.value = defaultValue ?? (field ? field.min : '');
                         const valueSpan = row.querySelector('.config-control-value');
@@ -1771,12 +2230,14 @@ class ChatClient {
             });
         }
 
+
         // Model may have changed (new override or reset) -- keep the
         // temperature/top_p controls' visibility, and the max_tokens cap, in
         // sync with the resulting effective model.
         const effectiveModelId = this._activeConfigOverrides.model_id
             || (window.CONFIG.overrideDefaults || {}).model_id
             || window.CONFIG.modelId;
+        this._syncModelSelectors(effectiveModelId);
         this._updateTemperatureControlsVisibility(effectiveModelId);
         this._updateMaxTokensCapForModel(effectiveModelId);
 

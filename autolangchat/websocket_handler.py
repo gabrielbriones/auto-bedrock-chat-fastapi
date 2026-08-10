@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -24,16 +23,19 @@ from .db import (
     BaseFeedbackStore,
     BaseKBStore,
     BaseTokenUsageStore,
+    BaseUserSettingsStore,
     FeedbackAuthorizer,
 )
 from .exceptions import (
     ConversationNotFoundError,
     FeedbackError,
     InvalidStatusTransitionError,
+    ModelInvocationError,
     UnauthorizedFeedbackError,
     WebSocketError,
 )
 from .graph.tools.manager import AuthInfo
+from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
 
@@ -85,6 +87,7 @@ class WebSocketChatHandler:
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
         token_usage_store: Optional[BaseTokenUsageStore] = None,
         conversation_store: Optional[BaseConversationStore] = None,
+        user_settings_store: Optional[BaseUserSettingsStore] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -99,6 +102,7 @@ class WebSocketChatHandler:
         )
         self.token_usage_store = token_usage_store
         self.conversation_store = conversation_store
+        self.user_settings_store = user_settings_store
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -206,6 +210,10 @@ class WebSocketChatHandler:
                     "timestamp": datetime.now().isoformat(),
                 },
             )
+
+            # Restore the user's persisted settings-sidebar configuration (if
+            # any) before the first turn. No-op for anonymous connections.
+            await self._hydrate_user_settings(websocket)
 
             # Main message handling loop
             await self._message_loop(websocket)
@@ -329,7 +337,8 @@ class WebSocketChatHandler:
                     )
                     return
 
-            logger.debug(f"Received user message: {user_message}")
+            logger.info("Received user message (%d chars)", len(user_message))
+            logger.debug("Received user message: %s", user_message)
 
             # Send typing indicator
             await self._send_message(
@@ -358,7 +367,7 @@ class WebSocketChatHandler:
             )
 
             # ------------------------------------------------------------------
-            # Dynamic parameter overrides (XMGPLAT-9697).
+            # Dynamic parameter overrides.
             #
             # Priority: per-message overrides > per-session overrides > global
             # config. `override_mode: "session"` additionally persists the
@@ -471,7 +480,6 @@ class WebSocketChatHandler:
             # it forward from the checkpoint automatically (total=False
             # TypedDict pass-through), so no manual aget_state is needed.
             # ------------------------------------------------------------------
-            _turn_start = time.perf_counter()
             graph_state = await self.chat_graph.ainvoke(
                 {"user_message": user_message},
                 config={
@@ -486,7 +494,6 @@ class WebSocketChatHandler:
                     }
                 },
             )
-            _turn_latency_ms = (time.perf_counter() - _turn_start) * 1000
 
             # Extract the final assistant message from graph state
             graph_messages = graph_state.get("messages", [])
@@ -496,26 +503,12 @@ class WebSocketChatHandler:
             # Graph messages are dicts: {"role": "assistant", "content": "...", ...}
             content = final_msg.get("content") or ""
             final_response = final_msg
-
-            audit_logger = logging.getLogger("autochat.audit")
-            audit_logger.info(
-                "chat.turn",
-                extra={
-                    "action": "chat.turn",
-                    "turn_latency_ms": round(_turn_latency_ms, 1),
-                    "tool_call_rounds": graph_metadata.get("tool_call_rounds", 0),
-                    "total_tool_calls": graph_metadata.get("total_tool_calls", 0),
-                    "preprocessing_applied": graph_metadata.get("preprocessing_applied", False),
-                    "kb_chunks": len(kb_results) if kb_results else 0,
-                    "model_id": effective_config.model_id,
-                    "ts": datetime.now().astimezone().isoformat(),
-                },
-            )
-            logger.debug(f"Chat graph response ({len(content):,} chars): {content[:100]}")
+            logger.info("Chat response (%s chars)", f"{len(content):,}")
+            logger.debug("Chat response preview: %s", content[:100])
 
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata["model_id"] = effective_config.model_id
-            # Human-readable name for the "Powered by ..." chat header (XMGPLAT-9697).
+            # Human-readable name for the "Powered by ..." chat header.
             # Matches model_id above -- the *configured* model for this turn, not
             # necessarily whichever model actually answered (see NOTE near the
             # token-usage-store call below re: fallback_model retries).
@@ -530,6 +523,8 @@ class WebSocketChatHandler:
                 response_metadata["input_tokens"] = graph_metadata["input_tokens"]
             if graph_metadata.get("output_tokens") is not None:
                 response_metadata["output_tokens"] = graph_metadata["output_tokens"]
+            if graph_metadata.get("stop_reason") is not None:
+                response_metadata["stop_reason"] = graph_metadata["stop_reason"]
             if kb_results:
                 response_metadata["kb_used"] = True
                 response_metadata["kb_chunks"] = len(kb_results)
@@ -555,20 +550,38 @@ class WebSocketChatHandler:
                 "kb_sources": response_metadata.get("kb_sources", []),
             }
 
-            # Send response to client
-            await self._send_message(
-                websocket,
-                {
-                    "type": "ai_response",
-                    "message_id": message_id,
-                    "message": final_response.get("content") or "",
-                    "tool_calls": final_response.get("tool_calls", []),
-                    "tool_results": final_response.get("tool_results", []),
-                    "timestamp": datetime.now().isoformat(),
-                    "metadata": response_metadata,
-                    "conversation_id": conversation_id,
-                },
-            )
+            # Send response to client. This can fail if the connection has
+            # dropped mid-turn (e.g. a network/proxy reconnect while the
+            # multi-round tool-calling loop was running) — the turn's
+            # messages are already checkpointed by the graph invocation
+            # above regardless of whether this send succeeds, so a failure
+            # here must not skip the bookkeeping below (record_turn, title
+            # generation, token usage) or the conversation would be left
+            # with a stale updated_at/title/message_count even though the
+            # answer is fully persisted and viewable once reloaded.
+            try:
+                await self._send_message(
+                    websocket,
+                    {
+                        "type": "ai_response",
+                        "message_id": message_id,
+                        "message": final_response.get("content") or "",
+                        "tool_calls": final_response.get("tool_calls", []),
+                        "tool_results": final_response.get("tool_results", []),
+                        "timestamp": datetime.now().isoformat(),
+                        "metadata": response_metadata,
+                        "conversation_id": conversation_id,
+                    },
+                    log_errors=False,
+                )
+            except WebSocketError:
+                logger.warning(
+                    "Could not deliver ai_response to a closed connection (session=%s, "
+                    "conversation_id=%s) — turn is already checkpointed; continuing with "
+                    "post-turn bookkeeping.",
+                    session.session_id,
+                    conversation_id,
+                )
 
             # Persist the turn against the conversation metadata store
             # (best-effort, mirrors the token-usage persistence below — the
@@ -630,8 +643,18 @@ class WebSocketChatHandler:
             logger.error(f"Error processing chat message: {str(e)}")
             self._total_errors += 1
 
-            # Send error to user
-            error_response = self._create_error_response(str(e))
+            # Send error to user. ModelInvocationError (raised by
+            # graph/nodes/llm_call.py when Bedrock rejects a specific model's
+            # request) carries a specific, actionable reason -- surface it
+            # verbatim rather than flattening it into _create_error_response()'s
+            # generic "model" bucket ("I'm having trouble with the AI model.
+            # Please try again in a moment."), which hides exactly the detail
+            # (e.g. "requires a cross-region inference profile ID") a user
+            # picking a model from the settings sidebar needs to see.
+            if isinstance(e, ModelInvocationError):
+                error_response = f"⚠️ {e}"
+            else:
+                error_response = self._create_error_response(str(e))
             await self._send_message(
                 websocket,
                 {
@@ -1031,7 +1054,7 @@ class WebSocketChatHandler:
         )
 
     # ------------------------------------------------------------------
-    # Dynamic parameter overrides (XMGPLAT-9697)
+    # Dynamic parameter overrides
     # ------------------------------------------------------------------
 
     def _apply_config_overrides(
@@ -1095,6 +1118,11 @@ class WebSocketChatHandler:
             session.metadata.get("config_overrides", {}),
         )
 
+        # Only session-scoped overrides are persisted -- a per-message
+        # override is deliberately transient.
+        if override_mode == "session":
+            await self._persist_user_settings(session, session.metadata.get("config_overrides", {}))
+
         await self._send_message(
             websocket,
             {
@@ -1110,6 +1138,10 @@ class WebSocketChatHandler:
         """Handle a ``config_reset`` message: clear all session-level dynamic
         parameter overrides, reverting subsequent turns to global config
         defaults. Responds with ``config_updated`` (empty active overrides).
+
+        For authenticated users with settings persistence enabled the stored
+        row is emptied rather than deleted, so the next connect reads an
+        existing "no overrides" row instead of racing a missing one.
         """
         session = await self.session_manager.get_session(websocket)
         if not session:
@@ -1117,6 +1149,8 @@ class WebSocketChatHandler:
             return
 
         session.metadata.pop("config_overrides", None)
+
+        await self._persist_user_settings(session, {})
 
         await self._send_message(
             websocket,
@@ -1128,6 +1162,104 @@ class WebSocketChatHandler:
                 "timestamp": datetime.now().isoformat(),
             },
         )
+
+    # ------------------------------------------------------------------
+    # Persisted per-user settings (XMGPLAT-11193)
+    # ------------------------------------------------------------------
+
+    def _user_settings_persistence_active(self, session: ChatSession) -> bool:
+        """Return True when ``session``'s config overrides should be persisted.
+
+        Requires the feature to be enabled, dynamic overrides to be usable at
+        all, an actual :class:`BaseUserSettingsStore` to be wired, *and* an
+        authenticated ``user_id``. Anonymous connections and misconfigured or
+        degraded deployments (flag enabled but the store failed to open) keep
+        today's in-memory, session-scoped behaviour.
+        """
+        return bool(
+            self.config.user_settings_persistence_enabled
+            and self.config.enable_dynamic_overrides
+            and self.user_settings_store is not None
+            and session.user_id
+        )
+
+    async def _hydrate_user_settings(self, websocket: WebSocket) -> None:
+        """Load the connecting user's persisted settings into the session.
+
+        The row is created empty on first login (race safe — several tabs can
+        connect at once) and only ever holds the parameters the user actually
+        changed: storing a snapshot of the global defaults instead would pin
+        every user to the values that happened to be configured the day they
+        first logged in, so a later ``AUTOCHAT_MAX_TOKENS`` / ``AUTOCHAT_MODEL_ID``
+        change would never reach them.
+
+        The stored document is reconciled against the *current* config (a model
+        that is no longer available, or a ``max_tokens`` above the selected
+        model's cap, is dropped and reported rather than raising), written
+        back, and pushed to the client so the sidebar renders the user's
+        persisted values instead of ``override_defaults``.
+
+        A store failure must never block chat: it is logged and the session
+        falls back to the in-memory, session-scoped behaviour.
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session or not self._user_settings_persistence_active(session):
+            return
+
+        try:
+            row = await self.user_settings_store.get_or_create_settings(session.user_id)
+        except Exception:
+            logger.warning(
+                "Failed to load persisted settings for user %s; falling back to session-only overrides.",
+                session.user_id,
+                exc_info=True,
+            )
+            return
+
+        stored = row.get("settings") or {}
+        valid_overrides, rejection_reasons = self.config.validate_overrides(stored)
+
+        if valid_overrides:
+            session.metadata["config_overrides"] = dict(valid_overrides)
+
+        # Persist the reconciled document so stale/invalid keys don't come
+        # back on every connect.
+        if valid_overrides != stored:
+            logger.info(
+                "Reconciled persisted settings for user %s: dropped %s",
+                session.user_id,
+                rejection_reasons,
+            )
+            await self._persist_user_settings(session, valid_overrides)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "config_updated",
+                "active_overrides": session.metadata.get("config_overrides", {}),
+                "applied_overrides": valid_overrides,
+                "rejected_overrides": rejection_reasons,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _persist_user_settings(self, session: ChatSession, settings: Dict[str, Any]) -> None:
+        """Write ``settings`` to the user's row, swallowing store failures.
+
+        No-op for anonymous sessions and when persistence is disabled or the
+        store is unavailable — settings persistence is best-effort and must
+        never fail a chat turn or a sidebar update.
+        """
+        if not self._user_settings_persistence_active(session):
+            return
+        try:
+            await self.user_settings_store.set_settings(session.user_id, settings)
+        except Exception:
+            logger.warning(
+                "Failed to persist settings for user %s; the change applies to this session only.",
+                session.user_id,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Conversation management (per-user, named, persisted conversations)
@@ -1277,15 +1409,17 @@ class WebSocketChatHandler:
         except ImportError:
             return None
 
-        kwargs: Dict[str, Any] = {
-            "model": self.config.conversation_title_model_id or self.config.model_id,
-            "region_name": self.config.aws_region,
+        model_id = self.config.conversation_title_model_id or self.config.model_id
+        kwargs = build_bedrock_kwargs(
+            model_id,
+            self.config,
             # Titles are short (5-8 words); keep the cap small.
-            "max_tokens": 60,
-        }
-        if self.config.aws_access_key_id and self.config.aws_secret_access_key:
-            kwargs["aws_access_key_id"] = self.config.aws_access_key_id
-            kwargs["aws_secret_access_key"] = self.config.aws_secret_access_key
+            max_tokens=60,
+            # Titles don't benefit from sampling tweaks, and passing them
+            # would break models that reject temperature/top_p.
+            temperature=None,
+            top_p=None,
+        )
 
         try:
             return ChatBedrockConverse(**kwargs)
@@ -1992,13 +2126,24 @@ class WebSocketChatHandler:
         )
         return True
 
-    async def _send_message(self, websocket: WebSocket, message: Dict[str, Any]):
-        """Send message to WebSocket client"""
+    async def _send_message(self, websocket: WebSocket, message: Dict[str, Any], log_errors: bool = True):
+        """Send message to WebSocket client.
+
+        Args:
+            websocket: The client connection to send to.
+            message: JSON-serializable payload to send.
+            log_errors: When ``True`` (default), a send failure is logged at
+                ERROR here before being re-raised as ``WebSocketError``. Set
+                to ``False`` when the caller already logs a more specific,
+                context-rich message for this failure (e.g. including
+                session/conversation ids) so the failure isn't logged twice.
+        """
 
         try:
             await websocket.send_json(message)
         except Exception as e:
-            logger.error(f"Failed to send message: {str(e)}")
+            if log_errors:
+                logger.error(f"Failed to send message: {str(e)}")
             raise WebSocketError(f"Failed to send message: {str(e)}")
 
     async def _send_error(self, websocket: WebSocket, error_message: str):
@@ -2030,7 +2175,15 @@ class WebSocketChatHandler:
         return client.host if client else "unknown"
 
     def _create_error_response(self, error_message: str) -> str:
-        """Create user-friendly error response"""
+        """Create user-friendly error response.
+
+        Note: model-specific failures raised as ``ModelInvocationError`` are
+        handled separately (and more specifically) in the ``except`` block
+        in ``_handle_chat_message`` -- this generic "model" bucket only
+        catches everything else that happens to mention "model" in its
+        message, so it still surfaces the actual error text rather than
+        fully hiding it behind a one-size-fits-all phrase.
+        """
 
         if "timeout" in error_message.lower():
             return "I'm taking longer than usual to respond. Please try again."
@@ -2039,7 +2192,7 @@ class WebSocketChatHandler:
         elif "access denied" in error_message.lower():
             return "I don't have access to that model or service. Please contact support."
         elif "model" in error_message.lower():
-            return "I'm having trouble with the AI model. Please try again in a moment."
+            return f"I'm having trouble with the AI model: {error_message}. Please try again in a moment."
         else:
             return f"I encountered an error: {error_message}. Please try again."
 

@@ -130,6 +130,30 @@ class TestManualUrlOverrides:
         assert provider._token_endpoint == "https://manual.example.com/token"
 
 
+class TestPublicEndpointProperties:
+    """Public read-only accessors for resolved endpoints.
+
+    Added so the MCP discovery routes (``mcp/discovery.py``) can build RFC
+    8414/9728 metadata without reaching into ``SSOProvider`` internals.
+    """
+
+    def test_properties_are_none_before_resolution(self):
+        provider = SSOProvider(_make_config())
+        assert provider.issuer is None
+        assert provider.authorization_endpoint is None
+        assert provider.token_endpoint is None
+        assert provider.jwks_uri is None
+
+    def test_properties_reflect_resolved_endpoints(self):
+        provider = SSOProvider(_make_config())
+        provider._resolve_endpoints(discovered=_DISCOVERY_DOC)
+
+        assert provider.issuer == "https://idp.example.com"
+        assert provider.authorization_endpoint == "https://idp.example.com/authorize"
+        assert provider.token_endpoint == "https://idp.example.com/token"
+        assert provider.jwks_uri == "https://idp.example.com/jwks"
+
+
 class TestBuildAuthorizationUrl:
     def test_build_authorization_url_includes_pkce_parameters(self):
         provider = SSOProvider(_make_config())

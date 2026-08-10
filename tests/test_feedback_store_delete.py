@@ -1,4 +1,4 @@
-"""Store-level unit tests for ``delete`` (XMGPLAT-10684, AC-12).
+"""Store-level unit tests for ``delete``.
 
 Covers both the SQLite and Postgres feedback stores:
 

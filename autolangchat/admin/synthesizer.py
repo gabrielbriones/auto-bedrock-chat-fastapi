@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 
 from ..db.feedback_base import BaseFeedbackStore
 from ..db.kb_base import BaseKBStore
+from ..model_capabilities import build_bedrock_kwargs
 from ..models import FeedbackEntry, FeedbackListFilters, KBDocument, KBDocumentListFilters, ReviewStatus
 from ..rag.embedding_pipeline import TextChunker
 
@@ -407,7 +408,7 @@ class FeedbackSynthesizer:
             existing_doc = existing_docs[0] if existing_docs else None
 
             # ------------------------------------------------------------------
-            # T4: Prefer cited document IDs over tag-based lookup (XMGPLAT-10940).
+            # Prefer cited document IDs over tag-based lookup.
             # Collect document_id values from kb_sources_used across all entries,
             # count occurrences, and override existing_doc with the most-cited
             # document if it still exists in the KB.
@@ -462,22 +463,23 @@ class FeedbackSynthesizer:
                 )
             aws_region = cfg.aws_region if cfg else "us-east-1"
             max_tokens = cfg.max_tokens if cfg else 4096
-            aws_access_key_id = cfg.aws_access_key_id if cfg else None
-            aws_secret_access_key = cfg.aws_secret_access_key if cfg else None
 
             lc_messages = [
                 SystemMessage(content=m["content"]) if m["role"] == "system" else HumanMessage(content=m["content"])
                 for m in messages
             ]
-            llm_kwargs: Dict[str, Any] = {
-                "model": model_id,
-                "region_name": aws_region,
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
-            }
-            if aws_access_key_id and aws_secret_access_key:
-                llm_kwargs["aws_access_key_id"] = aws_access_key_id
-                llm_kwargs["aws_secret_access_key"] = aws_secret_access_key
+            # Synthesis wants deterministic output, but models that reject
+            # temperature (e.g. reasoning models) must not receive it -- the
+            # shared builder drops it for those and clamps max_tokens to the
+            # model's own output cap.
+            llm_kwargs = build_bedrock_kwargs(
+                model_id,
+                cfg,
+                max_tokens=max_tokens,
+                temperature=0.0,
+                top_p=None,
+                region_name=aws_region,
+            )
             llm = ChatBedrockConverse(**llm_kwargs)
             ai_msg = await llm.ainvoke(lc_messages)
             raw_content_val = ai_msg.content

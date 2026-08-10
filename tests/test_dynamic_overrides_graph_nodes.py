@@ -1,10 +1,10 @@
-"""XMGPLAT-9697 Phase 3 — verify feature-toggle overrides propagate through
+"""Verify feature-toggle overrides propagate through
 LangGraph nodes via `config["configurable"]["chat_config"]` (not a shared
 `self.config` attribute).
 
 Both `preprocess_node` and `rag_node` already read `chat_config` fresh from
 `config["configurable"]` on every call, so passing the per-turn effective
-config built in `websocket_handler.py` (Phase 2) makes these toggles "just
+config built in `websocket_handler.py` makes these toggles "just
 work" -- this file is verification, not new plumbing. Tests mock
 `config["configurable"]["chat_config"]` directly per the plan, using a real
 `ChatConfig` (`.model_copy(update=...)`) rather than a hand-rolled stub, since
@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from autolangchat.config import ChatConfig
+from autolangchat.defaults import DEFAULT_SUMMARIZATION_TEMPERATURE
 from autolangchat.graph.nodes.preprocess import preprocess_node
 from autolangchat.graph.nodes.rag import rag_node
 
@@ -67,6 +68,101 @@ class TestPreprocessNodeAiSummarizationToggle:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         result = await preprocess_node(state, {"configurable": {}})
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# preprocess_node: summarization_model_id / temperature / max_tokens / top_p
+# ---------------------------------------------------------------------------
+
+
+class TestPreprocessNodeSummarizationParams:
+    @pytest.mark.asyncio
+    async def test_distinct_summarization_params_are_used(self):
+        """When summarization overrides are set, the summarizer LLM is built from
+        them instead of the main chat model/params."""
+        chat_config = _config(
+            enable_ai_summarization=True,
+            model_id="us.anthropic.claude-sonnet-5",
+            max_tokens=4096,
+            summarization_model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            summarization_temperature=0.2,
+            summarization_max_tokens=512,
+        )
+        state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
+        config = {"configurable": {"chat_config": chat_config}}
+
+        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+            mock_build_llm.return_value = MagicMock()
+            await preprocess_node(state, config)
+
+        mock_build_llm.assert_called_once()
+        called_model_id, called_config = mock_build_llm.call_args.args
+        assert called_model_id == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert called_config.model_id == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert called_config.temperature == 0.2
+        assert called_config.max_tokens == 512
+        assert called_config.top_p is None
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_main_config_when_summarization_fields_unset(self):
+        """When summarization_* fields are None, the summarizer reuses the main
+        model_id/max_tokens and the fixed DEFAULT_SUMMARIZATION_TEMPERATURE."""
+        chat_config = _config(
+            enable_ai_summarization=True,
+            model_id="us.anthropic.claude-sonnet-5",
+            max_tokens=4096,
+        )
+        state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
+        config = {"configurable": {"chat_config": chat_config}}
+
+        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+            mock_build_llm.return_value = MagicMock()
+            await preprocess_node(state, config)
+
+        called_config = mock_build_llm.call_args.args[1]
+        assert called_config.model_id == "us.anthropic.claude-sonnet-5"
+        assert called_config.max_tokens == 4096
+        assert called_config.temperature == DEFAULT_SUMMARIZATION_TEMPERATURE
+        assert called_config.top_p is None
+
+    @pytest.mark.asyncio
+    async def test_summarization_top_p_used_when_no_summarization_temperature(self):
+        """summarization_top_p takes effect only when summarization_temperature
+        is unset -- Bedrock Converse rejects both being sent together."""
+        chat_config = _config(
+            enable_ai_summarization=True,
+            summarization_top_p=0.4,
+        )
+        state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
+        config = {"configurable": {"chat_config": chat_config}}
+
+        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+            mock_build_llm.return_value = MagicMock()
+            await preprocess_node(state, config)
+
+        called_config = mock_build_llm.call_args.args[1]
+        assert called_config.top_p == 0.4
+        assert called_config.temperature is None
+
+    @pytest.mark.asyncio
+    async def test_summarization_temperature_wins_over_summarization_top_p(self):
+        """Mutual exclusivity: an explicit summarization_temperature drops
+        summarization_top_p entirely, even when both are configured."""
+        chat_config = _config(
+            enable_ai_summarization=True,
+            summarization_temperature=0.1,
+            summarization_top_p=0.4,
+        )
+        state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
+        config = {"configurable": {"chat_config": chat_config}}
+
+        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+            mock_build_llm.return_value = MagicMock()
+            await preprocess_node(state, config)
+
+        called_config = mock_build_llm.call_args.args[1]
+        assert called_config.temperature == 0.1
+        assert called_config.top_p is None
 
 
 # ---------------------------------------------------------------------------

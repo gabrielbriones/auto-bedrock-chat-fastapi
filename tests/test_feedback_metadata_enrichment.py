@@ -1,6 +1,6 @@
-"""Tests for the pluggable feedback metadata enrichment feature (XMGPLAT-10687, T8).
+"""Tests for the pluggable feedback metadata enrichment feature.
 
-Covers AC14 (a) through (h):
+Covers:
 
   (a) the enrichment HTTP call is made with the correct AC3 payload when a URL
       is configured (seven session fields only — no ``duration_seconds`` and no
@@ -75,6 +75,7 @@ _handler_stubs = {
         BaseFeedbackStore=object,
         BaseKBStore=object,
         BaseTokenUsageStore=object,
+        BaseUserSettingsStore=object,
         FeedbackAuthorizer=object,
     ),
     "autolangchat.graph": _stub_module("autolangchat.graph"),

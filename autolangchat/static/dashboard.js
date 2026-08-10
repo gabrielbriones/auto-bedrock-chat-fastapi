@@ -1710,7 +1710,7 @@ function formatMetadataValue(value) {
         metaRow.appendChild(metaItem('Created', fmtDate(doc.created_at)));
         metaRow.appendChild(metaItem('Chunks', doc.chunk_count != null ? String(doc.chunk_count) : '—'));
 
-        // Credibility score + flagged status (XMGPLAT-10933)
+        // Credibility score + flagged status
         var credScore = typeof doc.credibility_score === 'number' ? doc.credibility_score : 1.0;
         var credBadgeCls = doc.removal_flagged ? 'danger'
             : credScore >= 0.7 ? 'good'

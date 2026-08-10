@@ -215,6 +215,7 @@ client = WebSocketChatClient(
     "preprocessing_applied": false,
     "input_tokens": 120,
     "output_tokens": 240,
+    "stop_reason": "end_turn",
     "kb_used": true,
     "kb_chunks": 3,
     "kb_sources": [
@@ -252,6 +253,16 @@ nested `usage` dict, which reflects only the final LLM call.
 | --------------- | ----- | ------------------------------------ | ---------------------------------------------------------------- |
 | `input_tokens`  | `int` | Present when the model returns usage | Total input tokens consumed across all LLM calls in this turn.   |
 | `output_tokens` | `int` | Present when the model returns usage | Total output tokens generated across all LLM calls in this turn. |
+
+**Conditional — stop reason (present whenever Bedrock returns a stopReason):**
+
+Independent of token usage — this key is forwarded whenever Bedrock reports a
+`stopReason`, even if `usage` is missing. The key is omitted entirely (not sent
+as `null`) when Bedrock doesn't return one.
+
+| Key           | Type     | Condition                                     | Description                                                                                                                                                                              |
+| ------------- | -------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stop_reason` | `string` | Present whenever Bedrock returns a stopReason | Bedrock Converse's stop reason for the **final** LLM call only (`end_turn`, `max_tokens`, `tool_use`, etc.) — lets clients detect a truncated response instead of a genuinely empty one. |
 
 **Conditional — KB results (only when the knowledge base is queried):**
 

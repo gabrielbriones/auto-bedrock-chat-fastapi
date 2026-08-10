@@ -1,4 +1,4 @@
-"""Phase 1 — AUTOCHAT_* environment variable tests.
+"""AUTOCHAT_* environment variable tests.
 
 Verifies that ChatConfig reads from AUTOCHAT_* env vars (not BEDROCK_*),
 and that old BEDROCK_* vars are ignored.
@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import os
 from unittest.mock import patch
+
+import pytest
+from pydantic import ValidationError
 
 
 def _load_config(**env_overrides):
@@ -71,7 +74,7 @@ class TestAutochatEnvVarPrefix:
 
     def test_token_usage_enabled_defaults_to_false(self):
         """token_usage_enabled is opt-in (default off) so existing deployments
-        don't get surprise writes (XMGPLAT-10746)."""
+        don't get surprise writes."""
         config = _load_config()
         assert config.token_usage_enabled is False
 
@@ -143,3 +146,47 @@ class TestAutochatEnvVarPrefix:
             BEDROCK_FALLBACK_MODEL="should-be-ignored",
         )
         assert config.fallback_model == "us.anthropic.claude-opus-4-8"
+
+
+class TestSummarizationEnvVars:
+    """Separate model_id/temperature/max_tokens/top_p for the
+    AI summarizer, independent of the main chat config."""
+
+    def test_summarization_fields_default_to_none(self):
+        config = _load_config()
+        assert config.summarization_model_id is None
+        assert config.summarization_temperature is None
+        assert config.summarization_max_tokens is None
+        assert config.summarization_top_p is None
+
+    def test_summarization_model_id_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_SUMMARIZATION_MODEL_ID="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        assert config.summarization_model_id == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+    def test_summarization_temperature_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_SUMMARIZATION_TEMPERATURE="0.2")
+        assert abs(config.summarization_temperature - 0.2) < 1e-6
+
+    def test_summarization_max_tokens_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_SUMMARIZATION_MAX_TOKENS="512")
+        assert config.summarization_max_tokens == 512
+
+    def test_summarization_top_p_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_SUMMARIZATION_TOP_P="0.4")
+        assert abs(config.summarization_top_p - 0.4) < 1e-6
+
+    def test_summarization_temperature_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_SUMMARIZATION_TEMPERATURE="1.5")
+
+    def test_summarization_temperature_below_range_rejected(self):
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_SUMMARIZATION_TEMPERATURE="-0.1")
+
+    def test_summarization_top_p_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_SUMMARIZATION_TOP_P="1.1")
+
+    def test_summarization_max_tokens_non_positive_rejected(self):
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_SUMMARIZATION_MAX_TOKENS="0")
