@@ -1262,6 +1262,73 @@ body {
     text-overflow: ellipsis;
 }
 
+.conversation-item-checkbox {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.conversation-select-all-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f7fafc;
+}
+
+.conversation-select-all-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: #4a5568;
+    cursor: pointer;
+}
+
+.conversation-select-all-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.conversation-bulk-delete-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid #e2e8f0;
+    background: #f7fafc;
+}
+
+.conversation-bulk-delete-bar.hidden {
+    display: none;
+}
+
+.conversation-bulk-delete-count {
+    font-size: 0.85rem;
+    color: #4a5568;
+}
+
+.conversation-bulk-delete-btn {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: #e53e3e;
+    color: #fff;
+    font-weight: 500;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+}
+
+.conversation-bulk-delete-btn:hover {
+    background: #c53030;
+}
+
 .conversation-item-actions {
     display: flex;
     gap: 2px;
@@ -1593,6 +1660,50 @@ body {
     font-weight: 600;
     color: #3182ce;
     background: #ebf8ff;
+}
+
+/* Conversation item options dropdown (\u22ee button) -- portal menu appended to
+   document.body, same positioning pattern as .config-model-menu, so it isn't
+   clipped by the scrollable .conversation-list. */
+.conv-options-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 140px;
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #cbd5e0;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.conv-options-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    font-size: 0.86rem;
+    color: #2d3748;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.conv-options-menu-item:hover {
+    background: #edf2f7;
+}
+
+.conv-options-menu-item-danger {
+    color: #c53030;
+}
+
+.conv-options-menu-item-danger:hover {
+    background: #fff5f5;
+}
+
+.conv-options-menu-icon {
+    flex: none;
+    font-size: 0.9rem;
 }
 
 .config-toggle-row {

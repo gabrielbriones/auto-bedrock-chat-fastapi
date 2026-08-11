@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
 # the WebSocket path when the same guard already exists over REST.
 _CONVERSATION_LIST_MAX_LIMIT = 200
 
+# Upper bound on conversation_delete_bulk's ``conversation_ids`` — the ids
+# become bound parameters in a single statement, and SQLite caps those
+# (SQLITE_MAX_VARIABLE_NUMBER, 999 on older builds). Matches the largest
+# list a client could have selected from (_CONVERSATION_LIST_MAX_LIMIT).
+_CONVERSATION_DELETE_BULK_MAX_IDS = _CONVERSATION_LIST_MAX_LIMIT
+
 
 def _get_sso_session_store_class():
     """Lazy import of SSOSessionStore (requires PyJWT)."""
@@ -272,6 +278,8 @@ class WebSocketChatHandler:
                     await self._handle_conversation_load(websocket, message_data)
                 elif message_type == "conversation_delete":
                     await self._handle_conversation_delete(websocket, message_data)
+                elif message_type == "conversation_delete_bulk":
+                    await self._handle_conversation_delete_bulk(websocket, message_data)
                 elif message_type == "conversation_delete_all":
                     await self._handle_conversation_delete_all(websocket, message_data)
                 elif message_type == "conversation_rename":
@@ -1620,6 +1628,59 @@ class WebSocketChatHandler:
             {
                 "type": "conversation_deleted",
                 "conversation_id": conversation_id,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_conversation_delete_bulk(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_delete_bulk`` request — delete a chosen subset of conversations.
+
+        Unlike ``conversation_delete_all``, ``conversation_ids`` selects an
+        arbitrary subset (the client's current multi-select). Ids that
+        don't exist, or belong to another user, are silently skipped rather
+        than causing the whole request to fail — the response's
+        ``deleted_ids`` tells the client exactly what was removed so it can
+        reconcile its local list.
+        """
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        conversation_ids = data.get("conversation_ids")
+        if (
+            not conversation_ids
+            or not isinstance(conversation_ids, list)
+            or not all(isinstance(cid, str) and cid for cid in conversation_ids)
+        ):
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "conversation_ids must be a non-empty list of strings"
+            )
+            return
+
+        # De-duplicate while preserving order in case the client sends dupes.
+        unique_ids = list(dict.fromkeys(conversation_ids))
+        if len(unique_ids) > _CONVERSATION_DELETE_BULK_MAX_IDS:
+            await self._send_conversation_error(
+                websocket,
+                "invalid_conversation_request",
+                f"conversation_ids must contain at most {_CONVERSATION_DELETE_BULK_MAX_IDS} ids",
+            )
+            return
+
+        deleted_ids = await self.conversation_store.delete_conversations(session.user_id, unique_ids)
+
+        active_conversation_id = session.metadata.get("conversation_id")
+        active_conversation_deleted = active_conversation_id in deleted_ids
+        if active_conversation_deleted:
+            session.metadata["conversation_id"] = None
+            session.metadata.pop("feedback_meta", None)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_bulk_deleted",
+                "deleted_ids": deleted_ids,
+                "active_conversation_deleted": active_conversation_deleted,
                 "timestamp": datetime.now().isoformat(),
             },
         )
