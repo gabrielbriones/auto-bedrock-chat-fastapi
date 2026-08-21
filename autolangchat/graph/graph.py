@@ -55,9 +55,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_token_usage_store(token_usage_store: Any) -> Any:
+async def _resolve_token_usage_store(token_usage_store: Any) -> Any:
     """Resolve ``token_usage_store``, which may be a live instance or a
-    zero-arg callable returning the current instance.
+    zero-arg callable returning the current instance (or an awaitable of it).
 
     A callable lets a host (e.g. ``AutoLangChatPlugin``) hand the graph a
     live lookup (``lambda: self._token_usage_store``) instead of a frozen
@@ -70,14 +70,18 @@ def _resolve_token_usage_store(token_usage_store: Any) -> Any:
     (``inspect.isfunction``/``ismethod``) and ``functools.partial``. Not
     ``callable()`` in general -- a real store instance (or a test double
     standing in for one, e.g. ``MagicMock()``) is itself callable but must
-    be used as-is, not invoked.
+    be used as-is, not invoked. If invoking the provider returns an
+    awaitable (e.g. an async provider), it is awaited before returning.
     """
     if (
         inspect.isfunction(token_usage_store)
         or inspect.ismethod(token_usage_store)
         or isinstance(token_usage_store, functools.partial)
     ):
-        return token_usage_store()
+        result = token_usage_store()
+        if inspect.isawaitable(result):
+            result = await result
+        return result
     return token_usage_store
 
 
@@ -95,8 +99,12 @@ def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: 
             configurable["chat_config"] = chat_config
         if "tool_manager" not in configurable and tool_manager is not None:
             configurable["tool_manager"] = tool_manager
-        if "token_usage_store" not in configurable:
-            configurable["token_usage_store"] = _resolve_token_usage_store(token_usage_store)
+        # Resolve whichever value is effective -- a per-call override in
+        # configurable takes priority, but still needs the same
+        # provider-vs-instance resolution as the graph-level default.
+        configurable["token_usage_store"] = await _resolve_token_usage_store(
+            configurable.get("token_usage_store", token_usage_store)
+        )
         config = {**config, "configurable": configurable}
         return await node_fn(state, config)
 

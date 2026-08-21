@@ -422,6 +422,66 @@ class TestTokenUsageGraphIntegration:
         live_store.record_turn.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_per_call_override_provider_is_resolved(self, fake_config):
+        """A caller-supplied provider passed directly via
+        config['configurable']['token_usage_store'] (not through
+        build_chat_graph()) must get the same provider-vs-instance
+        resolution as the graph-level default, not be passed through raw."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        live_store = MagicMock()
+        live_store.record_turn = AsyncMock()
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            # No token_usage_store passed to build_chat_graph() -- only as a
+            # per-call configurable override.
+            graph = build_chat_graph(_TokenUsageEnabledConfig())
+            await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={
+                    "configurable": {
+                        "thread_id": "job-1",
+                        "token_usage_store": lambda: live_store,
+                    }
+                },
+            )
+
+        live_store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_provider_is_awaited(self, fake_config):
+        """An async zero-arg provider must be awaited, not left as an
+        un-awaited coroutine that later fails .record_turn()."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        live_store = MagicMock()
+        live_store.record_turn = AsyncMock()
+
+        async def _async_provider():
+            return live_store
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(_TokenUsageEnabledConfig(), token_usage_store=_async_provider)
+            await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={"configurable": {"thread_id": "job-1"}},
+            )
+
+        live_store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_direct_ainvoke_call_no_op_without_token_usage_store(self, fake_config):
         """Same call path, but no token_usage_store passed -- must not raise."""
 
