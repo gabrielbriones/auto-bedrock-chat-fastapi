@@ -5,6 +5,7 @@ ChatBedrockConverse so no real AWS credentials are needed.
 """
 
 import asyncio
+import functools
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -389,6 +390,36 @@ class TestTokenUsageGraphIntegration:
                 config={"configurable": {"thread_id": "job-2"}},
             )
             live_store.record_turn.assert_awaited_once()  # still just the one call from job-1
+
+    @pytest.mark.asyncio
+    async def test_token_usage_store_functools_partial_provider_is_resolved(self, fake_config):
+        """functools.partial(...) must also be recognized as a zero-arg
+        provider, not misclassified as an already-resolved store instance
+        (which would later fail when token_usage_node calls .record_turn on
+        the partial object itself instead of what it resolves to)."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        live_store = MagicMock()
+        live_store.record_turn = AsyncMock()
+        holder = {"store": live_store}
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(
+                _TokenUsageEnabledConfig(),
+                token_usage_store=functools.partial(holder.__getitem__, "store"),
+            )
+            await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={"configurable": {"thread_id": "job-1"}},
+            )
+
+        live_store.record_turn.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_direct_ainvoke_call_no_op_without_token_usage_store(self, fake_config):

@@ -28,6 +28,7 @@ MemorySaver can be swapped for AsyncPostgresSaver.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
@@ -65,13 +66,17 @@ def _resolve_token_usage_store(token_usage_store: Any) -> Any:
     that don't override ``configurable["token_usage_store"]`` themselves
     still see the up-to-date value instead of a stale, never-opened store.
 
-    Only plain functions/lambdas/bound methods are treated as providers
-    (``inspect.isfunction``/``ismethod``) rather than ``callable()`` in
-    general -- a real store instance (or a test double standing in for one,
-    e.g. ``MagicMock()``) is itself callable but must be used as-is, not
-    invoked.
+    Recognized as providers: plain functions/lambdas/bound methods
+    (``inspect.isfunction``/``ismethod``) and ``functools.partial``. Not
+    ``callable()`` in general -- a real store instance (or a test double
+    standing in for one, e.g. ``MagicMock()``) is itself callable but must
+    be used as-is, not invoked.
     """
-    if inspect.isfunction(token_usage_store) or inspect.ismethod(token_usage_store):
+    if (
+        inspect.isfunction(token_usage_store)
+        or inspect.ismethod(token_usage_store)
+        or isinstance(token_usage_store, functools.partial)
+    ):
         return token_usage_store()
     return token_usage_store
 
