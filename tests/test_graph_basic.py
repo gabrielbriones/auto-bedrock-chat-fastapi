@@ -539,6 +539,34 @@ class TestTokenUsageGraphIntegration:
         assert result["messages"][-1]["content"] == "hi"
 
     @pytest.mark.asyncio
+    async def test_provider_not_resolved_when_token_usage_disabled(self, fake_config):
+        """token_usage_node no-ops when token_usage_enabled is False, so the
+        provider must not even be called -- avoids wasted work and avoids
+        surfacing provider exceptions/log noise on every disabled turn."""
+
+        # fake_config (token_usage_enabled defaults to False/absent) is used
+        # as-is -- no _TokenUsageEnabledConfig subclass here.
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        call_count = {"n": 0}
+
+        def provider():
+            call_count["n"] += 1
+            raise AssertionError("provider must not be called when token_usage_enabled is False")
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(fake_config, token_usage_store=provider)
+            result = await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={"configurable": {"thread_id": "job-1"}},
+            )
+
+        assert result["messages"][-1]["content"] == "hi"
+        assert call_count["n"] == 0
+
+    @pytest.mark.asyncio
     async def test_direct_ainvoke_call_no_op_without_token_usage_store(self, fake_config):
         """Same call path, but no token_usage_store passed -- must not raise."""
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Union
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -114,10 +114,12 @@ def _inject_node_config(
             configurable["chat_config"] = chat_config
         if "tool_manager" not in configurable and tool_manager is not None:
             configurable["tool_manager"] = tool_manager
-        if resolve_token_usage_store:
+        if resolve_token_usage_store and getattr(configurable["chat_config"], "token_usage_enabled", False):
             # A per-call override in configurable takes priority, but still
             # needs the same provider-vs-instance resolution as the
-            # graph-level default.
+            # graph-level default. Skipped entirely when disabled --
+            # token_usage_node no-ops anyway, so resolving (and potentially
+            # awaiting/failing) the provider would be wasted work.
             configurable["token_usage_store"] = await _resolve_token_usage_store(
                 configurable.get("token_usage_store", token_usage_store)
             )
@@ -132,7 +134,13 @@ def _inject_node_config(
 def build_chat_graph(
     config: "ChatConfig",
     tool_manager: Optional["ToolManager"] = None,
-    token_usage_store: Optional[Union["BaseTokenUsageStore", Callable[[], Optional["BaseTokenUsageStore"]]]] = None,
+    token_usage_store: Optional[
+        Union[
+            "BaseTokenUsageStore",
+            Callable[[], Optional["BaseTokenUsageStore"]],
+            Callable[[], Awaitable[Optional["BaseTokenUsageStore"]]],
+        ]
+    ] = None,
 ):
     """Build and compile the chat StateGraph.
 
@@ -147,9 +155,9 @@ def build_chat_graph(
     token_usage_store:
         Optional pre-built, already-opened ``BaseTokenUsageStore`` instance
         (e.g. ``AutoLangChatPlugin._token_usage_store``), or a zero-arg
-        callable returning the current instance (e.g. ``lambda: self.
-        _token_usage_store``) -- use a callable when the store can be
-        disabled at runtime after the graph is built (e.g. a startup
+        callable (sync or async) returning the current instance (e.g.
+        ``lambda: self._token_usage_store``) -- use a callable when the store
+        can be disabled at runtime after the graph is built (e.g. a startup
         ``open()`` failure), so callers see the up-to-date value instead of
         a stale reference. Resolved once per turn and injected into the
         ``token_usage`` node's ``configurable`` so ``token_usage_node``
