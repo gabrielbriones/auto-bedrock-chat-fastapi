@@ -72,25 +72,40 @@ async def _resolve_token_usage_store(token_usage_store: Any) -> Any:
     standing in for one, e.g. ``MagicMock()``) is itself callable but must
     be used as-is, not invoked. If invoking the provider returns an
     awaitable (e.g. an async provider), it is awaited before returning.
+
+    Token-usage recording is best-effort: if the provider itself raises
+    (misconfigured, transient failure, etc.), the error is logged and
+    ``None`` is returned instead of propagating and failing the whole turn.
     """
     if (
         inspect.isfunction(token_usage_store)
         or inspect.ismethod(token_usage_store)
         or isinstance(token_usage_store, functools.partial)
     ):
-        result = token_usage_store()
-        if inspect.isawaitable(result):
-            result = await result
+        try:
+            result = token_usage_store()
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception:
+            logger.exception("token_usage_store provider raised; treating as unavailable for this turn")
+            return None
         return result
     return token_usage_store
 
 
-def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: Any, node_fn):
-    """Wrap a node function so chat_config/tool_manager/token_usage_store are
-    always injected.
+def _inject_node_config(
+    chat_config: Any, tool_manager: Any, token_usage_store: Any, node_fn, resolve_token_usage_store: bool = False
+):
+    """Wrap a node function so chat_config/tool_manager are always injected.
 
     LangGraph's with_config() doesn't deep-merge configurable when the caller
     supplies their own config dict, so we inject at node call time via a closure.
+
+    ``resolve_token_usage_store`` should only be set for the ``token_usage``
+    node -- it's the only node that reads ``token_usage_store`` from
+    ``configurable``, so resolving it (potentially awaiting an async
+    provider) on every other node call would be wasted work, up to once per
+    node per turn.
     """
 
     async def _wrapped(state, config: RunnableConfig):
@@ -99,12 +114,13 @@ def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: 
             configurable["chat_config"] = chat_config
         if "tool_manager" not in configurable and tool_manager is not None:
             configurable["tool_manager"] = tool_manager
-        # Resolve whichever value is effective -- a per-call override in
-        # configurable takes priority, but still needs the same
-        # provider-vs-instance resolution as the graph-level default.
-        configurable["token_usage_store"] = await _resolve_token_usage_store(
-            configurable.get("token_usage_store", token_usage_store)
-        )
+        if resolve_token_usage_store:
+            # A per-call override in configurable takes priority, but still
+            # needs the same provider-vs-instance resolution as the
+            # graph-level default.
+            configurable["token_usage_store"] = await _resolve_token_usage_store(
+                configurable.get("token_usage_store", token_usage_store)
+            )
         config = {**config, "configurable": configurable}
         return await node_fn(state, config)
 
@@ -135,11 +151,12 @@ def build_chat_graph(
         _token_usage_store``) -- use a callable when the store can be
         disabled at runtime after the graph is built (e.g. a startup
         ``open()`` failure), so callers see the up-to-date value instead of
-        a stale reference. Injected into every node call's ``configurable``
-        so ``token_usage_node`` records usage for *any* ``ainvoke()``
-        caller -- not just the WebSocket handler -- without that caller
-        having to pass it explicitly. A caller may still override it
-        per-call via ``config["configurable"]["token_usage_store"]``.
+        a stale reference. Resolved once per turn and injected into the
+        ``token_usage`` node's ``configurable`` so ``token_usage_node``
+        records usage for *any* ``ainvoke()`` caller -- not just the
+        WebSocket handler -- without that caller having to pass it
+        explicitly. A caller may still override it per-call via
+        ``config["configurable"]["token_usage_store"]``.
 
     Returns
     -------
@@ -148,7 +165,9 @@ def build_chat_graph(
     """
     builder = StateGraph(ChatState, input=InputState, output=OutputState)
 
-    # Nodes — wrapped so chat_config/tool_manager/token_usage_store are always injected
+    # Nodes — wrapped so chat_config/tool_manager are always injected;
+    # token_usage_store is only resolved for the token_usage node (see
+    # _inject_node_config's resolve_token_usage_store param).
     builder.add_node("init_turn", _inject_node_config(config, tool_manager, token_usage_store, init_turn_node))
     builder.add_node("rag", _inject_node_config(config, tool_manager, token_usage_store, rag_node))
     builder.add_node("preprocess", _inject_node_config(config, tool_manager, token_usage_store, preprocess_node))
@@ -156,7 +175,10 @@ def build_chat_graph(
     builder.add_node(
         "citation_boost", _inject_node_config(config, tool_manager, token_usage_store, citation_boost_node)
     )
-    builder.add_node("token_usage", _inject_node_config(config, tool_manager, token_usage_store, token_usage_node))
+    builder.add_node(
+        "token_usage",
+        _inject_node_config(config, tool_manager, token_usage_store, token_usage_node, resolve_token_usage_store=True),
+    )
 
     # Edges
     builder.add_edge(START, "init_turn")
