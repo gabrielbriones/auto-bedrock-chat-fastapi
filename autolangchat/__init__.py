@@ -7,6 +7,14 @@ hand-rolled session-management + LLM-call loop.
 
 __version__ = "1.1.0"
 
+# ``from . import X`` binds ``autolangchat.graph`` and
+# ``autolangchat.model_capabilities`` as direct attributes of this package.
+# Python 3.10's import system skips that setattr step when the submodule is
+# already in ``sys.modules`` (fixed in 3.11); the ``STORE_NAME`` bytecode from
+# a package-relative ``from . import X`` statement always sets the attribute
+# in this module's ``__dict__`` regardless of Python version, so the parent
+# attribute is reliably present for ``unittest.mock.patch`` traversal.
+from . import graph, model_capabilities
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES, AuthenticationHandler, AuthType, Credentials
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import (
@@ -19,14 +27,6 @@ from .exceptions import (
     SessionError,
     ToolError,
 )
-# ``from . import X`` binds ``autolangchat.graph`` and
-# ``autolangchat.model_capabilities`` as direct attributes of this package.
-# Python 3.10's import system skips that setattr step when the submodule is
-# already in ``sys.modules`` (fixed in 3.11); the ``STORE_NAME`` bytecode from
-# a package-relative ``from . import X`` statement always sets the attribute
-# in this module's ``__dict__`` regardless of Python version, so the parent
-# attribute is reliably present for ``unittest.mock.patch`` traversal.
-from . import graph, model_capabilities
 from .graph.graph import build_chat_graph
 from .graph.tools.generator import ToolsGenerator, create_tools_generator_from_spec
 from .graph.tools.manager import AuthInfo, ToolManager
