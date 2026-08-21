@@ -49,12 +49,13 @@ still delivered normally, just without the persisted record for that turn.
 
 ### Configuration reference
 
-| Setting                     | Env var                              | Default  | Notes                                                                             |
-| --------------------------- | ------------------------------------ | -------- | --------------------------------------------------------------------------------- |
-| `token_usage_enabled`       | `AUTOCHAT_TOKEN_USAGE_ENABLED`       | `false`  | Master switch                                                                     |
-| `token_usage_storage_type`  | `AUTOCHAT_TOKEN_USAGE_STORAGE_TYPE`  | `sqlite` | `sqlite` (zero-config) or `postgres`                                              |
-| `token_usage_database_path` | `AUTOCHAT_TOKEN_USAGE_DATABASE_PATH` | `None`   | SQLite file path; falls back to `feedback_database_path`, then `KB_DATABASE_PATH` |
-| `token_usage_postgres_url`  | `AUTOCHAT_TOKEN_USAGE_POSTGRES_URL`  | `None`   | Falls back to `AUTOCHAT_FEEDBACK_POSTGRES_URL`, then `AUTOCHAT_KB_POSTGRES_URL`   |
+| Setting                     | Env var                              | Default  | Notes                                                                                          |
+| --------------------------- | ------------------------------------ | -------- | ---------------------------------------------------------------------------------------------- |
+| `token_usage_enabled`       | `AUTOCHAT_TOKEN_USAGE_ENABLED`       | `false`  | Master switch                                                                                  |
+| `token_usage_storage_type`  | `AUTOCHAT_TOKEN_USAGE_STORAGE_TYPE`  | `sqlite` | `sqlite` (zero-config) or `postgres`                                                           |
+| `token_usage_database_path` | `AUTOCHAT_TOKEN_USAGE_DATABASE_PATH` | `None`   | SQLite file path; falls back to `feedback_database_path`, then `KB_DATABASE_PATH`              |
+| `token_usage_postgres_url`  | `AUTOCHAT_TOKEN_USAGE_POSTGRES_URL`  | `None`   | Falls back to `AUTOCHAT_FEEDBACK_POSTGRES_URL`, then `AUTOCHAT_KB_POSTGRES_URL`                |
+| `token_usage_write_timeout` | `AUTOCHAT_TOKEN_USAGE_WRITE_TIMEOUT` | `5.0`    | Seconds before the per-turn `record_turn()` write is abandoned (turn still completes normally) |
 
 ---
 

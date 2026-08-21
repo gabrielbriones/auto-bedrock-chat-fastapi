@@ -27,10 +27,16 @@ Returns ``{}`` in most cases -- no state mutation. When the last message has
 no ``message_id`` yet (normally only in tests; ``llm_call_node`` always sets
 one in real graph runs), returns an update writing the freshly generated id
 back into ``messages`` so it matches the ``turn_id`` just persisted.
+
+The store write itself is bounded by ``chat_config.token_usage_write_timeout``
+(default 5s) via ``asyncio.wait_for`` -- this node runs inline in chat_graph,
+so an unresponsive backend would otherwise add unbounded latency to every
+chat turn.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -73,15 +79,20 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
     user_id = configurable.get("user_id")
 
     try:
-        await token_usage_store.record_turn(
-            turn_id=message_id,
-            session_id=session_id,
-            user_id=user_id,
-            model_id=metadata.get("model_id") or chat_config.model_id,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            turn_ts=datetime.now(timezone.utc),
+        await asyncio.wait_for(
+            token_usage_store.record_turn(
+                turn_id=message_id,
+                session_id=session_id,
+                user_id=user_id,
+                model_id=metadata.get("model_id") or chat_config.model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                turn_ts=datetime.now(timezone.utc),
+            ),
+            timeout=getattr(chat_config, "token_usage_write_timeout", 5.0),
         )
+    except asyncio.TimeoutError:
+        logger.warning("Timed out recording token usage for turn_id=%s", message_id)
     except Exception:
         logger.exception("Failed to record token usage for turn_id=%s", message_id)
 

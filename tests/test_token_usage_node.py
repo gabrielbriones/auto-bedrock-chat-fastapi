@@ -10,6 +10,7 @@ and tests/test_websocket_token_usage_persistence.py for the WebSocket
 handler's ainvoke()-configurable wiring.
 """
 
+import asyncio
 import uuid
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock
@@ -215,6 +216,48 @@ class TestTokenUsageNode:
         state["messages"] = []
 
         result = await token_usage_node(state, config)
+
+        assert result == {}
+        store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_record_turn_timeout_is_bounded_and_swallowed(self):
+        """A hung store write must not block the turn indefinitely --
+        record_turn() is bounded by chat_config.token_usage_write_timeout."""
+        store = MagicMock()
+
+        async def _hang(**kwargs):
+            await asyncio.sleep(10)
+
+        store.record_turn = AsyncMock(side_effect=_hang)
+
+        class _FastTimeoutConfig(_TokenUsageConfig):
+            token_usage_write_timeout = 0.01
+
+        config = {
+            "configurable": {
+                "chat_config": _FastTimeoutConfig(),
+                "token_usage_store": store,
+                "thread_id": "thread-1",
+            }
+        }
+
+        # Must not raise and must not take anywhere near the 10s sleep.
+        result = await asyncio.wait_for(token_usage_node(_state(), config), timeout=2)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_record_turn_timeout_defaults_when_chat_config_lacks_field(self):
+        """chat_config stubs that predate token_usage_write_timeout (e.g. in
+        other tests) must still work via the getattr() default."""
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        result = await token_usage_node(_state(), config)
 
         assert result == {}
         store.record_turn.assert_awaited_once()

@@ -955,6 +955,20 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    token_usage_write_timeout: float = Field(
+        default=5.0,
+        alias="AUTOCHAT_TOKEN_USAGE_WRITE_TIMEOUT",
+        gt=0,
+        description=(
+            "Timeout in seconds for the token-usage store's record_turn() write. "
+            "token_usage_node runs inline in chat_graph, so an unresponsive storage "
+            "backend would otherwise add unbounded latency to every chat turn "
+            "(e.g. the WebSocket handler waits for ainvoke() to complete before "
+            "sending the response). On timeout, the write is abandoned and logged; "
+            "the turn still completes normally."
+        ),
+    )
+
     # ------------------------------------------------------------------
     # Conversation Storage Backend
     # ------------------------------------------------------------------
