@@ -164,11 +164,16 @@ class TestTokenUsageNode:
             "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
         }
 
-        await token_usage_node(_state(message_id=None), config)
+        result = await token_usage_node(_state(message_id=None), config)
 
         _, kwargs = store.record_turn.await_args
         # A fresh id was generated rather than skipping the call entirely.
         assert uuid.UUID(kwargs["turn_id"])
+        # The generated id is written back to state so callers with their own
+        # independent message_id fallback (e.g. websocket_handler.py) see the
+        # same value that was just persisted as turn_id.
+        written_back_id = result["messages"][-1]["metadata"]["message_id"]
+        assert written_back_id == kwargs["turn_id"]
 
     @pytest.mark.asyncio
     async def test_model_id_falls_back_to_chat_config_when_missing_from_metadata(self):
@@ -193,6 +198,23 @@ class TestTokenUsageNode:
 
         # Must not raise even though record_turn fails.
         result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_op_state_update_when_messages_empty(self):
+        """Edge case: no messages at all -- must not raise on messages[:-1]
+        and must not fabricate a messages list out of nothing."""
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+        state = _state(message_id=None)
+        state["messages"] = []
+
+        result = await token_usage_node(state, config)
 
         assert result == {}
         store.record_turn.assert_awaited_once()

@@ -23,7 +23,10 @@ State read:
                 accumulated across tool-call rounds by llm_call_node.
     messages  — the last message's own ``metadata`` dict carries message_id.
 
-Returns ``{}`` — no state mutation.
+Returns ``{}`` in most cases -- no state mutation. When the last message has
+no ``message_id`` yet (normally only in tests; ``llm_call_node`` always sets
+one in real graph runs), returns an update writing the freshly generated id
+back into ``messages`` so it matches the ``turn_id`` just persisted.
 """
 
 from __future__ import annotations
@@ -58,7 +61,8 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
     messages = state.get("messages") or []
     last_message = messages[-1] if messages else {}
     # Fall back to a fresh id only if the graph didn't produce one (tests).
-    message_id = (last_message.get("metadata") or {}).get("message_id") or str(uuid.uuid4())
+    existing_message_id = (last_message.get("metadata") or {}).get("message_id")
+    message_id = existing_message_id or str(uuid.uuid4())
 
     session_id = configurable.get("session_id") or configurable.get("thread_id")
     if not session_id:
@@ -81,4 +85,15 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
     except Exception:
         logger.exception("Failed to record token usage for turn_id=%s", message_id)
 
-    return {}
+    if existing_message_id or not messages:
+        return {}
+
+    # Write the generated id back so callers with their own independent
+    # message_id fallback (e.g. websocket_handler.py) see the same value
+    # that was just persisted as turn_id, instead of minting a second,
+    # different UUID and breaking correlation.
+    updated_last_message = {
+        **last_message,
+        "metadata": {**(last_message.get("metadata") or {}), "message_id": message_id},
+    }
+    return {"messages": [*messages[:-1], updated_last_message]}
