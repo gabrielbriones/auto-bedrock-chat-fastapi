@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
@@ -499,6 +499,9 @@ class WebSocketChatHandler:
                         "embedding_client": self.embedding_client,
                         "auth_context_text": auth_context_text,
                         "chat_config": effective_config,
+                        "token_usage_store": self.token_usage_store,
+                        "session_id": session.session_id,
+                        "user_id": session.user_id,
                     }
                 },
             )
@@ -518,8 +521,8 @@ class WebSocketChatHandler:
             response_metadata["model_id"] = effective_config.model_id
             # Human-readable name for the "Powered by ..." chat header.
             # Matches model_id above -- the *configured* model for this turn, not
-            # necessarily whichever model actually answered (see NOTE near the
-            # token-usage-store call below re: fallback_model retries).
+            # necessarily whichever model actually answered (token_usage_node uses
+            # graph_metadata["model_id"] instead, which reflects fallback_model retries).
             response_metadata["model_name"] = effective_config.get_model_display_name()
             response_metadata["tool_call_rounds"] = graph_metadata.get("tool_call_rounds", 0)
             response_metadata["total_tool_calls"] = graph_metadata.get("total_tool_calls", 0)
@@ -563,10 +566,10 @@ class WebSocketChatHandler:
             # multi-round tool-calling loop was running) — the turn's
             # messages are already checkpointed by the graph invocation
             # above regardless of whether this send succeeds, so a failure
-            # here must not skip the bookkeeping below (record_turn, title
-            # generation, token usage) or the conversation would be left
-            # with a stale updated_at/title/message_count even though the
-            # answer is fully persisted and viewable once reloaded.
+            # here must not skip the bookkeeping below (conversation
+            # record_turn, title generation) or the conversation would be
+            # left with a stale updated_at/title/message_count even though
+            # the answer is fully persisted and viewable once reloaded.
             try:
                 await self._send_message(
                     websocket,
@@ -592,9 +595,8 @@ class WebSocketChatHandler:
                 )
 
             # Persist the turn against the conversation metadata store
-            # (best-effort, mirrors the token-usage persistence below — the
-            # response has already been sent, so a failure here must not
-            # surface as a second ``ai_response``).
+            # (best-effort — the response has already been sent, so a
+            # failure here must not surface as a second ``ai_response``).
             if use_conversation_persistence and conversation_id is not None:
                 try:
                     await self.conversation_store.record_turn(conversation_id)
@@ -617,35 +619,10 @@ class WebSocketChatHandler:
                     )
                 )
 
-            # Persist per-turn token usage (best-effort). This must never
-            # affect chat delivery: the response has already been sent to
-            # the client above, so a persistence failure here is logged and
-            # swallowed rather than propagated to the outer except-block,
-            # which would otherwise attempt to send a second (error)
-            # ``ai_response`` after a successful one.
-            if self.token_usage_store is not None:
-                input_tokens = response_metadata.get("input_tokens")
-                output_tokens = response_metadata.get("output_tokens")
-                if input_tokens is not None and output_tokens is not None:
-                    try:
-                        # NOTE: intentionally NOT response_metadata["model_id"] —
-                        # that field is unconditionally overwritten with the
-                        # effective per-turn configured model a few lines above
-                        # (for the client-facing payload). graph_metadata["model_id"]
-                        # is the model that actually produced this response, which
-                        # may be the fallback_model if a context-window retry
-                        # occurred; that's what billing/observability needs.
-                        await self.token_usage_store.record_turn(
-                            turn_id=message_id,
-                            session_id=session.session_id,
-                            user_id=session.user_id,
-                            model_id=graph_metadata.get("model_id") or effective_config.model_id,
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            turn_ts=datetime.now(timezone.utc),
-                        )
-                    except Exception:
-                        logger.exception("Failed to record token usage for message_id=%s", message_id)
+            # Token usage is now recorded inside the graph itself by
+            # token_usage_node (runs for every chat_graph caller, not just
+            # this handler) — see token_usage_store in the ainvoke() config
+            # above. Nothing to do here.
 
         except Exception as e:
             logger.error(f"Error processing chat message: {str(e)}")

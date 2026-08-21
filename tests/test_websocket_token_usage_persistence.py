@@ -1,11 +1,15 @@
-"""Tests for per-turn token-usage persistence in the WebSocket handler.
+"""Tests for wiring token-usage collaborators into the ``chat_graph.ainvoke()``
+call from ``WebSocketChatHandler._handle_chat_message`` (XMGPLAT-11215).
 
-Verifies that ``WebSocketChatHandler._handle_chat_message``:
-
-  (a) calls ``token_usage_store.record_turn(...)`` with the expected
-      arguments when a store is configured and token counts are present;
-  (b) still delivers the ``ai_response`` to the client (and does not
-      propagate) when ``record_turn`` raises.
+Token-usage *recording* itself was moved into ``token_usage_node`` -- a graph
+node that runs for every ``chat_graph`` caller, not just this handler. See
+``tests/test_token_usage_node.py`` for node-level behavior (no-op cases,
+model_id/session_id fallbacks, failure swallowing) and
+``TestTokenUsageGraphIntegration`` in ``tests/test_graph_basic.py`` for a full
+non-WebSocket ``ainvoke()`` exercise. This file only verifies that the
+handler passes ``token_usage_store`` / ``session_id`` / ``user_id`` into
+``config["configurable"]`` correctly, and that response delivery is
+unaffected by whether a store is configured.
 """
 
 import asyncio
@@ -29,7 +33,8 @@ from autolangchat.websocket_handler import WebSocketChatHandler  # noqa: E402
 
 def _make_handler(graph_state, token_usage_store=None):
     """Build a handler with all collaborators mocked, wired to return
-    ``graph_state`` from the chat graph."""
+    ``graph_state`` from the chat graph. Returns ``(handler, chat_graph)``
+    so tests can inspect the ``ainvoke()`` call args."""
     config = MagicMock()
     config.timeout = 30.0
     config.model_id = "us.anthropic.claude-sonnet-4-6"
@@ -57,7 +62,7 @@ def _make_handler(graph_state, token_usage_store=None):
         chat_graph=chat_graph,
         token_usage_store=token_usage_store,
     )
-    return handler
+    return handler, chat_graph
 
 
 def _assistant_message():
@@ -75,33 +80,16 @@ def _assistant_message():
     }
 
 
-def _graph_metadata():
-    return {
-        "tool_call_rounds": 0,
-        "total_tool_calls": 0,
-        "preprocessing_applied": False,
-        "input_tokens": 120,
-        "output_tokens": 240,
-    }
-
-
 def _graph_state():
     return {
         "messages": [_assistant_message()],
-        "metadata": _graph_metadata(),
-        "kb_results": [],
-    }
-
-
-def _graph_state_without_token_counts():
-    """Graph state where the LLM call never surfaced usage metadata
-    (e.g. a provider response that omits ``usage_metadata``)."""
-    metadata = _graph_metadata()
-    del metadata["input_tokens"]
-    del metadata["output_tokens"]
-    return {
-        "messages": [_assistant_message()],
-        "metadata": metadata,
+        "metadata": {
+            "tool_call_rounds": 0,
+            "total_tool_calls": 0,
+            "preprocessing_applied": False,
+            "input_tokens": 120,
+            "output_tokens": 240,
+        },
         "kb_results": [],
     }
 
@@ -114,88 +102,38 @@ async def _drive(handler):
     return sent
 
 
-def test_record_turn_called_with_expected_args():
+def test_ainvoke_configurable_includes_token_usage_store_and_session_info():
     token_usage_store = MagicMock()
-    token_usage_store.record_turn = AsyncMock()
-    handler = _make_handler(_graph_state(), token_usage_store=token_usage_store)
+    handler, chat_graph = _make_handler(_graph_state(), token_usage_store=token_usage_store)
 
     sent = asyncio.run(_drive(handler))
 
     ai_responses = [m for m in sent if m.get("type") == "ai_response"]
     assert ai_responses, f"no ai_response sent; got {sent}"
 
-    token_usage_store.record_turn.assert_awaited_once()
-    _, kwargs = token_usage_store.record_turn.await_args
-    assert kwargs["turn_id"] == "msg-abc"
-    assert kwargs["session_id"] == "session-123"
-    assert kwargs["user_id"] == "alice"
-    assert kwargs["model_id"] == "us.anthropic.claude-sonnet-4-6"
-    assert kwargs["input_tokens"] == 120
-    assert kwargs["output_tokens"] == 240
+    chat_graph.ainvoke.assert_awaited_once()
+    _, kwargs = chat_graph.ainvoke.await_args
+    configurable = kwargs["config"]["configurable"]
+    assert configurable["token_usage_store"] is token_usage_store
+    assert configurable["session_id"] == "session-123"
+    assert configurable["user_id"] == "alice"
 
 
-def test_record_turn_uses_actual_model_not_configured_default():
-    """When a context-window retry falls back to a secondary model,
-    llm_call_node records the *actual* model used in graph_metadata
-    ("model_id"). record_turn must persist that value, not the statically
-    configured self.config.model_id, so billing/observability reflects
-    reality rather than always attributing usage to the primary model."""
-    token_usage_store = MagicMock()
-    token_usage_store.record_turn = AsyncMock()
-
-    graph_state = _graph_state()
-    graph_state["metadata"]["model_id"] = "us.anthropic.claude-3-haiku"  # the fallback model
-    handler = _make_handler(graph_state, token_usage_store=token_usage_store)
+def test_ainvoke_configurable_token_usage_store_none_when_unconfigured():
+    """Handler must pass token_usage_store=None through cleanly (the default
+    / disabled case) rather than omitting the key or raising."""
+    handler, chat_graph = _make_handler(_graph_state(), token_usage_store=None)
 
     sent = asyncio.run(_drive(handler))
 
     ai_responses = [m for m in sent if m.get("type") == "ai_response"]
     assert ai_responses, f"no ai_response sent; got {sent}"
-    # The client-facing payload still reports the configured model (existing,
-    # separate behavior — see test_websocket_response_metadata.py).
-    assert ai_responses[-1]["metadata"]["model_id"] == "us.anthropic.claude-sonnet-4-6"
 
-    token_usage_store.record_turn.assert_awaited_once()
-    _, kwargs = token_usage_store.record_turn.await_args
-    assert kwargs["model_id"] == "us.anthropic.claude-3-haiku"
-
-
-def test_record_turn_not_called_when_store_unconfigured():
-    handler = _make_handler(_graph_state(), token_usage_store=None)
-
-    sent = asyncio.run(_drive(handler))
-
-    ai_responses = [m for m in sent if m.get("type") == "ai_response"]
-    assert ai_responses, f"no ai_response sent; got {sent}"
-    # Nothing to assert on record_turn — there is no store — the point of
-    # this test is that ``_handle_chat_message`` doesn't blow up when
-    # ``token_usage_store`` is ``None`` (the default / disabled case).
-
-
-def test_record_turn_not_called_when_token_counts_missing():
-    """If the graph never surfaced input_tokens/output_tokens (e.g. the LLM
-    response lacked usage metadata), record_turn must not be called at all
-    — there's nothing meaningful to persist."""
-    token_usage_store = MagicMock()
-    token_usage_store.record_turn = AsyncMock()
-    handler = _make_handler(_graph_state_without_token_counts(), token_usage_store=token_usage_store)
-
-    sent = asyncio.run(_drive(handler))
-
-    ai_responses = [m for m in sent if m.get("type") == "ai_response"]
-    assert ai_responses, f"no ai_response sent; got {sent}"
-    token_usage_store.record_turn.assert_not_awaited()
-
-
-def test_record_turn_failure_does_not_prevent_response_delivery():
-    token_usage_store = MagicMock()
-    token_usage_store.record_turn = AsyncMock(side_effect=RuntimeError("db unavailable"))
-    handler = _make_handler(_graph_state(), token_usage_store=token_usage_store)
-
-    # Must not raise, even though record_turn fails.
-    sent = asyncio.run(_drive(handler))
-
-    ai_responses = [m for m in sent if m.get("type") == "ai_response"]
-    assert ai_responses, f"no ai_response sent; got {sent}"
-    assert ai_responses[-1].get("error") is not True
-    token_usage_store.record_turn.assert_awaited_once()
+    chat_graph.ainvoke.assert_awaited_once()
+    _, kwargs = chat_graph.ainvoke.await_args
+    configurable = kwargs["config"]["configurable"]
+    assert configurable["token_usage_store"] is None
+    # session_id/user_id are passed through regardless of whether a store is
+    # configured -- token_usage_node itself decides whether to act on them.
+    assert configurable["session_id"] == "session-123"
+    assert configurable["user_id"] == "alice"
