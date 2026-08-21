@@ -350,6 +350,47 @@ class TestTokenUsageGraphIntegration:
         assert kwargs["session_id"] == "workload-analyzer-job-1"
 
     @pytest.mark.asyncio
+    async def test_token_usage_store_callable_reflects_runtime_disablement(self, fake_config):
+        """token_usage_store may be a zero-arg callable (e.g. a plugin's
+        ``lambda: self._token_usage_store``) instead of a frozen instance, so
+        that a store disabled *after* the graph is built (e.g. a startup
+        open() failure sets the plugin's reference to None) is respected by
+        every graph caller instead of the stale pre-failure instance being
+        used forever."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        live_store = MagicMock()
+        live_store.record_turn = AsyncMock()
+
+        # Mutable holder mimicking AutoLangChatPlugin._token_usage_store.
+        holder = {"store": live_store}
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(_TokenUsageEnabledConfig(), token_usage_store=lambda: holder["store"])
+
+            await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={"configurable": {"thread_id": "job-1"}},
+            )
+            live_store.record_turn.assert_awaited_once()
+
+            # Simulate the store being disabled at runtime (e.g. open() failed).
+            holder["store"] = None
+
+            # Must no-op, not keep using the now-stale live_store reference.
+            await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={"configurable": {"thread_id": "job-2"}},
+            )
+            live_store.record_turn.assert_awaited_once()  # still just the one call from job-1
+
+    @pytest.mark.asyncio
     async def test_direct_ainvoke_call_no_op_without_token_usage_store(self, fake_config):
         """Same call path, but no token_usage_store passed -- must not raise."""
 

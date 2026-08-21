@@ -61,6 +61,11 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
     message_id = (last_message.get("metadata") or {}).get("message_id") or str(uuid.uuid4())
 
     session_id = configurable.get("session_id") or configurable.get("thread_id")
+    if not session_id:
+        # BaseTokenUsageStore.record_turn requires a non-null session_id;
+        # neither an explicit session_id nor a thread_id fallback is
+        # available, so there is nothing safe to record.
+        return {}
     user_id = configurable.get("user_id")
 
     try:

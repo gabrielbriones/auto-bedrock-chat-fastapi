@@ -28,8 +28,9 @@ MemorySaver can be swapped for AsyncPostgresSaver.
 
 from __future__ import annotations
 
+import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -53,6 +54,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_token_usage_store(token_usage_store: Any) -> Any:
+    """Resolve ``token_usage_store``, which may be a live instance or a
+    zero-arg callable returning the current instance.
+
+    A callable lets a host (e.g. ``AutoLangChatPlugin``) hand the graph a
+    live lookup (``lambda: self._token_usage_store``) instead of a frozen
+    reference -- if the store gets disabled at runtime (e.g. its ``open()``
+    fails during startup, after the graph was already compiled), callers
+    that don't override ``configurable["token_usage_store"]`` themselves
+    still see the up-to-date value instead of a stale, never-opened store.
+
+    Only plain functions/lambdas/bound methods are treated as providers
+    (``inspect.isfunction``/``ismethod``) rather than ``callable()`` in
+    general -- a real store instance (or a test double standing in for one,
+    e.g. ``MagicMock()``) is itself callable but must be used as-is, not
+    invoked.
+    """
+    if inspect.isfunction(token_usage_store) or inspect.ismethod(token_usage_store):
+        return token_usage_store()
+    return token_usage_store
+
+
 def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: Any, node_fn):
     """Wrap a node function so chat_config/tool_manager/token_usage_store are
     always injected.
@@ -68,7 +91,7 @@ def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: 
         if "tool_manager" not in configurable and tool_manager is not None:
             configurable["tool_manager"] = tool_manager
         if "token_usage_store" not in configurable:
-            configurable["token_usage_store"] = token_usage_store
+            configurable["token_usage_store"] = _resolve_token_usage_store(token_usage_store)
         config = {**config, "configurable": configurable}
         return await node_fn(state, config)
 
@@ -80,7 +103,7 @@ def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: 
 def build_chat_graph(
     config: "ChatConfig",
     tool_manager: Optional["ToolManager"] = None,
-    token_usage_store: Optional["BaseTokenUsageStore"] = None,
+    token_usage_store: Optional[Union["BaseTokenUsageStore", Callable[[], Optional["BaseTokenUsageStore"]]]] = None,
 ):
     """Build and compile the chat StateGraph.
 
@@ -94,11 +117,16 @@ def build_chat_graph(
         graph operates without tools.
     token_usage_store:
         Optional pre-built, already-opened ``BaseTokenUsageStore`` instance
-        (e.g. ``AutoLangChatPlugin._token_usage_store``). Injected into every
-        node call's ``configurable`` so ``token_usage_node`` records usage for
-        *any* ``ainvoke()`` caller -- not just the WebSocket handler -- without
-        that caller having to pass it explicitly. A caller may still override
-        it per-call via ``config["configurable"]["token_usage_store"]``.
+        (e.g. ``AutoLangChatPlugin._token_usage_store``), or a zero-arg
+        callable returning the current instance (e.g. ``lambda: self.
+        _token_usage_store``) -- use a callable when the store can be
+        disabled at runtime after the graph is built (e.g. a startup
+        ``open()`` failure), so callers see the up-to-date value instead of
+        a stale reference. Injected into every node call's ``configurable``
+        so ``token_usage_node`` records usage for *any* ``ainvoke()``
+        caller -- not just the WebSocket handler -- without that caller
+        having to pass it explicitly. A caller may still override it
+        per-call via ``config["configurable"]["token_usage_store"]``.
 
     Returns
     -------

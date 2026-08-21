@@ -143,10 +143,26 @@ class TestTokenUsageNode:
         assert kwargs["user_id"] is None
 
     @pytest.mark.asyncio
-    async def test_message_id_falls_back_to_generated_uuid_when_missing(self):
+    async def test_does_not_fire_when_session_id_and_thread_id_both_missing(self):
+        """record_turn requires a non-null session_id (NOT NULL column); with
+        neither session_id nor thread_id supplied, the node must no-op rather
+        than call record_turn(session_id=None) and rely on the store raising."""
         store = MagicMock()
         store.record_turn = AsyncMock()
         config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store}}
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_message_id_falls_back_to_generated_uuid_when_missing(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
 
         await token_usage_node(_state(message_id=None), config)
 
@@ -158,7 +174,9 @@ class TestTokenUsageNode:
     async def test_model_id_falls_back_to_chat_config_when_missing_from_metadata(self):
         store = MagicMock()
         store.record_turn = AsyncMock()
-        config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store}}
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
 
         await token_usage_node(_state(model_id=None), config)
 
@@ -169,7 +187,9 @@ class TestTokenUsageNode:
     async def test_record_turn_failure_is_swallowed(self):
         store = MagicMock()
         store.record_turn = AsyncMock(side_effect=RuntimeError("db unavailable"))
-        config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store}}
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
 
         # Must not raise even though record_turn fails.
         result = await token_usage_node(_state(), config)

@@ -254,9 +254,14 @@ class AutoLangChatPlugin:
         logger.debug("Checking token usage store configuration and initializing...")
         self._token_usage_store = create_token_usage_store(self.config)
 
-        # Build the LangGraph StateGraph that drives chat orchestration
+        # Build the LangGraph StateGraph that drives chat orchestration.
+        # token_usage_store is passed as a callable (not the instance itself)
+        # so that if _startup_open_token_usage_store() later disables it
+        # (open() failed -> self._token_usage_store = None), every graph
+        # caller sees the up-to-date value instead of the frozen reference
+        # captured here at __init__ time.
         self.chat_graph = build_chat_graph(
-            self.config, tool_manager=self.tool_manager, token_usage_store=self._token_usage_store
+            self.config, tool_manager=self.tool_manager, token_usage_store=lambda: self._token_usage_store
         )
 
         # SSO components (only when SSO is enabled)
