@@ -272,3 +272,103 @@ def _make_empty_astream():
         yield  # make it a generator
 
     return _astream
+
+
+# ---------------------------------------------------------------------------
+# Token usage — non-WebSocket ainvoke() call path (XMGPLAT-11215)
+# ---------------------------------------------------------------------------
+
+
+class TestTokenUsageGraphIntegration:
+    """token_usage_node must record usage for *any* direct chat_graph.ainvoke()
+    caller (e.g. qa/test.py, a batch job), not just WebSocketChatHandler."""
+
+    @pytest.mark.asyncio
+    async def test_direct_ainvoke_call_records_token_usage(self, fake_config):
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 15, "output_tokens": 25})
+        token_usage_store = MagicMock()
+        token_usage_store.record_turn = AsyncMock()
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(_TokenUsageEnabledConfig())
+            await graph.ainvoke(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "metadata": {},
+                },
+                config={
+                    "configurable": {
+                        "thread_id": "batch-job-1",
+                        "token_usage_store": token_usage_store,
+                    }
+                },
+            )
+
+        token_usage_store.record_turn.assert_awaited_once()
+        _, kwargs = token_usage_store.record_turn.await_args
+        assert kwargs["session_id"] == "batch-job-1"  # falls back to thread_id
+        assert kwargs["user_id"] is None
+        assert kwargs["input_tokens"] == 15
+        assert kwargs["output_tokens"] == 25
+
+    @pytest.mark.asyncio
+    async def test_build_chat_graph_wires_token_usage_store_without_per_call_configurable(self, fake_config):
+        """token_usage_store passed to build_chat_graph() itself (mirrors how
+        plugin.py wires AutoLangChatPlugin._token_usage_store) must be used
+        automatically -- callers should not have to repeat it on every
+        ainvoke()'s configurable dict."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        token_usage_store = MagicMock()
+        token_usage_store.record_turn = AsyncMock()
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(_TokenUsageEnabledConfig(), token_usage_store=token_usage_store)
+            # Note: no "token_usage_store" key here -- only build_chat_graph() was told about it.
+            await graph.ainvoke(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "metadata": {},
+                },
+                config={"configurable": {"thread_id": "workload-analyzer-job-1"}},
+            )
+
+        token_usage_store.record_turn.assert_awaited_once()
+        _, kwargs = token_usage_store.record_turn.await_args
+        assert kwargs["session_id"] == "workload-analyzer-job-1"
+
+    @pytest.mark.asyncio
+    async def test_direct_ainvoke_call_no_op_without_token_usage_store(self, fake_config):
+        """Same call path, but no token_usage_store passed -- must not raise."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi")
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(_TokenUsageEnabledConfig())
+            result = await graph.ainvoke(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "metadata": {},
+                },
+                config={"configurable": {"thread_id": "batch-job-2"}},
+            )
+
+        assert result["messages"][-1]["role"] == "assistant"

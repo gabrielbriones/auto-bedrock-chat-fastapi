@@ -4,7 +4,7 @@ Usage
 -----
     from autolangchat.graph.graph import build_chat_graph
 
-    graph = build_chat_graph(config, tool_manager)
+    graph = build_chat_graph(config, tool_manager, token_usage_store)
     state = await graph.ainvoke(
         {"messages": message_dicts, "metadata": {}},
         config={"configurable": {
@@ -17,7 +17,7 @@ Usage
 Graph topology
 ------------------------
 
-    START → init_turn → rag → preprocess → llm → citation_boost → END
+    START → init_turn → rag → preprocess → llm → citation_boost → token_usage → END
                                                 ↓             ↑
                                           tools_execution      |
                                                 ↓             |
@@ -40,19 +40,22 @@ from .nodes.init_turn import init_turn_node
 from .nodes.llm_call import llm_call_node
 from .nodes.preprocess import preprocess_node
 from .nodes.rag import rag_node
+from .nodes.token_usage import token_usage_node
 from .routing import should_continue
 from .state import ChatState, InputState, OutputState
 from .tools.tool_node import tools_execution_node
 
 if TYPE_CHECKING:
     from ..config import ChatConfig
+    from ..db import BaseTokenUsageStore
     from .tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
 
 
-def _inject_node_config(chat_config: Any, tool_manager: Any, node_fn):
-    """Wrap a node function so chat_config and tool_manager are always injected.
+def _inject_node_config(chat_config: Any, tool_manager: Any, token_usage_store: Any, node_fn):
+    """Wrap a node function so chat_config/tool_manager/token_usage_store are
+    always injected.
 
     LangGraph's with_config() doesn't deep-merge configurable when the caller
     supplies their own config dict, so we inject at node call time via a closure.
@@ -64,6 +67,8 @@ def _inject_node_config(chat_config: Any, tool_manager: Any, node_fn):
             configurable["chat_config"] = chat_config
         if "tool_manager" not in configurable and tool_manager is not None:
             configurable["tool_manager"] = tool_manager
+        if "token_usage_store" not in configurable:
+            configurable["token_usage_store"] = token_usage_store
         config = {**config, "configurable": configurable}
         return await node_fn(state, config)
 
@@ -75,6 +80,7 @@ def _inject_node_config(chat_config: Any, tool_manager: Any, node_fn):
 def build_chat_graph(
     config: "ChatConfig",
     tool_manager: Optional["ToolManager"] = None,
+    token_usage_store: Optional["BaseTokenUsageStore"] = None,
 ):
     """Build and compile the chat StateGraph.
 
@@ -86,6 +92,13 @@ def build_chat_graph(
     tool_manager:
         Optional pre-built ``ToolManager`` instance. If not provided, the
         graph operates without tools.
+    token_usage_store:
+        Optional pre-built, already-opened ``BaseTokenUsageStore`` instance
+        (e.g. ``AutoLangChatPlugin._token_usage_store``). Injected into every
+        node call's ``configurable`` so ``token_usage_node`` records usage for
+        *any* ``ainvoke()`` caller -- not just the WebSocket handler -- without
+        that caller having to pass it explicitly. A caller may still override
+        it per-call via ``config["configurable"]["token_usage_store"]``.
 
     Returns
     -------
@@ -94,12 +107,15 @@ def build_chat_graph(
     """
     builder = StateGraph(ChatState, input=InputState, output=OutputState)
 
-    # Nodes — wrapped so chat_config and tool_manager are always injected
-    builder.add_node("init_turn", _inject_node_config(config, tool_manager, init_turn_node))
-    builder.add_node("rag", _inject_node_config(config, tool_manager, rag_node))
-    builder.add_node("preprocess", _inject_node_config(config, tool_manager, preprocess_node))
-    builder.add_node("llm", _inject_node_config(config, tool_manager, llm_call_node))
-    builder.add_node("citation_boost", _inject_node_config(config, tool_manager, citation_boost_node))
+    # Nodes — wrapped so chat_config/tool_manager/token_usage_store are always injected
+    builder.add_node("init_turn", _inject_node_config(config, tool_manager, token_usage_store, init_turn_node))
+    builder.add_node("rag", _inject_node_config(config, tool_manager, token_usage_store, rag_node))
+    builder.add_node("preprocess", _inject_node_config(config, tool_manager, token_usage_store, preprocess_node))
+    builder.add_node("llm", _inject_node_config(config, tool_manager, token_usage_store, llm_call_node))
+    builder.add_node(
+        "citation_boost", _inject_node_config(config, tool_manager, token_usage_store, citation_boost_node)
+    )
+    builder.add_node("token_usage", _inject_node_config(config, tool_manager, token_usage_store, token_usage_node))
 
     # Edges
     builder.add_edge(START, "init_turn")
@@ -108,7 +124,7 @@ def build_chat_graph(
     builder.add_edge("preprocess", "llm")
 
     if tool_manager is not None:
-        builder.add_node("tools", _inject_node_config(config, tool_manager, tools_execution_node))
+        builder.add_node("tools", _inject_node_config(config, tool_manager, token_usage_store, tools_execution_node))
         builder.add_conditional_edges(
             "llm",
             should_continue,
@@ -120,7 +136,8 @@ def build_chat_graph(
     else:
         builder.add_edge("llm", "citation_boost")
 
-    builder.add_edge("citation_boost", END)
+    builder.add_edge("citation_boost", "token_usage")
+    builder.add_edge("token_usage", END)
 
     # Checkpointer: MemorySaver by default; can be swapped for Postgres (AsyncPostgresSaver).
     # The pool is created closed here and opened in the FastAPI startup event via
@@ -132,9 +149,9 @@ def build_chat_graph(
     graph = builder.compile(checkpointer=checkpointer)
 
     topology = (
-        "init_turn → rag → preprocess → llm → [tools → preprocess → llm →]* citation_boost → END"
+        "init_turn → rag → preprocess → llm → [tools → preprocess → llm →]* citation_boost → token_usage → END"
         if tool_manager is not None
-        else "init_turn → rag → preprocess → llm → citation_boost → END"
+        else "init_turn → rag → preprocess → llm → citation_boost → token_usage → END"
     )
     logger.info(
         "LangGraph chat graph compiled (nodes: %s, checkpointer: %s)",

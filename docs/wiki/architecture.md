@@ -32,6 +32,8 @@
 │  • preprocess node → token budget enforcement                       │
 │  • llm node        → ChatBedrockConverse call + streaming           │
 │  • tools node      → OpenAPI-backed tool execution loop             │
+│  • citation_boost  → optional KB credibility boost (post-turn)      │
+│  • token_usage     → optional per-turn usage recording (post-turn)  │
 └──────────────────────────────────────────────────────────────────────┘
 
 Optional RAG Components:
@@ -70,7 +72,8 @@ Optional RAG Components:
 5. **preprocess node** ensures the message history fits within token budget.
 6. **llm node** calls `ChatBedrockConverse` with messages + tools.
 7. **If the model returns tool calls** → `ToolManager` executes HTTP requests to your API, results are appended, and the loop repeats (up to `max_tool_call_rounds`; individual-turn call count is unlimited by default but can be capped via `max_tool_calls`).
-8. **Final response** is streamed back to the client via WebSocket.
+8. **citation_boost / token_usage nodes** run once the turn's final answer is ready — optional, config-gated post-turn bookkeeping (KB credibility boost, per-turn token-usage recording) that runs for every graph caller, not just the WebSocket handler.
+9. **Final response** is streamed back to the client via WebSocket.
 
 ---
 

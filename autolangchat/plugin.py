@@ -241,8 +241,23 @@ class AutoLangChatPlugin:
         )
         self.app_base_url = self.tool_manager.base_url
 
+        # Token-usage store. Constructed eagerly (before build_chat_graph()
+        # below, which injects it into every node call's configurable so
+        # token_usage_node records usage for any ainvoke() caller, not just
+        # the WebSocket handler) so the WebSocket handler can also be wired
+        # immediately; the connection pool / SQLite file is opened in the
+        # FastAPI startup event below and closed during shutdown. Backend
+        # selection (sqlite vs postgres) and configuration validation live in
+        # the factory.
+        from .db import create_token_usage_store
+
+        logger.debug("Checking token usage store configuration and initializing...")
+        self._token_usage_store = create_token_usage_store(self.config)
+
         # Build the LangGraph StateGraph that drives chat orchestration
-        self.chat_graph = build_chat_graph(self.config, tool_manager=self.tool_manager)
+        self.chat_graph = build_chat_graph(
+            self.config, tool_manager=self.tool_manager, token_usage_store=self._token_usage_store
+        )
 
         # SSO components (only when SSO is enabled)
         self.sso_provider: Optional[SSOProvider] = None
@@ -304,16 +319,6 @@ class AutoLangChatPlugin:
             authorized_users=self.config.feedback_authorized_users,
             allow_anonymous=getattr(self.config, "feedback_allow_anonymous", False),
         )
-
-        # Token-usage store. Constructed eagerly so the WebSocket
-        # handler can be wired immediately; the connection pool / SQLite file
-        # is opened in the FastAPI startup event below and closed during
-        # shutdown. Backend selection (sqlite vs postgres) and configuration
-        # validation live in the factory.
-        from .db import create_token_usage_store
-
-        logger.debug("Checking token usage store configuration and initializing...")
-        self._token_usage_store = create_token_usage_store(self.config)
 
         # Conversation metadata store. Constructed eagerly so the WebSocket
         # handler can be wired immediately; the connection pool / SQLite file

@@ -73,6 +73,40 @@ Writes are idempotent (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` keyed on
 propagated — a token-usage write failure never prevents the chat response
 from being delivered.
 
+## Recording mechanism
+
+Recording happens inside the compiled LangGraph `chat_graph` itself, in a
+terminal `token_usage_node` (runs after `citation_boost`, before `END`) —
+not in the WebSocket transport layer. This means _any_ caller of
+`chat_graph.ainvoke()` gets its usage recorded, not just
+`WebSocketChatHandler` (e.g. a standalone script, a batch job, or a future
+REST endpoint).
+
+The node is a no-op unless all of the following are present in
+`config["configurable"]`:
+
+| Key                 | Required | Notes                                                    |
+| ------------------- | -------- | -------------------------------------------------------- |
+| `token_usage_store` | required | A `BaseTokenUsageStore` instance. Absent/`None` ⇒ no-op. |
+| `chat_config`       | required | Must have `token_usage_enabled=True`.                    |
+| `session_id`        | optional | Falls back to `thread_id` when omitted.                  |
+| `user_id`           | optional | Falls back to `None` (anonymous) when omitted.           |
+
+`token_usage_store` and `chat_config` don't need to be passed on every
+`ainvoke()` call: `build_chat_graph(config, tool_manager, token_usage_store)`
+accepts the store once at graph-build time and injects it into every node
+call automatically (the same mechanism already used for `chat_config` and
+`tool_manager`). `AutoLangChatPlugin` wires its own
+`self._token_usage_store` in this way, so **any** app built on
+`plugin.chat_graph` — the WebSocket handler, or another component invoking
+`plugin.chat_graph.ainvoke()` directly — gets usage recorded with no extra
+wiring. `session_id`/`user_id` are still per-turn and must come from each
+call's own `configurable` dict (or are left to fall back to `thread_id`/
+`None`). A caller building its own bare graph via `build_chat_graph(config)`
+(e.g. a standalone script with no plugin) can still override
+`token_usage_store` per-call via `config["configurable"]["token_usage_store"]`
+— see `autolangchat/graph/nodes/token_usage.py` and `autolangchat/graph/graph.py`.
+
 ## Querying the recorded data
 
 Once enabled, recorded rows can be queried through the
