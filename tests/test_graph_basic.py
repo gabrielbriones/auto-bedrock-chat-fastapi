@@ -567,6 +567,36 @@ class TestTokenUsageGraphIntegration:
         assert call_count["n"] == 0
 
     @pytest.mark.asyncio
+    async def test_generic_callable_object_provider_is_resolved(self, fake_config):
+        """A generic callable object (custom __call__, not a plain function/
+        method/functools.partial) must also be recognized as a provider --
+        build_chat_graph's docs/type hint promise any zero-arg callable, not
+        just those specific shapes."""
+
+        class _TokenUsageEnabledConfig(_FakeChatConfig):
+            token_usage_enabled = True
+
+        ai_response = _make_ai_message("hi", usage={"input_tokens": 5, "output_tokens": 10})
+        live_store = MagicMock()
+        live_store.record_turn = AsyncMock()
+
+        class _Provider:
+            def __call__(self):
+                return live_store
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse") as MockLLM:
+            instance = MockLLM.return_value
+            instance.ainvoke = AsyncMock(return_value=ai_response)
+
+            graph = build_chat_graph(_TokenUsageEnabledConfig(), token_usage_store=_Provider())
+            await graph.ainvoke(
+                {"messages": [{"role": "user", "content": "hi"}], "metadata": {}},
+                config={"configurable": {"thread_id": "job-1"}},
+            )
+
+        live_store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_direct_ainvoke_call_no_op_without_token_usage_store(self, fake_config):
         """Same call path, but no token_usage_store passed -- must not raise."""
 

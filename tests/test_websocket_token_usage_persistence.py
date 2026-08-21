@@ -129,6 +129,7 @@ def test_ainvoke_configurable_token_usage_store_none_when_unconfigured():
     ai_responses = [m for m in sent if m.get("type") == "ai_response"]
     assert ai_responses, f"no ai_response sent; got {sent}"
 
+    chat_graph.ainvoke.assert_awaited_once()
     _, kwargs = chat_graph.ainvoke.await_args
     configurable = kwargs["config"]["configurable"]
     assert configurable["token_usage_store"] is None

@@ -28,7 +28,6 @@ MemorySaver can be swapped for AsyncPostgresSaver.
 
 from __future__ import annotations
 
-import functools
 import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Union
@@ -66,22 +65,19 @@ async def _resolve_token_usage_store(token_usage_store: Any) -> Any:
     that don't override ``configurable["token_usage_store"]`` themselves
     still see the up-to-date value instead of a stale, never-opened store.
 
-    Recognized as providers: plain functions/lambdas/bound methods
-    (``inspect.isfunction``/``ismethod``) and ``functools.partial``. Not
-    ``callable()`` in general -- a real store instance (or a test double
-    standing in for one, e.g. ``MagicMock()``) is itself callable but must
-    be used as-is, not invoked. If invoking the provider returns an
-    awaitable (e.g. an async provider), it is awaited before returning.
+    Recognized as providers: any callable that doesn't already look like a
+    store, i.e. lacks a ``record_turn`` attribute. A real store instance (or
+    a test double standing in for one, e.g. ``MagicMock()`` -- which
+    auto-vivifies a ``record_turn`` attribute on access) has ``record_turn``
+    and so is used as-is, not invoked, even though ``MagicMock`` itself is
+    technically callable. If invoking the provider returns an awaitable
+    (e.g. an async provider), it is awaited before returning.
 
     Token-usage recording is best-effort: if the provider itself raises
     (misconfigured, transient failure, etc.), the error is logged and
     ``None`` is returned instead of propagating and failing the whole turn.
     """
-    if (
-        inspect.isfunction(token_usage_store)
-        or inspect.ismethod(token_usage_store)
-        or isinstance(token_usage_store, functools.partial)
-    ):
+    if callable(token_usage_store) and not hasattr(token_usage_store, "record_turn"):
         try:
             result = token_usage_store()
             if inspect.isawaitable(result):
