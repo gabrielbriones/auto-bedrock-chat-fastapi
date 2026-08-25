@@ -161,9 +161,10 @@ class ContentCrawler:
             recursive: Whether to follow links recursively
             max_depth: Maximum crawl depth for recursive crawling
             allowed_domains: Hostnames recursive crawling may follow links to. Defaults
-                to just ``url``'s own hostname when not given, so a crawl doesn't wander
-                onto unrelated sites (e.g. external links found on the page) unless the
-                caller explicitly opts in to more domains
+                to just ``url``'s own hostname when ``None`` (not merely falsy), so a
+                crawl doesn't wander onto unrelated sites (e.g. external links found on
+                the page) unless the caller explicitly opts in to more domains. Pass
+                ``[]`` explicitly to disable domain restriction entirely.
             exclude_patterns: URL patterns to exclude (e.g., ['/de/', '/es/'] for translations)
             max_pages: Maximum number of pages to fetch during a recursive crawl (``None`` = unbounded)
 
@@ -173,7 +174,15 @@ class ContentCrawler:
         documents = []
 
         if recursive:
-            effective_allowed_domains = allowed_domains or [urlparse(url).hostname or ""]
+            if allowed_domains is None:
+                # Only default when the caller didn't pass anything at all —
+                # an explicit [] means "no restriction", and a malformed URL
+                # with no parseable hostname must not turn into [""], which
+                # would silently make every link look disallowed.
+                default_host = urlparse(url).hostname
+                effective_allowed_domains = [default_host] if default_host else []
+            else:
+                effective_allowed_domains = allowed_domains
             documents = await self._crawl_recursive(
                 url, source, topic, max_depth, effective_allowed_domains, exclude_patterns or [], max_pages
             )
@@ -391,7 +400,7 @@ class ContentCrawler:
                     # otherwise wastes bandwidth and can raise decode errors
                     # or trigger a slow-download timeout.
                     content_type = response.headers.get("Content-Type", "")
-                    if "text/html" not in content_type:
+                    if "text/html" not in content_type.lower():
                         logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {url}")
                         return None
 

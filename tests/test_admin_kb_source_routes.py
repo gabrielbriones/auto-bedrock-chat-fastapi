@@ -104,8 +104,13 @@ class _FakeSession:
 
 
 def _embedding_client():
+    # Returns one embedding per requested text — a fixed-length mock would
+    # mask the embedding-count-mismatch validation in kb_ingestion.py.
+    async def _generate(*, texts, model_id, batch_size=25):
+        return [[0.1, 0.2]] * len(texts)
+
     client = MagicMock()
-    client.generate_embeddings_batch = AsyncMock(return_value=[[0.1, 0.2]] * 10)
+    client.generate_embeddings_batch = AsyncMock(side_effect=_generate)
     return client
 
 
@@ -496,3 +501,131 @@ async def test_crawl_url_default_allowed_domains_excludes_external_links():
 
     assert any("example.com/same-host-page" in u for u in fetched)
     assert not any("external.example" in u for u in fetched)
+
+
+@pytest.mark.asyncio
+async def test_crawl_url_explicit_empty_allowed_domains_disables_restriction():
+    """An explicit `[]` must mean "no restriction", distinct from `None`
+    (which defaults to the start URL's own hostname)."""
+    root_html = f'<html><body>{_LONG_TEXT}<a href="https://external.example/other">external</a></body></html>'
+    leaf_html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    fetched = []
+
+    class _RecordingSession:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            return _FakeHTMLResponse(leaf_html if "external.example" in url else root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_RecordingSession()):
+        await crawler.crawl_url("https://example.com/", recursive=True, max_depth=2, allowed_domains=[])
+
+    assert any("external.example" in u for u in fetched)
+
+
+def test_crawl_url_malformed_start_url_does_not_block_all_links():
+    """A start URL with no parseable hostname must not silently produce
+    an unmatchable [""] domain filter that blocks every link."""
+    crawler = ContentCrawler()
+    # urlparse("not-a-url").hostname is None -- the default-domain fallback
+    # must degrade to "no restriction" rather than [""].
+    assert crawler._is_allowed_domain("https://example.com/x", [""]) is False
+
+
+# ---------------------------------------------------------------------------
+# Content-Type check is case-insensitive
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_parse_accepts_mixed_case_content_type():
+    class _MixedCaseResponse(_FakeHTMLResponse):
+        def __init__(self, html):
+            super().__init__(html)
+            self.headers = {"Content-Type": "Text/HTML; charset=utf-8"}
+
+    class _MixedCaseSession:
+        def get(self, url, **kwargs):
+            return _MixedCaseResponse(f"<html><body>{_LONG_TEXT}</body></html>")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=_MixedCaseSession()):
+        doc = await crawler._fetch_and_parse("https://example.com/", "src", None)
+
+    assert doc is not None
+
+
+# ---------------------------------------------------------------------------
+# Fast-path 409 before reading uploads
+# ---------------------------------------------------------------------------
+
+
+def test_file_source_rejects_second_run_without_reading_uploads():
+    app = _build_app(embedding_client=_slow_embedding_client())
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s1"},
+            files=[("files", ("a.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert first.status_code == 202
+
+        # A second upload while the first run is in flight should be
+        # rejected by the fast-path check before its content is ever read;
+        # a huge/slow file here must not add latency to the 409 response.
+        second = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s2"},
+            files=[("files", ("b.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert second.status_code == 409
+        assert second.json()["code"] == "kb_source_run_already_in_progress"
+
+        _wait_until_not_running(client)
+
+
+# ---------------------------------------------------------------------------
+# Embedding count mismatch fails loudly instead of silently truncating
+# ---------------------------------------------------------------------------
+
+
+def test_web_source_embedding_count_mismatch_recorded_as_error():
+    kb_store = _FakeKBStore()
+
+    async def _too_few_embeddings(*, texts, model_id, batch_size=25):
+        return [[0.1, 0.2]] * max(0, len(texts) - 1)
+
+    embedding_client = MagicMock()
+    embedding_client.generate_embeddings_batch = AsyncMock(side_effect=_too_few_embeddings)
+
+    app = _build_app(kb_store=kb_store, embedding_client=embedding_client)
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["pages_processed"] == 0
+    assert len(final.json()["errors"]) == 1
+    assert "embedding count mismatch" in final.json()["errors"][0]
+    assert not kb_store.chunks

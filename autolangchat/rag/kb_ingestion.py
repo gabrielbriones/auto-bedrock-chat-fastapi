@@ -134,6 +134,10 @@ async def ingest_web_source(
             embeddings = await bedrock_client.generate_embeddings_batch(
                 texts=texts, model_id=embedding_model, batch_size=25
             )
+            if len(embeddings) != len(chunks_data):
+                raise ValueError(
+                    f"embedding count mismatch for {doc_url}: expected {len(chunks_data)}, got {len(embeddings)}"
+                )
 
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
                 chunk_id = f"{doc_url}_{idx}"
@@ -255,6 +259,10 @@ async def ingest_local_source(
             embeddings = await bedrock_client.generate_embeddings_batch(
                 texts=texts, model_id=embedding_model, batch_size=25
             )
+            if len(embeddings) != len(chunks_data):
+                raise ValueError(
+                    f"embedding count mismatch for {doc_id}: expected {len(chunks_data)}, got {len(embeddings)}"
+                )
 
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
                 chunk_id = f"{doc_id}_{idx}"
@@ -352,6 +360,10 @@ async def ingest_uploaded_files(
             embeddings = await bedrock_client.generate_embeddings_batch(
                 texts=texts, model_id=embedding_model, batch_size=25
             )
+            if len(embeddings) != len(chunks_data):
+                raise ValueError(
+                    f"embedding count mismatch for {doc_id}: expected {len(chunks_data)}, got {len(embeddings)}"
+                )
 
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
                 chunk_id = f"{doc_id}_{idx}"

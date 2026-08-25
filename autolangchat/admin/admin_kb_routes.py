@@ -150,6 +150,7 @@ class KBSourceWebRequest(BaseModel):
     max_depth: int = 2
     # Defaults to each URL's own hostname (see ContentCrawler.crawl_url) so a
     # crawl doesn't wander onto unrelated external sites unless opted into.
+    # Pass [] explicitly to disable domain restriction entirely.
     allowed_domains: Optional[List[str]] = None
     exclude_patterns: Optional[List[str]] = None
     # Real cap on pages fetched per URL (see ContentCrawler._crawl_recursive) —
@@ -822,6 +823,21 @@ def register_admin_kb_routes(
 
         if not files:
             return _error_json(422, "no_files_uploaded", "at least one file must be uploaded")
+
+        # Cheap fast-path rejection before doing the expensive read/decode
+        # work below — a request arriving while a run is already in flight
+        # would otherwise pay the cost of reading every upload just to be
+        # rejected anyway. This is a lock-free peek (eventual consistency is
+        # fine here); the real atomic claim still happens via
+        # try_claim_run(...) after decoding, so a narrow race window between
+        # this check and the claim is only ever a missed optimization, not a
+        # correctness issue.
+        if _source_state.status.phase == KBSourcePhase.RUNNING:
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
 
         # Read + decode uploads now, before claiming the run: the uploaded
         # files' temporary storage is cleaned up once this request handler
