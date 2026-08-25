@@ -211,6 +211,10 @@ def test_file_source_rejects_no_files():
     client = TestClient(app)
     resp = client.post("/bedrock-chat/admin/kb/sources/file", data={"name": "s"}, files=[])
     assert resp.status_code == 422
+    # `files` must be optional at the FastAPI-param level, or this request
+    # never reaches our handler and gets FastAPI's own "field required"
+    # envelope instead of our flat ErrorResponse.
+    assert resp.json() == {"code": "no_files_uploaded", "detail": "at least one file must be uploaded"}
 
 
 def test_file_source_rejects_non_utf8_file():
@@ -339,6 +343,40 @@ async def test_max_pages_caps_number_of_pages_crawled():
         )
 
     assert len(docs) == 3
+
+
+@pytest.mark.asyncio
+async def test_max_pages_caps_fetch_attempts_not_just_successful_documents():
+    """A page that fails to fetch must still count against max_pages.
+
+    Otherwise a site returning many 404s (or otherwise-failing pages) could
+    make the crawler issue unbounded requests while len(documents) never
+    reaches the cap.
+    """
+    root_html = "<html><body>" + "".join(f'<a href="/broken{i}">x</a>' for i in range(5)) + "</body></html>"
+    fetch_urls = []
+
+    class _RootThenAllBrokenSession:
+        def get(self, url, **kwargs):
+            fetch_urls.append(url)
+            if "broken" in url:
+                return _FakeHTMLResponse("", status=404)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_RootThenAllBrokenSession()):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=2, max_pages=2)
+
+    # Root (success) + exactly 1 failing link attempted before the cap trips —
+    # not all 5 broken links.
+    assert len(docs) == 1
+    assert len(fetch_urls) == 2
 
 
 # ---------------------------------------------------------------------------

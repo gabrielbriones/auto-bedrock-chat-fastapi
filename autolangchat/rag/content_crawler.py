@@ -237,7 +237,7 @@ class ContentCrawler:
         - Ignores URL fragments (#) as they don't change content
         - Normalizes trailing slashes for consistency
         - Stops early if no new URLs found, even before max_depth
-        - Stops early once ``max_pages`` documents have been fetched, if set
+        - Stops early once ``max_pages`` fetches have been attempted, if set
         - Provides crawl statistics
         - Can exclude URL patterns (e.g., translations)
         """
@@ -253,9 +253,10 @@ class ContentCrawler:
         queued_urls = {self._normalize_url(start_url)}  # Track normalized version
         skipped_count = 0
         max_depth_reached = 0
+        pages_attempted = 0
 
         while to_crawl:
-            if max_pages is not None and len(documents) >= max_pages:
+            if max_pages is not None and pages_attempted >= max_pages:
                 logger.info(f"  ⏹ Reached max_pages={max_pages}; stopping crawl")
                 break
 
@@ -291,6 +292,7 @@ class ContentCrawler:
             queued_urls.discard(normalized_url)
 
             # Fetch and parse using ORIGINAL URL (preserves trailing slash for link resolution)
+            pages_attempted += 1
             doc = await self._fetch_and_parse(url, source, topic)
             if doc:
                 documents.append(doc)

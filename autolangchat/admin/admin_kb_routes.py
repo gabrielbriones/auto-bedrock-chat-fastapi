@@ -797,7 +797,12 @@ def register_admin_kb_routes(
         # `UploadFile` items, which older Swagger UI builds don't render as
         # file pickers — force the OpenAPI 3.0-style `format: binary` hint
         # too so "Choose File" buttons show up instead of a text input.
-        files: List[UploadFile] = File(..., json_schema_extra={"items": {"type": "string", "format": "binary"}}),
+        # Optional (not `File(...)`) so a request with zero files reaches
+        # the `if not files:` check below and gets our flat ErrorResponse
+        # envelope, instead of FastAPI's own "field required" 422 shape.
+        files: Optional[List[UploadFile]] = File(
+            default=None, json_schema_extra={"items": {"type": "string", "format": "binary"}}
+        ),
         identity=Depends(require_admin),
     ) -> KBSourceStatus | JSONResponse:
         """Start a background ingestion of admin-uploaded file content into the KB.

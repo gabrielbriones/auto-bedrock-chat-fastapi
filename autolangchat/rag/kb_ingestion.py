@@ -188,11 +188,15 @@ async def ingest_local_source(
 ) -> Dict[str, Any]:
     """Index a local file or directory into ``vector_db``.
 
-    Used by both ``kb_populate()`` and ``POST /admin/kb/sources/local``.
-    Raises ``FileNotFoundError`` if ``path`` does not exist — callers
-    running a single-source HTTP request should let this fail the run
-    rather than silently skipping (unlike the multi-source CLI pipeline,
-    which logs a warning and continues to the next configured source).
+    Used by ``kb_populate()``'s CLI populate pipeline for yaml-configured
+    ``type: local`` sources (path-based; there is no HTTP route for this —
+    ``POST /admin/kb/sources/file`` uses :func:`ingest_uploaded_files`
+    instead, since admins upload content directly rather than pointing at
+    a server-side path). Raises ``FileNotFoundError`` if ``path`` does not
+    exist — callers running a single-source HTTP request should let this
+    fail the run rather than silently skipping (unlike the multi-source
+    CLI pipeline, which logs a warning and continues to the next
+    configured source).
 
     Returns ``{"documents": int, "chunks": int, "errors": List[str]}``. A
     file failing to read/chunk/embed does not raise — it's skipped and
