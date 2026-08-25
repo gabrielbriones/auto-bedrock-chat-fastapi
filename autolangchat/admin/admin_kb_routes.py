@@ -129,6 +129,44 @@ class KBDocumentUpdateRequest(BaseModel):
 # KB source ingestion (web crawl / uploaded file) — request + status models
 # ---------------------------------------------------------------------------
 
+# Per-file and aggregate caps for POST /admin/kb/sources/file uploads. Read
+# in bounded chunks (rather than a single `await upload.read()`) so an
+# oversized file is rejected without ever buffering it fully in memory.
+_MAX_FILE_BYTES = 10 * 1024 * 1024
+_MAX_TOTAL_UPLOAD_BYTES = 50 * 1024 * 1024
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
+
+class UploadTooLargeError(Exception):
+    """Raised by :func:`_read_upload_capped` when a size cap is exceeded."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+async def _read_upload_capped(upload: UploadFile, *, max_bytes: int, remaining_total: int) -> bytes:
+    """Read ``upload`` in chunks, aborting as soon as a size cap is hit.
+
+    Enforces both the per-file cap (``max_bytes``) and whatever is left of
+    the aggregate request cap (``remaining_total``) without ever buffering
+    more than one chunk beyond the limit.
+    """
+    chunks: List[bytes] = []
+    total = 0
+    cap = min(max_bytes, remaining_total)
+    while True:
+        chunk = await upload.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > cap:
+            if max_bytes <= remaining_total:
+                raise UploadTooLargeError(f"file {upload.filename!r} exceeds the {max_bytes} byte per-file limit")
+            raise UploadTooLargeError(f"total upload size exceeds the {_MAX_TOTAL_UPLOAD_BYTES} byte limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 class KBSourcePhase(str, Enum):
     """Lifecycle phase of the in-memory KB source-ingestion runner."""
@@ -145,7 +183,10 @@ class KBSourceWebRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    urls: List[str]
+    # max_pages applies per URL, so the list itself is capped too -- an
+    # unbounded list of URLs would otherwise multiply the total crawl work
+    # without limit.
+    urls: List[str] = Field(max_length=20)
     topic: Optional[str] = None
     max_depth: int = 2
     # Defaults to each URL's own hostname (see ContentCrawler.crawl_url) so a
@@ -155,7 +196,10 @@ class KBSourceWebRequest(BaseModel):
     exclude_patterns: Optional[List[str]] = None
     # Real cap on pages fetched per URL (see ContentCrawler._crawl_recursive) —
     # previously a no-op in the CLI populate pipeline; kept usable here too.
-    max_pages: int = 100
+    # Bounded so it can't be set to 0/negative (would look like a clean but
+    # empty run) or an arbitrarily large value (defeats the whole point of
+    # the cap).
+    max_pages: int = Field(default=100, ge=1, le=10_000)
     # For pages that gate content behind auth (e.g. a bearer token header or
     # a session cookie). Not echoed back in the status response or audit log.
     headers: Optional[Dict[str, str]] = None
@@ -786,7 +830,10 @@ def register_admin_kb_routes(
         responses={
             **ADMIN_COMMON_RESPONSES,
             409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
-            422: {"model": ErrorResponse, "description": "No files uploaded, or a file is not valid UTF-8 text"},
+            422: {
+                "model": ErrorResponse,
+                "description": "No files uploaded, a file is not valid UTF-8 text, or an upload exceeds the size limit",
+            },
             503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
         },
         summary="Trigger a KB ingestion run from uploaded file content",
@@ -842,10 +889,17 @@ def register_admin_kb_routes(
         # Read + decode uploads now, before claiming the run: the uploaded
         # files' temporary storage is cleaned up once this request handler
         # returns, so the background task (which runs after the response is
-        # sent) cannot read them itself.
+        # sent) cannot read them itself. Reads are capped per-file and in
+        # aggregate so a handful of oversized uploads can't exhaust memory.
         decoded_files: List[Tuple[str, str]] = []
+        total_bytes_read = 0
         for upload in files:
-            raw = await upload.read()
+            remaining_total = _MAX_TOTAL_UPLOAD_BYTES - total_bytes_read
+            try:
+                raw = await _read_upload_capped(upload, max_bytes=_MAX_FILE_BYTES, remaining_total=remaining_total)
+            except UploadTooLargeError as exc:
+                return _error_json(422, "upload_too_large", exc.message)
+            total_bytes_read += len(raw)
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:

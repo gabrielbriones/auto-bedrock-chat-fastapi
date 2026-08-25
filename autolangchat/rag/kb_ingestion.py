@@ -32,6 +32,54 @@ def _notify(progress_cb: Optional[ProgressCallback], metric: str, amount: int = 
         progress_cb(metric, amount)
 
 
+async def _upsert_document(
+    vector_db: Any,
+    *,
+    doc_id: str,
+    content: str,
+    title: Optional[str],
+    source: str,
+    source_url: Optional[str],
+    topic: Optional[str],
+    date_published: Optional[str],
+    metadata: Dict[str, Any],
+) -> None:
+    """Insert a new document, or atomically replace an existing one's content.
+
+    ``update_document`` is used (rather than ``add_document``'s upsert) when
+    ``doc_id`` already exists, because the store transactionally clears the
+    document's *entire* old chunk set on a content change --
+    ``add_document``/``add_chunk`` only ever upsert by id, so re-ingesting a
+    document that now produces fewer chunks than before would otherwise
+    leave stale higher-index chunks from the previous version behind.
+    """
+    existing = await asyncio.to_thread(vector_db.get_document, doc_id)
+    if existing is not None:
+        await asyncio.to_thread(
+            vector_db.update_document,
+            doc_id,
+            content=content,
+            title=title,
+            source=source,
+            source_url=source_url,
+            topic=topic,
+            date_published=date_published,
+            metadata=metadata,
+        )
+    else:
+        await asyncio.to_thread(
+            vector_db.add_document,
+            doc_id=doc_id,
+            content=content,
+            title=title,
+            source=source,
+            source_url=source_url,
+            topic=topic,
+            date_published=date_published,
+            metadata=metadata,
+        )
+
+
 async def ingest_web_source(
     *,
     vector_db: Any,
@@ -103,24 +151,7 @@ async def ingest_web_source(
             logger.debug(f"      Skipped duplicate: {doc_url}")
             continue
 
-        processed_urls.add(doc_url)
-
         try:
-            await asyncio.to_thread(
-                vector_db.add_document,
-                doc_id=doc_url,
-                content=doc["content"],
-                title=doc.get("title", ""),
-                source=source_name,
-                source_url=doc_url,
-                topic=topic,
-                date_published=None,  # Web crawled content doesn't have publish date
-                metadata={
-                    "source_type": "web",
-                    "crawled_at": doc.get("crawled_at"),
-                },
-            )
-
             doc_dict = {
                 "id": doc_url,
                 "content": doc["content"],
@@ -138,6 +169,24 @@ async def ingest_web_source(
                 raise ValueError(
                     f"embedding count mismatch for {doc_url}: expected {len(chunks_data)}, got {len(embeddings)}"
                 )
+
+            # Only touch the store once a fully validated chunk set is ready
+            # -- avoids leaving a zero/partial-chunk document behind if
+            # chunking/embedding fails.
+            await _upsert_document(
+                vector_db,
+                doc_id=doc_url,
+                content=doc["content"],
+                title=doc.get("title", ""),
+                source=source_name,
+                source_url=doc_url,
+                topic=topic,
+                date_published=None,  # Web crawled content doesn't have publish date
+                metadata={
+                    "source_type": "web",
+                    "crawled_at": doc.get("crawled_at"),
+                },
+            )
 
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
                 chunk_id = f"{doc_url}_{idx}"
@@ -161,6 +210,11 @@ async def ingest_web_source(
                     metadata=chunk_metadata,
                 )
 
+            # Marked processed only now that the full write succeeded --
+            # otherwise a failed page would look like an already-handled
+            # duplicate to a later source sharing this set, losing the
+            # chance to retry it.
+            processed_urls.add(doc_url)
             total_chunks += len(chunks_data)
             total_documents += 1
             _notify(progress_cb, "pages_processed")
@@ -231,22 +285,6 @@ async def ingest_local_source(
 
             doc_id = str(file_path)
 
-            await asyncio.to_thread(
-                vector_db.add_document,
-                doc_id=doc_id,
-                content=content,
-                title=os.path.basename(file_path),
-                source=source_name,
-                source_url=None,
-                topic=topic,
-                date_published=None,
-                metadata={
-                    "source_type": "local",
-                    "source_path": doc_id,
-                    "filename": os.path.basename(file_path),
-                },
-            )
-
             doc_dict = {
                 "id": doc_id,
                 "content": content,
@@ -263,6 +301,25 @@ async def ingest_local_source(
                 raise ValueError(
                     f"embedding count mismatch for {doc_id}: expected {len(chunks_data)}, got {len(embeddings)}"
                 )
+
+            # Only touch the store once a fully validated chunk set is ready
+            # -- avoids leaving a zero/partial-chunk document behind if
+            # chunking/embedding fails.
+            await _upsert_document(
+                vector_db,
+                doc_id=doc_id,
+                content=content,
+                title=os.path.basename(file_path),
+                source=source_name,
+                source_url=None,
+                topic=topic,
+                date_published=None,
+                metadata={
+                    "source_type": "local",
+                    "source_path": doc_id,
+                    "filename": os.path.basename(file_path),
+                },
+            )
 
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
                 chunk_id = f"{doc_id}_{idx}"
@@ -333,21 +390,6 @@ async def ingest_uploaded_files(
         try:
             doc_id = f"{source_name}/{filename}"
 
-            await asyncio.to_thread(
-                vector_db.add_document,
-                doc_id=doc_id,
-                content=content,
-                title=filename,
-                source=source_name,
-                source_url=None,
-                topic=topic,
-                date_published=None,
-                metadata={
-                    "source_type": "file",
-                    "filename": filename,
-                },
-            )
-
             doc_dict = {
                 "id": doc_id,
                 "content": content,
@@ -364,6 +406,24 @@ async def ingest_uploaded_files(
                 raise ValueError(
                     f"embedding count mismatch for {doc_id}: expected {len(chunks_data)}, got {len(embeddings)}"
                 )
+
+            # Only touch the store once a fully validated chunk set is ready
+            # -- avoids leaving a zero/partial-chunk document behind if
+            # chunking/embedding fails.
+            await _upsert_document(
+                vector_db,
+                doc_id=doc_id,
+                content=content,
+                title=filename,
+                source=source_name,
+                source_url=None,
+                topic=topic,
+                date_published=None,
+                metadata={
+                    "source_type": "file",
+                    "filename": filename,
+                },
+            )
 
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
                 chunk_id = f"{doc_id}_{idx}"

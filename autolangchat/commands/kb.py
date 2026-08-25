@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -228,6 +228,7 @@ async def kb_populate(
 
         total_chunks = 0
         total_documents = 0
+        all_errors: List[str] = []
 
         # Track processed document URLs across sources to avoid re-embedding duplicates
         processed_urls = set()
@@ -271,6 +272,7 @@ async def kb_populate(
                 )
                 total_documents += result["documents"]
                 total_chunks += result["chunks"]
+                all_errors.extend(result["errors"])
 
             elif source_type == "local":
                 path = source.get("path")
@@ -296,13 +298,19 @@ async def kb_populate(
                 )
                 total_documents += result["documents"]
                 total_chunks += result["chunks"]
+                all_errors.extend(result["errors"])
 
             else:
                 logger.warning(f"⚠️  Unknown source type: {source_type}")
 
         # Final summary
         logger.info(f"\n{'=' * 60}")
-        logger.info("✅ Knowledge base population complete!")
+        if all_errors:
+            logger.warning(f"⚠️  Knowledge base population completed with {len(all_errors)} error(s):")
+            for error in all_errors:
+                logger.warning(f"   - {error}")
+        else:
+            logger.info("✅ Knowledge base population complete!")
         logger.info(f"   Database: {db_path}")
         logger.info(f"   Total documents: {total_documents}")
         logger.info(f"   Total chunks: {total_chunks}")
@@ -310,7 +318,11 @@ async def kb_populate(
         logger.info(f"{'=' * 60}")
 
         vector_db.close()
-        return True
+        # Any per-item failure (a page/file that couldn't be chunked/embedded/
+        # stored) means this wasn't a clean run, even though most content may
+        # have indexed successfully -- surface that via a non-zero exit
+        # rather than always reporting success.
+        return not all_errors
 
     except Exception as e:
         logger.error(f"❌ Failed to populate knowledge base: {e}")

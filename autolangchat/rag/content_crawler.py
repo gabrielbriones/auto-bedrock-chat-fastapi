@@ -7,6 +7,7 @@ it for embedding and storage in the knowledge base.
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import re
@@ -370,6 +371,57 @@ class ContentCrawler:
 
         return documents
 
+    #: Bounded redirect-following in _fetch_and_parse (see below) — enough
+    #: for legitimate multi-hop redirects (e.g. http->https->canonical)
+    #: without letting a target bounce a request through an unbounded chain.
+    _MAX_REDIRECTS = 5
+
+    async def _is_safe_host(self, hostname: str) -> bool:
+        """Resolve ``hostname`` and reject it if any address is internal.
+
+        Blocks SSRF access to loopback/private/link-local/reserved/
+        multicast/unspecified addresses (e.g. ``127.0.0.1``, RFC1918
+        ranges, cloud metadata endpoints like ``169.254.169.254``) that a
+        malicious or misconfigured crawl target could otherwise use to
+        reach internal services from this server. Resolution goes through
+        the running event loop's resolver (``getaddrinfo``) so DNS lookups
+        don't block the loop.
+        """
+        if not hostname:
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+            infos = await loop.getaddrinfo(hostname, None)
+        except OSError:
+            return False
+        if not infos:
+            return False
+        for info in infos:
+            raw_addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(raw_addr)
+            except ValueError:
+                return False
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return False
+        return True
+
+    async def _is_safe_url(self, url: str) -> bool:
+        """Validate ``url`` has an http(s) scheme and a non-internal host."""
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        if not parsed.hostname:
+            return False
+        return await self._is_safe_host(parsed.hostname)
+
     async def _fetch_and_parse(self, url: str, source: str, topic: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Fetch URL and parse content.
@@ -378,34 +430,62 @@ class ContentCrawler:
             Document dict or None if failed
         """
         try:
+            current_url = url
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": self.user_agent, **self.extra_headers}
-                async with session.get(
-                    url,
-                    headers=headers,
-                    cookies=self.cookies or None,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    proxy=self.proxy,  # Use proxy if configured
-                ) as response:
-                    if response.status != 200:
-                        message = f"HTTP {response.status} fetching {url}"
-                        logger.error(f"Failed to fetch {url}: HTTP {response.status}")
+                for _ in range(self._MAX_REDIRECTS + 1):
+                    # Re-validated on every hop (not just the initial URL) —
+                    # a target could otherwise redirect to an internal host
+                    # (or to a hostname that resolves to one via DNS
+                    # rebinding) after passing the first check.
+                    if not await self._is_safe_url(current_url):
+                        message = f"refusing to fetch internal/unsafe host: {current_url}"
+                        logger.error(message)
                         self.errors.append(message)
                         return None
 
-                    # Check Content-Type from the response headers before
-                    # downloading/decoding the body — avoids pulling down
-                    # (and UTF-8-decoding) large binary files linked from a
-                    # page (PDFs, zips, images, disk images, etc.), which
-                    # otherwise wastes bandwidth and can raise decode errors
-                    # or trigger a slow-download timeout.
-                    content_type = response.headers.get("Content-Type", "")
-                    if "text/html" not in content_type.lower():
-                        logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {url}")
-                        return None
+                    async with session.get(
+                        current_url,
+                        headers=headers,
+                        cookies=self.cookies or None,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                        proxy=self.proxy,  # Use proxy if configured
+                        allow_redirects=False,
+                    ) as response:
+                        if response.status in (301, 302, 303, 307, 308):
+                            location = response.headers.get("Location")
+                            if not location:
+                                message = f"redirect from {current_url} missing Location header"
+                                logger.error(message)
+                                self.errors.append(message)
+                                return None
+                            current_url = urljoin(current_url, location)
+                            continue
 
-                    html_content = await response.text()
-                    return self._parse_html(html_content, url, source, topic)
+                        if response.status != 200:
+                            message = f"HTTP {response.status} fetching {current_url}"
+                            logger.error(f"Failed to fetch {current_url}: HTTP {response.status}")
+                            self.errors.append(message)
+                            return None
+
+                        # Check Content-Type from the response headers before
+                        # downloading/decoding the body — avoids pulling down
+                        # (and UTF-8-decoding) large binary files linked from a
+                        # page (PDFs, zips, images, disk images, etc.), which
+                        # otherwise wastes bandwidth and can raise decode errors
+                        # or trigger a slow-download timeout.
+                        content_type = response.headers.get("Content-Type", "")
+                        if "text/html" not in content_type.lower():
+                            logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {current_url}")
+                            return None
+
+                        html_content = await response.text()
+                        return self._parse_html(html_content, url, source, topic)
+
+                message = f"too many redirects fetching {url}"
+                logger.error(message)
+                self.errors.append(message)
+                return None
 
         except asyncio.TimeoutError:
             logger.error(f"Timeout fetching {url}")
