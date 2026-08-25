@@ -404,6 +404,7 @@ Response shape (`POST` and `GET status` share it):
 | 409  | `kb_source_run_already_in_progress` | Another run is already in flight.                              |
 | 422  | `no_files_uploaded`                 | `POST .../file` with zero files attached.                      |
 | 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text (e.g. a PDF or image). |
+| 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
 | 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup. |
 
 ### Token Usage Analytics
@@ -515,6 +516,7 @@ All admin errors share a single flat shape:
 | 409  | `kb_source_run_already_in_progress`           | Another KB source-ingestion run is already in flight.                      |
 | 422  | (validation error from FastAPI)               | Body / path / query failed Pydantic validation.                            |
 | 422  | `no_files_uploaded` / `invalid_file_encoding` | KB source file upload has no files, or one isn't UTF-8 text.               |
+| 422  | `upload_too_large`                            | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
 | 503  | `kb_source_ingestion_unavailable`             | KB source-ingestion routes called without an embedding client/model wired. |
 
 ---

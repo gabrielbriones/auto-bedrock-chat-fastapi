@@ -480,7 +480,11 @@ class ContentCrawler:
                             return None
 
                         html_content = await response.text()
-                        return self._parse_html(html_content, url, source, topic)
+                        # Use current_url (the final, post-redirect address) so
+                        # the indexed doc's URL/ID and link-resolution base
+                        # reflect where the content actually came from, not the
+                        # pre-redirect address.
+                        return self._parse_html(html_content, current_url, source, topic)
 
                 message = f"too many redirects fetching {url}"
                 logger.error(message)

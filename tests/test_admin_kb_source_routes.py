@@ -882,3 +882,45 @@ async def test_fetch_and_parse_follows_redirect_but_blocks_redirect_to_private_h
 
     assert doc is None
     assert any("internal/unsafe host" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_parse_tags_doc_with_final_url_after_redirect():
+    """The indexed doc's URL/ID must reflect the final, post-redirect address
+    -- not the originally requested one -- so link resolution and dedup are
+    keyed by where the content actually came from."""
+
+    class _RedirectThenOK:
+        def __init__(self):
+            self._calls = 0
+
+        def get(self, url, **kwargs):
+            self._calls += 1
+            if self._calls == 1:
+                return _FakeRedirectResponse("https://example.com/final")
+            return _FakeHTMLResponse(f"<html><body>{_LONG_TEXT}</body></html>")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _FakeRedirectResponse:
+        def __init__(self, location):
+            self.status = 302
+            self.headers = {"Location": location}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    session = _RedirectThenOK()
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=session):
+        doc = await crawler._fetch_and_parse("https://example.com/start", "src", None)
+
+    assert doc is not None
+    assert doc["url"] == "https://example.com/final"

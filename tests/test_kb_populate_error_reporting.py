@@ -12,6 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+# Importing these submodules directly (rather than relying on kb_populate()'s
+# own lazy imports to do it first) guarantees they're set as attributes of
+# their parent packages before any patch("autolangchat.rag.bedrock_embeddings...")
+# call below resolves that dotted path -- otherwise whether the attribute is
+# already set depends on test collection/execution order, which is not
+# guaranteed across Python versions/environments.
+import autolangchat.db  # noqa: F401
+import autolangchat.rag.bedrock_embeddings  # noqa: F401
 from autolangchat.commands.kb import kb_populate
 
 
