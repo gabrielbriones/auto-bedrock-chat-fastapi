@@ -1907,6 +1907,8 @@ class AutoLangChatPlugin:
                 kb_store=self._kb_store,
                 require_admin=require_admin,
                 re_embed_document=re_embed,
+                embedding_client=self.embedding_client,
+                embedding_model=self.config.kb_embedding_model,
             )
         else:
             logger.info(

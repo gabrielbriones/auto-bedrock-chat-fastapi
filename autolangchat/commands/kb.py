@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
@@ -151,7 +150,7 @@ async def kb_populate(
         from ..config import load_config
         from ..db import create_kb_store
         from ..rag.bedrock_embeddings import BedrockEmbeddingClient
-        from ..rag.content_crawler import ContentCrawler
+        from ..rag.kb_ingestion import ingest_local_source, ingest_web_source
 
         # Load configuration (use provided config or load from environment)
         if config is None:
@@ -244,7 +243,6 @@ async def kb_populate(
             logger.info(f"\n📥 Processing source {i}/{len(sources)}: {source_name} ({source_type})")
 
             if source_type == "web":
-                # Web crawling
                 urls = source.get("urls", [])
                 max_pages = source.get("max_pages", 100)
 
@@ -254,109 +252,27 @@ async def kb_populate(
 
                 logger.info(f"   Crawling {len(urls)} URL(s), max_pages={max_pages}")
 
-                # Initialize crawler with shared visited_urls to skip already-crawled pages
-                crawler = ContentCrawler(visited_urls=shared_visited_urls)
-
-                documents = []
-                for url in urls:
-                    logger.info(f"   🌐 Crawling: {url}")
-                    # Pass crawl parameters including max_pages
-                    crawled_docs = await crawler.crawl_url(
-                        url=url,
-                        source=source_name,
-                        recursive=True,
-                        max_depth=source.get("max_depth", 2),
-                        allowed_domains=source.get("allowed_domains"),
-                        exclude_patterns=source.get("exclude_patterns"),
-                    )
-                    documents.extend(crawled_docs)
-                    logger.info(f"      Crawled {len(crawled_docs)} page(s)")
-
-                logger.info(f"   ✅ Total pages crawled: {len(documents)}")
-
-                # Process and store
-                skipped_duplicates = 0
-                for doc in documents:
-                    doc_url = doc["url"]
-
-                    # Skip if already processed (cross-source deduplication)
-                    if doc_url in processed_urls:
-                        skipped_duplicates += 1
-                        logger.debug(f"      Skipped duplicate: {doc_url}")
-                        continue
-
-                    processed_urls.add(doc_url)
-
-                    # Add document to documents table first
-                    vector_db.add_document(
-                        doc_id=doc_url,
-                        content=doc["content"],
-                        title=doc.get("title", ""),
-                        source=source_name,
-                        source_url=doc_url,
-                        topic=source.get("topic"),
-                        date_published=None,  # Web crawled content doesn't have publish date
-                        metadata={
-                            "source_type": "web",
-                            "crawled_at": doc.get("crawled_at"),
-                        },
-                    )
-
-                    # Create document dict for chunking with proper structure
-                    doc_dict = {
-                        "id": doc_url,
-                        "content": doc["content"],
-                        "title": doc.get("title", ""),
-                        "source": source_name,
-                        "url": doc_url,
-                        "topic": source.get("topic"),
-                    }
-
-                    # Chunk the document
-                    chunks_data = chunker.chunk_document(doc_dict)
-
-                    # Extract texts for embedding
-                    texts = [chunk["text"] for chunk in chunks_data]
-
-                    # Generate embeddings directly using bedrock_client (async)
-                    embeddings = await bedrock_client.generate_embeddings_batch(
-                        texts=texts, model_id=config.kb_embedding_model, batch_size=25
-                    )
-
-                    # Store chunks with embeddings and proper metadata
-                    for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
-                        chunk_id = f"{doc_url}_{idx}"
-
-                        # Build chunk metadata with document references
-                        chunk_metadata = {
-                            "doc_id": doc_url,
-                            "title": doc.get("title", ""),
-                            "source": source_name,
-                            "url": doc_url,
-                            "topic": source.get("topic"),
-                            "date_published": None,
-                        }
-
-                        vector_db.add_chunk(
-                            chunk_id=chunk_id,
-                            document_id=doc_url,
-                            content=chunk_data["text"],
-                            embedding=embedding,
-                            chunk_index=idx,
-                            start_char=chunk_data.get("start_char"),
-                            end_char=chunk_data.get("end_char"),
-                            metadata=chunk_metadata,
-                        )
-
-                    total_chunks += len(chunks_data)
-                    total_documents += 1
-                    logger.info(f"      Indexed: {doc_url} ({len(chunks_data)} chunks)")
-
-                if skipped_duplicates > 0:
-                    logger.info(f"   ℹ Skipped {skipped_duplicates} duplicate(s) from other sources")
+                result = await ingest_web_source(
+                    vector_db=vector_db,
+                    bedrock_client=bedrock_client,
+                    chunker=chunker,
+                    embedding_model=config.kb_embedding_model,
+                    source_name=source_name,
+                    urls=urls,
+                    topic=source.get("topic"),
+                    max_depth=source.get("max_depth", 2),
+                    allowed_domains=source.get("allowed_domains"),
+                    exclude_patterns=source.get("exclude_patterns"),
+                    max_pages=max_pages,
+                    extra_headers=source.get("headers"),
+                    cookies=source.get("cookies"),
+                    shared_visited_urls=shared_visited_urls,
+                    processed_urls=processed_urls,
+                )
+                total_documents += result["documents"]
+                total_chunks += result["chunks"]
 
             elif source_type == "local":
-                # Local file processing
                 path = source.get("path")
                 if not path:
                     logger.warning(f"⚠️  No path defined for source: {source_name}")
@@ -368,91 +284,18 @@ async def kb_populate(
 
                 logger.info(f"   Processing local path: {path}")
 
-                # Read file or directory
-                files = []
-                if os.path.isfile(path):
-                    files = [path]
-                elif os.path.isdir(path):
-                    # Find all text files
-                    for ext in source.get("extensions", [".txt", ".md", ".rst"]):
-                        files.extend(Path(path).rglob(f"*{ext}"))
-
-                logger.info(f"   Found {len(files)} file(s) to process")
-
-                for file_path in files:
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-
-                        doc_id = str(file_path)
-
-                        # Add document to documents table first
-                        vector_db.add_document(
-                            doc_id=doc_id,
-                            content=content,
-                            title=os.path.basename(file_path),
-                            source=source_name,
-                            source_url=None,
-                            topic=source.get("topic"),
-                            date_published=None,
-                            metadata={
-                                "source_type": "local",
-                                "source_path": doc_id,
-                                "filename": os.path.basename(file_path),
-                            },
-                        )
-
-                        # Create document dict for chunking with proper structure
-                        doc_dict = {
-                            "id": doc_id,
-                            "content": content,
-                            "title": os.path.basename(file_path),
-                            "source": source_name,
-                            "topic": source.get("topic"),
-                        }
-
-                        # Chunk the document
-                        chunks_data = chunker.chunk_document(doc_dict)
-
-                        # Extract texts for embedding
-                        texts = [chunk["text"] for chunk in chunks_data]
-
-                        # Generate embeddings directly using bedrock_client (async)
-                        embeddings = await bedrock_client.generate_embeddings_batch(
-                            texts=texts, model_id=config.kb_embedding_model, batch_size=25
-                        )
-
-                        # Store chunks with embeddings and proper metadata
-                        for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
-                            chunk_id = f"{doc_id}_{idx}"
-
-                            # Build chunk metadata with document references
-                            chunk_metadata = {
-                                "doc_id": doc_id,
-                                "title": os.path.basename(file_path),
-                                "source": source_name,
-                                "url": None,
-                                "topic": source.get("topic"),
-                                "date_published": None,
-                            }
-
-                            vector_db.add_chunk(
-                                chunk_id=chunk_id,
-                                document_id=doc_id,
-                                content=chunk_data["text"],
-                                embedding=embedding,
-                                chunk_index=idx,
-                                start_char=chunk_data.get("start_char"),
-                                end_char=chunk_data.get("end_char"),
-                                metadata=chunk_metadata,
-                            )
-
-                        total_chunks += len(chunks_data)
-                        total_documents += 1
-                        logger.info(f"      Indexed: {file_path} ({len(chunks_data)} chunks)")
-
-                    except Exception as e:
-                        logger.error(f"      ❌ Failed to process {file_path}: {e}")
+                result = await ingest_local_source(
+                    vector_db=vector_db,
+                    bedrock_client=bedrock_client,
+                    chunker=chunker,
+                    embedding_model=config.kb_embedding_model,
+                    source_name=source_name,
+                    path=path,
+                    extensions=source.get("extensions"),
+                    topic=source.get("topic"),
+                )
+                total_documents += result["documents"]
+                total_chunks += result["chunks"]
 
             else:
                 logger.warning(f"⚠️  Unknown source type: {source_type}")

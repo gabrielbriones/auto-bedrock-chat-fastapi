@@ -12,8 +12,8 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urljoin
+from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 import html2text
@@ -21,6 +21,11 @@ from bs4 import BeautifulSoup
 
 # Module logger
 logger = logging.getLogger(__name__)
+
+#: Called as ``progress_cb(metric_name, amount)`` as pages are crawled (e.g.
+#: ``("pages_crawled", 1)``) — separate from indexing progress, since a
+#: recursive crawl can run for a long time before any indexing starts.
+ProgressCallback = Callable[[str, int], None]
 
 
 class ContentCrawler:
@@ -34,6 +39,9 @@ class ContentCrawler:
         timeout: int = 30,
         proxy: Optional[str] = None,
         visited_urls: Optional[Set[str]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+        cookies: Optional[Dict[str, str]] = None,
+        progress_cb: Optional[ProgressCallback] = None,
     ):
         """
         Initialize content crawler.
@@ -45,11 +53,21 @@ class ContentCrawler:
             timeout: Request timeout in seconds
             proxy: Proxy URL (or auto-detected from HTTP_PROXY/HTTPS_PROXY env vars)
             visited_urls: Optional shared set of visited URLs (for cross-source deduplication)
+            extra_headers: Additional request headers (e.g. ``Authorization``) sent with
+                every request, merged over the default ``User-Agent`` header
+            cookies: Cookies sent with every request (e.g. a session cookie for
+                pages that gate content behind a login)
+            progress_cb: Optional callback invoked as ``("pages_crawled", 1)`` after each
+                page is successfully fetched — lets callers report crawl progress before
+                indexing (which only starts once the whole crawl finishes) begins
         """
         self.max_concurrent = max_concurrent
         self.rate_limit_delay = rate_limit_delay
         self.user_agent = user_agent
         self.timeout = timeout
+        self.extra_headers = extra_headers or {}
+        self.cookies = cookies or {}
+        self.progress_cb = progress_cb
 
         # Auto-detect proxy from environment variables if not provided
         self.proxy = proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
@@ -62,6 +80,27 @@ class ContentCrawler:
         self.html_converter.ignore_links = False
         self.html_converter.ignore_images = True
         self.html_converter.body_width = 0  # Don't wrap lines
+
+        #: Human-readable messages for pages that failed to fetch/parse
+        #: (non-200 status, timeout, connection error, etc.) — non-HTML
+        #: content being skipped is NOT an error, just intentionally ignored.
+        self.errors: List[str] = []
+
+    def _is_allowed_domain(self, url: str, allowed_domains: List[str]) -> bool:
+        """Check whether ``url``'s hostname is (or is a subdomain of) one of ``allowed_domains``.
+
+        Compares actual hostnames rather than doing a raw substring match, so
+        e.g. an unrelated link that merely contains the domain name in its
+        path/query string doesn't get mistaken for "same site".
+        """
+        host = (urlparse(url).hostname or "").lower()
+        if not host:
+            return False
+        for domain in allowed_domains:
+            domain = domain.lower().lstrip(".")
+            if host == domain or host.endswith(f".{domain}"):
+                return True
+        return False
 
     def _should_exclude_url(self, url: str, exclude_patterns: List[str]) -> bool:
         """
@@ -110,6 +149,7 @@ class ContentCrawler:
         max_depth: int = 2,
         allowed_domains: Optional[List[str]] = None,
         exclude_patterns: Optional[List[str]] = None,
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Crawl a URL and extract content.
@@ -120,8 +160,12 @@ class ContentCrawler:
             topic: Topic/category for the content
             recursive: Whether to follow links recursively
             max_depth: Maximum crawl depth for recursive crawling
-            allowed_domains: List of allowed domains for recursive crawling
+            allowed_domains: Hostnames recursive crawling may follow links to. Defaults
+                to just ``url``'s own hostname when not given, so a crawl doesn't wander
+                onto unrelated sites (e.g. external links found on the page) unless the
+                caller explicitly opts in to more domains
             exclude_patterns: URL patterns to exclude (e.g., ['/de/', '/es/'] for translations)
+            max_pages: Maximum number of pages to fetch during a recursive crawl (``None`` = unbounded)
 
         Returns:
             List of extracted documents with metadata
@@ -129,13 +173,16 @@ class ContentCrawler:
         documents = []
 
         if recursive:
+            effective_allowed_domains = allowed_domains or [urlparse(url).hostname or ""]
             documents = await self._crawl_recursive(
-                url, source, topic, max_depth, allowed_domains or [], exclude_patterns or []
+                url, source, topic, max_depth, effective_allowed_domains, exclude_patterns or [], max_pages
             )
         else:
             doc = await self._fetch_and_parse(url, source, topic)
             if doc:
                 documents.append(doc)
+                if self.progress_cb is not None:
+                    self.progress_cb("pages_crawled", 1)
 
         return documents
 
@@ -180,6 +227,7 @@ class ContentCrawler:
         max_depth: int,
         allowed_domains: List[str],
         exclude_patterns: List[str],
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Recursively crawl URLs following links.
@@ -189,6 +237,7 @@ class ContentCrawler:
         - Ignores URL fragments (#) as they don't change content
         - Normalizes trailing slashes for consistency
         - Stops early if no new URLs found, even before max_depth
+        - Stops early once ``max_pages`` documents have been fetched, if set
         - Provides crawl statistics
         - Can exclude URL patterns (e.g., translations)
         """
@@ -206,6 +255,10 @@ class ContentCrawler:
         max_depth_reached = 0
 
         while to_crawl:
+            if max_pages is not None and len(documents) >= max_pages:
+                logger.info(f"  ⏹ Reached max_pages={max_pages}; stopping crawl")
+                break
+
             url, depth = to_crawl.pop(0)
 
             # Normalize URL for comparison only
@@ -241,6 +294,8 @@ class ContentCrawler:
             doc = await self._fetch_and_parse(url, source, topic)
             if doc:
                 documents.append(doc)
+                if self.progress_cb is not None:
+                    self.progress_cb("pages_crawled", 1)
                 logger.info(f"✓ Crawled (depth {depth}): {normalized_url[:80]}...")
 
                 # Extract links if not at max depth
@@ -250,9 +305,11 @@ class ContentCrawler:
                     base_url_for_links = doc.get("url", url)
                     links = self._extract_links(doc.get("raw_html", ""), base_url_for_links)
 
-                    # Filter links by allowed domains
+                    # Filter links by allowed domains (exact host or subdomain match,
+                    # not a raw substring check — a link containing the domain name
+                    # somewhere in its path/query shouldn't count as "same site")
                     if allowed_domains:
-                        links = [link for link in links if any(domain in link for domain in allowed_domains)]
+                        links = [link for link in links if self._is_allowed_domain(link, allowed_domains)]
 
                     # Filter out excluded patterns (e.g., translations)
                     if exclude_patterns:
@@ -311,31 +368,41 @@ class ContentCrawler:
         """
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {"User-Agent": self.user_agent}
+                headers = {"User-Agent": self.user_agent, **self.extra_headers}
                 async with session.get(
                     url,
                     headers=headers,
+                    cookies=self.cookies or None,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                     proxy=self.proxy,  # Use proxy if configured
                 ) as response:
                     if response.status != 200:
+                        message = f"HTTP {response.status} fetching {url}"
                         logger.error(f"Failed to fetch {url}: HTTP {response.status}")
+                        self.errors.append(message)
+                        return None
+
+                    # Check Content-Type from the response headers before
+                    # downloading/decoding the body — avoids pulling down
+                    # (and UTF-8-decoding) large binary files linked from a
+                    # page (PDFs, zips, images, disk images, etc.), which
+                    # otherwise wastes bandwidth and can raise decode errors
+                    # or trigger a slow-download timeout.
+                    content_type = response.headers.get("Content-Type", "")
+                    if "text/html" not in content_type:
+                        logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {url}")
                         return None
 
                     html_content = await response.text()
-                    content_type = response.headers.get("Content-Type", "")
-
-                    # Only process HTML content
-                    if "text/html" not in content_type:
-                        return None
-
                     return self._parse_html(html_content, url, source, topic)
 
         except asyncio.TimeoutError:
             logger.error(f"Timeout fetching {url}")
+            self.errors.append(f"timeout fetching {url}")
             return None
         except Exception as e:
             logger.error(f"Error fetching {url}: {e}")
+            self.errors.append(f"error fetching {url}: {e}")
             return None
 
     def _parse_html(self, html_content: str, url: str, source: str, topic: Optional[str]) -> Dict[str, Any]:
@@ -551,9 +618,12 @@ class ContentCrawler:
         """Parse sitemap XML and extract URLs."""
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {"User-Agent": self.user_agent}
+                headers = {"User-Agent": self.user_agent, **self.extra_headers}
                 async with session.get(
-                    sitemap_url, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    sitemap_url,
+                    headers=headers,
+                    cookies=self.cookies or None,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
                 ) as response:
                     if response.status != 200:
                         logger.error(f"Failed to fetch sitemap: HTTP {response.status}")
