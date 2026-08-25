@@ -10,7 +10,7 @@ import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, Optional, Tuple
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -1001,10 +1001,10 @@ class AutoLangChatPlugin:
     def _safe_return_to(self, next_param: Optional[str]) -> Optional[str]:
         """Validate a client-supplied post-SSO-login redirect target.
 
-        Only same-site, relative paths under this app's own chat UI
-        endpoint are allowed. This rejects absolute URLs, protocol-relative
-        URLs (``//evil.com``), and any value containing a scheme, which
-        together prevent an open-redirect via a crafted ``next`` value.
+        Only same-site, relative paths under a configured return prefix are
+        allowed. This rejects absolute URLs, protocol-relative URLs
+        (``//evil.com``), and any value containing a scheme, which together
+        prevent an open-redirect via a crafted ``next`` value.
 
         The prefix check is done against the *decoded and normalized* path
         (percent-encoding decoded, then dot-segments collapsed via
@@ -1013,25 +1013,36 @@ class AutoLangChatPlugin:
         per the WHATWG URL spec's dot-segment handling) when resolving a
         redirect's ``Location``, so a raw value like
         ``/chat/ui/../../admin`` or ``/chat/ui/%2e%2e/%2e%2e/admin`` would
-        otherwise pass a naive ``str.startswith(ui_endpoint)`` check while
+        otherwise pass a naive prefix check while
         actually navigating outside the UI subtree once resolved
         client-side.
 
         Returns ``None`` when ``next_param`` is missing or fails validation
         (falls back to the plain chat UI root).
         """
+        def reject(reason: str) -> Optional[str]:
+            logger.warning("Rejected SSO return target: %s", reason)
+            return None
+
         if not next_param:
             return None
-        if "://" in next_param or next_param.startswith("//") or next_param.startswith("\\"):
-            return None
+        if "://" in next_param:
+            return reject("absolute URL")
+        if next_param.startswith("//"):
+            return reject("protocol-relative URL")
+        if "\\" in next_param:
+            return reject("backslash")
         if not next_param.startswith("/"):
-            return None
-        ui_endpoint = self.config.ui_endpoint
-        decoded_path = unquote(urlsplit(next_param).path)
+            return reject("non-relative path")
+        parsed_target = urlsplit(next_param)
+        decoded_path = unquote(parsed_target.path)
         normalized_path = posixpath.normpath(decoded_path)
-        if normalized_path != ui_endpoint and not normalized_path.startswith(f"{ui_endpoint}/"):
-            return None
-        return next_param
+        if not any(
+            normalized_path == prefix or normalized_path.startswith(f"{prefix.rstrip('/')}/")
+            for prefix in self.config.sso_allowed_return_prefixes
+        ):
+            return reject("path is not allow-listed")
+        return urlunsplit(("", "", parsed_target.path, parsed_target.query, parsed_target.fragment))
 
     async def _resolve_sso_session(self, request: Request) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """Resolve the SSO session (if any) that applies to this request.

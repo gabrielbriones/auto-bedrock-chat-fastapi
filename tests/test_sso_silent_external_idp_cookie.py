@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from autolangchat.plugin import AutoLangChatPlugin
+from autolangchat.sso.sso_session_store import SSOSessionStore
 
 
 class _FakeRequest:
@@ -301,7 +302,9 @@ async def test_resolve_sso_session_expired_own_session_falls_back():
 
 
 def _make_plugin_for_return_to(ui_endpoint="/chat/ui"):
-    return _make_bare_plugin(_make_config(ui_endpoint=ui_endpoint))
+    return _make_bare_plugin(
+        _make_config(ui_endpoint=ui_endpoint, sso_allowed_return_prefixes=[ui_endpoint])
+    )
 
 
 def test_safe_return_to_none_when_missing():
@@ -315,10 +318,44 @@ def test_safe_return_to_accepts_exact_ui_endpoint():
     assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui") == "/chat/ui"
 
 
+def test_safe_return_to_uses_custom_ui_endpoint_by_default():
+    plugin = _make_plugin_for_return_to(ui_endpoint="/legacy/ui")
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/legacy/ui") == "/legacy/ui"
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/chat/ui") is None
+
+
 def test_safe_return_to_accepts_ui_subpath_with_query():
     plugin = _make_plugin_for_return_to()
     value = "/chat/ui?prompt=health-check&JOB_ID=abc123"
     assert AutoLangChatPlugin._safe_return_to(plugin, value) == value
+
+
+def test_safe_return_to_accepts_configured_spa_prefix():
+    plugin = _make_plugin_for_return_to()
+    plugin.config.sso_allowed_return_prefixes = ["/chat/ui", "/ui"]
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/ui") == "/ui"
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/ui/c/abc123") == "/ui/c/abc123"
+
+
+def test_safe_return_to_preserves_spa_query_through_pending_auth_state():
+    plugin = _make_plugin_for_return_to()
+    plugin.config.sso_allowed_return_prefixes = ["/chat/ui", "/ui"]
+    target = "/ui/admin/feedback?status=pending&page=2"
+
+    return_to = AutoLangChatPlugin._safe_return_to(plugin, target)
+    store = SSOSessionStore()
+    store.store_pending("state-123", "verifier-123", return_to=return_to)
+
+    pending = store.pop_pending("state-123")
+
+    assert pending is not None
+    assert pending["return_to"] == target
+
+
+def test_safe_return_to_configured_prefix_requires_path_boundary():
+    plugin = _make_plugin_for_return_to()
+    plugin.config.sso_allowed_return_prefixes = ["/chat/ui", "/ui"]
+    assert AutoLangChatPlugin._safe_return_to(plugin, "/ui-evil") is None
 
 
 def test_safe_return_to_rejects_absolute_url():
@@ -334,6 +371,22 @@ def test_safe_return_to_rejects_protocol_relative_url():
 def test_safe_return_to_rejects_backslash_prefix():
     plugin = _make_plugin_for_return_to()
     assert AutoLangChatPlugin._safe_return_to(plugin, "\\\\evil.com/chat/ui") is None
+
+
+@pytest.mark.parametrize(
+    ("target", "reason"),
+    [
+        ("https://evil.com/chat/ui", "absolute URL"),
+        ("//evil.com/chat/ui", "protocol-relative URL"),
+        ("/chat/ui\\evil", "backslash"),
+        ("/admin/dashboard", "path is not allow-listed"),
+    ],
+)
+def test_safe_return_to_rejects_unsafe_targets_and_logs_reason(caplog, target, reason):
+    plugin = _make_plugin_for_return_to()
+
+    assert AutoLangChatPlugin._safe_return_to(plugin, target) is None
+    assert reason in caplog.text
 
 
 def test_safe_return_to_rejects_other_paths():
