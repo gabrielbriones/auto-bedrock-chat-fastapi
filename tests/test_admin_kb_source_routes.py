@@ -1120,3 +1120,63 @@ async def test_ingest_uploaded_files_batches_chunk_writes_into_one_thread_call()
     # One to_thread call for the whole document's chunk set, not one per chunk.
     assert len(chunk_write_calls) == 1
     assert len(kb_store.chunks) == result["chunks"]
+
+
+# ---------------------------------------------------------------------------
+# Lightweight phase accessor + upload-loop resource handling
+# ---------------------------------------------------------------------------
+
+
+def test_kb_source_run_state_phase_property_matches_status_phase():
+    state = kb_routes_mod._KBSourceRunState()
+    assert state.phase == kb_routes_mod.KBSourcePhase.IDLE
+
+
+def test_file_source_rejects_when_aggregate_cap_already_exhausted_without_reading(monkeypatch):
+    """Once the aggregate cap is exactly used up by prior files, a later file
+    must be rejected via the early short-circuit, before any bytes are read
+    from it."""
+    monkeypatch.setattr(kb_routes_mod, "_MAX_FILE_BYTES", 100)
+    monkeypatch.setattr(kb_routes_mod, "_MAX_TOTAL_UPLOAD_BYTES", 100)
+
+    app = _build_app(embedding_client=_embedding_client())
+    client = TestClient(app)
+    resp = client.post(
+        "/bedrock-chat/admin/kb/sources/file",
+        data={"name": "s"},
+        files=[
+            ("files", ("a.txt", b"x" * 100, "text/plain")),
+            ("files", ("b.txt", b"y" * 1, "text/plain")),
+        ],
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "upload_too_large"
+
+
+def test_file_source_closes_each_upload_after_reading(monkeypatch):
+    # Starlette's multipart form parser constructs plain
+    # starlette.datastructures.UploadFile instances (not the fastapi.UploadFile
+    # subclass used only for the route's type hint/OpenAPI schema), so that's
+    # the class that must be patched to observe close() calls at runtime.
+    from starlette.datastructures import UploadFile
+
+    close_calls = []
+    original_close = UploadFile.close
+
+    async def _tracking_close(self):
+        close_calls.append(self.filename)
+        await original_close(self)
+
+    monkeypatch.setattr(UploadFile, "close", _tracking_close)
+
+    app = _build_app(embedding_client=_embedding_client())
+    with TestClient(app) as client:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s"},
+            files=[("files", ("a.txt", _LONG_TEXT.encode("utf-8"), "text/plain"))],
+        )
+        assert resp.status_code == 202
+        _wait_until_not_running(client)
+
+    assert "a.txt" in close_calls

@@ -259,6 +259,13 @@ class _KBSourceRunState:
         # returned object.
         return self._status.model_copy(deep=True)
 
+    @property
+    def phase(self) -> KBSourcePhase:
+        # Cheap read for hot-path "is a run in progress?" checks -- avoids
+        # the full deep-copy of `status` (including `errors`) just to read
+        # one field.
+        return self._status.phase
+
     async def try_claim_run(self, *, run_id: str, source_name: str, source_type: str) -> bool:
         """Atomically transition to RUNNING if not already in progress."""
         async with self._lock:
@@ -879,7 +886,7 @@ def register_admin_kb_routes(
         # try_claim_run(...) after decoding, so a narrow race window between
         # this check and the claim is only ever a missed optimization, not a
         # correctness issue.
-        if _source_state.status.phase == KBSourcePhase.RUNNING:
+        if _source_state.phase == KBSourcePhase.RUNNING:
             return _error_json(
                 409,
                 "kb_source_run_already_in_progress",
@@ -894,21 +901,26 @@ def register_admin_kb_routes(
         decoded_files: List[Tuple[str, str]] = []
         total_bytes_read = 0
         for upload in files:
-            remaining_total = _MAX_TOTAL_UPLOAD_BYTES - total_bytes_read
             try:
-                raw = await _read_upload_capped(upload, max_bytes=_MAX_FILE_BYTES, remaining_total=remaining_total)
-            except UploadTooLargeError as exc:
-                return _error_json(422, "upload_too_large", exc.message)
-            total_bytes_read += len(raw)
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                return _error_json(
-                    422,
-                    "invalid_file_encoding",
-                    f"file {upload.filename!r} is not valid UTF-8 text",
-                )
-            decoded_files.append((upload.filename or "unnamed", text))
+                remaining_total = _MAX_TOTAL_UPLOAD_BYTES - total_bytes_read
+                if remaining_total <= 0:
+                    return _error_json(422, "upload_too_large", "total upload size exceeds the aggregate limit")
+                try:
+                    raw = await _read_upload_capped(upload, max_bytes=_MAX_FILE_BYTES, remaining_total=remaining_total)
+                except UploadTooLargeError as exc:
+                    return _error_json(422, "upload_too_large", exc.message)
+                total_bytes_read += len(raw)
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    return _error_json(
+                        422,
+                        "invalid_file_encoding",
+                        f"file {upload.filename!r} is not valid UTF-8 text",
+                    )
+                decoded_files.append((upload.filename or "unnamed", text))
+            finally:
+                await upload.close()
 
         actor = identity.user_id
         run_id = str(uuid4())
