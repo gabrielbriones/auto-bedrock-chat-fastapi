@@ -1005,3 +1005,118 @@ async def test_parse_sitemap_passes_configured_proxy():
         await crawler._parse_sitemap("https://example.com/sitemap.xml")
 
     assert captured["proxy"] == "http://proxy.example.internal:8080"
+
+
+# ---------------------------------------------------------------------------
+# pages_crawled progress must advance even when fetches fail/are skipped
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_crawl_url_non_recursive_reports_pages_crawled_on_failure():
+    progress_events = []
+    crawler = ContentCrawler(progress_cb=lambda metric, amount: progress_events.append((metric, amount)))
+
+    docs = await crawler.crawl_url("http://127.0.0.1/unsafe", recursive=False)
+
+    assert docs == []
+    assert ("pages_crawled", 1) in progress_events
+
+
+@pytest.mark.asyncio
+async def test_crawl_recursive_reports_pages_crawled_on_failure():
+    class _AllBrokenSession:
+        def get(self, url, **kwargs):
+            return _FakeHTMLResponse("", status=404)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    progress_events = []
+    crawler = ContentCrawler(
+        rate_limit_delay=0, progress_cb=lambda metric, amount: progress_events.append((metric, amount))
+    )
+    with patch("aiohttp.ClientSession", return_value=_AllBrokenSession()):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1)
+
+    assert docs == []
+    assert ("pages_crawled", 1) in progress_events
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_parse_timeout_error_reports_current_url_after_redirect():
+    class _RedirectResponse:
+        def __init__(self):
+            self.status = 302
+            self.headers = {"Location": "https://example.com/final"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _RedirectThenRaise:
+        def __init__(self):
+            self._calls = 0
+
+        def get(self, url, **kwargs):
+            self._calls += 1
+            if self._calls == 1:
+                return _RedirectResponse()
+            raise asyncio.TimeoutError()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=_RedirectThenRaise()):
+        doc = await crawler._fetch_and_parse("https://example.com/start", "src", None)
+
+    assert doc is None
+    assert any("timeout fetching https://example.com/final" in e for e in crawler.errors)
+    assert not any("timeout fetching https://example.com/start" in e for e in crawler.errors)
+
+
+# ---------------------------------------------------------------------------
+# Chunk writes are batched into a single asyncio.to_thread() call per doc
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_batches_chunk_writes_into_one_thread_call():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    scheduled_funcs = []
+    real_to_thread = asyncio.to_thread
+
+    async def _counting_to_thread(func, *args, **kwargs):
+        scheduled_funcs.append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    long_content = "hello world " * 700  # multiple chunks with default chunk_size
+    with patch("autolangchat.rag.kb_ingestion.asyncio.to_thread", side_effect=_counting_to_thread):
+        result = await ingest_uploaded_files(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model="fake-model",
+            source_name="src",
+            files=[("doc.txt", long_content)],
+        )
+
+    assert result["documents"] == 1
+    assert result["chunks"] > 1
+    chunk_write_calls = [f for f in scheduled_funcs if getattr(f, "__name__", "") == "_write_chunks_sync"]
+    # One to_thread call for the whole document's chunk set, not one per chunk.
+    assert len(chunk_write_calls) == 1
+    assert len(kb_store.chunks) == result["chunks"]

@@ -80,6 +80,45 @@ async def _upsert_document(
         )
 
 
+def _write_chunks_sync(
+    vector_db: Any,
+    *,
+    doc_id: str,
+    chunks_data: List[Dict[str, Any]],
+    embeddings: List[List[float]],
+    title: str,
+    source_name: str,
+    url: Optional[str],
+    topic: Optional[str],
+) -> None:
+    """Write every chunk for one document in a single synchronous call.
+
+    Run via one ``asyncio.to_thread(...)`` per document (not per chunk) --
+    scheduling a separate thread per chunk adds threadpool overhead that
+    can dominate runtime for documents with hundreds/thousands of chunks.
+    """
+    for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
+        chunk_id = f"{doc_id}_{idx}"
+        chunk_metadata = {
+            "doc_id": doc_id,
+            "title": title,
+            "source": source_name,
+            "url": url,
+            "topic": topic,
+            "date_published": None,
+        }
+        vector_db.add_chunk(
+            chunk_id=chunk_id,
+            document_id=doc_id,
+            content=chunk_data["text"],
+            embedding=embedding,
+            chunk_index=idx,
+            start_char=chunk_data.get("start_char"),
+            end_char=chunk_data.get("end_char"),
+            metadata=chunk_metadata,
+        )
+
+
 async def ingest_web_source(
     *,
     vector_db: Any,
@@ -188,27 +227,17 @@ async def ingest_web_source(
                 },
             )
 
-            for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
-                chunk_id = f"{doc_url}_{idx}"
-                chunk_metadata = {
-                    "doc_id": doc_url,
-                    "title": doc.get("title", ""),
-                    "source": source_name,
-                    "url": doc_url,
-                    "topic": topic,
-                    "date_published": None,
-                }
-                await asyncio.to_thread(
-                    vector_db.add_chunk,
-                    chunk_id=chunk_id,
-                    document_id=doc_url,
-                    content=chunk_data["text"],
-                    embedding=embedding,
-                    chunk_index=idx,
-                    start_char=chunk_data.get("start_char"),
-                    end_char=chunk_data.get("end_char"),
-                    metadata=chunk_metadata,
-                )
+            await asyncio.to_thread(
+                _write_chunks_sync,
+                vector_db,
+                doc_id=doc_url,
+                chunks_data=chunks_data,
+                embeddings=embeddings,
+                title=doc.get("title", ""),
+                source_name=source_name,
+                url=doc_url,
+                topic=topic,
+            )
 
             # Marked processed only now that the full write succeeded --
             # otherwise a failed page would look like an already-handled
@@ -321,27 +350,17 @@ async def ingest_local_source(
                 },
             )
 
-            for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
-                chunk_id = f"{doc_id}_{idx}"
-                chunk_metadata = {
-                    "doc_id": doc_id,
-                    "title": os.path.basename(file_path),
-                    "source": source_name,
-                    "url": None,
-                    "topic": topic,
-                    "date_published": None,
-                }
-                await asyncio.to_thread(
-                    vector_db.add_chunk,
-                    chunk_id=chunk_id,
-                    document_id=doc_id,
-                    content=chunk_data["text"],
-                    embedding=embedding,
-                    chunk_index=idx,
-                    start_char=chunk_data.get("start_char"),
-                    end_char=chunk_data.get("end_char"),
-                    metadata=chunk_metadata,
-                )
+            await asyncio.to_thread(
+                _write_chunks_sync,
+                vector_db,
+                doc_id=doc_id,
+                chunks_data=chunks_data,
+                embeddings=embeddings,
+                title=os.path.basename(file_path),
+                source_name=source_name,
+                url=None,
+                topic=topic,
+            )
 
             total_chunks += len(chunks_data)
             total_documents += 1
@@ -425,27 +444,17 @@ async def ingest_uploaded_files(
                 },
             )
 
-            for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, embeddings)):
-                chunk_id = f"{doc_id}_{idx}"
-                chunk_metadata = {
-                    "doc_id": doc_id,
-                    "title": filename,
-                    "source": source_name,
-                    "url": None,
-                    "topic": topic,
-                    "date_published": None,
-                }
-                await asyncio.to_thread(
-                    vector_db.add_chunk,
-                    chunk_id=chunk_id,
-                    document_id=doc_id,
-                    content=chunk_data["text"],
-                    embedding=embedding,
-                    chunk_index=idx,
-                    start_char=chunk_data.get("start_char"),
-                    end_char=chunk_data.get("end_char"),
-                    metadata=chunk_metadata,
-                )
+            await asyncio.to_thread(
+                _write_chunks_sync,
+                vector_db,
+                doc_id=doc_id,
+                chunks_data=chunks_data,
+                embeddings=embeddings,
+                title=filename,
+                source_name=source_name,
+                url=None,
+                topic=topic,
+            )
 
             total_chunks += len(chunks_data)
             total_documents += 1

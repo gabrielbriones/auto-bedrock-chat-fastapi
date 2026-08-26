@@ -189,10 +189,13 @@ class ContentCrawler:
             )
         else:
             doc = await self._fetch_and_parse(url, source, topic)
+            if self.progress_cb is not None:
+                # Count the attempt even on failure, so a single-URL crawl
+                # that errors doesn't leave /admin/kb/sources/status looking
+                # stuck at 0 pages_crawled.
+                self.progress_cb("pages_crawled", 1)
             if doc:
                 documents.append(doc)
-                if self.progress_cb is not None:
-                    self.progress_cb("pages_crawled", 1)
 
         return documents
 
@@ -304,10 +307,13 @@ class ContentCrawler:
             # Fetch and parse using ORIGINAL URL (preserves trailing slash for link resolution)
             pages_attempted += 1
             doc = await self._fetch_and_parse(url, source, topic)
+            if self.progress_cb is not None:
+                # Count the attempt even on failure/non-HTML skip, so status
+                # reporting advances during a crawl that's actively making
+                # (failing) requests, not just successful ones.
+                self.progress_cb("pages_crawled", 1)
             if doc:
                 documents.append(doc)
-                if self.progress_cb is not None:
-                    self.progress_cb("pages_crawled", 1)
                 logger.info(f"✓ Crawled (depth {depth}): {normalized_url[:80]}...")
 
                 # Extract links if not at max depth
@@ -492,12 +498,12 @@ class ContentCrawler:
                 return None
 
         except asyncio.TimeoutError:
-            logger.error(f"Timeout fetching {url}")
-            self.errors.append(f"timeout fetching {url}")
+            logger.error(f"Timeout fetching {current_url}")
+            self.errors.append(f"timeout fetching {current_url}")
             return None
         except Exception as e:
-            logger.error(f"Error fetching {url}: {e}")
-            self.errors.append(f"error fetching {url}: {e}")
+            logger.error(f"Error fetching {current_url}: {e}")
+            self.errors.append(f"error fetching {current_url}: {e}")
             return None
 
     def _parse_html(self, html_content: str, url: str, source: str, topic: Optional[str]) -> Dict[str, Any]:
