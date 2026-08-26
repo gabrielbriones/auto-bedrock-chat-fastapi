@@ -712,24 +712,45 @@ class ContentCrawler:
     async def _parse_sitemap(self, sitemap_url: str) -> List[str]:
         """Parse sitemap XML and extract URLs."""
         try:
+            current_url = sitemap_url
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": self.user_agent, **self.extra_headers}
-                async with session.get(
-                    sitemap_url,
-                    headers=headers,
-                    cookies=self.cookies or None,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                ) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch sitemap: HTTP {response.status}")
+                for _ in range(self._MAX_REDIRECTS + 1):
+                    # Same SSRF guard as _fetch_and_parse -- a sitemap URL is
+                    # just as attacker-controllable as a crawled page link.
+                    if not await self._is_safe_url(current_url):
+                        logger.error(f"refusing to fetch internal/unsafe host: {current_url}")
                         return []
 
-                    xml_content = await response.text()
-                    soup = BeautifulSoup(xml_content, "xml")
+                    async with session.get(
+                        current_url,
+                        headers=headers,
+                        cookies=self.cookies or None,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                        proxy=self.proxy,
+                        allow_redirects=False,
+                    ) as response:
+                        if response.status in (301, 302, 303, 307, 308):
+                            location = response.headers.get("Location")
+                            if not location:
+                                logger.error(f"redirect from {current_url} missing Location header")
+                                return []
+                            current_url = urljoin(current_url, location)
+                            continue
 
-                    # Extract all <loc> tags
-                    urls = [loc.text for loc in soup.find_all("loc")]
-                    return urls
+                        if response.status != 200:
+                            logger.error(f"Failed to fetch sitemap: HTTP {response.status}")
+                            return []
+
+                        xml_content = await response.text()
+                        soup = BeautifulSoup(xml_content, "xml")
+
+                        # Extract all <loc> tags
+                        urls = [loc.text for loc in soup.find_all("loc")]
+                        return urls
+
+                logger.error(f"too many redirects fetching sitemap {sitemap_url}")
+                return []
 
         except Exception as e:
             logger.error(f"Error parsing sitemap: {e}")

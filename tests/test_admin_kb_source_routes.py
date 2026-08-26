@@ -924,3 +924,84 @@ async def test_fetch_and_parse_tags_doc_with_final_url_after_redirect():
 
     assert doc is not None
     assert doc["url"] == "https://example.com/final"
+
+
+# ---------------------------------------------------------------------------
+# SSRF: sitemap fetching must be as protected as _fetch_and_parse
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_parse_sitemap_refuses_loopback_host():
+    crawler = ContentCrawler()
+    urls = await crawler._parse_sitemap("http://127.0.0.1/sitemap.xml")
+    assert urls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_sitemap_blocks_redirect_to_private_host():
+    class _RedirectResponse:
+        def __init__(self):
+            self.status = 302
+            self.headers = {"Location": "http://169.254.169.254/sitemap.xml"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _RedirectingSession:
+        def get(self, url, **kwargs):
+            return _RedirectResponse()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=_RedirectingSession()):
+        urls = await crawler._parse_sitemap("https://example.com/sitemap.xml")
+
+    assert urls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_sitemap_passes_configured_proxy():
+    """_parse_sitemap must thread the crawler's proxy through like
+    _fetch_and_parse does -- checked via the outgoing request kwargs rather
+    than a full XML parse, since BeautifulSoup's "xml" feature depends on an
+    optional lxml install not related to this fix."""
+    captured = {}
+
+    class _FakeSitemapResponse:
+        def __init__(self):
+            self.status = 200
+
+        async def text(self):
+            return "<urlset></urlset>"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _CapturingSession:
+        def get(self, url, **kwargs):
+            captured["proxy"] = kwargs.get("proxy")
+            return _FakeSitemapResponse()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(proxy="http://proxy.example.internal:8080")
+    with patch("aiohttp.ClientSession", return_value=_CapturingSession()):
+        await crawler._parse_sitemap("https://example.com/sitemap.xml")
+
+    assert captured["proxy"] == "http://proxy.example.internal:8080"
