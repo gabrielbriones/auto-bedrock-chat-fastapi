@@ -36,7 +36,17 @@ ContentCrawler = content_crawler_mod.ContentCrawler
 
 # kb_ingestion.py has no heavy (langgraph/boto3/etc.) dependencies of its own,
 # so unlike the modules above it's imported normally rather than via
-# load_module()'s file-path stub-loading.
+# load_module()'s file-path stub-loading. On some test-collection orders, a
+# bare ``autolangchat.rag`` stub from one of the load_module() calls above (or
+# from another test file) can be left in sys.modules instead of restored, so
+# clear any stale stubs before this plain import (see
+# clear_stale_stub_modules()'s docstring / XMGPLAT-11220 for the same issue
+# previously hit in test_plugin_lifecycle.py).
+from ._autolangchat_imports import clear_stale_stub_modules  # noqa: E402
+
+clear_stale_stub_modules()
+
+import autolangchat.rag.kb_ingestion as kb_ingestion_module  # noqa: E402
 from autolangchat.rag.kb_ingestion import ingest_uploaded_files  # noqa: E402
 
 # Content long enough to survive TextChunker's default min_chunk_size=50 words.
@@ -1104,7 +1114,10 @@ async def test_ingest_uploaded_files_batches_chunk_writes_into_one_thread_call()
         return await real_to_thread(func, *args, **kwargs)
 
     long_content = "hello world " * 700  # multiple chunks with default chunk_size
-    with patch("autolangchat.rag.kb_ingestion.asyncio.to_thread", side_effect=_counting_to_thread):
+    # patch.object() on the already-imported module (rather than a string
+    # path re-resolved through sys.modules) avoids AttributeErrors if some
+    # other test leaves a stale autolangchat.rag stub behind at runtime.
+    with patch.object(kb_ingestion_module.asyncio, "to_thread", side_effect=_counting_to_thread):
         result = await ingest_uploaded_files(
             vector_db=kb_store,
             bedrock_client=embedding_client,

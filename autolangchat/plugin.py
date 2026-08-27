@@ -9,7 +9,7 @@ import posixpath
 import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
@@ -335,6 +335,12 @@ class AutoLangChatPlugin:
 
         logger.debug("Checking conversation store configuration and initializing...")
         self._conversation_store = create_conversation_store(self.config)
+        # Distinguishes "never configured" (None from the factory above) from
+        # "configured but failed to open at startup" (set True in
+        # _startup_open_conversation_store) — the TTL sweep needs this to
+        # avoid orphaning conversation rows it can no longer clean up (see
+        # XMGPLAT-11388).
+        self._conversation_store_open_failed = False
 
         # Per-user settings store. Constructed eagerly so the WebSocket
         # handler can be wired immediately; the connection pool / SQLite file
@@ -2090,24 +2096,6 @@ class AutoLangChatPlugin:
 
         await _open_cp(self.chat_graph.checkpointer)
 
-        # 2. Schedule the background checkpoint-expiry sweep
-        from .graph.checkpointer import purge_expired_checkpoints as _purge
-
-        ttl = self.config.checkpoint_ttl_seconds
-        _PURGE_INTERVAL = 6 * 3600  # every 6 hours
-
-        async def _expiry_loop():
-            while True:
-                await asyncio.sleep(_PURGE_INTERVAL)
-                try:
-                    purged = await _purge(self.chat_graph.checkpointer, ttl)
-                    if purged:
-                        logger.info("Checkpoint TTL sweep: purged %d thread(s)", purged)
-                except Exception:
-                    logger.exception("Checkpoint TTL sweep failed")
-
-        asyncio.create_task(_expiry_loop())
-
         # 3. Auto-populate KB if needed
         if getattr(self, "_kb_needs_population", False):
             try:
@@ -2143,6 +2131,49 @@ class AutoLangChatPlugin:
 
         # 6b. Open the user-settings-store connection pool
         await self._startup_open_user_settings_store()
+
+        # 6c. Schedule the background checkpoint-expiry sweep. Scheduled only
+        # now (after the conversation store is opened, above) so its
+        # per-thread conversation cleanup never races against store startup
+        # — otherwise a sweep firing mid-startup would delete a checkpoint,
+        # fail to delete the matching conversation row (store not open yet),
+        # and orphan that row forever (the checkpoint is gone, so it can't be
+        # retried on the next sweep).
+        #
+        # If persistence is enabled but the store failed to open (as opposed
+        # to never being configured), skip the sweep entirely rather than
+        # just skipping its conversation cleanup step: purging a checkpoint
+        # with no way to clean up its conversation row would orphan that row
+        # forever once this process can no longer rediscover it (its
+        # checkpoint would already be gone by the time the store recovers on
+        # a later restart).
+        if self._conversation_store_open_failed and self.config.conversation_persistence_enabled:
+            logger.warning(
+                "Skipping checkpoint TTL sweep: conversation persistence is enabled but its "
+                "store failed to open — purging checkpoints now would permanently orphan their "
+                "conversation rows. Will resume on the next successful startup."
+            )
+        else:
+            from .graph.checkpointer import purge_expired_checkpoints as _purge
+
+            ttl = self.config.checkpoint_ttl_seconds
+            # Never sweep less often than the TTL itself (so a short TTL, e.g.
+            # for manual testing, is actually observed promptly), but don't
+            # sweep more than every 6h in normal (multi-day TTL) operation.
+            _PURGE_INTERVAL = min(ttl, 6 * 3600)
+
+            async def _expiry_loop():
+                while True:
+                    await asyncio.sleep(_PURGE_INTERVAL)
+                    try:
+                        purged = await _purge(self.chat_graph.checkpointer, ttl)
+                        if purged:
+                            logger.info("Checkpoint TTL sweep: purged %d thread(s)", len(purged))
+                            await self._purge_conversations_for_threads(purged)
+                    except Exception:
+                        logger.exception("Checkpoint TTL sweep failed")
+
+            asyncio.create_task(_expiry_loop())
 
         # 7. Schedule KB credibility decay background task (opt-in)
         if self._kb_store is not None and self.config.kb_credibility_decay_enabled:
@@ -2282,6 +2313,7 @@ class AutoLangChatPlugin:
             except Exception:  # pragma: no cover - defensive
                 logger.exception("Error while closing partially-opened ConversationStore")
             self._conversation_store = None
+            self._conversation_store_open_failed = True
             self.websocket_handler.conversation_store = None
 
     async def _startup_open_user_settings_store(self) -> None:
@@ -2311,6 +2343,45 @@ class AutoLangChatPlugin:
                 logger.exception("Error while closing partially-opened UserSettingsStore")
             self._user_settings_store = None
             self.websocket_handler.user_settings_store = None
+
+    async def _purge_conversations_for_threads(self, thread_ids: List[str]) -> None:
+        """Delete the conversation metadata row for each purged checkpoint thread_id.
+
+        Keeps a conversation's checkpoint TTL purge from orphaning its
+        metadata row forever (see XMGPLAT-11388). No-op when persistence is
+        disabled or no store is configured. Each per-id delete is isolated
+        so a single failure — or a race with another instance's sweep
+        having already deleted the row — doesn't abort the rest of the
+        batch or the sweep loop.
+
+        Before each delete, re-checks whether a checkpoint now exists for
+        that thread_id: the sweep's checkpoint purge and this metadata
+        cleanup aren't atomic, so a thread that was expired when purged can
+        become active again (a new turn writes a fresh checkpoint) in the
+        gap between the two. Deleting the conversation row out from under a
+        thread that just became active again would orphan it in the
+        opposite direction (checkpoint present, metadata gone), so skip it.
+        """
+        if not self.config.conversation_persistence_enabled or self._conversation_store is None:
+            return
+        for thread_id in thread_ids:
+            cfg = {"configurable": {"thread_id": thread_id}}
+            try:
+                checkpoint_state = await self.chat_graph.aget_state(cfg)
+            except Exception:
+                logger.exception(
+                    "Failed to re-check checkpoint state for purged thread_id %s; skipping its "
+                    "conversation cleanup this sweep — its checkpoint is already gone, so this "
+                    "row won't be rediscovered by a later sweep",
+                    thread_id,
+                )
+                continue
+            if checkpoint_state and checkpoint_state.values:
+                continue
+            try:
+                await self._conversation_store.delete_conversation(thread_id)
+            except Exception:
+                logger.exception("Failed to delete conversation row for purged thread_id %s", thread_id)
 
     def _warn_if_memory_saver_with_conversation_persistence(self) -> None:
         """Log a one-time degraded-mode warning for MemorySaver + conversation persistence.
