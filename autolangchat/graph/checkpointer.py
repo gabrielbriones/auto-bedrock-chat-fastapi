@@ -18,7 +18,7 @@ Shutdown (async):
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ async def close_checkpointer(checkpointer) -> None:
         logger.exception("Failed to close LangGraph Postgres connection pool")
 
 
-async def purge_expired_checkpoints(checkpointer, ttl_seconds: int) -> int:
+async def purge_expired_checkpoints(checkpointer, ttl_seconds: int) -> List[str]:
     """Delete all LangGraph checkpoints whose most recent ``ts`` is older than
     ``ttl_seconds``.
 
@@ -131,16 +131,17 @@ async def purge_expired_checkpoints(checkpointer, ttl_seconds: int) -> int:
     2. Deleting matching rows from ``checkpoints``, ``checkpoint_blobs``, and
        ``checkpoint_writes``.
 
-    Returns the number of thread_ids purged.  A no-op (returns 0) for
-    ``MemorySaver``.
+    Returns the list of purged thread_ids (conversation ids), so callers can
+    also clean up any linked conversation metadata.  A no-op (returns ``[]``)
+    for ``MemorySaver``.
     """
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
         if not isinstance(checkpointer, AsyncPostgresSaver):
-            return 0
+            return []
     except ImportError:
-        return 0
+        return []
 
     _FIND_OLD_THREADS = """
         SELECT thread_id
@@ -155,7 +156,7 @@ async def purge_expired_checkpoints(checkpointer, ttl_seconds: int) -> int:
             await cur.execute(_FIND_OLD_THREADS.format(seconds=int(ttl_seconds)))
             rows = await cur.fetchall()
             if not rows:
-                return 0
+                return []
             old_ids = [r["thread_id"] for r in rows]
             for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
                 await cur.execute(_DELETE_FROM.format(table=table), (old_ids,))
@@ -164,7 +165,7 @@ async def purge_expired_checkpoints(checkpointer, ttl_seconds: int) -> int:
                 len(old_ids),
                 ttl_seconds,
             )
-            return len(old_ids)
+            return old_ids
     except Exception:
         logger.exception("Error during checkpoint expiry purge")
-        return 0
+        return []

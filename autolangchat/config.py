@@ -1101,7 +1101,9 @@ class ChatConfig(BaseSettings):
         description=(
             "How long (in seconds) to retain LangGraph checkpoints before they "
             "are purged by the background cleanup task. Default: 7 days. "
-            "Only applies when using the Postgres checkpointer."
+            "Only applies when using the Postgres checkpointer. The sweep "
+            "itself runs every min(this value, 6h) — setting a very low TTL "
+            "(e.g. for manual testing) makes it poll the database that often too."
         ),
     )
 

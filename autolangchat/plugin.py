@@ -9,7 +9,7 @@ import posixpath
 import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
@@ -2094,7 +2094,10 @@ class AutoLangChatPlugin:
         from .graph.checkpointer import purge_expired_checkpoints as _purge
 
         ttl = self.config.checkpoint_ttl_seconds
-        _PURGE_INTERVAL = 6 * 3600  # every 6 hours
+        # Never sweep less often than the TTL itself (so a short TTL, e.g.
+        # for manual testing, is actually observed promptly), but don't
+        # sweep more than every 6h in normal (multi-day TTL) operation.
+        _PURGE_INTERVAL = min(ttl, 6 * 3600)
 
         async def _expiry_loop():
             while True:
@@ -2102,7 +2105,8 @@ class AutoLangChatPlugin:
                 try:
                     purged = await _purge(self.chat_graph.checkpointer, ttl)
                     if purged:
-                        logger.info("Checkpoint TTL sweep: purged %d thread(s)", purged)
+                        logger.info("Checkpoint TTL sweep: purged %d thread(s)", len(purged))
+                        await self._purge_conversations_for_threads(purged)
                 except Exception:
                     logger.exception("Checkpoint TTL sweep failed")
 
@@ -2311,6 +2315,24 @@ class AutoLangChatPlugin:
                 logger.exception("Error while closing partially-opened UserSettingsStore")
             self._user_settings_store = None
             self.websocket_handler.user_settings_store = None
+
+    async def _purge_conversations_for_threads(self, thread_ids: List[str]) -> None:
+        """Delete the conversation metadata row for each purged checkpoint thread_id.
+
+        Keeps a conversation's checkpoint TTL purge from orphaning its
+        metadata row forever (see XMGPLAT-11388). No-op when persistence is
+        disabled or no store is configured. Each per-id delete is isolated
+        so a single failure — or a race with another instance's sweep
+        having already deleted the row — doesn't abort the rest of the
+        batch or the sweep loop.
+        """
+        if not self.config.conversation_persistence_enabled or self._conversation_store is None:
+            return
+        for thread_id in thread_ids:
+            try:
+                await self._conversation_store.delete_conversation(thread_id)
+            except Exception:
+                logger.exception("Failed to delete conversation row for purged thread_id %s", thread_id)
 
     def _warn_if_memory_saver_with_conversation_persistence(self) -> None:
         """Log a one-time degraded-mode warning for MemorySaver + conversation persistence.

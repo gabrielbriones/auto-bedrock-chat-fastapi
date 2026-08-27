@@ -70,7 +70,7 @@ def patch_checkpointer(monkeypatch):
     mocks = SimpleNamespace(
         open=AsyncMock(),
         close=AsyncMock(),
-        purge=AsyncMock(return_value=0),
+        purge=AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(checkpointer_module, "open_checkpointer", mocks.open)
     monkeypatch.setattr(checkpointer_module, "close_checkpointer", mocks.close)
@@ -335,3 +335,66 @@ async def test_startup_does_not_warn_when_conversation_persistence_disabled(patc
 
     await plugin.shutdown()
     await _cancel_new_tasks(before)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint TTL sweep: conversation-row cleanup (XMGPLAT-11388)
+# ---------------------------------------------------------------------------
+
+
+async def test_purge_conversations_for_threads_deletes_each_purged_id():
+    conversation_store = MagicMock()
+    conversation_store.delete_conversation = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+
+    await plugin._purge_conversations_for_threads(["conv-1", "conv-2"])
+
+    conversation_store.delete_conversation.assert_any_await("conv-1")
+    conversation_store.delete_conversation.assert_any_await("conv-2")
+    assert conversation_store.delete_conversation.await_count == 2
+
+
+async def test_purge_conversations_for_threads_already_deleted_is_not_an_error():
+    # delete_conversation is idempotent by contract — a missing row is a
+    # silent no-op, not an exception, so nothing here should be caught/logged.
+    conversation_store = MagicMock()
+    conversation_store.delete_conversation = AsyncMock(return_value=None)
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+
+    await plugin._purge_conversations_for_threads(["already-gone"])
+
+    conversation_store.delete_conversation.assert_awaited_once_with("already-gone")
+
+
+async def test_purge_conversations_for_threads_isolates_per_id_failures(caplog):
+    conversation_store = MagicMock()
+    conversation_store.delete_conversation = AsyncMock(side_effect=[RuntimeError("boom"), None])
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+
+    with caplog.at_level(logging.ERROR, logger="autolangchat.plugin"):
+        await plugin._purge_conversations_for_threads(["conv-fails", "conv-ok"])
+
+    assert conversation_store.delete_conversation.await_count == 2
+    assert any("Failed to delete conversation row" in r.message for r in caplog.records)
+
+
+async def test_purge_conversations_for_threads_noop_when_persistence_disabled():
+    conversation_store = MagicMock()
+    conversation_store.delete_conversation = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = False
+
+    await plugin._purge_conversations_for_threads(["conv-1"])
+
+    conversation_store.delete_conversation.assert_not_awaited()
+
+
+async def test_purge_conversations_for_threads_noop_when_no_store_configured():
+    plugin = _make_plugin(_conversation_store=None)
+    plugin.config.conversation_persistence_enabled = True
+
+    # Should not raise even with no store to call delete_conversation on.
+    await plugin._purge_conversations_for_threads(["conv-1"])
