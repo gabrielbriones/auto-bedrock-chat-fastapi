@@ -2090,28 +2090,6 @@ class AutoLangChatPlugin:
 
         await _open_cp(self.chat_graph.checkpointer)
 
-        # 2. Schedule the background checkpoint-expiry sweep
-        from .graph.checkpointer import purge_expired_checkpoints as _purge
-
-        ttl = self.config.checkpoint_ttl_seconds
-        # Never sweep less often than the TTL itself (so a short TTL, e.g.
-        # for manual testing, is actually observed promptly), but don't
-        # sweep more than every 6h in normal (multi-day TTL) operation.
-        _PURGE_INTERVAL = min(ttl, 6 * 3600)
-
-        async def _expiry_loop():
-            while True:
-                await asyncio.sleep(_PURGE_INTERVAL)
-                try:
-                    purged = await _purge(self.chat_graph.checkpointer, ttl)
-                    if purged:
-                        logger.info("Checkpoint TTL sweep: purged %d thread(s)", len(purged))
-                        await self._purge_conversations_for_threads(purged)
-                except Exception:
-                    logger.exception("Checkpoint TTL sweep failed")
-
-        asyncio.create_task(_expiry_loop())
-
         # 3. Auto-populate KB if needed
         if getattr(self, "_kb_needs_population", False):
             try:
@@ -2147,6 +2125,34 @@ class AutoLangChatPlugin:
 
         # 6b. Open the user-settings-store connection pool
         await self._startup_open_user_settings_store()
+
+        # 6c. Schedule the background checkpoint-expiry sweep. Scheduled only
+        # now (after the conversation store is opened, above) so its
+        # per-thread conversation cleanup never races against store startup
+        # — otherwise a sweep firing mid-startup would delete a checkpoint,
+        # fail to delete the matching conversation row (store not open yet),
+        # and orphan that row forever (the checkpoint is gone, so it can't be
+        # retried on the next sweep).
+        from .graph.checkpointer import purge_expired_checkpoints as _purge
+
+        ttl = self.config.checkpoint_ttl_seconds
+        # Never sweep less often than the TTL itself (so a short TTL, e.g.
+        # for manual testing, is actually observed promptly), but don't
+        # sweep more than every 6h in normal (multi-day TTL) operation.
+        _PURGE_INTERVAL = min(ttl, 6 * 3600)
+
+        async def _expiry_loop():
+            while True:
+                await asyncio.sleep(_PURGE_INTERVAL)
+                try:
+                    purged = await _purge(self.chat_graph.checkpointer, ttl)
+                    if purged:
+                        logger.info("Checkpoint TTL sweep: purged %d thread(s)", len(purged))
+                        await self._purge_conversations_for_threads(purged)
+                except Exception:
+                    logger.exception("Checkpoint TTL sweep failed")
+
+        asyncio.create_task(_expiry_loop())
 
         # 7. Schedule KB credibility decay background task (opt-in)
         if self._kb_store is not None and self.config.kb_credibility_decay_enabled:

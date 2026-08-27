@@ -147,13 +147,13 @@ async def purge_expired_checkpoints(checkpointer, ttl_seconds: int) -> List[str]
         SELECT thread_id
         FROM checkpoints
         GROUP BY thread_id
-        HAVING MAX((checkpoint->>'ts')::timestamptz) < NOW() - INTERVAL '{seconds} seconds'
+        HAVING MAX((checkpoint->>'ts')::timestamptz) < NOW() - make_interval(secs => %s)
     """
     _DELETE_FROM = "DELETE FROM {table} WHERE thread_id = ANY(%s)"
 
     try:
         async with checkpointer._cursor() as cur:
-            await cur.execute(_FIND_OLD_THREADS.format(seconds=int(ttl_seconds)))
+            await cur.execute(_FIND_OLD_THREADS, (int(ttl_seconds),))
             rows = await cur.fetchall()
             if not rows:
                 return []
