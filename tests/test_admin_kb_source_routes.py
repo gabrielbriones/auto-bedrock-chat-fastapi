@@ -36,7 +36,16 @@ ContentCrawler = content_crawler_mod.ContentCrawler
 
 # kb_ingestion.py has no heavy (langgraph/boto3/etc.) dependencies of its own,
 # so unlike the modules above it's imported normally rather than via
-# load_module()'s file-path stub-loading.
+# load_module()'s file-path stub-loading. On some test-collection orders, a
+# bare ``autolangchat.rag`` stub from one of the load_module() calls above (or
+# from another test file) can be left in sys.modules instead of restored, so
+# clear any stale stubs before this plain import (see
+# clear_stale_stub_modules()'s docstring / XMGPLAT-11220 for the same issue
+# previously hit in test_plugin_lifecycle.py).
+from ._autolangchat_imports import clear_stale_stub_modules  # noqa: E402
+
+clear_stale_stub_modules()
+
 from autolangchat.rag.kb_ingestion import ingest_uploaded_files  # noqa: E402
 
 # Content long enough to survive TextChunker's default min_chunk_size=50 words.

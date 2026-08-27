@@ -9,7 +9,6 @@ patched so no real connection pool is opened.
 
 import asyncio
 import logging
-import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,15 +21,12 @@ import pytest
 # collection orders those stubs are left behind instead of being restored to
 # the real package, so a later plain
 # ``from autolangchat.plugin import ...`` here can pick up the stub and fail
-# with ImportError. Only these two specific entries are ever left stubbed;
-# drop them (if they are indeed bare stubs, i.e. have no ``__spec__``) so
-# Python re-imports the real packages. Already-real submodules (e.g.
-# ``autolangchat.graph.graph``) are untouched and get reused as-is, so this
-# doesn't create duplicate class objects for anything else.
-for _name in ("autolangchat", "autolangchat.db"):
-    _mod = sys.modules.get(_name)
-    if _mod is not None and getattr(_mod, "__spec__", None) is None:
-        del sys.modules[_name]
+# with ImportError. Already-real submodules (e.g. ``autolangchat.graph.graph``)
+# are untouched and get reused as-is, so this doesn't create duplicate class
+# objects for anything else.
+from ._autolangchat_imports import clear_stale_stub_modules  # noqa: E402
+
+clear_stale_stub_modules()
 
 import autolangchat.graph.checkpointer as checkpointer_module  # noqa: E402
 from autolangchat.plugin import AutoLangChatPlugin  # noqa: E402
@@ -47,6 +43,7 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
     plugin._feedback_store = None
     plugin._token_usage_store = None
     plugin._conversation_store = None
+    plugin._conversation_store_open_failed = False
     plugin._user_settings_store = None
     plugin._mcp_session_manager = None
     plugin._mcp_exit_stack = None
@@ -56,7 +53,9 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
         kb_allow_empty=True,
         mcp_enabled=False,
     )
-    plugin.chat_graph = SimpleNamespace(checkpointer=MagicMock(name="checkpointer"))
+    plugin.chat_graph = SimpleNamespace(
+        checkpointer=MagicMock(name="checkpointer"), aget_state=AsyncMock(return_value=None)
+    )
     plugin.websocket_handler = SimpleNamespace(shutdown=AsyncMock(), feedback_store=None)
     plugin.tool_manager = SimpleNamespace(shutdown=AsyncMock())
     for key, value in overrides.items():
@@ -398,3 +397,80 @@ async def test_purge_conversations_for_threads_noop_when_no_store_configured():
 
     # Should not raise even with no store to call delete_conversation on.
     await plugin._purge_conversations_for_threads(["conv-1"])
+
+
+async def test_purge_conversations_for_threads_skips_delete_when_checkpoint_recreated():
+    # Simulates a thread becoming active again (a fresh turn writes a new
+    # checkpoint) in the gap between the sweep purging it and this cleanup
+    # step running — the conversation row must not be deleted out from
+    # under it.
+    conversation_store = MagicMock()
+    conversation_store.delete_conversation = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+    recreated_state = SimpleNamespace(values={"messages": ["a fresh turn"]})
+    plugin.chat_graph.aget_state = AsyncMock(
+        side_effect=lambda cfg: recreated_state if cfg["configurable"]["thread_id"] == "conv-active" else None
+    )
+
+    await plugin._purge_conversations_for_threads(["conv-active", "conv-truly-expired"])
+
+    conversation_store.delete_conversation.assert_awaited_once_with("conv-truly-expired")
+
+
+async def test_startup_skips_sweep_when_conversation_store_failed_to_open(patch_checkpointer, caplog):
+    plugin = _make_plugin(_conversation_store_open_failed=True)
+    plugin.config.conversation_persistence_enabled = True
+    before = asyncio.all_tasks()
+
+    with caplog.at_level(logging.WARNING, logger="autolangchat.plugin"):
+        await plugin.startup()
+
+    # No expiry-sweep task spawned: purging checkpoints with no way to clean
+    # up their conversation rows would orphan them permanently.
+    assert asyncio.all_tasks() - before == set()
+    assert not patch_checkpointer.purge.await_count
+    assert any("Skipping checkpoint TTL sweep" in r.message for r in caplog.records)
+
+    await plugin.shutdown()
+
+
+async def test_startup_runs_sweep_normally_when_store_never_configured(patch_checkpointer):
+    # _conversation_store_open_failed=False (never attempted to open, e.g.
+    # persistence disabled) must not be confused with "failed to open".
+    plugin = _make_plugin()
+    plugin.config.conversation_persistence_enabled = False
+    before = asyncio.all_tasks()
+
+    await plugin.startup()
+
+    assert len(asyncio.all_tasks() - before) == 1
+
+    await _cancel_new_tasks(before)
+    await plugin.shutdown()
+
+
+async def test_expiry_loop_deletes_conversations_for_purged_threads(patch_checkpointer):
+    """End-to-end handoff: the sweep loop's purge() result actually reaches
+    _purge_conversations_for_threads(), not just the standalone helper call
+    tested above in isolation."""
+    conversation_store = MagicMock()
+    conversation_store.open = AsyncMock()
+    conversation_store.delete_conversation = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+    # Tiny TTL -> tiny _PURGE_INTERVAL (min(ttl, 6h)) so the loop's first
+    # sleep resolves almost immediately instead of waiting hours.
+    plugin.config.checkpoint_ttl_seconds = 0.01
+    patch_checkpointer.purge.return_value = ["conv-1", "conv-2"]
+    before = asyncio.all_tasks()
+
+    await plugin.startup()
+    # Give the background loop a chance to run past its first sleep+purge.
+    await asyncio.sleep(0.2)
+
+    conversation_store.delete_conversation.assert_any_await("conv-1")
+    conversation_store.delete_conversation.assert_any_await("conv-2")
+
+    await _cancel_new_tasks(before)
+    await plugin.shutdown()
