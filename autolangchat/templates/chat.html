@@ -128,6 +128,7 @@
             variables: {{ preset_variables | tojson }},
             ssoEnabled: {{ 'true' if sso_enabled else 'false' }},
             ssoLoginUrl: {{ sso_login_url | tojson }},
+            ssoLogoutUrl: {{ sso_logout_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
             ssoUserDisplay: {{ sso_user_display | tojson }},
             feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }},

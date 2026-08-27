@@ -562,7 +562,7 @@ class ChatClient {
             // SSO logout: POST to the HTTP logout endpoint to clear the
             // HttpOnly cookie and server-side session, then reload.
             if (window.CONFIG.ssoAuthenticated) {
-                const logoutUrl = (window.CONFIG.ssoLoginUrl || '').replace('/login', '/logout');
+                const logoutUrl = window.CONFIG.ssoLogoutUrl || '/chat/auth/sso/logout';
                 fetch(logoutUrl, {
                     method: 'POST',
                     credentials: 'same-origin',

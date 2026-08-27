@@ -147,6 +147,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
         "preset_variables": [],
         "sso_enabled": False,
         "sso_login_url": "/chat/auth/sso/login",
+        "sso_logout_url": "/chat/auth/sso/logout",
         "sso_authenticated": False,
         "sso_user_display": "",
         "feedback_enabled": False,
@@ -170,5 +171,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
     assert payload["appTitle"] == "Test App"
     assert payload["modelDisplayName"] == "Claude Sonnet 5 (US)"
     assert payload["uiWelcomeMessage"] == "Welcome"
+    # Published rather than derived by the client from ssoLoginUrl (CONTRACT-002 BC-009).
+    assert payload["ssoLogoutUrl"] == "/chat/auth/sso/logout"
     # available_model_groups=None (matches chat.html's `default([], true)` filter)
     assert payload["availableModelGroups"] == []
