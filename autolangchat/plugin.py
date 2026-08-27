@@ -2365,11 +2365,20 @@ class AutoLangChatPlugin:
         if not self.config.conversation_persistence_enabled or self._conversation_store is None:
             return
         for thread_id in thread_ids:
+            cfg = {"configurable": {"thread_id": thread_id}}
             try:
-                cfg = {"configurable": {"thread_id": thread_id}}
                 checkpoint_state = await self.chat_graph.aget_state(cfg)
-                if checkpoint_state and checkpoint_state.values:
-                    continue
+            except Exception:
+                logger.exception(
+                    "Failed to re-check checkpoint state for purged thread_id %s; skipping its "
+                    "conversation cleanup this sweep — its checkpoint is already gone, so this "
+                    "row won't be rediscovered by a later sweep",
+                    thread_id,
+                )
+                continue
+            if checkpoint_state and checkpoint_state.values:
+                continue
+            try:
                 await self._conversation_store.delete_conversation(thread_id)
             except Exception:
                 logger.exception("Failed to delete conversation row for purged thread_id %s", thread_id)

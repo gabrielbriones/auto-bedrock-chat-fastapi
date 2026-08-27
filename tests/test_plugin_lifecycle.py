@@ -418,6 +418,25 @@ async def test_purge_conversations_for_threads_skips_delete_when_checkpoint_recr
     conversation_store.delete_conversation.assert_awaited_once_with("conv-truly-expired")
 
 
+async def test_purge_conversations_for_threads_state_check_failure_does_not_log_as_delete_failure(caplog):
+    # If aget_state() itself raises (e.g. a transient checkpointer error),
+    # delete_conversation() must never be attempted for that thread_id, and
+    # the log message must say so distinctly rather than implying the
+    # delete itself failed.
+    conversation_store = MagicMock()
+    conversation_store.delete_conversation = AsyncMock()
+    plugin = _make_plugin(_conversation_store=conversation_store)
+    plugin.config.conversation_persistence_enabled = True
+    plugin.chat_graph.aget_state = AsyncMock(side_effect=RuntimeError("checkpointer unavailable"))
+
+    with caplog.at_level(logging.ERROR, logger="autolangchat.plugin"):
+        await plugin._purge_conversations_for_threads(["conv-1"])
+
+    conversation_store.delete_conversation.assert_not_awaited()
+    assert any("Failed to re-check checkpoint state" in r.message for r in caplog.records)
+    assert not any("Failed to delete conversation row" in r.message for r in caplog.records)
+
+
 async def test_startup_skips_sweep_when_conversation_store_failed_to_open(patch_checkpointer, caplog):
     plugin = _make_plugin(_conversation_store_open_failed=True)
     plugin.config.conversation_persistence_enabled = True
