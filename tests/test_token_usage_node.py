@@ -1,0 +1,263 @@
+"""Tests for token_usage_node — the terminal graph node that persists
+per-turn token usage after citation_boost (XMGPLAT-11215).
+
+Follows the same "optional post-turn node, no-op unless configured" shape
+as citation_boost_node (see TestCitationBoostNode in
+tests/test_kb_credibility_signals.py). This runs for *every* chat_graph
+caller, not just WebSocketChatHandler -- see TestTokenUsageGraphIntegration
+in tests/test_graph_basic.py for a full non-WebSocket ainvoke() exercise,
+and tests/test_websocket_token_usage_persistence.py for the WebSocket
+handler's ainvoke()-configurable wiring.
+"""
+
+import asyncio
+import uuid
+from typing import Any, Dict, Optional
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from autolangchat.graph.nodes.token_usage import token_usage_node
+
+
+class _TokenUsageConfig:
+    token_usage_enabled = True
+    model_id = "us.anthropic.claude-sonnet-4-6"
+
+
+def _state(
+    input_tokens: Optional[int] = 120,
+    output_tokens: Optional[int] = 240,
+    model_id: Optional[str] = "from-llm",
+    message_id: Optional[str] = "msg-abc",
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {"model_id": model_id}
+    if input_tokens is not None:
+        metadata["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        metadata["output_tokens"] = output_tokens
+    message_metadata = {"message_id": message_id} if message_id is not None else {}
+    return {
+        "messages": [{"role": "assistant", "content": "hi", "metadata": message_metadata}],
+        "metadata": metadata,
+    }
+
+
+class TestTokenUsageNode:
+    @pytest.mark.asyncio
+    async def test_records_when_enabled_and_store_present(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {
+                "chat_config": _TokenUsageConfig(),
+                "token_usage_store": store,
+                "thread_id": "thread-1",
+                "session_id": "session-1",
+                "user_id": "alice",
+            }
+        }
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_awaited_once()
+        _, kwargs = store.record_turn.await_args
+        assert kwargs["turn_id"] == "msg-abc"
+        assert kwargs["session_id"] == "session-1"
+        assert kwargs["user_id"] == "alice"
+        assert kwargs["model_id"] == "from-llm"
+        assert kwargs["input_tokens"] == 120
+        assert kwargs["output_tokens"] == 240
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_disabled(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+
+        class _Disabled(_TokenUsageConfig):
+            token_usage_enabled = False
+
+        config = {"configurable": {"chat_config": _Disabled(), "token_usage_store": store}}
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_no_store(self):
+        config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": None}}
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_no_chat_config(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {"configurable": {"chat_config": None, "token_usage_store": store}}
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_token_counts_missing(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store}}
+
+        result = await token_usage_node(_state(input_tokens=None, output_tokens=None), config)
+
+        assert result == {}
+        store.record_turn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_only_output_tokens_missing(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store}}
+
+        await token_usage_node(_state(output_tokens=None), config)
+
+        store.record_turn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_session_id_falls_back_to_thread_id_and_user_id_defaults_none(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {
+                "chat_config": _TokenUsageConfig(),
+                "token_usage_store": store,
+                "thread_id": "thread-42",
+            }
+        }
+
+        await token_usage_node(_state(), config)
+
+        _, kwargs = store.record_turn.await_args
+        assert kwargs["session_id"] == "thread-42"
+        assert kwargs["user_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_session_id_and_thread_id_both_missing(self):
+        """record_turn requires a non-null session_id (NOT NULL column); with
+        neither session_id nor thread_id supplied, the node must no-op rather
+        than call record_turn(session_id=None) and rely on the store raising."""
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {"configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store}}
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_message_id_falls_back_to_generated_uuid_when_missing(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        result = await token_usage_node(_state(message_id=None), config)
+
+        _, kwargs = store.record_turn.await_args
+        # A fresh id was generated rather than skipping the call entirely.
+        assert uuid.UUID(kwargs["turn_id"])
+        # The generated id is written back to state so callers with their own
+        # independent message_id fallback (e.g. websocket_handler.py) see the
+        # same value that was just persisted as turn_id.
+        written_back_id = result["messages"][-1]["metadata"]["message_id"]
+        assert written_back_id == kwargs["turn_id"]
+
+    @pytest.mark.asyncio
+    async def test_model_id_falls_back_to_chat_config_when_missing_from_metadata(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        await token_usage_node(_state(model_id=None), config)
+
+        _, kwargs = store.record_turn.await_args
+        assert kwargs["model_id"] == _TokenUsageConfig.model_id
+
+    @pytest.mark.asyncio
+    async def test_record_turn_failure_is_swallowed(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock(side_effect=RuntimeError("db unavailable"))
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        # Must not raise even though record_turn fails.
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_op_state_update_when_messages_empty(self):
+        """Edge case: no messages at all -- must not raise on messages[:-1]
+        and must not fabricate a messages list out of nothing."""
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+        state = _state(message_id=None)
+        state["messages"] = []
+
+        result = await token_usage_node(state, config)
+
+        assert result == {}
+        store.record_turn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_record_turn_timeout_is_bounded_and_swallowed(self):
+        """A hung store write must not block the turn indefinitely --
+        record_turn() is bounded by chat_config.token_usage_write_timeout."""
+        store = MagicMock()
+
+        async def _hang(**kwargs):
+            await asyncio.sleep(10)
+
+        store.record_turn = AsyncMock(side_effect=_hang)
+
+        class _FastTimeoutConfig(_TokenUsageConfig):
+            token_usage_write_timeout = 0.01
+
+        config = {
+            "configurable": {
+                "chat_config": _FastTimeoutConfig(),
+                "token_usage_store": store,
+                "thread_id": "thread-1",
+            }
+        }
+
+        # Must not raise and must not take anywhere near the 10s sleep.
+        result = await asyncio.wait_for(token_usage_node(_state(), config), timeout=2)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_record_turn_timeout_defaults_when_chat_config_lacks_field(self):
+        """chat_config stubs that predate token_usage_write_timeout (e.g. in
+        other tests) must still work via the getattr() default."""
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        result = await token_usage_node(_state(), config)
+
+        assert result == {}
+        store.record_turn.assert_awaited_once()

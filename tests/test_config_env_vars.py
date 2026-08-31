@@ -94,6 +94,14 @@ class TestAutochatEnvVarPrefix:
         config = _load_config(AUTOCHAT_TOKEN_USAGE_POSTGRES_URL="postgresql://x/db")
         assert config.token_usage_postgres_url == "postgresql://x/db"
 
+    def test_token_usage_write_timeout_defaults_to_5_seconds(self):
+        config = _load_config()
+        assert config.token_usage_write_timeout == 5.0
+
+    def test_token_usage_write_timeout_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_TOKEN_USAGE_WRITE_TIMEOUT="1.5")
+        assert config.token_usage_write_timeout == 1.5
+
     def test_admin_enabled_from_autochat_var(self):
         config = _load_config(AUTOCHAT_ADMIN_ENABLED="true")
         assert config.admin_enabled is True

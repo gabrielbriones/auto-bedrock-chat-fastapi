@@ -9,6 +9,9 @@ feature and the knowledge base. It exposes two route groups under
   user-submitted 👍 / 👎 corrections.
 - **KB Management** — `/admin/kb/documents/*` — list, inspect, edit, and
   delete KB documents (re-embeds on content change).
+- **KB Source Ingestion** — `/admin/kb/sources/*` — trigger a web crawl or
+  upload file content to populate the KB at runtime, and poll the
+  in-progress run's status.
 - **Token Usage Analytics** — `/admin/tokens/*` — query recorded
   per-turn token usage (see [Token Usage Tracking](token-usage-tracking)
   for how the underlying data gets recorded).
@@ -296,6 +299,114 @@ on the same document.
 > scoring works, see
 > [Continuous Learning Loop — Effectiveness Tracking](continuous-learning-loop#effectiveness-tracking).
 
+### KB Source Ingestion
+
+| Method | Path                       | Description                                                            |
+| ------ | -------------------------- | ---------------------------------------------------------------------- |
+| POST   | `/admin/kb/sources/web`    | Trigger a background web crawl; indexes the crawled pages into the KB. |
+| POST   | `/admin/kb/sources/file`   | Trigger a background ingestion of uploaded file content into the KB.   |
+| GET    | `/admin/kb/sources/status` | Poll the single global ingestion run's state.                          |
+
+Both `POST` routes return **`202 Accepted`** immediately with a
+`run_id` and `phase: "running"` — the crawl/ingest itself runs as a
+background task. Poll `GET /admin/kb/sources/status` for completion;
+it always reflects the **one** global run (see below), so there's no
+need to pass `run_id` back in — it's only echoed for audit/log
+correlation.
+
+> **Single global run:** only one ingestion run may be in flight at a
+> time — a second `POST` while one is running returns `409
+kb_source_run_already_in_progress`. This is intentional: admins can
+> see in the UI that a run is active and simply wait. There is no
+> per-run history — `GET /admin/kb/sources/status` always reports the
+> most recent run, resetting to `idle` on process restart.
+
+`POST /admin/kb/sources/web` body:
+
+```json
+{
+  "name": "ISS docs",
+  "urls": ["https://example.com/docs/"],
+  "topic": "ISS",
+  "max_depth": 2,
+  "max_pages": 100,
+  "allowed_domains": ["example.com"],
+  "exclude_patterns": ["/de/", "/es/"],
+  "headers": { "Authorization": "Bearer ..." },
+  "cookies": { "session_id": "..." }
+}
+```
+
+| Field              | Required | Notes                                                                                                        |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `name`             | yes      | Used as the KB document `source`.                                                                            |
+| `urls`             | yes      | One or more start URLs; must be non-empty.                                                                   |
+| `topic`            | no       | Attached to every indexed document.                                                                          |
+| `max_depth`        | no       | Default `2`.                                                                                                 |
+| `max_pages`        | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                       |
+| `allowed_domains`  | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites. |
+| `exclude_patterns` | no       | URL substrings/paths to skip (e.g. translated pages).                                                        |
+| `headers`          | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.     |
+| `cookies`          | no       | Cookies sent with every crawl request (e.g. a session cookie).                                               |
+
+`headers`/`cookies` are never echoed back in the status response or audit log.
+
+`POST /admin/kb/sources/file` is a `multipart/form-data` request (not
+JSON) — admins upload content directly since they don't have
+filesystem access to the running service:
+
+```bash
+curl -sS -b cookies.txt -X POST \
+  'https://app.example.com/admin/kb/sources/file' \
+  -F 'name=Runbook' \
+  -F 'topic=ops' \
+  -F 'files=@notes.md;type=text/markdown'
+```
+
+| Field   | Required | Notes                                                       |
+| ------- | -------- | ----------------------------------------------------------- |
+| `name`  | yes      | Used as the KB document `source`.                           |
+| `topic` | no       | Attached to every indexed document.                         |
+| `files` | yes      | One or more uploaded files. Each must decode as UTF-8 text. |
+
+Response shape (`POST` and `GET status` share it):
+
+```json
+{
+  "run_id": "3fc33e6e-abdb-4420-ac37-ac21dc1251d2",
+  "phase": "completed",
+  "source_name": "ISS docs",
+  "source_type": "web",
+  "started_at": "2026-08-24T22:49:44.545048Z",
+  "finished_at": "2026-08-24T22:50:12.001Z",
+  "pages_crawled": 12,
+  "pages_processed": 11,
+  "files_processed": 0,
+  "chunks_written": 47,
+  "error": null,
+  "errors": []
+}
+```
+
+| Field             | Notes                                                                                                                                                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `phase`           | `idle` / `running` / `completed` / `failed`.                                                                                                                                                                               |
+| `pages_crawled`   | Web only — increments as pages are fetched, during the (potentially long) crawl phase before indexing starts.                                                                                                              |
+| `pages_processed` | Web only — documents actually chunked/embedded/stored.                                                                                                                                                                     |
+| `files_processed` | File-upload only.                                                                                                                                                                                                          |
+| `chunks_written`  | Total chunks stored so far.                                                                                                                                                                                                |
+| `error`           | Set only if the whole run crashed with an unhandled exception (`phase: "failed"`).                                                                                                                                         |
+| `errors`          | Per-item failures (a page that failed to fetch, a file that failed to chunk/embed) that did **not** abort the run — a `"completed"` run with 0 results and a non-empty `errors` list means everything failed individually. |
+
+| HTTP | `code`                              | When                                                           |
+| ---- | ----------------------------------- | -------------------------------------------------------------- |
+| 202  | —                                   | Run accepted; poll `GET .../status`.                           |
+| 409  | `kb_source_run_already_in_progress` | Another run is already in flight.                              |
+| 422  | `no_files_uploaded`                 | `POST .../file` with zero files attached.                      |
+| 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text (e.g. a PDF or image). |
+| 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
+| 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup. |
+
 ### Token Usage Analytics
 
 Registered only when a token-usage store is configured (see
@@ -395,14 +506,18 @@ All admin errors share a single flat shape:
 }
 ```
 
-| HTTP | `code`                          | When                                                          |
-| ---- | ------------------------------- | ------------------------------------------------------------- |
-| 400  | `invalid_filters`               | Bad date window, malformed query value.                       |
-| 401  | `not_authenticated`             | No identity source resolved the caller.                       |
-| 403  | `not_admin`                     | Identity resolved but `AdminAuthorizer` rejected it.          |
-| 404  | `not_found`                     | Target id doesn't exist.                                      |
-| 409  | `invalid_status_transition`     | Feedback PATCH attempts a forbidden review-status transition. |
-| 422  | (validation error from FastAPI) | Body / path / query failed Pydantic validation.               |
+| HTTP | `code`                                        | When                                                                       |
+| ---- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| 400  | `invalid_filters`                             | Bad date window, malformed query value.                                    |
+| 401  | `not_authenticated`                           | No identity source resolved the caller.                                    |
+| 403  | `not_admin`                                   | Identity resolved but `AdminAuthorizer` rejected it.                       |
+| 404  | `not_found`                                   | Target id doesn't exist.                                                   |
+| 409  | `invalid_status_transition`                   | Feedback PATCH attempts a forbidden review-status transition.              |
+| 409  | `kb_source_run_already_in_progress`           | Another KB source-ingestion run is already in flight.                      |
+| 422  | (validation error from FastAPI)               | Body / path / query failed Pydantic validation.                            |
+| 422  | `no_files_uploaded` / `invalid_file_encoding` | KB source file upload has no files, or one isn't UTF-8 text.               |
+| 422  | `upload_too_large`                            | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
+| 503  | `kb_source_ingestion_unavailable`             | KB source-ingestion routes called without an embedding client/model wired. |
 
 ---
 
@@ -413,11 +528,12 @@ Every state-changing admin request emits a structured log line on the
 up. Storage in a dedicated DB table is out of scope; a host that wants
 persistence can attach a logging handler.
 
-| Action                   | Where          | Payload                                                                            |
-| ------------------------ | -------------- | ---------------------------------------------------------------------------------- |
-| `feedback.review.update` | PATCH feedback | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`    |
-| `kb.document.update`     | PATCH KB doc   | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts` |
-| `kb.document.delete`     | DELETE KB doc  | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`   |
+| Action                   | Where          | Payload                                                                                                   |
+| ------------------------ | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `feedback.review.update` | PATCH feedback | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`                           |
+| `kb.document.update`     | PATCH KB doc   | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts`                        |
+| `kb.document.delete`     | DELETE KB doc  | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`                          |
+| `kb.source.populate`     | POST KB source | `actor_user_id`, `target_id` (`run_id`), `source_name`, `source_type`, `phase` (`start`/`complete`), `ts` |
 
 `content_hash` is SHA-256; full content is **not** logged so log lines
 stay bounded.
@@ -450,8 +566,13 @@ ergonomic, but it is a foot-gun:
 
 ## Out of scope (intentional)
 
-- `POST /admin/kb/documents` — creation is owned by the populate
-  pipeline and the synthesizer (see [Feedback Synthesis](feedback-synthesis)).
+- `POST /admin/kb/documents` (raw document creation) — content only enters
+  the KB via the populate pipeline, the synthesizer (see
+  [Feedback Synthesis](feedback-synthesis)), or `/admin/kb/sources/*` above.
+- Dashboard UI button to trigger `/admin/kb/sources/*` — tracked as a
+  separate follow-up ticket; the HTTP endpoints exist today but aren't
+  yet surfaced in the Dashboard.
+- Scheduling/cron-based recurring re-crawls of a KB source.
 - Rate limiting — operationally enforced upstream (Nginx / ALB).
 - Persisting audit logs to a DB table — handled by the host app's log
   shipper.

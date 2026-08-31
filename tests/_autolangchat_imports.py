@@ -57,3 +57,21 @@ def load_module(module_name, relative_path, extra_modules=None):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
+
+
+def clear_stale_stub_modules():
+    """Drop any ``autolangchat*`` bare stub packages left behind in ``sys.modules``.
+
+    On some test-collection orders, a stub installed by ``load_module()`` (or a
+    hand-rolled equivalent elsewhere in this suite) is left in ``sys.modules``
+    instead of being restored to the real package. A later plain
+    ``from autolangchat.x import y`` in another test file then picks up the
+    stub (which has no ``__spec__`` and no real submodules attached) and fails
+    with ``ImportError``/``AttributeError``. Call this before any such plain
+    import to force Python to re-import the real package/submodule instead.
+    Already-real modules (proper ``__spec__``) are left untouched.
+    """
+    for name in [n for n in sys.modules if n == "autolangchat" or n.startswith("autolangchat.")]:
+        mod = sys.modules.get(name)
+        if mod is not None and getattr(mod, "__spec__", None) is None:
+            del sys.modules[name]

@@ -11,6 +11,11 @@ Endpoints
 * ``PATCH  /admin/kb/documents/{id}``  — partial update; on content
   change the route re-embeds the document and writes new chunks.
 * ``DELETE /admin/kb/documents/{id}``  — hard delete (document + chunks).
+* ``POST   /admin/kb/sources/web``     — trigger a web-crawl ingestion run.
+* ``POST   /admin/kb/sources/file``    — trigger an ingestion run from
+  uploaded file content (multipart form; admins don't have filesystem
+  access to the running service).
+* ``GET    /admin/kb/sources/status``  — poll the in-flight ingestion run.
 
 Concurrency
 -----------
@@ -50,15 +55,18 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..db.kb_base import BaseKBStore
 from ..exceptions import AdminAPIError
-from ..models import KBDocument, KBDocumentListFilters, KBDocumentListResponse
+from ..models import ErrorResponse, KBDocument, KBDocumentListFilters, KBDocumentListResponse
 from .admin_errors import ADMIN_COMMON_RESPONSES
 
 logger = logging.getLogger(__name__)
@@ -117,6 +125,299 @@ class KBDocumentUpdateRequest(BaseModel):
         return [t.strip() for t in v if isinstance(t, str) and t.strip()]
 
 
+# ---------------------------------------------------------------------------
+# KB source ingestion (web crawl / uploaded file) — request + status models
+# ---------------------------------------------------------------------------
+
+# Per-file and aggregate caps for POST /admin/kb/sources/file uploads. Read
+# in bounded chunks (rather than a single `await upload.read()`) so an
+# oversized file is rejected without ever buffering it fully in memory.
+_MAX_FILE_BYTES = 10 * 1024 * 1024
+_MAX_TOTAL_UPLOAD_BYTES = 50 * 1024 * 1024
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
+
+class UploadTooLargeError(Exception):
+    """Raised by :func:`_read_upload_capped` when a size cap is exceeded."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+async def _read_upload_capped(upload: UploadFile, *, max_bytes: int, remaining_total: int) -> bytes:
+    """Read ``upload`` in chunks, aborting as soon as a size cap is hit.
+
+    Enforces both the per-file cap (``max_bytes``) and whatever is left of
+    the aggregate request cap (``remaining_total``) without ever buffering
+    more than one chunk beyond the limit.
+    """
+    chunks: List[bytes] = []
+    total = 0
+    cap = min(max_bytes, remaining_total)
+    while True:
+        chunk = await upload.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > cap:
+            if max_bytes <= remaining_total:
+                raise UploadTooLargeError(f"file {upload.filename!r} exceeds the {max_bytes} byte per-file limit")
+            raise UploadTooLargeError(f"total upload size exceeds the {_MAX_TOTAL_UPLOAD_BYTES} byte limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+class KBSourcePhase(str, Enum):
+    """Lifecycle phase of the in-memory KB source-ingestion runner."""
+
+    IDLE = "idle"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class KBSourceWebRequest(BaseModel):
+    """Request body for ``POST /admin/kb/sources/web``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    # max_pages applies per URL, so the list itself is capped too -- an
+    # unbounded list of URLs would otherwise multiply the total crawl work
+    # without limit.
+    urls: List[str] = Field(max_length=20)
+    topic: Optional[str] = None
+    max_depth: int = 2
+    # Defaults to each URL's own hostname (see ContentCrawler.crawl_url) so a
+    # crawl doesn't wander onto unrelated external sites unless opted into.
+    # Pass [] explicitly to disable domain restriction entirely.
+    allowed_domains: Optional[List[str]] = None
+    exclude_patterns: Optional[List[str]] = None
+    # Real cap on pages fetched per URL (see ContentCrawler._crawl_recursive) —
+    # previously a no-op in the CLI populate pipeline; kept usable here too.
+    # Bounded so it can't be set to 0/negative (would look like a clean but
+    # empty run) or an arbitrarily large value (defeats the whole point of
+    # the cap).
+    max_pages: int = Field(default=100, ge=1, le=10_000)
+    # For pages that gate content behind auth (e.g. a bearer token header or
+    # a session cookie). Not echoed back in the status response or audit log.
+    headers: Optional[Dict[str, str]] = None
+    cookies: Optional[Dict[str, str]] = None
+
+    @field_validator("urls")
+    @classmethod
+    def _urls_not_empty(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("urls must contain at least one URL")
+        return v
+
+
+class KBSourceStatus(BaseModel):
+    """Wire shape for the KB source-ingestion run state.
+
+    Returned by both ``POST /admin/kb/sources/{web,file}`` (on claim) and
+    ``GET /admin/kb/sources/status`` (on poll).
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    run_id: Optional[str] = None
+    phase: KBSourcePhase = KBSourcePhase.IDLE
+    source_name: Optional[str] = None
+    source_type: Optional[str] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    pages_crawled: int = 0
+    pages_processed: int = 0
+    files_processed: int = 0
+    chunks_written: int = 0
+    #: Fatal error that aborted the whole run (unhandled exception).
+    error: Optional[str] = None
+    #: Per-item failures (a page that failed to fetch, a file that failed to
+    #: chunk/embed) that did NOT abort the run — the run can still complete
+    #: with 0 documents indexed while this is non-empty.
+    errors: List[str] = Field(default_factory=list)
+
+
+class _KBSourceRunState:
+    """Mutable in-memory state for the KB source-ingestion runner.
+
+    Mirrors the ``_RunState`` pattern in ``admin_synthesis_routes.py``: a
+    single in-flight run at a time, claimed via :meth:`try_claim_run` and
+    polled via the :attr:`status` property (read without holding the lock —
+    eventual consistency is acceptable for status checks).
+    """
+
+    def __init__(self) -> None:
+        self._status = KBSourceStatus()
+        self._lock = asyncio.Lock()
+
+    @property
+    def status(self) -> KBSourceStatus:
+        # Deep snapshot so callers cannot mutate our internal state via the
+        # returned object.
+        return self._status.model_copy(deep=True)
+
+    @property
+    def phase(self) -> KBSourcePhase:
+        # Cheap read for hot-path "is a run in progress?" checks -- avoids
+        # the full deep-copy of `status` (including `errors`) just to read
+        # one field.
+        return self._status.phase
+
+    async def try_claim_run(self, *, run_id: str, source_name: str, source_type: str) -> bool:
+        """Atomically transition to RUNNING if not already in progress."""
+        async with self._lock:
+            if self._status.phase == KBSourcePhase.RUNNING:
+                return False
+            self._status = KBSourceStatus(
+                run_id=run_id,
+                phase=KBSourcePhase.RUNNING,
+                source_name=source_name,
+                source_type=source_type,
+                started_at=datetime.now(timezone.utc),
+            )
+            return True
+
+    def record_progress(self, metric: str, amount: int = 1) -> None:
+        """``progress_cb`` passed to ``ingest_web_source``/``ingest_uploaded_files``."""
+        if metric == "pages_crawled":
+            self._status.pages_crawled += amount
+        elif metric == "pages_processed":
+            self._status.pages_processed += amount
+        elif metric == "files_processed":
+            self._status.files_processed += amount
+        elif metric == "chunks_written":
+            self._status.chunks_written += amount
+
+    def _mark_completed(self, errors: Optional[List[str]] = None) -> None:
+        self._status = self._status.model_copy(
+            update={
+                "phase": KBSourcePhase.COMPLETED,
+                "finished_at": datetime.now(timezone.utc),
+                "errors": errors or [],
+            }
+        )
+
+    def _mark_failed(self, error: str) -> None:
+        self._status = self._status.model_copy(
+            update={"phase": KBSourcePhase.FAILED, "finished_at": datetime.now(timezone.utc), "error": error}
+        )
+
+
+async def _run_web_source_ingestion(
+    *,
+    state: _KBSourceRunState,
+    actor: str,
+    run_id: str,
+    kb_store: BaseKBStore,
+    embedding_client: Any,
+    embedding_model: str,
+    chunker: Any,
+    body: KBSourceWebRequest,
+) -> None:
+    """Run a web-source ingestion as an ``asyncio.create_task`` background task."""
+    from ..rag.kb_ingestion import ingest_web_source
+
+    try:
+        result = await ingest_web_source(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model=embedding_model,
+            source_name=body.name,
+            urls=body.urls,
+            topic=body.topic,
+            max_depth=body.max_depth,
+            allowed_domains=body.allowed_domains,
+            exclude_patterns=body.exclude_patterns,
+            max_pages=body.max_pages,
+            extra_headers=body.headers,
+            cookies=body.cookies,
+            progress_cb=state.record_progress,
+        )
+        state._mark_completed(errors=result["errors"])
+        logger.info(
+            "KB web source ingestion complete: source=%s documents=%d chunks=%d errors=%d",
+            body.name,
+            result["documents"],
+            result["chunks"],
+            len(result["errors"]),
+        )
+    except Exception as exc:  # pragma: no cover — defensive outer catch
+        logger.exception("KB web source ingestion failed for run %s: %s", run_id, exc)
+        state._mark_failed(str(exc))
+    finally:
+        audit_logger.info(
+            "kb.source.populate",
+            extra={
+                "action": "kb.source.populate",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": body.name,
+                "source_type": "web",
+                "phase": "complete",
+                "run_status": state.status.phase.value,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
+async def _run_file_source_ingestion(
+    *,
+    state: _KBSourceRunState,
+    actor: str,
+    run_id: str,
+    kb_store: BaseKBStore,
+    embedding_client: Any,
+    embedding_model: str,
+    chunker: Any,
+    source_name: str,
+    topic: Optional[str],
+    files: List[Tuple[str, str]],
+) -> None:
+    """Run an uploaded-file ingestion as an ``asyncio.create_task`` background task."""
+    from ..rag.kb_ingestion import ingest_uploaded_files
+
+    try:
+        result = await ingest_uploaded_files(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model=embedding_model,
+            source_name=source_name,
+            files=files,
+            topic=topic,
+            progress_cb=state.record_progress,
+        )
+        state._mark_completed(errors=result["errors"])
+        logger.info(
+            "KB file source ingestion complete: source=%s documents=%d chunks=%d errors=%d",
+            source_name,
+            result["documents"],
+            result["chunks"],
+            len(result["errors"]),
+        )
+    except Exception as exc:  # pragma: no cover — defensive outer catch
+        logger.exception("KB file source ingestion failed for run %s: %s", run_id, exc)
+        state._mark_failed(str(exc))
+    finally:
+        audit_logger.info(
+            "kb.source.populate",
+            extra={
+                "action": "kb.source.populate",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": source_name,
+                "source_type": "file",
+                "phase": "complete",
+                "run_status": state.status.phase.value,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
 def register_admin_kb_routes(
     app: FastAPI,
     *,
@@ -124,16 +425,20 @@ def register_admin_kb_routes(
     kb_store: BaseKBStore,
     require_admin: Callable,
     re_embed_document: Optional[Callable] = None,
+    embedding_client: Any = None,
+    embedding_model: Optional[str] = None,
+    chunker: Any = None,
 ) -> APIRouter:
-    """Register the ``/admin/kb/documents*`` routes on ``app``.
+    """Register the ``/admin/kb/documents*`` and ``/admin/kb/sources*`` routes on ``app``.
 
     Parameters
     ----------
     app:
         Host FastAPI application.
     prefix:
-        Full admin prefix (e.g. ``"/chat/admin"``). Routes mount at
-        ``{prefix}/kb/documents*``.
+        Full admin prefix (e.g. ``"/chat/admin"``). Document routes mount at
+        ``{prefix}/kb/documents*``; source-ingestion routes mount at
+        ``{prefix}/kb/sources*``.
     kb_store:
         The active :class:`BaseKBStore`.
     require_admin:
@@ -148,6 +453,19 @@ def register_admin_kb_routes(
         That's an explicit operator decision (e.g. embedding model
         unavailable); the response carries ``chunk_count == 0`` and a
         warning is logged.
+    embedding_client:
+        Wired embedding client (``BedrockEmbeddingClient``) used by the
+        ``/kb/sources/*`` ingestion routes to embed newly crawled/read
+        content. Required (together with ``embedding_model``) for those
+        routes to actually run a crawl/ingest; when either is ``None``
+        they respond with ``503``.
+    embedding_model:
+        Bedrock embedding model id (``config.kb_embedding_model``) passed
+        to ``embedding_client.generate_embeddings_batch``.
+    chunker:
+        Optional pre-built ``TextChunker`` shared by the source-ingestion
+        routes. Defaults to a plain ``TextChunker()`` (same defaults as
+        the populate pipeline) when ``None``.
     """
     router = APIRouter(prefix=f"{prefix}/kb/documents", tags=["admin-kb"])
 
@@ -421,8 +739,250 @@ def register_admin_kb_routes(
             # FastAPI returns 204 with no body when the handler returns None.
             return None
 
+    # ------------------------------------------------------------------
+    # /admin/kb/sources* — runtime web-crawl / file-upload ingestion
+    # ------------------------------------------------------------------
+    from ..rag.embedding_pipeline import TextChunker  # local import: heavy module
+
+    _source_chunker = chunker or TextChunker()
+    _source_state = _KBSourceRunState()
+
+    sources_router = APIRouter(prefix=f"{prefix}/kb/sources", tags=["admin-kb"])
+
+    def _error_json(status_code: int, code: str, detail: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=status_code,
+            content=ErrorResponse(code=code, detail=detail).model_dump(exclude_none=True),
+        )
+
+    def _ingestion_unavailable_response() -> Optional[JSONResponse]:
+        # Returned directly (rather than raised as AdminAPIError) so this
+        # route doesn't depend on the host app's global exception-handler
+        # wiring to produce a clean error instead of a 500.
+        if embedding_client is None or not embedding_model:
+            return _error_json(
+                503,
+                "kb_source_ingestion_unavailable",
+                "KB source ingestion is not configured (missing embedding client/model)",
+            )
+        return None
+
+    @sources_router.post(
+        "/web",
+        response_model=KBSourceStatus,
+        status_code=202,
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
+            503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
+        },
+        summary="Trigger a web-crawl KB ingestion run",
+    )
+    async def trigger_web_source(
+        body: KBSourceWebRequest,
+        identity=Depends(require_admin),
+    ) -> KBSourceStatus | JSONResponse:
+        """Start a background web crawl and index the results into the KB.
+
+        Returns ``202 Accepted`` immediately with a ``run_id`` and the
+        ``running`` state. Poll ``GET /admin/kb/sources/status`` for
+        completion. Returns ``409`` if a run is already in progress.
+        """
+        unavailable = _ingestion_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        actor = identity.user_id
+        run_id = str(uuid4())
+
+        if not await _source_state.try_claim_run(run_id=run_id, source_name=body.name, source_type="web"):
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
+
+        audit_logger.info(
+            "kb.source.populate",
+            extra={
+                "action": "kb.source.populate",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": body.name,
+                "source_type": "web",
+                "phase": "start",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        asyncio.create_task(
+            _run_web_source_ingestion(
+                state=_source_state,
+                actor=actor,
+                run_id=run_id,
+                kb_store=kb_store,
+                embedding_client=embedding_client,
+                embedding_model=embedding_model,
+                chunker=_source_chunker,
+                body=body,
+            )
+        )
+
+        return _source_state.status
+
+    @sources_router.post(
+        "/file",
+        response_model=KBSourceStatus,
+        status_code=202,
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
+            422: {
+                "model": ErrorResponse,
+                "description": "No files uploaded, a file is not valid UTF-8 text, or an upload exceeds the size limit",
+            },
+            503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
+        },
+        summary="Trigger a KB ingestion run from uploaded file content",
+    )
+    async def trigger_file_source(
+        name: str = Form(...),
+        topic: Optional[str] = Form(None),
+        # FastAPI/Pydantic v2 emit OpenAPI 3.1's `contentMediaType` for
+        # `UploadFile` items, which older Swagger UI builds don't render as
+        # file pickers — force the OpenAPI 3.0-style `format: binary` hint
+        # too so "Choose File" buttons show up instead of a text input.
+        # Optional (not `File(...)`) so a request with zero files reaches
+        # the `if not files:` check below and gets our flat ErrorResponse
+        # envelope, instead of FastAPI's own "field required" 422 shape.
+        files: Optional[List[UploadFile]] = File(
+            default=None, json_schema_extra={"items": {"type": "string", "format": "binary"}}
+        ),
+        identity=Depends(require_admin),
+    ) -> KBSourceStatus | JSONResponse:
+        """Start a background ingestion of admin-uploaded file content into the KB.
+
+        Admins don't have shell access to the running service, so this
+        takes uploaded file content directly (multipart form) rather than
+        a server-side filesystem path — unlike the offline CLI populate
+        pipeline's ``type: local`` sources, which do read from disk.
+
+        Returns ``202 Accepted`` immediately with a ``run_id`` and the
+        ``running`` state. Poll ``GET /admin/kb/sources/status`` for
+        completion. Returns ``409`` if a run is already in progress.
+        """
+        unavailable = _ingestion_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        if not files:
+            return _error_json(422, "no_files_uploaded", "at least one file must be uploaded")
+
+        # Cheap fast-path rejection before doing the expensive read/decode
+        # work below — a request arriving while a run is already in flight
+        # would otherwise pay the cost of reading every upload just to be
+        # rejected anyway. This is a lock-free peek (eventual consistency is
+        # fine here); the real atomic claim still happens via
+        # try_claim_run(...) after decoding, so a narrow race window between
+        # this check and the claim is only ever a missed optimization, not a
+        # correctness issue.
+        if _source_state.phase == KBSourcePhase.RUNNING:
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
+
+        # Read + decode uploads now, before claiming the run: the uploaded
+        # files' temporary storage is cleaned up once this request handler
+        # returns, so the background task (which runs after the response is
+        # sent) cannot read them itself. Reads are capped per-file and in
+        # aggregate so a handful of oversized uploads can't exhaust memory.
+        decoded_files: List[Tuple[str, str]] = []
+        total_bytes_read = 0
+        for upload in files:
+            try:
+                remaining_total = _MAX_TOTAL_UPLOAD_BYTES - total_bytes_read
+                if remaining_total <= 0:
+                    return _error_json(422, "upload_too_large", "total upload size exceeds the aggregate limit")
+                try:
+                    raw = await _read_upload_capped(upload, max_bytes=_MAX_FILE_BYTES, remaining_total=remaining_total)
+                except UploadTooLargeError as exc:
+                    return _error_json(422, "upload_too_large", exc.message)
+                total_bytes_read += len(raw)
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    return _error_json(
+                        422,
+                        "invalid_file_encoding",
+                        f"file {upload.filename!r} is not valid UTF-8 text",
+                    )
+                decoded_files.append((upload.filename or "unnamed", text))
+            finally:
+                await upload.close()
+
+        actor = identity.user_id
+        run_id = str(uuid4())
+
+        if not await _source_state.try_claim_run(run_id=run_id, source_name=name, source_type="file"):
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
+
+        audit_logger.info(
+            "kb.source.populate",
+            extra={
+                "action": "kb.source.populate",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": name,
+                "source_type": "file",
+                "phase": "start",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        asyncio.create_task(
+            _run_file_source_ingestion(
+                state=_source_state,
+                actor=actor,
+                run_id=run_id,
+                kb_store=kb_store,
+                embedding_client=embedding_client,
+                embedding_model=embedding_model,
+                chunker=_source_chunker,
+                source_name=name,
+                topic=topic,
+                files=decoded_files,
+            )
+        )
+
+        return _source_state.status
+
+    @sources_router.get(
+        "/status",
+        response_model=KBSourceStatus,
+        responses={**ADMIN_COMMON_RESPONSES},
+        summary="Return current KB source-ingestion run state",
+    )
+    async def get_source_status(identity=Depends(require_admin)) -> KBSourceStatus:
+        """Return the in-memory KB source-ingestion run state.
+
+        Only a single run is ever in flight at a time (see ``try_claim_run``),
+        so this always reflects that one global run — there's no per-run_id
+        lookup. Only the most recent run is tracked (no history) and the
+        state resets on each process restart. ``phase`` is one of: ``idle``,
+        ``running``, ``completed``, ``failed``.
+        """
+        return _source_state.status
+
+    app.include_router(sources_router)
+
     app.include_router(router)
-    logger.info("Admin KB routes registered under %s/kb/documents", prefix)
+    logger.info("Admin KB routes registered under %s/kb/documents and %s/kb/sources", prefix, prefix)
     return router
 
 
