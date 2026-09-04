@@ -266,6 +266,22 @@ def test_delete_kb_source_removes_all_matching_documents():
     assert set(store.documents.keys()) == {"d3"}
 
 
+def test_delete_kb_source_spans_multiple_batches():
+    """Regression test for the PR #147 review comment: delete_kb_source
+    re-lists at offset=0 each batch instead of materializing every doc id
+    up front, so it must correctly delete a source with more documents
+    than a single internal batch (200)."""
+    store = _FakeKBStore()
+    for i in range(250):
+        _seed(store, f"d{i}", source="big-source")
+    _seed(store, "keep", source="other")
+    client = _build_app(store)
+    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "big-source"})
+    assert resp.status_code == 200
+    assert resp.json() == {"source": "big-source", "deleted": 250}
+    assert set(store.documents.keys()) == {"keep"}
+
+
 def test_delete_kb_source_missing_returns_404():
     client = _build_app(_FakeKBStore())
     resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "nope"})

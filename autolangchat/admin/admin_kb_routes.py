@@ -1029,30 +1029,32 @@ def register_admin_kb_routes(
         actor = identity.user_id
         filters = KBDocumentListFilters(source=name)
 
-        doc_ids: List[str] = []
-        offset = 0
+        # List/delete a batch at a time rather than materializing every
+        # matching doc id up front -- avoids unbounded memory for large
+        # sources and a redundant second pass. Re-list at offset=0 each
+        # time since deleting shrinks the underlying result set (the
+        # "next" page becomes page 0 once the current page is gone).
         batch_size = 200
-        while True:
-            batch = await asyncio.to_thread(kb_store.list_documents, filters, batch_size, offset)
-            doc_ids.extend(doc.id for doc in batch)
-            if len(batch) < batch_size:
-                break
-            offset += batch_size
-
-        if not doc_ids:
-            return _error_json(404, "kb_source_not_found", f"no documents found for source {name!r}")
-
         deleted = 0
-        for doc_id in doc_ids:
-            lock = await _lock_for(doc_id)
-            async with lock:
-                # Re-check existence under the lock — a concurrent
-                # single-document DELETE (or another overlapping bulk
-                # delete) may have already removed this one.
-                if await asyncio.to_thread(kb_store.get_document, doc_id) is None:
-                    continue
-                await asyncio.to_thread(kb_store.delete_document, doc_id)
-                deleted += 1
+        found_any = False
+        while True:
+            batch = await asyncio.to_thread(kb_store.list_documents, filters, batch_size, 0)
+            if not batch:
+                break
+            found_any = True
+            for doc in batch:
+                lock = await _lock_for(doc.id)
+                async with lock:
+                    # Re-check existence under the lock — a concurrent
+                    # single-document DELETE (or another overlapping bulk
+                    # delete) may have already removed this one.
+                    if await asyncio.to_thread(kb_store.get_document, doc.id) is None:
+                        continue
+                    await asyncio.to_thread(kb_store.delete_document, doc.id)
+                    deleted += 1
+
+        if not found_any:
+            return _error_json(404, "kb_source_not_found", f"no documents found for source {name!r}")
 
         audit_logger.info(
             "kb.source.delete",

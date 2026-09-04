@@ -113,6 +113,7 @@
      * Content-Type (with boundary) is left for the browser to set. */
     function apiPostForm(path, formData) {
         return fetch(P + path, { method: 'POST', credentials: 'include', body: formData }).then(function (r) {
+            if (r.status === 204) return null;
             return r.json().then(function (data) {
                 if (!r.ok) {
                     var msg = (data && (data.detail || data.message)) || ('HTTP ' + r.status);
