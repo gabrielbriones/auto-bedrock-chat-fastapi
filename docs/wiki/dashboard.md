@@ -71,6 +71,36 @@ Browse and manage Knowledge Base documents from
 - **Filter chips**: source, topic, tags CSV, date-published range.
 - Clicking a row opens the [KB Document Editor](#kb-document-editor).
 
+### KB Sources
+
+Populate the KB from a running service — no CLI/restart required — and
+manage what's already been ingested. The nav item is hidden entirely
+unless `GET /admin/_capabilities` reports `kb_source_ingestion_enabled:
+true` (i.e. a KB store is configured), mirroring the Token Usage nav
+item's visibility rule.
+
+- **Ingested Sources**: a table of every distinct `source` name from
+  `GET /admin/kb/sources`, with its document count and a **Delete**
+  button. Deleting a source (`DELETE /admin/kb/sources?name=...`) hard-
+  deletes every document — and their chunks — ingested under that name;
+  sources are identified by name, not by run id, since completed runs
+  aren't tracked once `GET /admin/kb/sources/status` moves past them.
+- **Web Crawl** form (`POST /admin/kb/sources/web`): `name`, `urls`,
+  `topic`, `max_depth`, `max_pages`, `allowed_domains`,
+  `exclude_patterns`, plus a collapsed "Advanced" section for optional
+  `headers`/`cookies` (sent for that run only — never persisted or
+  echoed back).
+- **Upload Files** form (`POST /admin/kb/sources/file`): `name`,
+  `topic`, and one or more uploaded files (multipart) — there's no
+  server-side path field since admins don't have filesystem access to
+  the running service.
+- Both forms poll `GET /admin/kb/sources/status` while a run is in
+  progress, disabling both submit buttons (only one run may be in
+  flight at a time) and showing a progress panel (phase, source name/
+  type, pages/files processed, chunks written). On completion, a toast
+  reports success/failure and both the Ingested Sources table and the
+  KB Browser list are refreshed automatically.
+
 ### Token Usage
 
 Read-only usage analytics sourced from the four `GET /admin/tokens/*`

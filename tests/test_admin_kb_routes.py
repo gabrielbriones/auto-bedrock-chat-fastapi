@@ -67,6 +67,13 @@ class _FakeKBStore:
     def delete_document(self, doc_id):
         self.documents.pop(doc_id, None)
 
+    def list_sources(self):
+        counts = {}
+        for doc in self.documents.values():
+            if doc.source:
+                counts[doc.source] = counts.get(doc.source, 0) + 1
+        return [{"source": source, "count": count} for source, count in counts.items()]
+
     def add_document(
         self, doc_id, content, title=None, source=None, source_url=None, topic=None, date_published=None, metadata=None
     ):
@@ -145,9 +152,128 @@ def test_patch_kb_document_reembed_on_content_change():
     assert resp.json()["content"] == "new body"
 
 
+def test_patch_kb_document_preserves_web_source_metadata_on_content_change():
+    """XMGPLAT-11221 AC #3: editing content on a web-crawl-ingested document
+    must preserve its populate-pipeline metadata (source_type, crawled_at)
+    and still trigger re-embedding."""
+    store = _FakeKBStore()
+    _seed(
+        store,
+        "d1",
+        content="old body",
+        source="ISS docs",
+        metadata={"source_type": "web", "crawled_at": "2026-08-20T00:00:00Z"},
+    )
+    client = _build_app(store)
+    resp = client.patch("/bedrock-chat/admin/kb/documents/d1", json={"content": "new body"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["content"] == "new body"
+    assert body["metadata"]["source_type"] == "web"
+    assert body["metadata"]["crawled_at"] == "2026-08-20T00:00:00Z"
+    assert body["chunk_count"] == 1  # re-embedded
+
+
+def test_patch_kb_document_preserves_file_source_metadata_on_content_change():
+    """Same as above for a file-upload-ingested document (source_type: file,
+    filename instead of crawled_at)."""
+    store = _FakeKBStore()
+    _seed(
+        store,
+        "d1",
+        content="old body",
+        source="Runbook",
+        metadata={"source_type": "file", "filename": "notes.md"},
+    )
+    client = _build_app(store)
+    resp = client.patch("/bedrock-chat/admin/kb/documents/d1", json={"content": "new body"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["content"] == "new body"
+    assert body["metadata"]["source_type"] == "file"
+    assert body["metadata"]["filename"] == "notes.md"
+    assert body["chunk_count"] == 1  # re-embedded
+
+
+def test_patch_kb_document_preserves_source_metadata_on_title_only_change():
+    """A metadata-preserving PATCH that doesn't touch content shouldn't
+    re-embed (chunk_count stays unset)."""
+    store = _FakeKBStore()
+    _seed(
+        store,
+        "d1",
+        content="body",
+        title="Old Title",
+        source="ISS docs",
+        metadata={"source_type": "web", "crawled_at": "2026-08-20T00:00:00Z"},
+    )
+    client = _build_app(store)
+    resp = client.patch("/bedrock-chat/admin/kb/documents/d1", json={"title": "New Title"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["title"] == "New Title"
+    assert body["metadata"]["source_type"] == "web"
+    assert body["metadata"]["crawled_at"] == "2026-08-20T00:00:00Z"
+    assert body["chunk_count"] is None  # content unchanged -> no re-embed
+
+
 def test_delete_kb_document_removes_entry():
     store = _FakeKBStore()
     _seed(store, "d1")
     client = _build_app(store)
     resp = client.delete(f"/bedrock-chat/admin/kb/documents/d1")
     assert resp.status_code == 204
+
+
+def test_delete_kb_document_with_web_source_metadata():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="ISS docs", metadata={"source_type": "web", "crawled_at": "2026-08-20T00:00:00Z"})
+    client = _build_app(store)
+    resp = client.delete("/bedrock-chat/admin/kb/documents/d1")
+    assert resp.status_code == 204
+    assert "d1" not in store.documents
+
+
+def test_delete_kb_document_with_file_source_metadata():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="Runbook", metadata={"source_type": "file", "filename": "notes.md"})
+    client = _build_app(store)
+    resp = client.delete("/bedrock-chat/admin/kb/documents/d1")
+    assert resp.status_code == 204
+    assert "d1" not in store.documents
+
+
+def test_list_kb_sources_groups_by_source_with_counts():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="blog")
+    _seed(store, "d2", source="blog")
+    _seed(store, "d3", source="docs")
+    client = _build_app(store)
+    resp = client.get("/bedrock-chat/admin/kb/sources")
+    assert resp.status_code == 200
+    assert {(row["source"], row["count"]) for row in resp.json()} == {("blog", 2), ("docs", 1)}
+
+
+def test_delete_kb_source_removes_all_matching_documents():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="blog")
+    _seed(store, "d2", source="blog")
+    _seed(store, "d3", source="docs")
+    client = _build_app(store)
+    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "blog"})
+    assert resp.status_code == 200
+    assert resp.json() == {"source": "blog", "deleted": 2}
+    assert set(store.documents.keys()) == {"d3"}
+
+
+def test_delete_kb_source_missing_returns_404():
+    client = _build_app(_FakeKBStore())
+    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "nope"})
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "kb_source_not_found"
+
+
+def test_delete_kb_source_requires_name():
+    client = _build_app(_FakeKBStore())
+    resp = client.delete("/bedrock-chat/admin/kb/sources")
+    assert resp.status_code == 422
