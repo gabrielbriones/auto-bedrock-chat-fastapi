@@ -166,21 +166,22 @@ All endpoints sit under `/admin/`. Responses use a flat error envelope:
 
 ### Capability probe
 
-| Method | Path                   | Description                                                                              |
-| ------ | ---------------------- | ---------------------------------------------------------------------------------------- |
-| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous, token_usage_enabled}` — **always 200**, never 403 or 401. |
+| Method | Path                   | Description                                                                                                           |
+| ------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous, token_usage_enabled, kb_source_ingestion_enabled}` — **always 200**, never 403 or 401. |
 
 Response shape:
 
 ```json
-{ "is_admin": true, "anonymous": false, "token_usage_enabled": true }
+{ "is_admin": true, "anonymous": false, "token_usage_enabled": true, "kb_source_ingestion_enabled": true }
 ```
 
-| Field                 | Type    | Notes                                                                                                                                                                                                          |
-| --------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `is_admin`            | boolean | `true` when the caller is authenticated and authorised as an admin.                                                                                                                                            |
-| `anonymous`           | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely.                                                                                           |
-| `token_usage_enabled` | boolean | `true` when a token-usage store is configured (`_token_usage_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the Token Usage nav item when no store is configured. |
+| Field                         | Type    | Notes                                                                                                                                                                                                                                                                         |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is_admin`                    | boolean | `true` when the caller is authenticated and authorised as an admin.                                                                                                                                                                                                           |
+| `anonymous`                   | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely.                                                                                                                                                          |
+| `token_usage_enabled`         | boolean | `true` when a token-usage store is configured (`_token_usage_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the Token Usage nav item when no store is configured.                                                                |
+| `kb_source_ingestion_enabled` | boolean | `true` when a KB store is configured (`_kb_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the KB Sources nav item when KB ingestion isn't set up (matches the condition under which `/admin/kb/sources/*` is registered at all). |
 
 The Chat UI calls this endpoint on page load. If `is_admin=true` it
 reveals the Dashboard button in the header; otherwise the button stays
@@ -306,6 +307,8 @@ on the same document.
 | POST   | `/admin/kb/sources/web`    | Trigger a background web crawl; indexes the crawled pages into the KB. |
 | POST   | `/admin/kb/sources/file`   | Trigger a background ingestion of uploaded file content into the KB.   |
 | GET    | `/admin/kb/sources/status` | Poll the single global ingestion run's state.                          |
+| GET    | `/admin/kb/sources`        | List distinct KB document `source` names with their document counts.   |
+| DELETE | `/admin/kb/sources`        | Delete every document (and chunks) whose `source` matches `?name=`.    |
 
 Both `POST` routes return **`202 Accepted`** immediately with a
 `run_id` and `phase: "running"` — the crawl/ingest itself runs as a
@@ -406,6 +409,34 @@ Response shape (`POST` and `GET status` share it):
 | 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text (e.g. a PDF or image). |
 | 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
 | 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup. |
+
+`GET /admin/kb/sources` lists every distinct `source` value across KB
+documents — not just ones ingested via the two routes above; the
+offline `kb_populate()` CLI and any manually-created document share the
+same `source` column:
+
+```json
+[
+  { "source": "ISS docs", "count": 42 },
+  { "source": "Runbook", "count": 3 }
+]
+```
+
+`DELETE /admin/kb/sources?name=<source>` hard-deletes every document
+(and its chunks) whose `source` exactly matches `name`. Sources are
+identified by name rather than by `run_id` — completed runs aren't
+tracked once `GET .../status` moves on, only the document rows they
+left behind are:
+
+```json
+{ "source": "ISS docs", "deleted": 42 }
+```
+
+| HTTP | `code`                | When                                  |
+| ---- | --------------------- | ------------------------------------- |
+| 200  | —                     | Deleted (see body for count).         |
+| 404  | `kb_source_not_found` | No documents match `name`.            |
+| 422  | —                     | `name` query parameter missing/empty. |
 
 ### Token Usage Analytics
 

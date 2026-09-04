@@ -108,6 +108,26 @@
     function apiPatch(path, body)  { return apiRequest('PATCH',  path, body); }
     function apiDelete(path)       { return apiRequest('DELETE', path); }
 
+    /** POST a FormData body (multipart) — used by the KB Sources file-upload
+     * form, which sends actual file content rather than a JSON body.
+     * Content-Type (with boundary) is left for the browser to set. */
+    function apiPostForm(path, formData) {
+        return fetch(P + path, { method: 'POST', credentials: 'include', body: formData }).then(function (r) {
+            if (r.status === 204) return null;
+            return r.json().then(function (data) {
+                if (!r.ok) {
+                    var msg = (data && (data.detail || data.message)) || ('HTTP ' + r.status);
+                    var err = new Error(msg);
+                    err.status = r.status;
+                    err.code = data && data.code;
+                    err.data = data;
+                    throw err;
+                }
+                return data;
+            });
+        });
+    }
+
     // ----------------------------------------------------------------
     // Toast notifications
     // ----------------------------------------------------------------
@@ -790,6 +810,422 @@
             _kbState.offset = newOffset;
             loadKBBrowser(_kbState);
         });
+    }
+
+    // ================================================================
+    // KB SOURCES VIEW
+    // ================================================================
+
+    /** Build the static shell (web-crawl form + file-upload form) for the
+     * KB Sources view. Called once from init() when
+     * caps.kb_source_ingestion_enabled is true — mirrors
+     * renderKBBrowserShell()/renderTokenUsageShell(). */
+    function renderKBSourcesShell() {
+        var view = document.getElementById('view-kb-sources');
+        view.innerHTML = '';
+
+        var hdr = el('div', 'section-header');
+        hdr.appendChild(el('h2', null, 'KB Sources'));
+        view.appendChild(hdr);
+
+        var statusPanel = el('div', 'drawer-section hidden'); statusPanel.id = 'kbsrc-status-panel';
+        view.appendChild(statusPanel);
+
+        view.appendChild(buildKBSourcesList());
+        view.appendChild(buildKBSourceWebForm());
+        view.appendChild(buildKBSourceFileForm());
+
+        loadKBSourcesList();
+
+        // Pick up a run already in progress (e.g. the admin reloaded the
+        // page mid-crawl) so the panel/buttons reflect reality immediately.
+        apiGet('/kb/sources/status')
+            .then(function (status) {
+                kbSourcesRenderStatus(status);
+                if (status && status.phase === 'running') kbSourcesStartPolling();
+            })
+            .catch(function () { /* non-fatal — panel just stays hidden */ });
+    }
+
+    // ---- Ingested sources list (by name, with delete) -----------------
+
+    function buildKBSourcesList() {
+        var sec = el('div', 'drawer-section');
+        sec.appendChild(el('h4', null, 'Ingested Sources'));
+        var wrap = el('div', 'data-table-wrap'); wrap.id = 'kbsrc-list-wrap';
+        sec.appendChild(wrap);
+        return sec;
+    }
+
+    function loadKBSourcesList() {
+        var wrap = document.getElementById('kbsrc-list-wrap');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        wrap.appendChild(buildLoadingRow());
+        apiGet('/kb/sources')
+            .then(function (rows) { renderKBSourcesList(rows); })
+            .catch(function (e) {
+                wrap.innerHTML = '';
+                wrap.appendChild(buildErrorRow(String(e)));
+            });
+    }
+
+    /** Render the Ingested Sources table. Each row is identified by its
+     * `source` name (not a run id — completed runs aren't tracked, only
+     * the document rows they left behind are) with a Delete button that
+     * hard-deletes every document under that name via
+     * `DELETE /kb/sources?name=...`. */
+    function renderKBSourcesList(rows) {
+        var wrap = document.getElementById('kbsrc-list-wrap');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+
+        var table = el('table', 'data-table');
+        var thead = document.createElement('thead');
+        var hrow = document.createElement('tr');
+        ['Source', 'Documents', ''].forEach(function (h) {
+            var th = el('th'); th.textContent = h; hrow.appendChild(th);
+        });
+        thead.appendChild(hrow); table.appendChild(thead);
+
+        var tbody = document.createElement('tbody');
+        if (!rows || rows.length === 0) {
+            var erow = document.createElement('tr');
+            var etd = document.createElement('td'); etd.colSpan = 3;
+            etd.appendChild(el('div', 'table-empty', 'No KB sources ingested yet.'));
+            erow.appendChild(etd); tbody.appendChild(erow);
+        } else {
+            rows.forEach(function (row) {
+                var tr = document.createElement('tr');
+                var tdName = el('td'); tdName.textContent = row.source;
+                var tdCount = el('td'); tdCount.textContent = String(row.count);
+                var tdAction = el('td');
+                var delBtn = el('button', 'btn-danger', 'Delete');
+                delBtn.addEventListener('click', function () {
+                    showConfirm(
+                        'Delete Source?',
+                        'This will permanently delete all ' + row.count + ' document(s) ingested under \u201c' +
+                            row.source + '\u201d and their chunks. This cannot be undone.',
+                        'Delete'
+                    ).then(function (confirmed) {
+                        if (!confirmed) return;
+                        delBtn.disabled = true;
+                        delBtn.textContent = 'Deleting…';
+                        apiDelete('/kb/sources?name=' + encodeURIComponent(row.source))
+                            .then(function (result) {
+                                var n = result && result.deleted != null ? result.deleted : row.count;
+                                showToast('Deleted ' + n + ' document(s) for \u201c' + row.source + '\u201d.', 'success');
+                                loadKBSourcesList();
+                                loadKBBrowser(_kbState);
+                            })
+                            .catch(function (e) {
+                                showToast('Delete failed: ' + String(e), 'error');
+                                delBtn.disabled = false;
+                                delBtn.textContent = 'Delete';
+                            });
+                    });
+                });
+                tdAction.appendChild(delBtn);
+                [tdName, tdCount, tdAction].forEach(function (td) { tr.appendChild(td); });
+                tbody.appendChild(tr);
+            });
+        }
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+    }
+
+    // ---- Run status polling shared by both KB Sources forms ----------
+
+    var _kbSourcesPolling = false;
+
+    function kbSourcesSetButtonsDisabled(disabled) {
+        var webBtn = document.getElementById('kbsrc-web-submit');
+        var fileBtn = document.getElementById('kbsrc-file-submit');
+        if (webBtn) webBtn.disabled = disabled;
+        if (fileBtn) fileBtn.disabled = disabled;
+    }
+
+    /** Render the shared status/progress panel from a KBSourceStatus payload. */
+    function kbSourcesRenderStatus(status) {
+        var panel = document.getElementById('kbsrc-status-panel');
+        if (!panel) return;
+        if (!status || status.phase === 'idle') { panel.classList.add('hidden'); return; }
+        panel.classList.remove('hidden');
+        panel.innerHTML = '';
+
+        var phaseLabel = status.phase.charAt(0).toUpperCase() + status.phase.slice(1);
+        var title = el('h4', null, phaseLabel + (status.source_name ? ': ' + status.source_name : '') +
+            (status.source_type ? ' (' + status.source_type + ')' : ''));
+        panel.appendChild(title);
+
+        var counts = el('div', 'meta-row');
+        if (status.source_type === 'web') counts.appendChild(metaItem('Pages Crawled', String(status.pages_crawled || 0)));
+        var processed = status.source_type === 'file' ? status.files_processed : status.pages_processed;
+        counts.appendChild(metaItem('Processed', String(processed || 0)));
+        counts.appendChild(metaItem('Chunks Written', String(status.chunks_written || 0)));
+        panel.appendChild(counts);
+
+        if (status.error) {
+            var errDiv = el('div', 'inline-error visible', status.error);
+            panel.appendChild(errDiv);
+        }
+        if (status.errors && status.errors.length) {
+            panel.appendChild(el('div', 'form-hint', status.errors.length + ' item error(s) during this run.'));
+        }
+    }
+
+    /** Toast the outcome of a finished run and refresh the KB Browser list
+     * so newly ingested documents show up without a manual reload. */
+    function kbSourcesHandleTerminalStatus(status) {
+        if (status.phase === 'completed') {
+            var msg = 'KB source run finished: ' + (status.chunks_written || 0) + ' chunk(s) written.';
+            if (status.errors && status.errors.length) msg += ' (' + status.errors.length + ' item error(s).)';
+            showToast(msg, status.errors && status.errors.length ? 'info' : 'success');
+        } else if (status.phase === 'failed') {
+            showToast('KB source run failed: ' + (status.error || 'unknown error'), 'error');
+        }
+        loadKBBrowser(_kbState);
+        loadKBSourcesList();
+    }
+
+    /** Poll GET /kb/sources/status until the run leaves the `running`
+     * phase, disabling both submit buttons for the duration. Safe to call
+     * repeatedly — a second call while already polling is a no-op. */
+    function kbSourcesStartPolling() {
+        if (_kbSourcesPolling) return;
+        _kbSourcesPolling = true;
+        kbSourcesSetButtonsDisabled(true);
+
+        var poll = function () {
+            apiGet('/kb/sources/status')
+                .then(function (status) {
+                    kbSourcesRenderStatus(status);
+                    if (status && status.phase === 'running') {
+                        setTimeout(poll, 1500);
+                        return;
+                    }
+                    _kbSourcesPolling = false;
+                    kbSourcesSetButtonsDisabled(false);
+                    if (status && (status.phase === 'completed' || status.phase === 'failed')) {
+                        kbSourcesHandleTerminalStatus(status);
+                    }
+                })
+                .catch(function (e) {
+                    _kbSourcesPolling = false;
+                    kbSourcesSetButtonsDisabled(false);
+                    showToast('Failed to poll KB source status: ' + String(e), 'error');
+                });
+        };
+        poll();
+    }
+
+    /** Split a CSV/newline-separated textarea value into a trimmed,
+     * non-empty string array; returns undefined for blank input so the
+     * field is omitted from the request body rather than sent as []. */
+    function splitListInput(raw) {
+        if (!raw) return undefined;
+        var parts = raw.split(/[\n,]/).map(function (s) { return s.trim(); }).filter(Boolean);
+        return parts.length ? parts : undefined;
+    }
+
+    function buildKBSourceWebForm() {
+        var sec = el('div', 'drawer-section kb-source-form');
+        sec.appendChild(el('h4', null, 'Web Crawl'));
+
+        var nameRow = el('div', 'form-row');
+        nameRow.appendChild(el('label', 'form-label', 'Name'));
+        var nameInp = el('input', 'form-input'); nameInp.type = 'text'; nameInp.id = 'kbsrc-web-name';
+        nameRow.appendChild(nameInp); sec.appendChild(nameRow);
+
+        var urlsRow = el('div', 'form-row');
+        urlsRow.appendChild(el('label', 'form-label', 'URLs (one per line, up to 20)'));
+        var urlsTa = el('textarea', 'form-textarea'); urlsTa.id = 'kbsrc-web-urls'; urlsTa.rows = 3;
+        urlsRow.appendChild(urlsTa); sec.appendChild(urlsRow);
+
+        var topicRow = el('div', 'form-row');
+        topicRow.appendChild(el('label', 'form-label', 'Topic (optional)'));
+        var topicInp = el('input', 'form-input'); topicInp.type = 'text'; topicInp.id = 'kbsrc-web-topic';
+        topicRow.appendChild(topicInp); sec.appendChild(topicRow);
+
+        var depthRow = el('div', 'form-row');
+        depthRow.appendChild(el('label', 'form-label', 'Max Depth'));
+        var depthInp = el('input', 'form-input'); depthInp.type = 'number'; depthInp.id = 'kbsrc-web-max-depth';
+        depthInp.min = '0'; depthInp.value = '2';
+        depthRow.appendChild(depthInp); sec.appendChild(depthRow);
+
+        var pagesRow = el('div', 'form-row');
+        pagesRow.appendChild(el('label', 'form-label', 'Max Pages'));
+        var pagesInp = el('input', 'form-input'); pagesInp.type = 'number'; pagesInp.id = 'kbsrc-web-max-pages';
+        pagesInp.min = '1'; pagesInp.max = '10000'; pagesInp.value = '100';
+        pagesRow.appendChild(pagesInp); sec.appendChild(pagesRow);
+
+        var domainsRow = el('div', 'form-row');
+        domainsRow.appendChild(el('label', 'form-label', 'Allowed Domains (CSV, optional)'));
+        var domainsInp = el('input', 'form-input'); domainsInp.type = 'text'; domainsInp.id = 'kbsrc-web-allowed-domains';
+        domainsRow.appendChild(domainsInp);
+        domainsRow.appendChild(el('div', 'form-hint', 'Defaults to each URL\u2019s own hostname when left blank.'));
+        sec.appendChild(domainsRow);
+
+        var excludeRow = el('div', 'form-row');
+        excludeRow.appendChild(el('label', 'form-label', 'Exclude Patterns (CSV, optional)'));
+        var excludeInp = el('input', 'form-input'); excludeInp.type = 'text'; excludeInp.id = 'kbsrc-web-exclude-patterns';
+        excludeRow.appendChild(excludeInp); sec.appendChild(excludeRow);
+
+        // Advanced/optional auth fields — collapsed by default since they
+        // carry sensitive values (bearer tokens, session cookies).
+        var details = document.createElement('details');
+        details.className = 'drawer-section';
+        var summary = document.createElement('summary');
+        summary.className = 'drawer-section-summary';
+        summary.textContent = 'Advanced: Headers / Cookies (optional)';
+        details.appendChild(summary);
+
+        var headersRow = el('div', 'form-row');
+        headersRow.appendChild(el('label', 'form-label', 'Headers (JSON object, optional)'));
+        var headersTa = el('textarea', 'form-textarea mono'); headersTa.id = 'kbsrc-web-headers'; headersTa.rows = 3;
+        headersTa.placeholder = '{"Authorization": "Bearer ..."}';
+        headersRow.appendChild(headersTa);
+        var headersErr = el('div', 'inline-error'); headersErr.id = 'kbsrc-web-headers-err';
+        headersRow.appendChild(headersErr);
+        details.appendChild(headersRow);
+
+        var cookiesRow = el('div', 'form-row');
+        cookiesRow.appendChild(el('label', 'form-label', 'Cookies (JSON object, optional)'));
+        var cookiesTa = el('textarea', 'form-textarea mono'); cookiesTa.id = 'kbsrc-web-cookies'; cookiesTa.rows = 3;
+        cookiesTa.placeholder = '{"session_id": "..."}';
+        cookiesRow.appendChild(cookiesTa);
+        var cookiesErr = el('div', 'inline-error'); cookiesErr.id = 'kbsrc-web-cookies-err';
+        cookiesRow.appendChild(cookiesErr);
+        details.appendChild(cookiesRow);
+
+        details.appendChild(el('div', 'form-hint', 'Sent as-is for this run only \u2014 not persisted or shown in run status/audit logs.'));
+        sec.appendChild(details);
+
+        var formErr = el('div', 'inline-error'); formErr.id = 'kbsrc-web-err';
+        sec.appendChild(formErr);
+
+        var footer = el('div', 'drawer-footer');
+        var submitBtn = el('button', 'btn-primary', 'Start Web Crawl'); submitBtn.id = 'kbsrc-web-submit';
+        footer.appendChild(submitBtn);
+        sec.appendChild(footer);
+
+        submitBtn.addEventListener('click', function () {
+            var showErr = function (msg) { formErr.textContent = msg; formErr.classList.add('visible'); };
+            formErr.classList.remove('visible');
+            headersErr.classList.remove('visible');
+            cookiesErr.classList.remove('visible');
+
+            var name = nameInp.value.trim();
+            var urls = splitListInput(urlsTa.value);
+            if (!name) { showErr('Name is required.'); return; }
+            if (!urls || !urls.length) { showErr('At least one URL is required.'); return; }
+
+            var body = { name: name, urls: urls };
+            var topic = topicInp.value.trim(); if (topic) body.topic = topic;
+            if (depthInp.value !== '') body.max_depth = parseInt(depthInp.value, 10);
+            if (pagesInp.value !== '') body.max_pages = parseInt(pagesInp.value, 10);
+            var allowedDomains = splitListInput(domainsInp.value); if (allowedDomains) body.allowed_domains = allowedDomains;
+            var excludePatterns = splitListInput(excludeInp.value); if (excludePatterns) body.exclude_patterns = excludePatterns;
+
+            if (headersTa.value.trim()) {
+                try { body.headers = JSON.parse(headersTa.value); }
+                catch (e) { headersErr.textContent = 'Headers must be valid JSON.'; headersErr.classList.add('visible'); return; }
+            }
+            if (cookiesTa.value.trim()) {
+                try { body.cookies = JSON.parse(cookiesTa.value); }
+                catch (e) { cookiesErr.textContent = 'Cookies must be valid JSON.'; cookiesErr.classList.add('visible'); return; }
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Starting…';
+            apiPost('/kb/sources/web', body)
+                .then(function (status) {
+                    showToast('Web crawl started (run ' + (status && status.run_id ? status.run_id : '—') + ').', 'success');
+                    submitBtn.textContent = 'Start Web Crawl';
+                    kbSourcesRenderStatus(status);
+                    kbSourcesStartPolling();
+                })
+                .catch(function (e) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Start Web Crawl';
+                    if (e && e.status === 409) {
+                        showToast('A KB source run is already in progress — showing its status.', 'info');
+                        kbSourcesStartPolling();
+                        return;
+                    }
+                    showToast('Failed to start web crawl: ' + String(e), 'error');
+                });
+        });
+
+        return sec;
+    }
+
+    function buildKBSourceFileForm() {
+        var sec = el('div', 'drawer-section kb-source-form');
+        sec.appendChild(el('h4', null, 'Upload Files'));
+
+        var nameRow = el('div', 'form-row');
+        nameRow.appendChild(el('label', 'form-label', 'Name'));
+        var nameInp = el('input', 'form-input'); nameInp.type = 'text'; nameInp.id = 'kbsrc-file-name';
+        nameRow.appendChild(nameInp); sec.appendChild(nameRow);
+
+        var topicRow = el('div', 'form-row');
+        topicRow.appendChild(el('label', 'form-label', 'Topic (optional)'));
+        var topicInp = el('input', 'form-input'); topicInp.type = 'text'; topicInp.id = 'kbsrc-file-topic';
+        topicRow.appendChild(topicInp); sec.appendChild(topicRow);
+
+        var filesRow = el('div', 'form-row');
+        filesRow.appendChild(el('label', 'form-label', 'Files'));
+        var filesInp = el('input', 'form-input'); filesInp.type = 'file'; filesInp.id = 'kbsrc-file-files'; filesInp.multiple = true;
+        filesRow.appendChild(filesInp);
+        filesRow.appendChild(el('div', 'form-hint', 'Admins upload file content directly \u2014 there is no server-side path.'));
+        sec.appendChild(filesRow);
+
+        var formErr = el('div', 'inline-error'); formErr.id = 'kbsrc-file-err';
+        sec.appendChild(formErr);
+
+        var footer = el('div', 'drawer-footer');
+        var submitBtn = el('button', 'btn-primary', 'Upload & Ingest'); submitBtn.id = 'kbsrc-file-submit';
+        footer.appendChild(submitBtn);
+        sec.appendChild(footer);
+
+        submitBtn.addEventListener('click', function () {
+            var showErr = function (msg) { formErr.textContent = msg; formErr.classList.add('visible'); };
+            formErr.classList.remove('visible');
+
+            var name = nameInp.value.trim();
+            var files = filesInp.files;
+            if (!name) { showErr('Name is required.'); return; }
+            if (!files || !files.length) { showErr('At least one file is required.'); return; }
+
+            var formData = new FormData();
+            formData.append('name', name);
+            var topic = topicInp.value.trim(); if (topic) formData.append('topic', topic);
+            for (var i = 0; i < files.length; i++) formData.append('files', files[i]);
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading…';
+            apiPostForm('/kb/sources/file', formData)
+                .then(function (status) {
+                    showToast('File ingestion started (run ' + (status && status.run_id ? status.run_id : '—') + ').', 'success');
+                    submitBtn.textContent = 'Upload & Ingest';
+                    filesInp.value = '';
+                    kbSourcesRenderStatus(status);
+                    kbSourcesStartPolling();
+                })
+                .catch(function (e) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Upload & Ingest';
+                    if (e && e.status === 409) {
+                        showToast('A KB source run is already in progress — showing its status.', 'info');
+                        kbSourcesStartPolling();
+                        return;
+                    }
+                    showToast('Failed to start file ingestion: ' + String(e), 'error');
+                });
+        });
+
+        return sec;
     }
 
     // ================================================================
@@ -2166,6 +2602,13 @@ function formatMetadataValue(value) {
                 if (caps.token_usage_enabled) {
                     show('navTokenUsage');
                     renderTokenUsageShell();
+                }
+
+                // KB Sources nav item follows the same hide-by-default
+                // pattern, gated on whether a KB store is configured.
+                if (caps.kb_source_ingestion_enabled) {
+                    show('navKBSources');
+                    renderKBSourcesShell();
                 }
 
                 show('dashboardApp');

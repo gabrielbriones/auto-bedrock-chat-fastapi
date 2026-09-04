@@ -240,6 +240,19 @@ class KBSourceStatus(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class KBSourceSummary(BaseModel):
+    """One row of ``GET /admin/kb/sources`` — a distinct KB document
+    ``source`` value and how many documents currently carry it.
+
+    Covers every document regardless of how it was ingested (web crawl,
+    file upload, or the offline populate pipeline) since they all share
+    the same ``source`` column.
+    """
+
+    source: str
+    count: int
+
+
 class _KBSourceRunState:
     """Mutable in-memory state for the KB source-ingestion runner.
 
@@ -978,6 +991,82 @@ def register_admin_kb_routes(
         ``running``, ``completed``, ``failed``.
         """
         return _source_state.status
+
+    @sources_router.get(
+        "",
+        response_model=List[KBSourceSummary],
+        responses={**ADMIN_COMMON_RESPONSES},
+        summary="List distinct KB source names and their document counts",
+    )
+    async def list_kb_sources(identity=Depends(require_admin)) -> List[KBSourceSummary]:
+        """Return every distinct ``source`` value across KB documents.
+
+        Covers documents from any ingestion path (web crawl, file upload,
+        or the offline populate pipeline), not just runs tracked by
+        ``KBSourceStatus`` — that state only ever holds the *most recent*
+        run, so it can't answer "what sources exist" once a run completes.
+        """
+        rows = await asyncio.to_thread(kb_store.list_sources)
+        return [KBSourceSummary(source=row["source"], count=row["count"]) for row in rows]
+
+    @sources_router.delete(
+        "",
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            404: {"model": ErrorResponse, "description": "No documents found for this source name"},
+        },
+        summary="Delete every KB document ingested under a source name",
+    )
+    async def delete_kb_source(name: str = Query(..., min_length=1), identity=Depends(require_admin)):
+        """Hard-delete every document (and its chunks) whose ``source``
+        equals ``name`` exactly.
+
+        Identifies the source by name (matching the KB Sources UI, which
+        lists sources by name) rather than by run id — ingestion runs
+        aren't tracked once complete, only the document rows they left
+        behind are.
+        """
+        actor = identity.user_id
+        filters = KBDocumentListFilters(source=name)
+
+        # List/delete a batch at a time rather than materializing every
+        # matching doc id up front -- avoids unbounded memory for large
+        # sources and a redundant second pass. Re-list at offset=0 each
+        # time since deleting shrinks the underlying result set (the
+        # "next" page becomes page 0 once the current page is gone).
+        batch_size = 200
+        deleted = 0
+        found_any = False
+        while True:
+            batch = await asyncio.to_thread(kb_store.list_documents, filters, batch_size, 0)
+            if not batch:
+                break
+            found_any = True
+            for doc in batch:
+                lock = await _lock_for(doc.id)
+                async with lock:
+                    # Re-check existence under the lock — a concurrent
+                    # single-document DELETE (or another overlapping bulk
+                    # delete) may have already removed this one.
+                    if await asyncio.to_thread(kb_store.get_document, doc.id) is None:
+                        continue
+                    await asyncio.to_thread(kb_store.delete_document, doc.id)
+                    deleted += 1
+
+        if not found_any:
+            return _error_json(404, "kb_source_not_found", f"no documents found for source {name!r}")
+
+        audit_logger.info(
+            "kb.source.delete",
+            extra={
+                "action": "kb.source.delete",
+                "actor_user_id": actor,
+                "target_id": name,
+                "deleted_count": deleted,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return {"source": name, "deleted": deleted}
 
     app.include_router(sources_router)
 
