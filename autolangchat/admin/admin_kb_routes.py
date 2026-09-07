@@ -1005,9 +1005,19 @@ def register_admin_kb_routes(
         or the offline populate pipeline), not just runs tracked by
         ``KBSourceStatus`` — that state only ever holds the *most recent*
         run, so it can't answer "what sources exist" once a run completes.
+
+        Blank/whitespace-only ``source`` values are excluded: the store
+        only filters ``source IS NOT NULL``, but ``PATCH
+        /admin/kb/documents/{id}`` allows clearing ``source`` to ``""``,
+        and an empty name can't round-trip to ``DELETE
+        /admin/kb/sources?name=...`` (which requires a non-empty name).
         """
         rows = await asyncio.to_thread(kb_store.list_sources)
-        return [KBSourceSummary(source=row["source"], count=row["count"]) for row in rows]
+        return [
+            KBSourceSummary(source=row["source"], count=row["count"])
+            for row in rows
+            if row.get("source") and row["source"].strip()
+        ]
 
     @sources_router.delete(
         "",

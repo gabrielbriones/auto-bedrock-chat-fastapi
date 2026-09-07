@@ -200,7 +200,7 @@ def test_patch_kb_document_preserves_file_source_metadata_on_content_change():
 
 def test_patch_kb_document_preserves_source_metadata_on_title_only_change():
     """A metadata-preserving PATCH that doesn't touch content shouldn't
-    re-embed (chunk_count stays unset)."""
+    re-embed."""
     store = _FakeKBStore()
     _seed(
         store,
@@ -217,7 +217,7 @@ def test_patch_kb_document_preserves_source_metadata_on_title_only_change():
     assert body["title"] == "New Title"
     assert body["metadata"]["source_type"] == "web"
     assert body["metadata"]["crawled_at"] == "2026-08-20T00:00:00Z"
-    assert body["chunk_count"] is None  # content unchanged -> no re-embed
+    assert store.stats["chunks"] == 0  # content unchanged -> re_embed_document never called
 
 
 def test_delete_kb_document_removes_entry():
@@ -255,6 +255,20 @@ def test_list_kb_sources_groups_by_source_with_counts():
     resp = client.get("/bedrock-chat/admin/kb/sources")
     assert resp.status_code == 200
     assert {(row["source"], row["count"]) for row in resp.json()} == {("blog", 2), ("docs", 1)}
+
+
+def test_list_kb_sources_excludes_blank_and_whitespace_only_sources():
+    """Regression test for PR #147 review: a document's `source` can be
+    cleared to "" via PATCH, and the store only filters `source IS NOT
+    NULL` -- blank/whitespace-only sources must not surface here since
+    they can't be deleted by name (DELETE requires a non-empty name)."""
+    store = _FakeKBStore()
+    _seed(store, "d1", source="blog")
+    _seed(store, "d2", source="   ")
+    client = _build_app(store)
+    resp = client.get("/bedrock-chat/admin/kb/sources")
+    assert resp.status_code == 200
+    assert [row["source"] for row in resp.json()] == ["blog"]
 
 
 def test_delete_kb_source_removes_all_matching_documents():

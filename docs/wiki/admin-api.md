@@ -413,7 +413,9 @@ Response shape (`POST` and `GET status` share it):
 `GET /admin/kb/sources` lists every distinct `source` value across KB
 documents — not just ones ingested via the two routes above; the
 offline `kb_populate()` CLI and any manually-created document share the
-same `source` column:
+same `source` column. Blank/whitespace-only `source` values are
+excluded (e.g. a document whose `source` was cleared to `""` via
+`PATCH /admin/kb/documents/{id}`) since they can't be deleted by name:
 
 ```json
 [
