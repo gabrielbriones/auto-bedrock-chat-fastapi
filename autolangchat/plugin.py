@@ -1788,13 +1788,13 @@ class AutoLangChatPlugin:
         # ----------------------------------------------------------------
         # Capability probe — GET /admin/_capabilities
         #
-        # Always returns 200 {is_admin, anonymous, token_usage_enabled}.
-        # Never raises a 403 so the Chat UI can silently hide the
-        # Dashboard button rather than surfacing an error to non-admin
-        # users.  When ``require_tool_auth=False``, the anonymous-admin
-        # escape hatch is unconditional: identity is ignored even if
-        # credentials are present, and this is reflected as
-        # ``anonymous=true`` so the dashboard can render a visible
+        # Always returns 200 {is_admin, anonymous, token_usage_enabled,
+        # kb_source_ingestion_enabled}. Never raises a 403 so the Chat UI
+        # can silently hide the Dashboard button rather than surfacing an
+        # error to non-admin users.  When ``require_tool_auth=False``, the
+        # anonymous-admin escape hatch is unconditional: identity is
+        # ignored even if credentials are present, and this is reflected
+        # as ``anonymous=true`` so the dashboard can render a visible
         # dev-mode warning banner.
         #
         # ``token_usage_enabled`` reflects whether ``_token_usage_store``
@@ -1802,6 +1802,11 @@ class AutoLangChatPlugin:
         # dashboard's Token Usage nav item can be hidden when the store
         # isn't set up — mirroring how the four ``/tokens/*`` routes
         # themselves are only registered when the store is configured.
+        #
+        # ``kb_source_ingestion_enabled`` mirrors that same pattern for the
+        # KB Sources nav item: it reflects whether ``_kb_store`` is
+        # configured, matching the condition under which
+        # ``/admin/kb/sources/*`` is registered at all.
         # ----------------------------------------------------------------
 
         @self.app.get(
@@ -1810,37 +1815,36 @@ class AutoLangChatPlugin:
             summary="Capability probe — is the current caller an admin?",
         )
         async def get_admin_capabilities(request: Request) -> JSONResponse:
-            """Return ``{is_admin, anonymous, token_usage_enabled}`` — always 200, never 403.
+            """Return ``{is_admin, anonymous, token_usage_enabled, kb_source_ingestion_enabled}`` — always 200, never 403.
 
             Used by the Chat UI on page load to decide whether to show
             the Dashboard button.  When ``require_tool_auth=False``, the
             anonymous-admin escape hatch is unconditionally active:
             ``{is_admin: true, anonymous: true}`` is returned regardless
             of whether any identity sources are configured or the caller
-            presented credentials. ``token_usage_enabled`` is independent
-            of the admin/auth outcome — it reflects whether a token-usage
-            store is configured on this plugin instance.
+            presented credentials. ``token_usage_enabled`` and
+            ``kb_source_ingestion_enabled`` are independent of the
+            admin/auth outcome — they reflect whether a token-usage store
+            and a KB store (respectively) are configured on this plugin
+            instance.
             """
             token_usage_enabled = getattr(self, "_token_usage_store", None) is not None
+            kb_source_ingestion_enabled = getattr(self, "_kb_store", None) is not None
+            caps = {
+                "token_usage_enabled": token_usage_enabled,
+                "kb_source_ingestion_enabled": kb_source_ingestion_enabled,
+            }
             if not self.config.require_tool_auth:
-                return JSONResponse({"is_admin": True, "anonymous": True, "token_usage_enabled": token_usage_enabled})
+                return JSONResponse({"is_admin": True, "anonymous": True, **caps})
             try:
                 identity = await _resolve_identity(request)
                 if identity is None:
-                    return JSONResponse(
-                        {"is_admin": False, "anonymous": False, "token_usage_enabled": token_usage_enabled}
-                    )
+                    return JSONResponse({"is_admin": False, "anonymous": False, **caps})
                 is_admin_result = await self._admin_authorizer.is_admin(identity)
-                return JSONResponse(
-                    {
-                        "is_admin": is_admin_result,
-                        "anonymous": False,
-                        "token_usage_enabled": token_usage_enabled,
-                    }
-                )
+                return JSONResponse({"is_admin": is_admin_result, "anonymous": False, **caps})
             except Exception:
                 logger.exception("Failed to resolve admin capabilities")
-                return JSONResponse({"is_admin": False, "anonymous": False, "token_usage_enabled": token_usage_enabled})
+                return JSONResponse({"is_admin": False, "anonymous": False, **caps})
 
         # ----------------------------------------------------------------
         # Admin Dashboard UI — GET {chat_endpoint}/dashboard
