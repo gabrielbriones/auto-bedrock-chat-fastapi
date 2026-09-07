@@ -2,6 +2,124 @@
 
 <!-- version list -->
 
+## v3.1.0 (2026-09-07)
+
+### Bug Fixes
+
+- Avoid chunk-count join in bulk source delete, associate KB Sources form labels with inputs (PR
+  #147 review)
+  ([`e1c7c86`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e1c7c8684dcb22dcf36dbf27a0e9a6a483eca11e))
+
+- Bound token_usage_store.record_turn() with a timeout
+  ([`6794fd4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6794fd44a23f0bec0ec42f721cef4cbb5b650acd))
+
+- Correct allowed_domains [] semantics, case-insensitive Content-Type, fast-path 409, embedding
+  count validation
+  ([`7d19a01`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7d19a018844eeb9b79ebb3df8a72e0bc27c4ed01))
+
+- Enforce max_pages on fetch attempts, make file upload optional for custom 422, fix stale docstring
+  ([`0d3b491`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0d3b4916c98fc850b03de2b4803c1fa83f51f92b))
+
+- Exclude blank/whitespace source names from GET /admin/kb/sources, assert re-embed via store
+  side-effect not chunk_count (PR #147 review)
+  ([`6e77fe2`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6e77fe2f66790aebe73acfac68e356fa740cdb90))
+
+- Guard against reverse conversation orphans, skip sweep on degraded store, fix flaky CI import
+  ([`b426d9f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b426d9f4abec503fb50e4a13215b37f5af81dd40))
+
+- Handle 204 in apiPostForm, batch delete_kb_source to avoid full id list (PR #147 review)
+  ([`4c79fb0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/4c79fb055927b7627bd3ff14b9edb9fffd65a15c))
+
+- Parameterize TTL sweep query, schedule sweep after conversation store opens
+  ([`6d558ed`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6d558edf25c3947a8d75b9c24898e40c82ab0a28))
+
+- Re-check document source under lock before bulk-deleting by source name (PR #147 review)
+  ([`d5b789f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d5b789fc2a0b5f5a6c22964dac0dc404ab583fc6))
+
+- Recognize any callable lacking record_turn as a token_usage_store provider
+  ([`c1e76b4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c1e76b40c315df77b12a5061507c632fac4b4cd6))
+
+- Recognize functools.partial as a token_usage_store provider callable
+  ([`8d6bc19`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8d6bc19acb02f6f8798e7e72dfa79e9f0928c243))
+
+- Resolve token_usage_store overrides and await async providers
+  ([`98fe84b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/98fe84b2ceb16ff139b1e82bc3444a752eb64980))
+
+- Skip token_usage_store resolution when disabled; widen provider type
+  ([`7f2dcd1`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7f2dcd1882f02184c5a8b3ae7e633156466eb605))
+
+- Split cleanup exception handling, fix root cause of flaky 3.10 CI failure
+  ([`d0f18f5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d0f18f55e72286112c16535a041c774df01872c2))
+
+- Swallow token_usage_store provider errors; resolve once per turn
+  ([`2904d64`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2904d6482e8240d1a76c7292a8b1d14ad14189be))
+
+- Write back generated message_id into graph state for correlation
+  ([`2b0ea22`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2b0ea225401097eb363f41dca4dc705de9103da5))
+
+- **conversations**: Delete orphaned conversation rows on checkpoint TTL sweep (XMGPLAT-11388)
+  ([`1837b83`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1837b839a7f938dbe8228c19b440787929de99ca))
+
+- **kb**: Add lightweight phase accessor, close uploads, short-circuit exhausted upload cap
+  (XMGPLAT-11220)
+  ([`93d1f9a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/93d1f9a1b763ae89d53e91cd95cc04ccf6487113))
+
+- **kb**: Apply SSRF protections to sitemap fetching (XMGPLAT-11220)
+  ([`163bacb`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/163bacbb31028e256f246f850c1849e36a028de7))
+
+- **kb**: Batch per-chunk thread writes, fix redirect-aware error/progress reporting (XMGPLAT-11220)
+  ([`13908c9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/13908c9cc4417d2e9d5c7f6f3e28ed144005d2e7))
+
+- **kb**: Harden source ingestion against SSRF, unbounded uploads, stale chunks (XMGPLAT-11220)
+  ([`bc99f06`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/bc99f067b7d2d084fb8141076f64a20c4925c2c7))
+
+- **kb**: Use post-redirect URL for indexed docs, document upload_too_large, fix flaky CI import
+  (XMGPLAT-11220)
+  ([`8a0f06e`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8a0f06e0b17c2e33836646ce75c0918f67e34d0c))
+
+- **python310**: Explicit subpackage attribute binding in __init__.py
+  ([`6190a11`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6190a11bd237e1bb58a9c30684d455f12d41feac))
+
+- **tests**: Guard against stale stub module causing intermittent CI failure (XMGPLAT-11220)
+  ([`b6a0fa7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b6a0fa7521c33cc2d53b932d5023fb8e914c5be5))
+
+- **tests**: Stop several ad-hoc autolangchat stub loaders from leaking sys.modules entries
+  ([`f037033`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f037033a405495cc1a5861bfbee2c1b5ebfc72ad))
+
+- **token-usage**: No-op without a session/thread id; keep token_usage_store live at runtime
+  ([`7d23b6e`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7d23b6e1caec6e1cbf0ecc8631ea27887583a478))
+
+### Chores
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`5f52fc2`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5f52fc2fe19e36afed04871683c4f592e04168d1))
+
+- **deps**: Update dependency highlight.js to v11.12.0
+  ([`abfcc5b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/abfcc5b0e2f9ecf4ed7255f8a44d438af886c11b))
+
+- **deps**: Update python-minor-patch
+  ([`9827db0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/9827db0b9d29575ac3e6c2169f06dbecf8c38ea7))
+
+### Code Style
+
+- Fix black/isort formatting in __init__.py's python3.10 fix
+  ([`ebad939`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/ebad939a1d3b0864f8a732f91bbe776b282d7da7))
+
+### Features
+
+- **conversations**: Add bulk delete for selected conversations
+  ([`e1c517f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e1c517f556e88844b76f35eb322333c8e25ed821))
+
+- **kb**: Add dashboard UI to populate and manage KB sources at runtime (XMGPLAT-11221)
+  ([`2acc65e`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2acc65ed1411088ed0b4838f404e9e29384eed08))
+
+- **kb**: Populate KB via web crawl or file upload at runtime (XMGPLAT-11220)
+  ([`05ed49f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/05ed49f5647e8f346f757d07ead4366de6254dbf))
+
+- **token-usage**: Record token usage inside the LangGraph graph for all chat_graph callers
+  ([`62d9dc5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/62d9dc57e9485ae14118bc90af7abe79a701a3d7))
+
+
 ## v3.0.0 (2026-08-10)
 
 ### Bug Fixes

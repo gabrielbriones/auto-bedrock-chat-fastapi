@@ -5,7 +5,7 @@ orchestration layer now runs on a LangGraph StateGraph instead of the
 hand-rolled session-management + LLM-call loop.
 """
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 # ``from . import X`` binds ``autolangchat.graph`` and
 # ``autolangchat.model_capabilities`` as direct attributes of this package.
