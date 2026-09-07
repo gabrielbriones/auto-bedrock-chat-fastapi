@@ -285,6 +285,43 @@ def test_delete_kb_source_spans_multiple_batches():
     assert set(store.documents.keys()) == {"keep"}
 
 
+class _ReSourcedKBStore(_FakeKBStore):
+    """Simulates a concurrent PATCH that re-sources one document between
+    `delete_kb_source`'s `list_document_ids()` call and the per-doc lock's
+    `get_document()` re-check."""
+
+    def __init__(self, resourced_doc_id, new_source):
+        super().__init__()
+        self._resourced_doc_id = resourced_doc_id
+        self._new_source = new_source
+        self._listed = False
+
+    def list_document_ids(self, filters, limit=200, offset=0):
+        ids = super().list_document_ids(filters, limit=limit, offset=offset)
+        self._listed = True
+        return ids
+
+    def get_document(self, doc_id):
+        if self._listed and doc_id == self._resourced_doc_id:
+            self.documents[doc_id] = self.documents[doc_id].model_copy(update={"source": self._new_source})
+        return super().get_document(doc_id)
+
+
+def test_delete_kb_source_skips_document_resourced_after_listing():
+    """Regression test for PR #147 review comment: a document whose
+    `source` changes (e.g. via a concurrent PATCH) between listing and the
+    per-doc lock re-check must not be deleted as part of the old source."""
+    store = _ReSourcedKBStore(resourced_doc_id="d2", new_source="other")
+    _seed(store, "d1", source="blog")
+    _seed(store, "d2", source="blog")
+    client = _build_app(store)
+    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "blog"})
+    assert resp.status_code == 200
+    assert resp.json() == {"source": "blog", "deleted": 1}
+    assert set(store.documents.keys()) == {"d2"}
+    assert store.documents["d2"].source == "other"
+
+
 def test_delete_kb_source_missing_returns_404():
     client = _build_app(_FakeKBStore())
     resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "nope"})

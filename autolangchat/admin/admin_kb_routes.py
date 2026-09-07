@@ -1048,10 +1048,13 @@ def register_admin_kb_routes(
             for doc_id in batch:
                 lock = await _lock_for(doc_id)
                 async with lock:
-                    # Re-check existence under the lock — a concurrent
-                    # single-document DELETE (or another overlapping bulk
-                    # delete) may have already removed this one.
-                    if await asyncio.to_thread(kb_store.get_document, doc_id) is None:
+                    # Re-check under the lock — a concurrent single-document
+                    # DELETE (or another overlapping bulk delete) may have
+                    # already removed this one, and a concurrent PATCH may
+                    # have re-sourced it away from `name` since it was
+                    # listed; either way it no longer belongs to this run.
+                    current = await asyncio.to_thread(kb_store.get_document, doc_id)
+                    if current is None or current.get("source") != name:
                         continue
                     await asyncio.to_thread(kb_store.delete_document, doc_id)
                     deleted += 1
