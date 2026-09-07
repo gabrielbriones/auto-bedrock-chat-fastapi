@@ -1034,23 +1034,26 @@ def register_admin_kb_routes(
         # sources and a redundant second pass. Re-list at offset=0 each
         # time since deleting shrinks the underlying result set (the
         # "next" page becomes page 0 once the current page is gone).
+        # Uses list_document_ids (id-only, no chunk-count JOIN) rather
+        # than list_documents -- this loop doesn't need chunk_count, and
+        # that JOIN would otherwise re-run for every batch.
         batch_size = 200
         deleted = 0
         found_any = False
         while True:
-            batch = await asyncio.to_thread(kb_store.list_documents, filters, batch_size, 0)
+            batch = await asyncio.to_thread(kb_store.list_document_ids, filters, batch_size, 0)
             if not batch:
                 break
             found_any = True
-            for doc in batch:
-                lock = await _lock_for(doc.id)
+            for doc_id in batch:
+                lock = await _lock_for(doc_id)
                 async with lock:
                     # Re-check existence under the lock — a concurrent
                     # single-document DELETE (or another overlapping bulk
                     # delete) may have already removed this one.
-                    if await asyncio.to_thread(kb_store.get_document, doc.id) is None:
+                    if await asyncio.to_thread(kb_store.get_document, doc_id) is None:
                         continue
-                    await asyncio.to_thread(kb_store.delete_document, doc.id)
+                    await asyncio.to_thread(kb_store.delete_document, doc_id)
                     deleted += 1
 
         if not found_any:

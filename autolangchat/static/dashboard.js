@@ -1033,41 +1033,48 @@
         sec.appendChild(el('h4', null, 'Web Crawl'));
 
         var nameRow = el('div', 'form-row');
-        nameRow.appendChild(el('label', 'form-label', 'Name'));
+        var nameLbl = el('label', 'form-label', 'Name'); nameLbl.htmlFor = 'kbsrc-web-name';
+        nameRow.appendChild(nameLbl);
         var nameInp = el('input', 'form-input'); nameInp.type = 'text'; nameInp.id = 'kbsrc-web-name';
         nameRow.appendChild(nameInp); sec.appendChild(nameRow);
 
         var urlsRow = el('div', 'form-row');
-        urlsRow.appendChild(el('label', 'form-label', 'URLs (one per line, up to 20)'));
+        var urlsLbl = el('label', 'form-label', 'URLs (one per line, up to 20)'); urlsLbl.htmlFor = 'kbsrc-web-urls';
+        urlsRow.appendChild(urlsLbl);
         var urlsTa = el('textarea', 'form-textarea'); urlsTa.id = 'kbsrc-web-urls'; urlsTa.rows = 3;
         urlsRow.appendChild(urlsTa); sec.appendChild(urlsRow);
 
         var topicRow = el('div', 'form-row');
-        topicRow.appendChild(el('label', 'form-label', 'Topic (optional)'));
+        var topicLbl = el('label', 'form-label', 'Topic (optional)'); topicLbl.htmlFor = 'kbsrc-web-topic';
+        topicRow.appendChild(topicLbl);
         var topicInp = el('input', 'form-input'); topicInp.type = 'text'; topicInp.id = 'kbsrc-web-topic';
         topicRow.appendChild(topicInp); sec.appendChild(topicRow);
 
         var depthRow = el('div', 'form-row');
-        depthRow.appendChild(el('label', 'form-label', 'Max Depth'));
+        var depthLbl = el('label', 'form-label', 'Max Depth'); depthLbl.htmlFor = 'kbsrc-web-max-depth';
+        depthRow.appendChild(depthLbl);
         var depthInp = el('input', 'form-input'); depthInp.type = 'number'; depthInp.id = 'kbsrc-web-max-depth';
         depthInp.min = '0'; depthInp.value = '2';
         depthRow.appendChild(depthInp); sec.appendChild(depthRow);
 
         var pagesRow = el('div', 'form-row');
-        pagesRow.appendChild(el('label', 'form-label', 'Max Pages'));
+        var pagesLbl = el('label', 'form-label', 'Max Pages'); pagesLbl.htmlFor = 'kbsrc-web-max-pages';
+        pagesRow.appendChild(pagesLbl);
         var pagesInp = el('input', 'form-input'); pagesInp.type = 'number'; pagesInp.id = 'kbsrc-web-max-pages';
         pagesInp.min = '1'; pagesInp.max = '10000'; pagesInp.value = '100';
         pagesRow.appendChild(pagesInp); sec.appendChild(pagesRow);
 
         var domainsRow = el('div', 'form-row');
-        domainsRow.appendChild(el('label', 'form-label', 'Allowed Domains (CSV, optional)'));
+        var domainsLbl = el('label', 'form-label', 'Allowed Domains (CSV, optional)'); domainsLbl.htmlFor = 'kbsrc-web-allowed-domains';
+        domainsRow.appendChild(domainsLbl);
         var domainsInp = el('input', 'form-input'); domainsInp.type = 'text'; domainsInp.id = 'kbsrc-web-allowed-domains';
         domainsRow.appendChild(domainsInp);
         domainsRow.appendChild(el('div', 'form-hint', 'Defaults to each URL\u2019s own hostname when left blank.'));
         sec.appendChild(domainsRow);
 
         var excludeRow = el('div', 'form-row');
-        excludeRow.appendChild(el('label', 'form-label', 'Exclude Patterns (CSV, optional)'));
+        var excludeLbl = el('label', 'form-label', 'Exclude Patterns (CSV, optional)'); excludeLbl.htmlFor = 'kbsrc-web-exclude-patterns';
+        excludeRow.appendChild(excludeLbl);
         var excludeInp = el('input', 'form-input'); excludeInp.type = 'text'; excludeInp.id = 'kbsrc-web-exclude-patterns';
         excludeRow.appendChild(excludeInp); sec.appendChild(excludeRow);
 
@@ -1081,7 +1088,8 @@
         details.appendChild(summary);
 
         var headersRow = el('div', 'form-row');
-        headersRow.appendChild(el('label', 'form-label', 'Headers (JSON object, optional)'));
+        var headersLbl = el('label', 'form-label', 'Headers (JSON object, optional)'); headersLbl.htmlFor = 'kbsrc-web-headers';
+        headersRow.appendChild(headersLbl);
         var headersTa = el('textarea', 'form-textarea mono'); headersTa.id = 'kbsrc-web-headers'; headersTa.rows = 3;
         headersTa.placeholder = '{"Authorization": "Bearer ..."}';
         headersRow.appendChild(headersTa);
@@ -1090,7 +1098,8 @@
         details.appendChild(headersRow);
 
         var cookiesRow = el('div', 'form-row');
-        cookiesRow.appendChild(el('label', 'form-label', 'Cookies (JSON object, optional)'));
+        var cookiesLbl = el('label', 'form-label', 'Cookies (JSON object, optional)'); cookiesLbl.htmlFor = 'kbsrc-web-cookies';
+        cookiesRow.appendChild(cookiesLbl);
         var cookiesTa = el('textarea', 'form-textarea mono'); cookiesTa.id = 'kbsrc-web-cookies'; cookiesTa.rows = 3;
         cookiesTa.placeholder = '{"session_id": "..."}';
         cookiesRow.appendChild(cookiesTa);
@@ -1165,17 +1174,20 @@
         sec.appendChild(el('h4', null, 'Upload Files'));
 
         var nameRow = el('div', 'form-row');
-        nameRow.appendChild(el('label', 'form-label', 'Name'));
+        var nameLbl = el('label', 'form-label', 'Name'); nameLbl.htmlFor = 'kbsrc-file-name';
+        nameRow.appendChild(nameLbl);
         var nameInp = el('input', 'form-input'); nameInp.type = 'text'; nameInp.id = 'kbsrc-file-name';
         nameRow.appendChild(nameInp); sec.appendChild(nameRow);
 
         var topicRow = el('div', 'form-row');
-        topicRow.appendChild(el('label', 'form-label', 'Topic (optional)'));
+        var topicLbl = el('label', 'form-label', 'Topic (optional)'); topicLbl.htmlFor = 'kbsrc-file-topic';
+        topicRow.appendChild(topicLbl);
         var topicInp = el('input', 'form-input'); topicInp.type = 'text'; topicInp.id = 'kbsrc-file-topic';
         topicRow.appendChild(topicInp); sec.appendChild(topicRow);
 
         var filesRow = el('div', 'form-row');
-        filesRow.appendChild(el('label', 'form-label', 'Files'));
+        var filesLbl = el('label', 'form-label', 'Files'); filesLbl.htmlFor = 'kbsrc-file-files';
+        filesRow.appendChild(filesLbl);
         var filesInp = el('input', 'form-input'); filesInp.type = 'file'; filesInp.id = 'kbsrc-file-files'; filesInp.multiple = true;
         filesRow.appendChild(filesInp);
         filesRow.appendChild(el('div', 'form-hint', 'Admins upload file content directly \u2014 there is no server-side path.'));

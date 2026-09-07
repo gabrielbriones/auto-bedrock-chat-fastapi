@@ -50,6 +50,9 @@ class _FakeKBStore:
     def count_documents(self, filters):
         return len(self.list_documents(filters, limit=10_000, offset=0))
 
+    def list_document_ids(self, filters, limit=200, offset=0):
+        return [doc.id for doc in self.list_documents(filters, limit=limit, offset=offset)]
+
     def get_document(self, doc_id):
         doc = self.documents.get(doc_id)
         if doc is None:
