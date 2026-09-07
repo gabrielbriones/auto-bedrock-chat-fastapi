@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 # client can't force a huge single-response allocation/serialization via
 # the WebSocket path when the same guard already exists over REST.
 _CONVERSATION_LIST_MAX_LIMIT = 200
+
+# Upper bound on conversation_delete_bulk's ``conversation_ids`` — the ids
+# become bound parameters in a single statement, and SQLite caps those
+# (SQLITE_MAX_VARIABLE_NUMBER, 999 on older builds). Matches the largest
+# list a client could have selected from (_CONVERSATION_LIST_MAX_LIMIT).
+_CONVERSATION_DELETE_BULK_MAX_IDS = _CONVERSATION_LIST_MAX_LIMIT
 
 
 def _get_sso_session_store_class():
@@ -272,6 +278,8 @@ class WebSocketChatHandler:
                     await self._handle_conversation_load(websocket, message_data)
                 elif message_type == "conversation_delete":
                     await self._handle_conversation_delete(websocket, message_data)
+                elif message_type == "conversation_delete_bulk":
+                    await self._handle_conversation_delete_bulk(websocket, message_data)
                 elif message_type == "conversation_delete_all":
                     await self._handle_conversation_delete_all(websocket, message_data)
                 elif message_type == "conversation_rename":
@@ -491,6 +499,9 @@ class WebSocketChatHandler:
                         "embedding_client": self.embedding_client,
                         "auth_context_text": auth_context_text,
                         "chat_config": effective_config,
+                        "token_usage_store": self.token_usage_store,
+                        "session_id": session.session_id,
+                        "user_id": session.user_id,
                     }
                 },
             )
@@ -510,8 +521,8 @@ class WebSocketChatHandler:
             response_metadata["model_id"] = effective_config.model_id
             # Human-readable name for the "Powered by ..." chat header.
             # Matches model_id above -- the *configured* model for this turn, not
-            # necessarily whichever model actually answered (see NOTE near the
-            # token-usage-store call below re: fallback_model retries).
+            # necessarily whichever model actually answered (token_usage_node uses
+            # graph_metadata["model_id"] instead, which reflects fallback_model retries).
             response_metadata["model_name"] = effective_config.get_model_display_name()
             response_metadata["tool_call_rounds"] = graph_metadata.get("tool_call_rounds", 0)
             response_metadata["total_tool_calls"] = graph_metadata.get("total_tool_calls", 0)
@@ -555,10 +566,10 @@ class WebSocketChatHandler:
             # multi-round tool-calling loop was running) — the turn's
             # messages are already checkpointed by the graph invocation
             # above regardless of whether this send succeeds, so a failure
-            # here must not skip the bookkeeping below (record_turn, title
-            # generation, token usage) or the conversation would be left
-            # with a stale updated_at/title/message_count even though the
-            # answer is fully persisted and viewable once reloaded.
+            # here must not skip the bookkeeping below (conversation
+            # record_turn, title generation) or the conversation would be
+            # left with a stale updated_at/title/message_count even though
+            # the answer is fully persisted and viewable once reloaded.
             try:
                 await self._send_message(
                     websocket,
@@ -584,9 +595,8 @@ class WebSocketChatHandler:
                 )
 
             # Persist the turn against the conversation metadata store
-            # (best-effort, mirrors the token-usage persistence below — the
-            # response has already been sent, so a failure here must not
-            # surface as a second ``ai_response``).
+            # (best-effort — the response has already been sent, so a
+            # failure here must not surface as a second ``ai_response``).
             if use_conversation_persistence and conversation_id is not None:
                 try:
                     await self.conversation_store.record_turn(conversation_id)
@@ -609,35 +619,10 @@ class WebSocketChatHandler:
                     )
                 )
 
-            # Persist per-turn token usage (best-effort). This must never
-            # affect chat delivery: the response has already been sent to
-            # the client above, so a persistence failure here is logged and
-            # swallowed rather than propagated to the outer except-block,
-            # which would otherwise attempt to send a second (error)
-            # ``ai_response`` after a successful one.
-            if self.token_usage_store is not None:
-                input_tokens = response_metadata.get("input_tokens")
-                output_tokens = response_metadata.get("output_tokens")
-                if input_tokens is not None and output_tokens is not None:
-                    try:
-                        # NOTE: intentionally NOT response_metadata["model_id"] —
-                        # that field is unconditionally overwritten with the
-                        # effective per-turn configured model a few lines above
-                        # (for the client-facing payload). graph_metadata["model_id"]
-                        # is the model that actually produced this response, which
-                        # may be the fallback_model if a context-window retry
-                        # occurred; that's what billing/observability needs.
-                        await self.token_usage_store.record_turn(
-                            turn_id=message_id,
-                            session_id=session.session_id,
-                            user_id=session.user_id,
-                            model_id=graph_metadata.get("model_id") or effective_config.model_id,
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            turn_ts=datetime.now(timezone.utc),
-                        )
-                    except Exception:
-                        logger.exception("Failed to record token usage for message_id=%s", message_id)
+            # Token usage is now recorded inside the graph itself by
+            # token_usage_node (runs for every chat_graph caller, not just
+            # this handler) — see token_usage_store in the ainvoke() config
+            # above. Nothing to do here.
 
         except Exception as e:
             logger.error(f"Error processing chat message: {str(e)}")
@@ -1620,6 +1605,59 @@ class WebSocketChatHandler:
             {
                 "type": "conversation_deleted",
                 "conversation_id": conversation_id,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+    async def _handle_conversation_delete_bulk(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
+        """Handle a ``conversation_delete_bulk`` request — delete a chosen subset of conversations.
+
+        Unlike ``conversation_delete_all``, ``conversation_ids`` selects an
+        arbitrary subset (the client's current multi-select). Ids that
+        don't exist, or belong to another user, are silently skipped rather
+        than causing the whole request to fail — the response's
+        ``deleted_ids`` tells the client exactly what was removed so it can
+        reconcile its local list.
+        """
+        session = await self._conversation_guard(websocket)
+        if session is None:
+            return
+
+        conversation_ids = data.get("conversation_ids")
+        if (
+            not conversation_ids
+            or not isinstance(conversation_ids, list)
+            or not all(isinstance(cid, str) and cid for cid in conversation_ids)
+        ):
+            await self._send_conversation_error(
+                websocket, "invalid_conversation_request", "conversation_ids must be a non-empty list of strings"
+            )
+            return
+
+        # De-duplicate while preserving order in case the client sends dupes.
+        unique_ids = list(dict.fromkeys(conversation_ids))
+        if len(unique_ids) > _CONVERSATION_DELETE_BULK_MAX_IDS:
+            await self._send_conversation_error(
+                websocket,
+                "invalid_conversation_request",
+                f"conversation_ids must contain at most {_CONVERSATION_DELETE_BULK_MAX_IDS} ids",
+            )
+            return
+
+        deleted_ids = await self.conversation_store.delete_conversations(session.user_id, unique_ids)
+
+        active_conversation_id = session.metadata.get("conversation_id")
+        active_conversation_deleted = active_conversation_id in deleted_ids
+        if active_conversation_deleted:
+            session.metadata["conversation_id"] = None
+            session.metadata.pop("feedback_meta", None)
+
+        await self._send_message(
+            websocket,
+            {
+                "type": "conversation_bulk_deleted",
+                "deleted_ids": deleted_ids,
+                "active_conversation_deleted": active_conversation_deleted,
                 "timestamp": datetime.now().isoformat(),
             },
         )

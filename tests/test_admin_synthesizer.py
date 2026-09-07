@@ -2,61 +2,32 @@ import json
 import sys
 import types
 from datetime import datetime, timezone
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ._autolangchat_imports import load_module
 
-ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_ROOT = ROOT / "autolangchat"
-
 
 def _load_synthesizer_module():
-    module_name = "autolangchat.admin.synthesizer"
-    module_path = PACKAGE_ROOT / "admin" / "synthesizer.py"
-
-    rag_pkg = types.ModuleType("autolangchat.rag")
-    rag_pkg.__path__ = [str(PACKAGE_ROOT / "rag")]
-
     embedding_pipeline_mod = load_module("autolangchat.rag.embedding_pipeline", "rag/embedding_pipeline.py")
     models_mod = load_module("autolangchat.models", "models.py")
     exceptions_mod = load_module("autolangchat.exceptions", "exceptions.py")
     feedback_base_mod = load_module("autolangchat.db.feedback_base", "db/feedback_base.py")
     kb_base_mod = load_module("autolangchat.db.kb_base", "db/kb_base.py")
 
-    installed = {
-        "autolangchat": types.ModuleType("autolangchat"),
-        "autolangchat.admin": types.ModuleType("autolangchat.admin"),
-        "autolangchat.db": types.ModuleType("autolangchat.db"),
-        "autolangchat.rag": rag_pkg,
-        "autolangchat.rag.embedding_pipeline": embedding_pipeline_mod,
-        "autolangchat.models": models_mod,
-        "autolangchat.exceptions": exceptions_mod,
-        "autolangchat.db.feedback_base": feedback_base_mod,
-        "autolangchat.db.kb_base": kb_base_mod,
-    }
-    installed["autolangchat"].__path__ = [str(PACKAGE_ROOT)]
-    installed["autolangchat.admin"].__path__ = [str(PACKAGE_ROOT / "admin")]
-    installed["autolangchat.db"].__path__ = [str(PACKAGE_ROOT / "db")]
-
-    original = {name: sys.modules.get(name) for name in installed}
-    try:
-        sys.modules.update(installed)
-        spec = spec_from_file_location(module_name, module_path)
-        module = module_from_spec(spec)
-        assert spec and spec.loader
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module, models_mod
-    finally:
-        for name, previous in original.items():
-            if previous is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = previous
+    module = load_module(
+        "autolangchat.admin.synthesizer",
+        "admin/synthesizer.py",
+        extra_modules={
+            "autolangchat.rag.embedding_pipeline": embedding_pipeline_mod,
+            "autolangchat.models": models_mod,
+            "autolangchat.exceptions": exceptions_mod,
+            "autolangchat.db.feedback_base": feedback_base_mod,
+            "autolangchat.db.kb_base": kb_base_mod,
+        },
+    )
+    return module, models_mod
 
 
 synth_mod, models_mod = _load_synthesizer_module()

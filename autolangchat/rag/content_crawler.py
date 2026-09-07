@@ -7,13 +7,14 @@ it for embedding and storage in the knowledge base.
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urljoin
+from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 import html2text
@@ -21,6 +22,11 @@ from bs4 import BeautifulSoup
 
 # Module logger
 logger = logging.getLogger(__name__)
+
+#: Called as ``progress_cb(metric_name, amount)`` as pages are crawled (e.g.
+#: ``("pages_crawled", 1)``) — separate from indexing progress, since a
+#: recursive crawl can run for a long time before any indexing starts.
+ProgressCallback = Callable[[str, int], None]
 
 
 class ContentCrawler:
@@ -34,6 +40,9 @@ class ContentCrawler:
         timeout: int = 30,
         proxy: Optional[str] = None,
         visited_urls: Optional[Set[str]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+        cookies: Optional[Dict[str, str]] = None,
+        progress_cb: Optional[ProgressCallback] = None,
     ):
         """
         Initialize content crawler.
@@ -45,11 +54,21 @@ class ContentCrawler:
             timeout: Request timeout in seconds
             proxy: Proxy URL (or auto-detected from HTTP_PROXY/HTTPS_PROXY env vars)
             visited_urls: Optional shared set of visited URLs (for cross-source deduplication)
+            extra_headers: Additional request headers (e.g. ``Authorization``) sent with
+                every request, merged over the default ``User-Agent`` header
+            cookies: Cookies sent with every request (e.g. a session cookie for
+                pages that gate content behind a login)
+            progress_cb: Optional callback invoked as ``("pages_crawled", 1)`` after each
+                page is successfully fetched — lets callers report crawl progress before
+                indexing (which only starts once the whole crawl finishes) begins
         """
         self.max_concurrent = max_concurrent
         self.rate_limit_delay = rate_limit_delay
         self.user_agent = user_agent
         self.timeout = timeout
+        self.extra_headers = extra_headers or {}
+        self.cookies = cookies or {}
+        self.progress_cb = progress_cb
 
         # Auto-detect proxy from environment variables if not provided
         self.proxy = proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
@@ -62,6 +81,27 @@ class ContentCrawler:
         self.html_converter.ignore_links = False
         self.html_converter.ignore_images = True
         self.html_converter.body_width = 0  # Don't wrap lines
+
+        #: Human-readable messages for pages that failed to fetch/parse
+        #: (non-200 status, timeout, connection error, etc.) — non-HTML
+        #: content being skipped is NOT an error, just intentionally ignored.
+        self.errors: List[str] = []
+
+    def _is_allowed_domain(self, url: str, allowed_domains: List[str]) -> bool:
+        """Check whether ``url``'s hostname is (or is a subdomain of) one of ``allowed_domains``.
+
+        Compares actual hostnames rather than doing a raw substring match, so
+        e.g. an unrelated link that merely contains the domain name in its
+        path/query string doesn't get mistaken for "same site".
+        """
+        host = (urlparse(url).hostname or "").lower()
+        if not host:
+            return False
+        for domain in allowed_domains:
+            domain = domain.lower().lstrip(".")
+            if host == domain or host.endswith(f".{domain}"):
+                return True
+        return False
 
     def _should_exclude_url(self, url: str, exclude_patterns: List[str]) -> bool:
         """
@@ -110,6 +150,7 @@ class ContentCrawler:
         max_depth: int = 2,
         allowed_domains: Optional[List[str]] = None,
         exclude_patterns: Optional[List[str]] = None,
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Crawl a URL and extract content.
@@ -120,8 +161,13 @@ class ContentCrawler:
             topic: Topic/category for the content
             recursive: Whether to follow links recursively
             max_depth: Maximum crawl depth for recursive crawling
-            allowed_domains: List of allowed domains for recursive crawling
+            allowed_domains: Hostnames recursive crawling may follow links to. Defaults
+                to just ``url``'s own hostname when ``None`` (not merely falsy), so a
+                crawl doesn't wander onto unrelated sites (e.g. external links found on
+                the page) unless the caller explicitly opts in to more domains. Pass
+                ``[]`` explicitly to disable domain restriction entirely.
             exclude_patterns: URL patterns to exclude (e.g., ['/de/', '/es/'] for translations)
+            max_pages: Maximum number of pages to fetch during a recursive crawl (``None`` = unbounded)
 
         Returns:
             List of extracted documents with metadata
@@ -129,11 +175,25 @@ class ContentCrawler:
         documents = []
 
         if recursive:
+            if allowed_domains is None:
+                # Only default when the caller didn't pass anything at all —
+                # an explicit [] means "no restriction", and a malformed URL
+                # with no parseable hostname must not turn into [""], which
+                # would silently make every link look disallowed.
+                default_host = urlparse(url).hostname
+                effective_allowed_domains = [default_host] if default_host else []
+            else:
+                effective_allowed_domains = allowed_domains
             documents = await self._crawl_recursive(
-                url, source, topic, max_depth, allowed_domains or [], exclude_patterns or []
+                url, source, topic, max_depth, effective_allowed_domains, exclude_patterns or [], max_pages
             )
         else:
             doc = await self._fetch_and_parse(url, source, topic)
+            if self.progress_cb is not None:
+                # Count the attempt even on failure, so a single-URL crawl
+                # that errors doesn't leave /admin/kb/sources/status looking
+                # stuck at 0 pages_crawled.
+                self.progress_cb("pages_crawled", 1)
             if doc:
                 documents.append(doc)
 
@@ -180,6 +240,7 @@ class ContentCrawler:
         max_depth: int,
         allowed_domains: List[str],
         exclude_patterns: List[str],
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Recursively crawl URLs following links.
@@ -189,6 +250,7 @@ class ContentCrawler:
         - Ignores URL fragments (#) as they don't change content
         - Normalizes trailing slashes for consistency
         - Stops early if no new URLs found, even before max_depth
+        - Stops early once ``max_pages`` fetches have been attempted, if set
         - Provides crawl statistics
         - Can exclude URL patterns (e.g., translations)
         """
@@ -204,8 +266,13 @@ class ContentCrawler:
         queued_urls = {self._normalize_url(start_url)}  # Track normalized version
         skipped_count = 0
         max_depth_reached = 0
+        pages_attempted = 0
 
         while to_crawl:
+            if max_pages is not None and pages_attempted >= max_pages:
+                logger.info(f"  ⏹ Reached max_pages={max_pages}; stopping crawl")
+                break
+
             url, depth = to_crawl.pop(0)
 
             # Normalize URL for comparison only
@@ -238,7 +305,13 @@ class ContentCrawler:
             queued_urls.discard(normalized_url)
 
             # Fetch and parse using ORIGINAL URL (preserves trailing slash for link resolution)
+            pages_attempted += 1
             doc = await self._fetch_and_parse(url, source, topic)
+            if self.progress_cb is not None:
+                # Count the attempt even on failure/non-HTML skip, so status
+                # reporting advances during a crawl that's actively making
+                # (failing) requests, not just successful ones.
+                self.progress_cb("pages_crawled", 1)
             if doc:
                 documents.append(doc)
                 logger.info(f"✓ Crawled (depth {depth}): {normalized_url[:80]}...")
@@ -250,9 +323,11 @@ class ContentCrawler:
                     base_url_for_links = doc.get("url", url)
                     links = self._extract_links(doc.get("raw_html", ""), base_url_for_links)
 
-                    # Filter links by allowed domains
+                    # Filter links by allowed domains (exact host or subdomain match,
+                    # not a raw substring check — a link containing the domain name
+                    # somewhere in its path/query shouldn't count as "same site")
                     if allowed_domains:
-                        links = [link for link in links if any(domain in link for domain in allowed_domains)]
+                        links = [link for link in links if self._is_allowed_domain(link, allowed_domains)]
 
                     # Filter out excluded patterns (e.g., translations)
                     if exclude_patterns:
@@ -302,6 +377,57 @@ class ContentCrawler:
 
         return documents
 
+    #: Bounded redirect-following in _fetch_and_parse (see below) — enough
+    #: for legitimate multi-hop redirects (e.g. http->https->canonical)
+    #: without letting a target bounce a request through an unbounded chain.
+    _MAX_REDIRECTS = 5
+
+    async def _is_safe_host(self, hostname: str) -> bool:
+        """Resolve ``hostname`` and reject it if any address is internal.
+
+        Blocks SSRF access to loopback/private/link-local/reserved/
+        multicast/unspecified addresses (e.g. ``127.0.0.1``, RFC1918
+        ranges, cloud metadata endpoints like ``169.254.169.254``) that a
+        malicious or misconfigured crawl target could otherwise use to
+        reach internal services from this server. Resolution goes through
+        the running event loop's resolver (``getaddrinfo``) so DNS lookups
+        don't block the loop.
+        """
+        if not hostname:
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+            infos = await loop.getaddrinfo(hostname, None)
+        except OSError:
+            return False
+        if not infos:
+            return False
+        for info in infos:
+            raw_addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(raw_addr)
+            except ValueError:
+                return False
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return False
+        return True
+
+    async def _is_safe_url(self, url: str) -> bool:
+        """Validate ``url`` has an http(s) scheme and a non-internal host."""
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        if not parsed.hostname:
+            return False
+        return await self._is_safe_host(parsed.hostname)
+
     async def _fetch_and_parse(self, url: str, source: str, topic: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Fetch URL and parse content.
@@ -310,32 +436,74 @@ class ContentCrawler:
             Document dict or None if failed
         """
         try:
+            current_url = url
             async with aiohttp.ClientSession() as session:
-                headers = {"User-Agent": self.user_agent}
-                async with session.get(
-                    url,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    proxy=self.proxy,  # Use proxy if configured
-                ) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch {url}: HTTP {response.status}")
+                headers = {"User-Agent": self.user_agent, **self.extra_headers}
+                for _ in range(self._MAX_REDIRECTS + 1):
+                    # Re-validated on every hop (not just the initial URL) —
+                    # a target could otherwise redirect to an internal host
+                    # (or to a hostname that resolves to one via DNS
+                    # rebinding) after passing the first check.
+                    if not await self._is_safe_url(current_url):
+                        message = f"refusing to fetch internal/unsafe host: {current_url}"
+                        logger.error(message)
+                        self.errors.append(message)
                         return None
 
-                    html_content = await response.text()
-                    content_type = response.headers.get("Content-Type", "")
+                    async with session.get(
+                        current_url,
+                        headers=headers,
+                        cookies=self.cookies or None,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                        proxy=self.proxy,  # Use proxy if configured
+                        allow_redirects=False,
+                    ) as response:
+                        if response.status in (301, 302, 303, 307, 308):
+                            location = response.headers.get("Location")
+                            if not location:
+                                message = f"redirect from {current_url} missing Location header"
+                                logger.error(message)
+                                self.errors.append(message)
+                                return None
+                            current_url = urljoin(current_url, location)
+                            continue
 
-                    # Only process HTML content
-                    if "text/html" not in content_type:
-                        return None
+                        if response.status != 200:
+                            message = f"HTTP {response.status} fetching {current_url}"
+                            logger.error(f"Failed to fetch {current_url}: HTTP {response.status}")
+                            self.errors.append(message)
+                            return None
 
-                    return self._parse_html(html_content, url, source, topic)
+                        # Check Content-Type from the response headers before
+                        # downloading/decoding the body — avoids pulling down
+                        # (and UTF-8-decoding) large binary files linked from a
+                        # page (PDFs, zips, images, disk images, etc.), which
+                        # otherwise wastes bandwidth and can raise decode errors
+                        # or trigger a slow-download timeout.
+                        content_type = response.headers.get("Content-Type", "")
+                        if "text/html" not in content_type.lower():
+                            logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {current_url}")
+                            return None
+
+                        html_content = await response.text()
+                        # Use current_url (the final, post-redirect address) so
+                        # the indexed doc's URL/ID and link-resolution base
+                        # reflect where the content actually came from, not the
+                        # pre-redirect address.
+                        return self._parse_html(html_content, current_url, source, topic)
+
+                message = f"too many redirects fetching {url}"
+                logger.error(message)
+                self.errors.append(message)
+                return None
 
         except asyncio.TimeoutError:
-            logger.error(f"Timeout fetching {url}")
+            logger.error(f"Timeout fetching {current_url}")
+            self.errors.append(f"timeout fetching {current_url}")
             return None
         except Exception as e:
-            logger.error(f"Error fetching {url}: {e}")
+            logger.error(f"Error fetching {current_url}: {e}")
+            self.errors.append(f"error fetching {current_url}: {e}")
             return None
 
     def _parse_html(self, html_content: str, url: str, source: str, topic: Optional[str]) -> Dict[str, Any]:
@@ -550,21 +718,45 @@ class ContentCrawler:
     async def _parse_sitemap(self, sitemap_url: str) -> List[str]:
         """Parse sitemap XML and extract URLs."""
         try:
+            current_url = sitemap_url
             async with aiohttp.ClientSession() as session:
-                headers = {"User-Agent": self.user_agent}
-                async with session.get(
-                    sitemap_url, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)
-                ) as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch sitemap: HTTP {response.status}")
+                headers = {"User-Agent": self.user_agent, **self.extra_headers}
+                for _ in range(self._MAX_REDIRECTS + 1):
+                    # Same SSRF guard as _fetch_and_parse -- a sitemap URL is
+                    # just as attacker-controllable as a crawled page link.
+                    if not await self._is_safe_url(current_url):
+                        logger.error(f"refusing to fetch internal/unsafe host: {current_url}")
                         return []
 
-                    xml_content = await response.text()
-                    soup = BeautifulSoup(xml_content, "xml")
+                    async with session.get(
+                        current_url,
+                        headers=headers,
+                        cookies=self.cookies or None,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                        proxy=self.proxy,
+                        allow_redirects=False,
+                    ) as response:
+                        if response.status in (301, 302, 303, 307, 308):
+                            location = response.headers.get("Location")
+                            if not location:
+                                logger.error(f"redirect from {current_url} missing Location header")
+                                return []
+                            current_url = urljoin(current_url, location)
+                            continue
 
-                    # Extract all <loc> tags
-                    urls = [loc.text for loc in soup.find_all("loc")]
-                    return urls
+                        if response.status != 200:
+                            logger.error(f"Failed to fetch sitemap: HTTP {response.status}")
+                            return []
+
+                        xml_content = await response.text()
+                        soup = BeautifulSoup(xml_content, "xml")
+
+                        # Extract all <loc> tags
+                        urls = [loc.text for loc in soup.find_all("loc")]
+                        return urls
+
+                logger.error(f"too many redirects fetching sitemap {sitemap_url}")
+                return []
 
         except Exception as e:
             logger.error(f"Error parsing sitemap: {e}")

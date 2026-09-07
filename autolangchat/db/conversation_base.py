@@ -132,5 +132,19 @@ class BaseConversationStore(ABC):
         """
 
     @abstractmethod
+    async def delete_conversations(self, user_id: str, conversation_ids: List[str]) -> List[str]:
+        """Remove a specific subset of ``user_id``'s conversation metadata rows.
+
+        Only rows both matching an id in ``conversation_ids`` *and* owned by
+        ``user_id`` are removed — ids belonging to other users, or that
+        don't exist, are silently ignored (idempotent, same spirit as
+        ``delete_conversation``).
+
+        Returns the subset of ``conversation_ids`` that were actually
+        deleted (i.e. existed and were owned by ``user_id``), so callers can
+        report skipped/not-found ids without a separate lookup.
+        """
+
+    @abstractmethod
     async def get_conversation_count(self, user_id: str) -> int:
         """Return the number of conversations belonging to ``user_id``."""

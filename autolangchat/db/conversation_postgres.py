@@ -12,6 +12,7 @@ Requires the optional ``[postgres]`` extra::
 from __future__ import annotations
 
 import logging
+import uuid
 from importlib import resources
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -37,6 +38,17 @@ def _import_psycopg_async() -> Tuple[Any, Any, Any]:
         return psycopg, AsyncConnectionPool, Jsonb
     except ImportError as exc:  # pragma: no cover - exercised in env-less CI
         raise ImportError(_MISSING_DEPS_MSG) from exc
+
+
+def _is_uuid(value: Any) -> bool:
+    """Return True if ``value`` is a string Postgres would accept as a ``uuid``."""
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 class PostgresConversationStore(BaseConversationStore):
@@ -194,6 +206,33 @@ class PostgresConversationStore(BaseConversationStore):
             deleted = cur.rowcount
             await conn.commit()
             return deleted
+
+    async def delete_conversations(self, user_id: str, conversation_ids: List[str]) -> List[str]:
+        if not conversation_ids:
+            return []
+        # `id` is a UUID column, so a single unparseable id would abort the
+        # whole statement with `invalid input syntax for type uuid`. Drop
+        # those up front and treat them as "not found" — same
+        # silently-skipped contract as ids owned by another user.
+        valid_ids = [cid for cid in conversation_ids if _is_uuid(cid)]
+        if not valid_ids:
+            return []
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            # The `::uuid[]` cast is required: psycopg dumps a list[str] as
+            # `text[]`, and `uuid = ANY(text[])` has no matching operator.
+            # (A scalar `%s` gets away without it because it's sent as an
+            # untyped literal that Postgres infers as uuid.)
+            await cur.execute(
+                "DELETE FROM conversations WHERE user_id = %s AND id = ANY(%s::uuid[]) RETURNING id",
+                (user_id, valid_ids),
+            )
+            # psycopg returns uuid.UUID objects, which aren't
+            # JSON-serializable. Cast to str like `_row_to_dict` does
+            # elsewhere, since these ids are sent back verbatim in the
+            # `conversation_bulk_deleted` WS response.
+            deleted_ids = [str(row[0]) for row in await cur.fetchall()]
+            await conn.commit()
+            return deleted_ids
 
     # ------------------------------------------------------------------
     # Queries

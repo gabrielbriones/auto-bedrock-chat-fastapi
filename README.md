@@ -191,7 +191,8 @@ autolangchat/
 │   │   ├── rag.py                   # Optional KB retrieval + enhanced system prompt injection
 │   │   ├── preprocess.py            # Wraps MessagePreprocessor — token budget stages
 │   │   ├── llm_call.py              # ChatBedrockConverse node (.astream() + fallback model)
-│   │   └── citation_boost.py        # Citation relevance boosting
+│   │   ├── citation_boost.py        # Citation relevance boosting
+│   │   └── token_usage.py           # Per-turn token-usage recording (optional, post-turn)
 │   └── tools/
 │       ├── generator.py             # OpenAPI spec → tool schema generation
 │       ├── manager.py               # Tool registry + LangChain tool execution

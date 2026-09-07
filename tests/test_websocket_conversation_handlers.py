@@ -43,6 +43,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from autolangchat import websocket_handler
 from autolangchat.websocket_handler import WebSocketChatHandler
 
 
@@ -158,6 +159,7 @@ async def test_message_loop_dispatches_all_conversation_message_types():
             ("conversation_new", {}),
             ("conversation_load", {"conversation_id": "nonexistent"}),
             ("conversation_delete", {"conversation_id": "nonexistent"}),
+            ("conversation_delete_bulk", {"conversation_ids": ["nonexistent"]}),
             ("conversation_delete_all", {}),
             ("conversation_rename", {"conversation_id": "nonexistent", "title": "x"}),
         ]:
@@ -402,6 +404,115 @@ async def test_conversation_delete_of_other_users_conversation_is_not_found():
         assert sent[0]["code"] == "conversation_not_found"
         # Bob's conversation must still exist.
         assert await store.get_conversation("bobs-conv") is not None
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# conversation_delete_bulk
+# ---------------------------------------------------------------------------
+
+
+async def test_conversation_delete_bulk_removes_only_owned_ids():
+    store = await _make_store()
+    try:
+        await store.create_conversation("c1", "alice")
+        await store.create_conversation("c2", "alice")
+        await store.create_conversation("bobs-conv", "bob")
+        session = _make_session(user_id="alice")
+        handler = _make_handler(session, conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_delete_bulk(
+            ws, {"conversation_ids": ["c1", "c2", "bobs-conv", "never-existed"]}
+        )
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_bulk_deleted"
+        assert sorted(sent[0]["deleted_ids"]) == ["c1", "c2"]
+        assert sent[0]["active_conversation_deleted"] is False
+        assert await store.get_conversation("c1") is None
+        assert await store.get_conversation("c2") is None
+        # Bob's conversation must still exist.
+        assert await store.get_conversation("bobs-conv") is not None
+    finally:
+        await store.close()
+
+
+async def test_conversation_delete_bulk_clears_active_conversation_when_included():
+    store = await _make_store()
+    try:
+        await store.create_conversation("c1", "alice")
+        session = _make_session(user_id="alice")
+        session.metadata["conversation_id"] = "c1"
+        session.metadata["feedback_meta"] = {"some": "state"}
+        handler = _make_handler(session, conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_delete_bulk(ws, {"conversation_ids": ["c1"]})
+
+        sent = _sent(ws)
+        assert sent[0]["deleted_ids"] == ["c1"]
+        assert sent[0]["active_conversation_deleted"] is True
+        assert session.metadata.get("conversation_id") is None
+        assert "feedback_meta" not in session.metadata
+    finally:
+        await store.close()
+
+
+async def test_conversation_delete_bulk_rejects_empty_or_malformed_ids():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+
+        for bad_payload in [{"conversation_ids": []}, {"conversation_ids": "c1"}, {"conversation_ids": [1, 2]}, {}]:
+            ws = _new_ws()
+            await handler._handle_conversation_delete_bulk(ws, bad_payload)
+            sent = _sent(ws)
+            assert sent[0]["type"] == "conversation_error"
+            assert sent[0]["code"] == "invalid_conversation_request"
+    finally:
+        await store.close()
+
+
+async def test_conversation_delete_bulk_rejects_oversized_id_list():
+    """Every id becomes a bound parameter in one statement — an unbounded
+    list would blow past SQLite's variable limit."""
+    store = await _make_store()
+    try:
+        await store.create_conversation("c1", "alice")
+        session = _make_session(user_id="alice")
+        handler = _make_handler(session, conversation_store=store)
+
+        too_many = [f"conv-{i}" for i in range(websocket_handler._CONVERSATION_DELETE_BULK_MAX_IDS + 1)]
+        ws = _new_ws()
+        await handler._handle_conversation_delete_bulk(ws, {"conversation_ids": too_many})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_error"
+        assert sent[0]["code"] == "invalid_conversation_request"
+        # Nothing may be deleted when the request is rejected.
+        assert await store.get_conversation("c1") is not None
+    finally:
+        await store.close()
+
+
+async def test_conversation_delete_bulk_deduplicates_ids():
+    """Duplicates must collapse (they'd otherwise count double against the
+    id cap) and be reported once in ``deleted_ids``."""
+    store = await _make_store()
+    try:
+        await store.create_conversation("c1", "alice")
+        session = _make_session(user_id="alice")
+        handler = _make_handler(session, conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_delete_bulk(ws, {"conversation_ids": ["c1", "c1", "c1"]})
+
+        sent = _sent(ws)
+        assert sent[0]["deleted_ids"] == ["c1"]
+        assert await store.get_conversation("c1") is None
     finally:
         await store.close()
 

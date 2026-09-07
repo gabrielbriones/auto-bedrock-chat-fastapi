@@ -768,6 +768,24 @@ class SQLiteKBStore(BaseKBStore):
         cursor.execute(sql, params)
         return int(cursor.fetchone()[0])
 
+    @_locked
+    def list_document_ids(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> List[str]:
+        where, params = self._build_list_where(filters)
+        sql = f"""
+            SELECT d.id FROM documents d
+            {where}
+            ORDER BY d.created_at DESC, d.id ASC
+            LIMIT ? OFFSET ?
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params + [int(limit), int(offset)])
+        return [row[0] for row in cursor.fetchall()]
+
     def _delete_chunks_for(self, cursor: sqlite3.Cursor, doc_id: str) -> None:
         """Remove all chunks for ``doc_id`` from chunks, vec_chunks, and
         fts_chunks. Caller owns the transaction.

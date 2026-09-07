@@ -54,6 +54,16 @@ class ChatClient {
         this.sidebarToggleButton = document.getElementById('sidebarToggleButton');
         this.sidebarCloseButton = document.getElementById('sidebarCloseButton');
         this.sidebarBackdrop = document.getElementById('sidebarBackdrop');
+        // Multi-select state for bulk deletion: ids the user has checked via
+        // the per-item checkboxes rendered by _renderConversationList().
+        this._selectedConversationIds = new Set();
+        // Ids of the bulk delete currently awaiting a server reply (null when
+        // none is in flight) -- doubles as the double-submit guard.
+        this._pendingBulkDeleteIds = null;
+        this.conversationSelectAllCheckbox = document.getElementById('conversationSelectAllCheckbox');
+        this.conversationBulkDeleteBar = document.getElementById('conversationBulkDeleteBar');
+        this.conversationBulkDeleteCount = document.getElementById('conversationBulkDeleteCount');
+        this.conversationBulkDeleteButton = document.getElementById('conversationBulkDeleteButton');
         this._setupConversationSidebarListeners();
 
         // Dynamic parameter overrides settings sidebar.
@@ -177,6 +187,10 @@ class ChatClient {
             this.messageInput.classList.remove('input-locked');
             this.sendButton.disabled = true;
             this._disablePresetButtons();
+            // Same reasoning for an in-flight bulk delete: its reply can't
+            // arrive on this connection, so release the guard rather than
+            // wedging the delete button until a page reload.
+            this._pendingBulkDeleteIds = null;
 
             // Re-enable auth submit button if the modal is still open
             // (server never replied with auth_configured / auth_failed)
@@ -804,6 +818,7 @@ class ChatClient {
 
             case 'conversation_deleted':
                 this.conversations = this.conversations.filter(c => c.id !== data.conversation_id);
+                this._selectedConversationIds.delete(data.conversation_id);
                 if (this.activeConversationId === data.conversation_id) {
                     this.activeConversationId = null;
                     this._clearChatArea();
@@ -811,8 +826,38 @@ class ChatClient {
                 this._renderConversationList();
                 break;
 
+            case 'conversation_bulk_deleted': {
+                const deletedIds = new Set(data.deleted_ids || []);
+                this.conversations = this.conversations.filter(c => !deletedIds.has(c.id));
+
+                // Clear every id we *asked* to delete, not just the ones the
+                // server reported deleting -- ids it skipped (already gone,
+                // or not ours) would otherwise stay selected forever and keep
+                // the bulk-delete bar showing a count that can never drop.
+                const requestedIds = this._pendingBulkDeleteIds || deletedIds;
+                requestedIds.forEach((id) => this._selectedConversationIds.delete(id));
+                this._pendingBulkDeleteIds = null;
+
+                // The server flag is authoritative, but fall back to our own
+                // view in case this tab's active conversation drifted from
+                // the session's (e.g. deleted from another tab).
+                if (data.active_conversation_deleted || deletedIds.has(this.activeConversationId)) {
+                    this.activeConversationId = null;
+                    this._clearChatArea();
+                }
+                this._renderConversationList();
+
+                // The sidebar only holds one page (conversation_list's
+                // default limit), so deleting a page's worth can leave it
+                // looking empty while older conversations still exist --
+                // pull the next page in.
+                if (deletedIds.size) this.requestConversationList();
+                break;
+            }
+
             case 'conversation_all_deleted':
                 this.conversations = [];
+                this._selectedConversationIds.clear();
                 this.activeConversationId = null;
                 this._clearChatArea();
                 this._renderConversationList();
@@ -828,6 +873,10 @@ class ChatClient {
 
             case 'conversation_error':
                 console.warn('conversation_error', data);
+                // Release the bulk-delete in-flight guard: the request was
+                // rejected, so nothing was deleted and the user must be able
+                // to retry.
+                this._pendingBulkDeleteIds = null;
                 if (data.code === 'conversation_history_unavailable') {
                     this.addMessage('system', `⚠️ ${data.message || 'This conversation\'s history is unavailable.'}`);
                 }
@@ -1332,6 +1381,14 @@ class ChatClient {
         if (this.sidebarBackdrop) {
             this.sidebarBackdrop.addEventListener('click', () => this._closeSidebarDrawer());
         }
+        if (this.conversationSelectAllCheckbox) {
+            this.conversationSelectAllCheckbox.addEventListener('change', (e) => {
+                this._setAllConversationsSelected(e.target.checked);
+            });
+        }
+        if (this.conversationBulkDeleteButton) {
+            this.conversationBulkDeleteButton.addEventListener('click', () => this._bulkDeleteConversationsConfirm());
+        }
     }
 
     _toggleSidebarDrawer() {
@@ -1534,6 +1591,103 @@ class ChatClient {
         this.ws.send(JSON.stringify({ type: 'conversation_delete', conversation_id: conv.id }));
     }
 
+    // Toggle the options dropdown (Rename / Delete) for a conversation item,
+    // anchored to the three-dot `anchorBtn` that triggered it. Portal-style
+    // menu (appended to document.body, position: fixed) so it isn't clipped
+    // by the scrollable `.conversation-list` -- same pattern as
+    // _buildModelPicker's family/model flyouts.
+    _optionsConversationDisplay(conv, anchorBtn) {
+        // Clicking the same conversation's already-open menu closes it.
+        const reopening = this._conversationOptionsConvId === conv.id;
+        this._closeConversationOptionsMenu();
+        if (reopening) return;
+
+        const menu = document.createElement('ul');
+        menu.className = 'conv-options-menu';
+        menu.setAttribute('role', 'menu');
+
+        const buildItem = (icon, label, onActivate, extraClass) => {
+            const item = document.createElement('li');
+            item.className = 'conv-options-menu-item' + (extraClass ? ` ${extraClass}` : '');
+            item.setAttribute('role', 'menuitem');
+            item.tabIndex = 0;
+
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'conv-options-menu-icon';
+            iconSpan.textContent = icon;
+            item.appendChild(iconSpan);
+
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'conv-options-menu-label';
+            labelSpan.textContent = label;
+            item.appendChild(labelSpan);
+
+            const activate = (e) => {
+                e.stopPropagation();
+                this._closeConversationOptionsMenu();
+                onActivate();
+            };
+            item.addEventListener('click', activate);
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    activate(e);
+                }
+            });
+            return item;
+        };
+
+        // Same icons used elsewhere for these actions (✎ rename, 🗑 delete).
+        menu.appendChild(buildItem('✎', 'Rename', () => this._renameConversationPrompt(conv)));
+        menu.appendChild(buildItem('🗑', 'Delete', () => this._deleteConversationConfirm(conv), 'conv-options-menu-item-danger'));
+
+        document.body.appendChild(menu);
+        this._conversationOptionsMenuEl = menu;
+        this._conversationOptionsConvId = conv.id;
+        this._conversationOptionsAnchorEl = anchorBtn;
+
+        const rect = anchorBtn.getBoundingClientRect();
+        menu.style.top = `${rect.bottom + 4}px`;
+        menu.style.right = `${window.innerWidth - rect.right}px`;
+
+        anchorBtn.setAttribute('aria-expanded', 'true');
+        this._bindConversationOptionsGlobalListeners();
+    }
+
+    _closeConversationOptionsMenu() {
+        if (this._conversationOptionsAnchorEl) {
+            this._conversationOptionsAnchorEl.setAttribute('aria-expanded', 'false');
+        }
+        if (this._conversationOptionsMenuEl) {
+            this._conversationOptionsMenuEl.remove();
+        }
+        this._conversationOptionsMenuEl = null;
+        this._conversationOptionsConvId = null;
+        this._conversationOptionsAnchorEl = null;
+    }
+
+    _bindConversationOptionsGlobalListeners() {
+        if (this._conversationOptionsGlobalListenersBound) return;
+        this._conversationOptionsGlobalListenersBound = true;
+        document.addEventListener('click', (event) => {
+            if (!this._conversationOptionsMenuEl) return;
+            if (this._conversationOptionsMenuEl.contains(event.target)
+                || (this._conversationOptionsAnchorEl && this._conversationOptionsAnchorEl.contains(event.target))) {
+                return;
+            }
+            this._closeConversationOptionsMenu();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') this._closeConversationOptionsMenu();
+        });
+        // Portal menu is position: fixed against the viewport, not the
+        // scrollable list -- close it on scroll rather than let it drift away
+        // from its anchor.
+        if (this.conversationList) {
+            this.conversationList.addEventListener('scroll', () => this._closeConversationOptionsMenu());
+        }
+    }
+
     _renderConversationList() {
         if (!this.conversationList) return;
         this.conversationList.innerHTML = '';
@@ -1545,10 +1699,29 @@ class ChatClient {
             (b.updated_at || '').localeCompare(a.updated_at || '')
         );
 
+        // Drop selections for conversations that no longer exist (deleted
+        // elsewhere, e.g. via the single-item delete menu) so the bulk-delete
+        // bar's count and the select-all checkbox stay accurate.
+        const liveIds = new Set(sorted.map((c) => c.id));
+        for (const id of [...this._selectedConversationIds]) {
+            if (!liveIds.has(id)) this._selectedConversationIds.delete(id);
+        }
+
         sorted.forEach((conv) => {
             const li = document.createElement('li');
             li.className = 'conversation-item' + (conv.id === this.activeConversationId ? ' active' : '');
             li.dataset.conversationId = conv.id;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'conversation-item-checkbox';
+            checkbox.setAttribute('aria-label', `Select ${conv.title || 'conversation'}`);
+            checkbox.checked = this._selectedConversationIds.has(conv.id);
+            checkbox.addEventListener('click', (e) => e.stopPropagation());
+            checkbox.addEventListener('change', (e) => {
+                this._toggleConversationSelection(conv.id, e.target.checked);
+            });
+            li.appendChild(checkbox);
 
             const titleSpan = document.createElement('span');
             titleSpan.className = 'conversation-item-title';
@@ -1558,29 +1731,19 @@ class ChatClient {
             const actions = document.createElement('span');
             actions.className = 'conversation-item-actions';
 
-            const renameBtn = document.createElement('button');
-            renameBtn.type = 'button';
-            renameBtn.className = 'conv-action-btn conv-rename-btn';
-            renameBtn.title = 'Rename';
-            renameBtn.setAttribute('aria-label', 'Rename conversation');
-            renameBtn.textContent = '✎';
-            renameBtn.addEventListener('click', (e) => {
+            const optionsBtn = document.createElement('button');
+            optionsBtn.type = 'button';
+            optionsBtn.className = 'conv-action-btn conv-option-btn';
+            optionsBtn.title = 'Options';
+            optionsBtn.setAttribute('aria-label', 'Options for conversation');
+            optionsBtn.setAttribute('aria-haspopup', 'true');
+            optionsBtn.setAttribute('aria-expanded', 'false');
+            optionsBtn.textContent = '⋮';
+            optionsBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this._renameConversationPrompt(conv);
+                this._optionsConversationDisplay(conv, optionsBtn);
             });
-            actions.appendChild(renameBtn);
-
-            const deleteBtn = document.createElement('button');
-            deleteBtn.type = 'button';
-            deleteBtn.className = 'conv-action-btn conv-delete-btn';
-            deleteBtn.title = 'Delete';
-            deleteBtn.setAttribute('aria-label', 'Delete conversation');
-            deleteBtn.textContent = '🗑';
-            deleteBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._deleteConversationConfirm(conv);
-            });
-            actions.appendChild(deleteBtn);
+            actions.appendChild(optionsBtn);
 
             li.appendChild(actions);
             li.setAttribute('role', 'button');
@@ -1595,6 +1758,67 @@ class ChatClient {
             });
             this.conversationList.appendChild(li);
         });
+
+        this._updateBulkDeleteBarState();
+    }
+
+    // ------------------------------------------------------------------
+    // Multi-select + bulk deletion
+    // ------------------------------------------------------------------
+
+    _toggleConversationSelection(conversationId, selected) {
+        if (selected) {
+            this._selectedConversationIds.add(conversationId);
+        } else {
+            this._selectedConversationIds.delete(conversationId);
+        }
+        this._updateBulkDeleteBarState();
+    }
+
+    _setAllConversationsSelected(selected) {
+        if (selected) {
+            this.conversations.forEach((c) => this._selectedConversationIds.add(c.id));
+        } else {
+            this._selectedConversationIds.clear();
+        }
+        this._renderConversationList();
+    }
+
+    // Keeps the "Select all" checkbox, the checked state of each rendered
+    // checkbox, and the bulk-delete action bar (count + visibility) in sync
+    // with `_selectedConversationIds` — called after every render and every
+    // individual selection toggle.
+    _updateBulkDeleteBarState() {
+        const total = this.conversations.length;
+        const selectedCount = this._selectedConversationIds.size;
+
+        if (this.conversationSelectAllCheckbox) {
+            this.conversationSelectAllCheckbox.checked = total > 0 && selectedCount === total;
+            this.conversationSelectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < total;
+        }
+
+        if (this.conversationBulkDeleteBar) {
+            this.conversationBulkDeleteBar.classList.toggle('hidden', selectedCount === 0);
+        }
+        if (this.conversationBulkDeleteCount) {
+            this.conversationBulkDeleteCount.textContent =
+                `${selectedCount} selected`;
+        }
+    }
+
+    _bulkDeleteConversationsConfirm() {
+        if (this._pendingBulkDeleteIds) return; // a bulk delete is already in flight
+        const ids = [...this._selectedConversationIds];
+        if (!ids.length) return;
+        const label = ids.length === 1 ? '1 conversation' : `${ids.length} conversations`;
+        if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            // The user confirmed a destructive action -- don't fail silently.
+            this.addMessage('system', '⚠️ Not connected — conversations were not deleted.');
+            return;
+        }
+        this._pendingBulkDeleteIds = new Set(ids);
+        this.ws.send(JSON.stringify({ type: 'conversation_delete_bulk', conversation_ids: ids }));
     }
 
     // ------------------------------------------------------------------

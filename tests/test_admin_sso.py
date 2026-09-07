@@ -1,58 +1,15 @@
-import sys
-import types
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_ROOT = ROOT / "autolangchat"
+from ._autolangchat_imports import load_module
 
-
-def _install_package_stubs():
-    package = types.ModuleType("autolangchat")
-    package.__path__ = [str(PACKAGE_ROOT)]
-    admin_pkg = types.ModuleType("autolangchat.admin")
-    admin_pkg.__path__ = [str(PACKAGE_ROOT / "admin")]
-    sso_pkg = types.ModuleType("autolangchat.sso")
-    sso_pkg.__path__ = [str(PACKAGE_ROOT / "sso")]
-    return {
-        "autolangchat": package,
-        "autolangchat.admin": admin_pkg,
-        "autolangchat.sso": sso_pkg,
-    }
-
-
-def _load_module(module_name: str, relative_path: str, extra_modules=None):
-    module_path = PACKAGE_ROOT / relative_path
-    installed = _install_package_stubs()
-    if extra_modules:
-        installed.update(extra_modules)
-
-    original = {name: sys.modules.get(name) for name in installed}
-    try:
-        sys.modules.update(installed)
-        spec = spec_from_file_location(module_name, module_path)
-        module = module_from_spec(spec)
-        assert spec and spec.loader
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, previous in original.items():
-            if previous is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = previous
-
-
-_sso_store_mod = _load_module("autolangchat.sso.sso_session_store", "sso/sso_session_store.py")
-
-extra = {
-    "autolangchat.sso.sso_session_store": _sso_store_mod,
-}
-_admin_auth_mod = _load_module("autolangchat.admin.admin_auth", "admin/admin_auth.py", extra_modules=extra)
+_sso_store_mod = load_module("autolangchat.sso.sso_session_store", "sso/sso_session_store.py")
+_admin_auth_mod = load_module(
+    "autolangchat.admin.admin_auth",
+    "admin/admin_auth.py",
+    extra_modules={"autolangchat.sso.sso_session_store": _sso_store_mod},
+)
 
 SSOSessionStore = _sso_store_mod.SSOSessionStore
 extract_user_id_from_sso_session = _sso_store_mod.extract_user_id_from_sso_session
