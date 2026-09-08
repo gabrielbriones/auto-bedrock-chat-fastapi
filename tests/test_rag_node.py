@@ -1,67 +1,32 @@
-import sys
 import types
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 
 import pytest
 
+from ._autolangchat_imports import load_module
 
-def _load_rag_module():
-    package_root = Path(__file__).resolve().parents[1] / "autolangchat"
-    module_path = package_root / "graph" / "nodes" / "rag.py"
+_graph_pkg = types.ModuleType("autolangchat.graph")
+_graph_pkg.__path__ = []
+_nodes_pkg = types.ModuleType("autolangchat.graph.nodes")
+_nodes_pkg.__path__ = []
+_state_mod = types.ModuleType("autolangchat.graph.state")
+_state_mod.ChatState = dict
 
-    autolangchat_pkg = types.ModuleType("autolangchat")
-    autolangchat_pkg.__path__ = [str(package_root)]
+_langchain_core_pkg = types.ModuleType("langchain_core")
+_langchain_core_pkg.__path__ = []
+_runnables_mod = types.ModuleType("langchain_core.runnables")
+_runnables_mod.RunnableConfig = dict
 
-    graph_pkg = types.ModuleType("autolangchat.graph")
-    graph_pkg.__path__ = [str(package_root / "graph")]
-
-    nodes_pkg = types.ModuleType("autolangchat.graph.nodes")
-    nodes_pkg.__path__ = [str(package_root / "graph" / "nodes")]
-
-    state_mod = types.ModuleType("autolangchat.graph.state")
-    state_mod.ChatState = dict
-
-    langchain_core_pkg = types.ModuleType("langchain_core")
-    langchain_core_pkg.__path__ = []
-    runnables_mod = types.ModuleType("langchain_core.runnables")
-    runnables_mod.RunnableConfig = dict
-
-    original_modules = {
-        name: sys.modules.get(name)
-        for name in [
-            "autolangchat",
-            "autolangchat.graph",
-            "autolangchat.graph.nodes",
-            "autolangchat.graph.state",
-            "langchain_core",
-            "langchain_core.runnables",
-        ]
-    }
-
-    sys.modules["autolangchat"] = autolangchat_pkg
-    sys.modules["autolangchat.graph"] = graph_pkg
-    sys.modules["autolangchat.graph.nodes"] = nodes_pkg
-    sys.modules["autolangchat.graph.state"] = state_mod
-    sys.modules["langchain_core"] = langchain_core_pkg
-    sys.modules["langchain_core.runnables"] = runnables_mod
-
-    try:
-        spec = spec_from_file_location("autolangchat.graph.nodes.rag", module_path)
-        module = module_from_spec(spec)
-        assert spec and spec.loader
-        sys.modules["autolangchat.graph.nodes.rag"] = module
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, original in original_modules.items():
-            if original is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = original
-
-
-rag_node = _load_rag_module().rag_node
+rag_node = load_module(
+    "autolangchat.graph.nodes.rag",
+    "graph/nodes/rag.py",
+    extra_modules={
+        "autolangchat.graph": _graph_pkg,
+        "autolangchat.graph.nodes": _nodes_pkg,
+        "autolangchat.graph.state": _state_mod,
+        "langchain_core": _langchain_core_pkg,
+        "langchain_core.runnables": _runnables_mod,
+    },
+).rag_node
 
 
 class _DummyChatConfig:

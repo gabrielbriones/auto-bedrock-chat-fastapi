@@ -36,6 +36,7 @@ def _make_handler(graph_state):
 
     session = SimpleNamespace(
         session_id="session-123",
+        user_id=None,
         credentials=None,
         auth_handler=None,
         metadata={},

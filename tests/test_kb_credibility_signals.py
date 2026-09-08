@@ -469,9 +469,6 @@ class TestRatedFeedbackCredibilitySignal:
 
 
 def _load_synthesizer():
-    rag_pkg = types.ModuleType("autolangchat.rag")
-    rag_pkg.__path__ = []
-
     embedding_pipeline_mod = load_module("autolangchat.rag.embedding_pipeline", "rag/embedding_pipeline.py")
     feedback_base_mod = load_module(
         "autolangchat.db.feedback_base",
@@ -482,38 +479,17 @@ def _load_synthesizer():
         },
     )
 
-    installed = {
-        "autolangchat": types.ModuleType("autolangchat"),
-        "autolangchat.admin": types.ModuleType("autolangchat.admin"),
-        "autolangchat.db": types.ModuleType("autolangchat.db"),
-        "autolangchat.rag": rag_pkg,
-        "autolangchat.rag.embedding_pipeline": embedding_pipeline_mod,
-        "autolangchat.models": _models_mod,
-        "autolangchat.exceptions": _exceptions_mod,
-        "autolangchat.db.feedback_base": feedback_base_mod,
-        "autolangchat.db.kb_base": _kb_base_mod,
-    }
-    for pkg in ("autolangchat", "autolangchat.admin", "autolangchat.db"):
-        installed[pkg].__path__ = []
-
-    original = {name: sys.modules.get(name) for name in installed}
-    try:
-        sys.modules.update(installed)
-        from importlib.util import module_from_spec, spec_from_file_location
-        from pathlib import Path
-
-        path = Path(__file__).resolve().parents[1] / "autolangchat" / "admin" / "synthesizer.py"
-        spec = spec_from_file_location("autolangchat.admin.synthesizer", path)
-        mod = module_from_spec(spec)
-        sys.modules["autolangchat.admin.synthesizer"] = mod
-        spec.loader.exec_module(mod)
-        return mod
-    finally:
-        for name, previous in original.items():
-            if previous is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = previous
+    return load_module(
+        "autolangchat.admin.synthesizer",
+        "admin/synthesizer.py",
+        extra_modules={
+            "autolangchat.rag.embedding_pipeline": embedding_pipeline_mod,
+            "autolangchat.models": _models_mod,
+            "autolangchat.exceptions": _exceptions_mod,
+            "autolangchat.db.feedback_base": feedback_base_mod,
+            "autolangchat.db.kb_base": _kb_base_mod,
+        },
+    )
 
 
 _synth_mod = _load_synthesizer()

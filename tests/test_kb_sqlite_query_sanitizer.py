@@ -1,69 +1,36 @@
-import sys
 import types
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
+
+from ._autolangchat_imports import load_module
 
 
-def _load_kb_sqlite_module():
-    package_root = Path(__file__).resolve().parents[1] / "autolangchat"
-    module_path = package_root / "db" / "kb_sqlite.py"
-
-    autolangchat_pkg = types.ModuleType("autolangchat")
-    autolangchat_pkg.__path__ = [str(package_root)]
-    autolangchat_db_pkg = types.ModuleType("autolangchat.db")
-    autolangchat_db_pkg.__path__ = [str(package_root / "db")]
-
-    exceptions_mod = types.ModuleType("autolangchat.exceptions")
-
-    class KBDocumentNotFoundError(Exception):
-        pass
-
-    exceptions_mod.KBDocumentNotFoundError = KBDocumentNotFoundError
-
-    models_mod = types.ModuleType("autolangchat.models")
-    models_mod.KBDocument = object
-    models_mod.KBDocumentListFilters = object
-
-    kb_base_mod = types.ModuleType("autolangchat.db.kb_base")
-
-    class BaseKBStore:
-        pass
-
-    kb_base_mod.BaseKBStore = BaseKBStore
-
-    original_modules = {
-        name: sys.modules.get(name)
-        for name in [
-            "autolangchat",
-            "autolangchat.db",
-            "autolangchat.exceptions",
-            "autolangchat.models",
-            "autolangchat.db.kb_base",
-        ]
-    }
-
-    sys.modules["autolangchat"] = autolangchat_pkg
-    sys.modules["autolangchat.db"] = autolangchat_db_pkg
-    sys.modules["autolangchat.exceptions"] = exceptions_mod
-    sys.modules["autolangchat.models"] = models_mod
-    sys.modules["autolangchat.db.kb_base"] = kb_base_mod
-
-    try:
-        spec = spec_from_file_location("autolangchat.db.kb_sqlite", module_path)
-        module = module_from_spec(spec)
-        assert spec and spec.loader
-        sys.modules["autolangchat.db.kb_sqlite"] = module
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, original in original_modules.items():
-            if original is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = original
+class _KBDocumentNotFoundError(Exception):
+    pass
 
 
-SQLiteKBStore = _load_kb_sqlite_module().SQLiteKBStore
+_exceptions_mod = types.ModuleType("autolangchat.exceptions")
+_exceptions_mod.KBDocumentNotFoundError = _KBDocumentNotFoundError
+
+_models_mod = types.ModuleType("autolangchat.models")
+_models_mod.KBDocument = object
+_models_mod.KBDocumentListFilters = object
+
+
+class _BaseKBStore:
+    pass
+
+
+_kb_base_mod = types.ModuleType("autolangchat.db.kb_base")
+_kb_base_mod.BaseKBStore = _BaseKBStore
+
+SQLiteKBStore = load_module(
+    "autolangchat.db.kb_sqlite",
+    "db/kb_sqlite.py",
+    extra_modules={
+        "autolangchat.exceptions": _exceptions_mod,
+        "autolangchat.models": _models_mod,
+        "autolangchat.db.kb_base": _kb_base_mod,
+    },
+).SQLiteKBStore
 
 
 def test_sanitize_fts5_query_removes_commas_and_punctuation():

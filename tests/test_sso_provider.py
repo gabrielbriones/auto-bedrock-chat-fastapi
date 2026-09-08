@@ -1,45 +1,10 @@
-import sys
-import types
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_ROOT = ROOT / "autolangchat"
+from ._autolangchat_imports import load_module
 
-
-def _install_package_stubs():
-    package = types.ModuleType("autolangchat")
-    package.__path__ = [str(PACKAGE_ROOT)]
-    sso_pkg = types.ModuleType("autolangchat.sso")
-    sso_pkg.__path__ = [str(PACKAGE_ROOT / "sso")]
-    return {"autolangchat": package, "autolangchat.sso": sso_pkg}
-
-
-def _load_sso_handler_module():
-    module_name = "autolangchat.sso.sso_handler"
-    module_path = PACKAGE_ROOT / "sso" / "sso_handler.py"
-    installed = _install_package_stubs()
-    original = {name: sys.modules.get(name) for name in installed}
-    try:
-        sys.modules.update(installed)
-        spec = spec_from_file_location(module_name, module_path)
-        module = module_from_spec(spec)
-        assert spec and spec.loader
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, previous in original.items():
-            if previous is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = previous
-
-
-sso_handler_mod = _load_sso_handler_module()
+sso_handler_mod = load_module("autolangchat.sso.sso_handler", "sso/sso_handler.py")
 SSOProvider = sso_handler_mod.SSOProvider
 SSODiscoveryError = sso_handler_mod.SSODiscoveryError
 SSOTokenError = sso_handler_mod.SSOTokenError
