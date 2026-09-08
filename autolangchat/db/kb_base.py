@@ -87,6 +87,21 @@ class BaseKBStore(ABC):
         """
 
     @abstractmethod
+    def list_document_ids(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> List[str]:
+        """Return just the ids of documents matching ``filters``.
+
+        Same ordering/filter semantics as :meth:`list_documents`, but
+        skips the ``chunks`` JOIN used to populate ``chunk_count`` --
+        for callers (e.g. bulk delete) that only need ids, not full
+        document rows.
+        """
+
+    @abstractmethod
     def update_document(
         self,
         doc_id: str,

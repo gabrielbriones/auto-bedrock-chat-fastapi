@@ -217,8 +217,11 @@ above) applies to `GET .../messages` exactly as it does to the WebSocket
 `conversation_load` handler.
 
 > `delete_conversation`/`DELETE /conversations/{id}` only remove the
-> metadata row. The LangGraph checkpoint row is cleaned up separately by
-> the existing checkpoint TTL sweep (`AUTOCHAT_CHECKPOINT_TTL_SECONDS`).
+> metadata row; the LangGraph checkpoint row is left for the checkpoint
+> TTL sweep (`AUTOCHAT_CHECKPOINT_TTL_SECONDS`) to clean up. The reverse
+> also holds: when the TTL sweep purges an expired checkpoint, it deletes
+> the matching `conversations` row too, so a conversation never lingers
+> forever pointing at a checkpoint that no longer exists.
 
 ---
 

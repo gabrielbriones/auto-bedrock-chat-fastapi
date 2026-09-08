@@ -137,12 +137,12 @@ class TestCheckpointerLifecycleNoop:
         await close_checkpointer(cp)
 
     @pytest.mark.asyncio
-    async def test_purge_returns_zero_for_memory_saver(self):
+    async def test_purge_returns_empty_list_for_memory_saver(self):
         from langgraph.checkpoint.memory import MemorySaver
 
         cp = MemorySaver()
         result = await purge_expired_checkpoints(cp, ttl_seconds=3600)
-        assert result == 0
+        assert result == []
 
 
 # ---------------------------------------------------------------------------

@@ -608,6 +608,24 @@ class PgVectorKBStore(BaseKBStore):
                 cur.execute(sql, params)
                 return int(cur.fetchone()[0])
 
+    def list_document_ids(
+        self,
+        filters: Optional[KBDocumentListFilters] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> List[str]:
+        where, params = self._build_list_where(filters)
+        sql = f"""
+            SELECT d.id FROM documents d
+            {where}
+            ORDER BY d.created_at DESC, d.id ASC
+            LIMIT %s OFFSET %s
+        """
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params + [int(limit), int(offset)])
+                return [row[0] for row in cur.fetchall()]
+
     def update_document(
         self,
         doc_id: str,

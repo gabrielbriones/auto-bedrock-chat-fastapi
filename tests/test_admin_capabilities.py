@@ -91,3 +91,20 @@ def test_capabilities_token_usage_enabled_reported_even_when_not_admin():
     assert body["is_admin"] is False
     assert body["anonymous"] is False
     assert body["token_usage_enabled"] is True
+
+
+def test_capabilities_kb_source_ingestion_enabled_false_when_kb_store_none():
+    plugin = _make_bare_plugin(None)
+    client = TestClient(plugin.app)
+    resp = client.get("/chat/admin/_capabilities")
+    assert resp.status_code == 200
+    assert resp.json()["kb_source_ingestion_enabled"] is False
+
+
+def test_capabilities_kb_source_ingestion_enabled_true_when_kb_store_configured():
+    plugin = _make_bare_plugin(None)
+    plugin._kb_store = SimpleNamespace()
+    client = TestClient(plugin.app)
+    resp = client.get("/chat/admin/_capabilities")
+    assert resp.status_code == 200
+    assert resp.json()["kb_source_ingestion_enabled"] is True
