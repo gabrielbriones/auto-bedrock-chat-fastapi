@@ -456,6 +456,7 @@ class ToolManager:
             if response.status_code >= 400:
                 return {
                     "error": f"HTTP {response.status_code}",
+                    "status_code": response.status_code,
                     "details": response.text[:500],
                 }
 

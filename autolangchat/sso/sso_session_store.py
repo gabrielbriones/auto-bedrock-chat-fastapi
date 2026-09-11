@@ -1,15 +1,19 @@
 """SSO session storage and session-token signing utilities"""
 
+import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 try:
     import jwt
     from jwt.exceptions import PyJWTError
 except ImportError as _exc:
     raise ImportError("PyJWT is required for SSO support. " "Install with: pip install autolangchat[sso]") from _exc
+
+if TYPE_CHECKING:
+    from .sso_handler import SSOProvider
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,12 @@ class SSOSessionStore:
         # Counter for opportunistic cleanup in create_session()
         self._create_count: int = 0
         self._CLEANUP_INTERVAL: int = 100
+        # key: session_id (str) → value: lock guarding refresh_token grant calls
+        # for that session, so two concurrent turns/connections sharing the same
+        # SSO session never both race the IdP's (often single-use/rotating)
+        # refresh token. Entries are removed alongside their session in
+        # delete_session()/cleanup_expired() to avoid unbounded growth.
+        self._refresh_locks: Dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Session CRUD
@@ -88,7 +98,13 @@ class SSOSessionStore:
             "id_token": tokens.get("id_token"),
             "id_token_claims": id_token_claims or {},
             "user_info": user_info or {},
+            # App-session TTL — governs how long this SSOSessionStore entry
+            # (and its session token) stays valid, independent of the IdP
+            # access token's own lifetime tracked below.
             "expires_at": now + self._session_ttl,
+            # IdP access token's own expiry (proactive/reactive expiration
+            # handling checks this, not expires_at above).
+            "access_token_expires_at": now + tokens.get("expires_in", self._session_ttl),
             "created_at": now,
         }
         logger.debug("SSO session created: %s (expires in %ds)", session_id, self._session_ttl)
@@ -119,6 +135,7 @@ class SSOSessionStore:
     def delete_session(self, session_id: str) -> None:
         """Remove a session from the store (idempotent)."""
         self._sessions.pop(session_id, None)
+        self._refresh_locks.pop(session_id, None)
         logger.debug("SSO session deleted: %s", session_id)
 
     def update_tokens(self, session_id: str, new_tokens: Dict[str, Any]) -> bool:
@@ -140,8 +157,10 @@ class SSOSessionStore:
             session["refresh_token"] = new_tokens["refresh_token"]
         if "id_token" in new_tokens:
             session["id_token"] = new_tokens["id_token"]
+        now = time.time()
         # Extend expiry on refresh
-        session["expires_at"] = time.time() + self._session_ttl
+        session["expires_at"] = now + self._session_ttl
+        session["access_token_expires_at"] = now + new_tokens.get("expires_in", self._session_ttl)
         logger.debug("SSO session tokens updated: %s", session_id)
         return True
 
@@ -155,6 +174,7 @@ class SSOSessionStore:
         expired = [sid for sid, s in self._sessions.items() if now > s["expires_at"]]
         for sid in expired:
             del self._sessions[sid]
+            self._refresh_locks.pop(sid, None)
         if expired:
             logger.debug("Cleanup removed %d expired SSO sessions", len(expired))
 
@@ -269,6 +289,80 @@ class SSOSessionStore:
         except PyJWTError as exc:
             logger.debug("Session token validation failed: %s", exc)
             return None
+
+    # ------------------------------------------------------------------
+    # Refresh locking
+    # ------------------------------------------------------------------
+
+    def get_refresh_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the (lazily-created) refresh lock for a given session.
+
+        Callers should hold this lock for the duration of a refresh_token
+        grant call against the IdP, so concurrent turns/connections sharing
+        the same SSO session never race each other for a (potentially
+        single-use/rotating) refresh token. Removed automatically when the
+        session itself is deleted or expires.
+        """
+        lock = self._refresh_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._refresh_locks[session_id] = lock
+        return lock
+
+
+# ---------------------------------------------------------------------------
+# Shared refresh helper (used by both proactive and reactive expiration modes)
+# ---------------------------------------------------------------------------
+
+
+async def refresh_sso_session_if_needed(
+    sso_session_store: "SSOSessionStore",
+    sso_provider: "SSOProvider",
+    sso_session_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Refresh an SSO session's tokens, guarded by its per-session lock.
+
+    Looks up the session, calls the IdP's refresh_token grant if a refresh
+    token is available, and persists the new tokens via ``update_tokens()``.
+    Safe to call concurrently for the same ``sso_session_id`` — only one
+    caller actually performs the IdP round trip; the lock alone only
+    serializes callers, so a waiter re-checks ``access_token`` once it gets
+    the lock and, if it already changed while waiting, adopts the winner's
+    refreshed session instead of also calling the IdP.
+
+    Args:
+        sso_session_store: The store owning ``sso_session_id``.
+        sso_provider: Provider used to perform the refresh_token grant.
+        sso_session_id: The session to refresh.
+
+    Returns:
+        The updated session dict on success, or ``None`` if the session is
+        gone, has no refresh token, or the IdP refresh call failed.
+    """
+    from .sso_handler import SSODiscoveryError, SSOTokenError
+
+    session_before_lock = sso_session_store.get_session(sso_session_id)
+    if session_before_lock is None:
+        return None
+    refresh_tok = session_before_lock.get("refresh_token")
+    if not refresh_tok:
+        return None
+    access_token_before = session_before_lock.get("access_token")
+
+    async with sso_session_store.get_refresh_lock(sso_session_id):
+        session = sso_session_store.get_session(sso_session_id)
+        if session is None:
+            return None
+        if session.get("access_token") != access_token_before:
+            # Another caller already refreshed while we waited for the lock.
+            return session
+        try:
+            new_tokens = await sso_provider.refresh_token(refresh_tok)
+        except (SSOTokenError, SSODiscoveryError) as exc:
+            logger.warning("SSO token refresh failed for session %s: %s", sso_session_id, exc)
+            return None
+        sso_session_store.update_tokens(sso_session_id, new_tokens)
+        return sso_session_store.get_session(sso_session_id)
 
 
 # ---------------------------------------------------------------------------

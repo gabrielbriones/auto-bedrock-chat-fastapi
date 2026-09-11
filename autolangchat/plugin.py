@@ -254,6 +254,17 @@ class AutoLangChatPlugin:
         logger.debug("Checking token usage store configuration and initializing...")
         self._token_usage_store = create_token_usage_store(self.config)
 
+        # SSO components (only when SSO is enabled). Built before
+        # build_chat_graph() below so sso_session_store/sso_provider can be
+        # injected into the "tools" node's configurable for reactive
+        # auth-expiration handling.
+        self.sso_provider: Optional[SSOProvider] = None
+        self.sso_session_store: Optional[SSOSessionStore] = None
+        if self.config.sso_enabled:
+            _load_sso_imports()
+            self.sso_provider = SSOProvider(self.config)
+            self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
+
         # Build the LangGraph StateGraph that drives chat orchestration.
         # token_usage_store is passed as a callable (not the instance itself)
         # so that if _startup_open_token_usage_store() later disables it
@@ -261,16 +272,12 @@ class AutoLangChatPlugin:
         # caller sees the up-to-date value instead of the frozen reference
         # captured here at __init__ time.
         self.chat_graph = build_chat_graph(
-            self.config, tool_manager=self.tool_manager, token_usage_store=lambda: self._token_usage_store
+            self.config,
+            tool_manager=self.tool_manager,
+            token_usage_store=lambda: self._token_usage_store,
+            sso_session_store=self.sso_session_store,
+            sso_provider=self.sso_provider,
         )
-
-        # SSO components (only when SSO is enabled)
-        self.sso_provider: Optional[SSOProvider] = None
-        self.sso_session_store: Optional[SSOSessionStore] = None
-        if self.config.sso_enabled:
-            _load_sso_imports()
-            self.sso_provider = SSOProvider(self.config)
-            self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
 
         # MCP (Model Context Protocol) server components (only when MCP is
         # enabled). Pure tool provider over Streamable HTTP -- does not reuse
@@ -374,6 +381,7 @@ class AutoLangChatPlugin:
             chat_graph=self.chat_graph,
             embedding_client=self.embedding_client,
             sso_session_store=self.sso_session_store,
+            sso_provider=self.sso_provider,
             kb_store=self._kb_store,
             feedback_store=self._feedback_store,
             feedback_authorizer=self._feedback_authorizer,

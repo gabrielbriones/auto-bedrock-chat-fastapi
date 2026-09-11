@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -566,6 +566,20 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    auth_expiration_behaviour: Literal["none", "proactive", "reactive", "both"] = Field(
+        default="none",
+        alias="AUTOCHAT_AUTH_EXPIRATION_BEHAVIOUR",
+        description=(
+            "How to handle credential expiration mid-session. 'none' preserves legacy behavior "
+            "(expired tool calls surface a plain HTTP 401 error to the LLM). 'proactive' checks "
+            "the SSO access token's expiry at each message boundary and silently refreshes it (or "
+            "sends an auth_expired WebSocket message if no refresh path exists). 'reactive' "
+            "intercepts a tool call's 401, refreshes once, and retries (or sends auth_expired on "
+            "failure). 'both' applies both checks. Manual bearer tokens have no server-side "
+            "refresh path and always go straight to auth_expired under proactive/reactive/both."
+        ),
+    )
+
     # SSO Configuration
     sso_enabled: bool = Field(
         default=False,
@@ -659,7 +673,7 @@ class ChatConfig(BaseSettings):
     )
 
     sso_session_ttl: int = Field(
-        default=3600,
+        default=24 * 3600,  # 24 hours
         alias="AUTOCHAT_SSO_SESSION_TTL",
         gt=0,
         description="SSO session duration in seconds before requiring re-authentication",
