@@ -44,4 +44,4 @@ MIN_PROPORTIONAL_BUDGET = 100
 # ── Network / Session ───────────────────────────────────────────────────
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_SESSIONS = 1_000
-DEFAULT_SESSION_TIMEOUT = 3_600
+DEFAULT_SESSION_TIMEOUT = 24 * 3_600

@@ -102,15 +102,15 @@ Provide **either** a discovery URL (recommended) **or** individual endpoint URLs
 
 ### Optional Settings
 
-| Parameter / Env Var                                                          | Default                  | Description                                                                                                              |
-| ---------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `sso_provider` / `AUTOCHAT_SSO_PROVIDER`                                     | `None`                   | Provider hint for preset defaults: `cognito`, `okta`, `azure_ad`, `auth0`, `keycloak`, `generic`                         |
-| `sso_client_secret` / `AUTOCHAT_SSO_CLIENT_SECRET`                           | `None`                   | Client secret for confidential clients (public clients with PKCE don't need this)                                        |
-| `sso_scopes` / `AUTOCHAT_SSO_SCOPES`                                         | `"openid profile email"` | Space-separated OAuth2 scopes to request                                                                                 |
-| `sso_callback_path` / `AUTOCHAT_SSO_CALLBACK_PATH`                           | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                                                 |
-| `sso_public_base_url` / `AUTOCHAT_SSO_PUBLIC_BASE_URL`                       | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url))                    |
-| `sso_session_ttl` / `AUTOCHAT_SSO_SESSION_TTL`                               | `3600`                   | SSO session lifetime in seconds                                                                                          |
-| `sso_trust_external_idp_cookies` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES` | `False`                  | Opt-in silent-SSO shortcut — see [Silent SSO from an External IdP Cookie](#silent-sso-from-an-external-idp-cookie) below |
+| Parameter / Env Var                                                          | Default                  | Description                                                                                                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sso_provider` / `AUTOCHAT_SSO_PROVIDER`                                     | `None`                   | Provider hint for preset defaults: `cognito`, `okta`, `azure_ad`, `auth0`, `keycloak`, `generic`                                                                                       |
+| `sso_client_secret` / `AUTOCHAT_SSO_CLIENT_SECRET`                           | `None`                   | Client secret for confidential clients (public clients with PKCE don't need this)                                                                                                      |
+| `sso_scopes` / `AUTOCHAT_SSO_SCOPES`                                         | `"openid profile email"` | Space-separated OAuth2 scopes to request                                                                                                                                               |
+| `sso_callback_path` / `AUTOCHAT_SSO_CALLBACK_PATH`                           | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                                                                                                               |
+| `sso_public_base_url` / `AUTOCHAT_SSO_PUBLIC_BASE_URL`                       | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url))                                                                                  |
+| `sso_session_ttl` / `AUTOCHAT_SSO_SESSION_TTL`                               | `86400` (24h)            | SSO session lifetime in seconds — should be set comfortably longer than the IdP access token's own lifetime; see [Session expired](#session-expired-vs-auth-expiration-handling) below |
+| `sso_trust_external_idp_cookies` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES` | `False`                  | Opt-in silent-SSO shortcut — see [Silent SSO from an External IdP Cookie](#silent-sso-from-an-external-idp-cookie) below                                                               |
 
 ---
 
@@ -344,9 +344,18 @@ If tool calls receive 401 from the downstream API:
 - Check that the requested scopes match what the API expects
 - Ensure the token hasn't expired (`access_token` lifetime is configured in the IdP)
 
-### Session expired
+### Session expired vs. auth expiration handling
 
-SSO sessions expire after `sso_session_ttl` seconds (default 3600). Users need to re-authenticate by clicking "Login with SSO" again.
+SSO sessions expire after `sso_session_ttl` seconds (default 86400, i.e. 24h) — once that elapses, users need to re-authenticate by clicking "Login with SSO" again. This is a separate, longer-lived ceiling from the IdP **access token**'s own lifetime (typically ~1 hour), which is refreshed automatically according to `auth_expiration_behaviour` (see [configuration.md](configuration.md#authentication)):
+
+- `none` (default) — the access token's own expiry is never checked proactively; an expired token only surfaces once a tool call fails with a plain HTTP 401.
+- `proactive` — at each message boundary, the access token's expiry (with a 60s buffer) is checked and refreshed silently via the refresh token if needed. Falls back to an `auth_expired` WebSocket message when there's no refresh token (or refresh fails).
+- `reactive` — when a tool call actually returns 401, refresh is attempted once and the call retried. Falls back to `auth_expired` on failure.
+- `both` — both checks are active.
+
+`sso_session_ttl` should be set comfortably longer than the IdP's access token lifetime (which `auth_expiration_behaviour` is refreshing within) — if the two are close together, a long idle gap between messages can let the _session_token JWT itself_ expire before a message ever arrives to trigger a refresh, forcing re-login regardless of `auth_expiration_behaviour`. `proactive` mode never inspects tool-call results — it only checks token freshness at the message boundary, before any tool call is made — so a credential (SSO or manual bearer token) that expires mid-turn is only caught by `reactive`/`both`. Manual bearer tokens have no server-side refresh path and always go straight to `auth_expired` once a tool call 401s under `reactive`/`both`.
+
+**Cookie renewal for long-lived tabs.** The proactive/reactive refresh paths above only reissue the WebSocket connection's in-memory `session_token` — they never touch the browser's HttpOnly `sso_session_token` cookie, since a WebSocket message can't set an HTTP cookie. That cookie's own `max_age` (set once, at login, to `sso_session_ttl`) would otherwise still expire a tab left open long enough, even though the server-side session was kept perfectly fresh. The bundled chat UI works around this with a periodic (hourly) same-origin `POST /auth/sso/refresh` call (`chat-client.js`'s `_startSsoSessionCookieRenewal()`), gated on `auth_expiration_behaviour != "none"` (this performs a real IdP refresh*token grant, so it must not run for the `"none"` mode's 100%-legacy guarantee). That call authenticates via the cookie alone and, for security, never returns the token in its JSON body (only `Set-Cookie` renews it — otherwise same-origin JS, e.g. an XSS payload, could call the endpoint and read the token straight out of the response). Because of that, the \_current* live connection can't learn the renewed token from the HTTP response either — so the same periodic timer also sends a `refresh_session_token` WebSocket message, which asks the server to refresh this connection's own in-memory credentials independently (silent no-op on failure; the existing proactive/reactive checks remain the authoritative path for reporting an actually-expired session). A custom frontend integration should replicate both calls to get the same long-lived-tab behavior.
 
 ---
 

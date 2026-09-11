@@ -340,12 +340,30 @@ class ToolManager:
             for idx, outcome in zip(pending_indices, outcomes):
                 tool_call = capped_calls[idx]
                 function_name = tool_call.get("name")
-                is_error = isinstance(outcome, Exception)
-                if is_error:
+                is_exception = isinstance(outcome, Exception)
+                # _execute_single_tool_call() returns (rather than raises) either
+                # {"error": f"HTTP {code}", "status_code": code, "details": ...} for
+                # an HTTP >=400 response, or {"error": str(exc)} for a network-level
+                # failure -- both need to surface at the top level of the result
+                # entry (callers like tool_node.py's reactive auth-expiration
+                # handling check status_code there), instead of being buried under
+                # "result". Detected by shape, not just "'error' in outcome": a
+                # successful 2xx JSON body can legitimately contain its own
+                # "error" field (e.g. {"error": null, "data": ...}) and must not
+                # be misclassified as a tool failure.
+                is_http_error = isinstance(outcome, dict) and (
+                    "status_code" in outcome or set(outcome.keys()) == {"error"}
+                )
+                if is_exception:
                     logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
 
-                result_entry = {"tool_call_id": tool_call.get("id"), "name": function_name}
-                result_entry["error" if is_error else "result"] = str(outcome) if is_error else outcome
+                result_entry: Dict[str, Any] = {"tool_call_id": tool_call.get("id"), "name": function_name}
+                if is_exception:
+                    result_entry["error"] = str(outcome)
+                elif is_http_error:
+                    result_entry.update(outcome)
+                else:
+                    result_entry["result"] = outcome
                 results[idx] = result_entry
 
         final_results: List[Dict[str, Any]] = [r for r in results if r is not None]
@@ -456,6 +474,7 @@ class ToolManager:
             if response.status_code >= 400:
                 return {
                     "error": f"HTTP {response.status_code}",
+                    "status_code": response.status_code,
                     "details": response.text[:500],
                 }
 

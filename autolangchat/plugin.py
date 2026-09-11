@@ -36,11 +36,12 @@ SSODiscoveryError = None  # type: ignore[assignment]
 SSOTokenError = None  # type: ignore[assignment]
 SSOValidationError = None  # type: ignore[assignment]
 extract_user_id_from_sso_session = None  # type: ignore[assignment]
+refresh_sso_session_if_needed = None  # type: ignore[assignment]
 
 
 def _load_sso_imports():
     """Lazily import SSO modules; raises ImportError with a helpful message."""
-    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session  # noqa: E501
+    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session, refresh_sso_session_if_needed  # noqa: E501
     if SSOProvider is not None:
         return  # already loaded
     try:
@@ -50,6 +51,7 @@ def _load_sso_imports():
         from .sso.sso_handler import SSOValidationError as _SSOValidationError
         from .sso.sso_session_store import SSOSessionStore as _SSOSessionStore
         from .sso.sso_session_store import extract_user_id_from_sso_session as _extract_user_id
+        from .sso.sso_session_store import refresh_sso_session_if_needed as _refresh_sso_session_if_needed
     except ImportError as exc:
         raise ImportError("SSO dependencies are not installed. " "Install with: pip install autolangchat[sso]") from exc
     SSOProvider = _SSOProvider
@@ -58,6 +60,7 @@ def _load_sso_imports():
     SSOTokenError = _SSOTokenError
     SSOValidationError = _SSOValidationError
     extract_user_id_from_sso_session = _extract_user_id
+    refresh_sso_session_if_needed = _refresh_sso_session_if_needed
 
 
 # MCP imports are deferred — only loaded when mcp_enabled=True at runtime.
@@ -254,6 +257,17 @@ class AutoLangChatPlugin:
         logger.debug("Checking token usage store configuration and initializing...")
         self._token_usage_store = create_token_usage_store(self.config)
 
+        # SSO components (only when SSO is enabled). Built before
+        # build_chat_graph() below so sso_session_store/sso_provider can be
+        # injected into the "tools" node's configurable for reactive
+        # auth-expiration handling.
+        self.sso_provider: Optional[SSOProvider] = None
+        self.sso_session_store: Optional[SSOSessionStore] = None
+        if self.config.sso_enabled:
+            _load_sso_imports()
+            self.sso_provider = SSOProvider(self.config)
+            self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
+
         # Build the LangGraph StateGraph that drives chat orchestration.
         # token_usage_store is passed as a callable (not the instance itself)
         # so that if _startup_open_token_usage_store() later disables it
@@ -261,16 +275,12 @@ class AutoLangChatPlugin:
         # caller sees the up-to-date value instead of the frozen reference
         # captured here at __init__ time.
         self.chat_graph = build_chat_graph(
-            self.config, tool_manager=self.tool_manager, token_usage_store=lambda: self._token_usage_store
+            self.config,
+            tool_manager=self.tool_manager,
+            token_usage_store=lambda: self._token_usage_store,
+            sso_session_store=self.sso_session_store,
+            sso_provider=self.sso_provider,
         )
-
-        # SSO components (only when SSO is enabled)
-        self.sso_provider: Optional[SSOProvider] = None
-        self.sso_session_store: Optional[SSOSessionStore] = None
-        if self.config.sso_enabled:
-            _load_sso_imports()
-            self.sso_provider = SSOProvider(self.config)
-            self.sso_session_store = SSOSessionStore(session_ttl=self.config.sso_session_ttl)
 
         # MCP (Model Context Protocol) server components (only when MCP is
         # enabled). Pure tool provider over Streamable HTTP -- does not reuse
@@ -374,6 +384,7 @@ class AutoLangChatPlugin:
             chat_graph=self.chat_graph,
             embedding_client=self.embedding_client,
             sso_session_store=self.sso_session_store,
+            sso_provider=self.sso_provider,
             kb_store=self._kb_store,
             feedback_store=self._feedback_store,
             feedback_authorizer=self._feedback_authorizer,
@@ -662,6 +673,7 @@ class AutoLangChatPlugin:
                             "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
+                            "auth_expiration_behaviour": self.config.auth_expiration_behaviour,
                             "feedback_enabled": feedback_enabled,
                             "lock_input_while_responding": self.config.ui_lock_input_while_responding,
                             # Admin Dashboard button visibility probe.
@@ -1281,12 +1293,21 @@ class AutoLangChatPlugin:
         async def sso_refresh(request: Request):
             """Refresh SSO tokens using the stored refresh token.
 
-            Expects the session token either as a Bearer Authorization header
-            or in the request JSON body as ``{"session_token": "..."}``.  Returns
-            the new session expiry on success.
+            Expects the session token either as a Bearer Authorization header,
+            in the request JSON body as ``{"session_token": "..."}``, or (for
+            same-origin browser calls that can't read the HttpOnly cookie
+            directly) the ``sso_session_token`` cookie itself. Returns the new
+            session expiry on success, and also reissues the ``sso_session_token``
+            cookie with a fresh ``max_age`` -- this is what lets a periodic
+            client-side call (see chat-client.js) keep a long-lived tab's
+            browser cookie from ever reaching its hard expiry, independent of
+            the in-memory session_token reissuing done by the proactive/reactive
+            WebSocket refresh paths (which only affect the current connection,
+            not the cookie the browser will present on a future reconnect).
             """
             # Extract session token
             session_token = None
+            from_cookie_only = False
             auth_header = request.headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 session_token = auth_header[7:]
@@ -1296,6 +1317,9 @@ class AutoLangChatPlugin:
                     session_token = body.get("session_token")
                 except Exception:
                     pass
+            if not session_token:
+                session_token = request.cookies.get("sso_session_token")
+                from_cookie_only = bool(session_token)
 
             if not session_token:
                 return JSONResponse({"error": "missing_session_token"}, status_code=401)
@@ -1310,30 +1334,50 @@ class AutoLangChatPlugin:
             if not session:
                 return JSONResponse({"error": "session_not_found"}, status_code=401)
 
-            refresh_tok = session.get("refresh_token")
-            if not refresh_tok:
+            if not session.get("refresh_token"):
                 return JSONResponse({"error": "no_refresh_token"}, status_code=400)
 
-            try:
-                new_tokens = await self.sso_provider.refresh_token(refresh_tok)
-            except (SSOTokenError, SSODiscoveryError) as exc:
-                logger.error("SSO token refresh failed: %s", exc)
-                return JSONResponse({"error": "refresh_failed", "detail": str(exc)}, status_code=502)
-
-            self.sso_session_store.update_tokens(session_id, new_tokens)
+            # Goes through the same lock-guarded helper as the proactive/reactive
+            # auto-refresh paths, so a manual refresh here can never race one of
+            # those and submit the same (often single-use/rotating) refresh
+            # token twice. The helper itself swallows IdP errors and returns
+            # None rather than raising -- it doesn't distinguish "no session"/
+            # "no refresh token" (already checked above) from an actual IdP
+            # failure, so this endpoint can no longer report IdP failure detail.
+            updated_session = await refresh_sso_session_if_needed(self.sso_session_store, self.sso_provider, session_id)
+            if updated_session is None:
+                return JSONResponse({"error": "refresh_failed"}, status_code=502)
 
             # Issue a new session token reflecting the updated expiry
             new_session_token = self.sso_session_store.generate_session_token(
                 session_id=session_id,
                 sso_session_secret=self.config.sso_session_secret,
             )
-            updated_session = self.sso_session_store.get_session(session_id)
-            return JSONResponse(
-                {
-                    "session_token": new_session_token,
-                    "expires_at": updated_session["expires_at"] if updated_session else None,
-                }
+            forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+            is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+            # When the caller authenticated purely via the HttpOnly cookie (the
+            # periodic same-origin renewal call from chat-client.js), the body
+            # must NOT also return the raw token -- same-origin JS (e.g. an XSS
+            # payload) could otherwise call this endpoint relying solely on the
+            # auto-attached cookie and read the token straight out of the JSON
+            # response, defeating the whole point of HttpOnly. Only a caller that
+            # explicitly supplied the token itself (Bearer header / body field --
+            # i.e. already had it, nothing new leaked) gets it echoed back.
+            response_body: Dict[str, Any] = {
+                "expires_at": updated_session["expires_at"] if updated_session else None,
+            }
+            if not from_cookie_only:
+                response_body["session_token"] = new_session_token
+            response = JSONResponse(response_body)
+            response.set_cookie(
+                key="sso_session_token",
+                value=new_session_token,
+                httponly=True,
+                samesite="lax",
+                secure=is_secure,
+                max_age=self.config.sso_session_ttl,
             )
+            return response
 
         @self.app.post(f"{self.config.chat_endpoint}/auth/sso/logout")
         async def sso_logout(request: Request):

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -14,7 +15,7 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from .auth_handler import AuthenticationHandler, AuthType, Credentials
+from .auth_handler import AuthenticationHandler, AuthType, Credentials, can_refresh
 from .config import ChatConfig
 from .conversation_titler import generate_conversation_title
 from .db import (
@@ -71,6 +72,13 @@ def _get_extract_user_id():
     return extract_user_id_from_sso_session
 
 
+def _get_refresh_sso_session_if_needed():
+    """Lazy import of refresh_sso_session_if_needed (requires PyJWT)."""
+    from .sso.sso_session_store import refresh_sso_session_if_needed
+
+    return refresh_sso_session_if_needed
+
+
 class WebSocketChatHandler:
     """Handles WebSocket connections and chat communication.
 
@@ -94,6 +102,7 @@ class WebSocketChatHandler:
         token_usage_store: Optional[BaseTokenUsageStore] = None,
         conversation_store: Optional[BaseConversationStore] = None,
         user_settings_store: Optional[BaseUserSettingsStore] = None,
+        sso_provider: Optional[Any] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -109,6 +118,7 @@ class WebSocketChatHandler:
         self.token_usage_store = token_usage_store
         self.conversation_store = conversation_store
         self.user_settings_store = user_settings_store
+        self.sso_provider = sso_provider
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -288,6 +298,8 @@ class WebSocketChatHandler:
                     await self._handle_config_update(websocket, message_data)
                 elif message_type == "config_reset":
                     await self._handle_config_reset(websocket, message_data)
+                elif message_type == "refresh_session_token":
+                    await self._handle_refresh_session_token(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -313,7 +325,8 @@ class WebSocketChatHandler:
                 sso_session_id = _get_sso_session_store_class().validate_session_token(
                     session_token, self.config.sso_session_secret
                 )
-                if not sso_session_id or not self.sso_session_store.get_session(sso_session_id):
+                sso_session = self.sso_session_store.get_session(sso_session_id) if sso_session_id else None
+                if not sso_session:
                     # SSO session expired — notify client and clear credentials
                     session.credentials = None
                     session.auth_handler = None
@@ -327,6 +340,46 @@ class WebSocketChatHandler:
                         },
                     )
                     return
+
+                # Proactive: check the IdP access token's own expiry (distinct
+                # from the app-session TTL validated above) and refresh ahead
+                # of time, with a 60s buffer, when needed.
+                if self.config.auth_expiration_behaviour in ("proactive", "both"):
+                    expires_at = sso_session.get("access_token_expires_at")
+                    if expires_at is not None:
+                        logger.debug(
+                            "SSO access token for session %s expires in %.0fs",
+                            sso_session_id,
+                            expires_at - time.time(),
+                        )
+                    if expires_at is not None and time.time() >= expires_at - 60:
+                        refreshed_session = None
+                        if can_refresh(session.credentials, sso_session) and self.sso_provider:
+                            refresh_sso_session_if_needed = _get_refresh_sso_session_if_needed()
+                            refreshed_session = await refresh_sso_session_if_needed(
+                                self.sso_session_store, self.sso_provider, sso_session_id
+                            )
+                        if refreshed_session is None:
+                            session.credentials = None
+                            session.auth_handler = None
+                            await self._send_message(
+                                websocket,
+                                {
+                                    "type": "auth_expired",
+                                    "message": "Your SSO session has expired. Please log in again.",
+                                    "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
+                                    "timestamp": datetime.now().isoformat(),
+                                },
+                            )
+                            return
+                        # Adopt the refreshed access token, and reissue the
+                        # session token so its embedded expiry claim reflects
+                        # the store's now-extended app-session TTL too.
+                        session.credentials.bearer_token = refreshed_session.get("access_token")
+                        session.credentials.session_token = self.sso_session_store.generate_session_token(
+                            session_id=sso_session_id,
+                            sso_session_secret=self.config.sso_session_secret,
+                        )
 
         user_message = data.get("message", "")
         if not user_message.strip():
@@ -593,6 +646,28 @@ class WebSocketChatHandler:
                     session.session_id,
                     conversation_id,
                 )
+
+            # Reactive-mode auth expiration: tool_node.py sets this when a
+            # 401 couldn't be recovered via refresh-and-retry (no refresh
+            # path, or the refresh/retry itself failed). Sent additively
+            # alongside the ai_response above, not instead of it — the LLM
+            # already produced a reply reacting to the tool failure.
+            if graph_metadata.get("auth_expired"):
+                session.credentials = None
+                session.auth_handler = None
+                try:
+                    await self._send_message(
+                        websocket,
+                        {
+                            "type": "auth_expired",
+                            "message": "Your session has expired. Please log in again.",
+                            "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        log_errors=False,
+                    )
+                except WebSocketError:
+                    pass
 
             # Persist the turn against the conversation metadata store
             # (best-effort — the response has already been sent, so a
@@ -1949,6 +2024,47 @@ class WebSocketChatHandler:
             logger.error(f"Error handling authentication message: {str(e)}")
             self._total_errors += 1
             await self._send_error(websocket, f"Authentication error: {str(e)}")
+
+    async def _handle_refresh_session_token(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Best-effort: refresh this connection's own in-memory SSO credentials.
+
+        Companion to chat-client.js's periodic /auth/sso/refresh cookie renewal
+        -- that HTTP call only extends the browser cookie (deliberately never
+        returning the token, so a same-origin XSS can't read it out of the
+        response), so this WS message lets the same periodic cadence also keep
+        the *current* live connection's session_token from going stale,
+        without waiting for the next chat message or a reconnect. Silent no-op
+        on any failure -- the existing proactive/reactive checks in
+        _handle_chat_message remain the authoritative path for actually
+        reporting an expired session to the client.
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session or not session.credentials or session.credentials.auth_type != AuthType.SSO:
+            return
+        if not self.sso_session_store or not self.sso_provider:
+            return
+
+        session_token = session.credentials.session_token
+        if not session_token:
+            return
+        sso_session_id = _get_sso_session_store_class().validate_session_token(
+            session_token, self.config.sso_session_secret
+        )
+        if not sso_session_id:
+            return
+
+        refresh_sso_session_if_needed = _get_refresh_sso_session_if_needed()
+        refreshed_session = await refresh_sso_session_if_needed(
+            self.sso_session_store, self.sso_provider, sso_session_id
+        )
+        if refreshed_session is None:
+            return
+
+        session.credentials.bearer_token = refreshed_session.get("access_token")
+        session.credentials.session_token = self.sso_session_store.generate_session_token(
+            session_id=sso_session_id,
+            sso_session_secret=self.config.sso_session_secret,
+        )
 
     async def _handle_logout(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle logout message from client"""

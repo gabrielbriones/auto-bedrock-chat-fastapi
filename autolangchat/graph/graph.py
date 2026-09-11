@@ -49,6 +49,8 @@ from .tools.tool_node import tools_execution_node
 if TYPE_CHECKING:
     from ..config import ChatConfig
     from ..db import BaseTokenUsageStore
+    from ..sso.sso_handler import SSOProvider
+    from ..sso.sso_session_store import SSOSessionStore
     from .tools.manager import ToolManager
 
 logger = logging.getLogger(__name__)
@@ -90,7 +92,13 @@ async def _resolve_token_usage_store(token_usage_store: Any) -> Any:
 
 
 def _inject_node_config(
-    chat_config: Any, tool_manager: Any, token_usage_store: Any, node_fn, resolve_token_usage_store: bool = False
+    chat_config: Any,
+    tool_manager: Any,
+    token_usage_store: Any,
+    node_fn,
+    resolve_token_usage_store: bool = False,
+    sso_session_store: Any = None,
+    sso_provider: Any = None,
 ):
     """Wrap a node function so chat_config/tool_manager are always injected.
 
@@ -102,6 +110,10 @@ def _inject_node_config(
     ``configurable``, so resolving it (potentially awaiting an async
     provider) on every other node call would be wasted work, up to once per
     node per turn.
+
+    ``sso_session_store``/``sso_provider`` are only read by the ``tools``
+    node (reactive auth-expiration handling), but are injected uniformly
+    like ``tool_manager`` for consistency.
     """
 
     async def _wrapped(state, config: RunnableConfig):
@@ -110,6 +122,10 @@ def _inject_node_config(
             configurable["chat_config"] = chat_config
         if "tool_manager" not in configurable and tool_manager is not None:
             configurable["tool_manager"] = tool_manager
+        if "sso_session_store" not in configurable and sso_session_store is not None:
+            configurable["sso_session_store"] = sso_session_store
+        if "sso_provider" not in configurable and sso_provider is not None:
+            configurable["sso_provider"] = sso_provider
         if resolve_token_usage_store and getattr(configurable["chat_config"], "token_usage_enabled", False):
             # A per-call override in configurable takes priority, but still
             # needs the same provider-vs-instance resolution as the
@@ -137,6 +153,8 @@ def build_chat_graph(
             Callable[[], Awaitable[Optional["BaseTokenUsageStore"]]],
         ]
     ] = None,
+    sso_session_store: Optional["SSOSessionStore"] = None,
+    sso_provider: Optional["SSOProvider"] = None,
 ):
     """Build and compile the chat StateGraph.
 
@@ -161,6 +179,14 @@ def build_chat_graph(
         WebSocket handler -- without that caller having to pass it
         explicitly. A caller may still override it per-call via
         ``config["configurable"]["token_usage_store"]``.
+    sso_session_store:
+        Optional ``SSOSessionStore`` instance, injected into the ``tools``
+        node's ``configurable`` for reactive auth-expiration handling
+        (refreshing an expired SSO access token after a tool call 401s).
+        ``None`` when SSO is disabled.
+    sso_provider:
+        Optional ``SSOProvider`` instance used alongside ``sso_session_store``
+        to perform the actual refresh_token grant call.
 
     Returns
     -------
@@ -191,7 +217,17 @@ def build_chat_graph(
     builder.add_edge("preprocess", "llm")
 
     if tool_manager is not None:
-        builder.add_node("tools", _inject_node_config(config, tool_manager, token_usage_store, tools_execution_node))
+        builder.add_node(
+            "tools",
+            _inject_node_config(
+                config,
+                tool_manager,
+                token_usage_store,
+                tools_execution_node,
+                sso_session_store=sso_session_store,
+                sso_provider=sso_provider,
+            ),
+        )
         builder.add_conditional_edges(
             "llm",
             should_continue,

@@ -91,6 +91,53 @@ class ChatClient {
         this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
+        this._startSsoSessionCookieRenewal();
+    }
+
+    // The in-memory session_token reissued by the server's proactive/reactive
+    // WebSocket refresh paths only keeps the *current* connection alive -- it
+    // never touches the browser's HttpOnly sso_session_token cookie (which JS
+    // can't read or set directly), so that cookie's own max_age just counts
+    // down from initial login regardless of how many silent refreshes happen
+    // over the WebSocket. Periodically calling /auth/sso/refresh (same-origin,
+    // cookie sent automatically) re-issues that cookie with a fresh max_age,
+    // so a long-lived idle tab can still reconnect successfully well beyond
+    // the original login's cookie lifetime.
+    //
+    // Separately (not via this HTTP response -- it deliberately never returns
+    // the token for a cookie-only caller, so a same-origin XSS payload can't
+    // read it out; see plugin.py's sso_refresh route), a "refresh_session_token"
+    // WebSocket message asks the server to refresh THIS live connection's own
+    // in-memory session_token too, entirely server-side, so an already-open tab
+    // doesn't have to wait for the next chat message (or a reconnect) to pick
+    // up the renewal.
+    //
+    // Only runs when auth_expiration_behaviour is NOT "none" -- that mode's
+    // whole point is 100% legacy/unchanged behavior, and this performs a real
+    // IdP refresh_token grant (not a no-op), so triggering it unconditionally
+    // would silently change "none"'s semantics.
+    _startSsoSessionCookieRenewal() {
+        if (!window.CONFIG.ssoEnabled || !window.CONFIG.ssoAuthenticated) {
+            return;
+        }
+        if (!window.CONFIG.authExpirationBehaviour || window.CONFIG.authExpirationBehaviour === 'none') {
+            return;
+        }
+        const refreshUrl = (window.CONFIG.ssoLoginUrl || '').replace(/\/login$/, '/refresh');
+        if (!refreshUrl) {
+            return;
+        }
+        const oneHourMs = 60 * 60 * 1000;
+        setInterval(() => {
+            fetch(refreshUrl, { method: 'POST', credentials: 'same-origin' }).catch(() => {
+                // Best-effort -- a failed cookie renewal just means the cookie
+                // keeps counting down to its existing expiry; nothing to
+                // recover here (the WS-side refresh below is independent).
+            });
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'refresh_session_token' }));
+            }
+        }, oneHourMs);
     }
 
     setupEventListeners() {

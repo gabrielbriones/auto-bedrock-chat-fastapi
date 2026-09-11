@@ -106,11 +106,11 @@ autolangchat_plugin = add_autolangchat(
 
 ### Session Management
 
-| Env Variable                         | Default | Description                                |
-| ------------------------------------ | ------- | ------------------------------------------ |
-| `AUTOCHAT_MAX_SESSIONS`              | `1000`  | Max concurrent sessions                    |
-| `AUTOCHAT_SESSION_TIMEOUT`           | `3600`  | Session timeout (seconds)                  |
-| `AUTOCHAT_MAX_CONVERSATION_MESSAGES` | `20`    | Max messages in history (count-based trim) |
+| Env Variable                         | Default | Description                                                                               |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `AUTOCHAT_MAX_SESSIONS`              | `1000`  | Max concurrent sessions                                                                   |
+| `AUTOCHAT_SESSION_TIMEOUT`           | `86400` | Idle-connection timeout (seconds) before the background sweep removes a WebSocket session |
+| `AUTOCHAT_MAX_CONVERSATION_MESSAGES` | `20`    | Max messages in history (count-based trim)                                                |
 
 ### Error Handling & Retries
 
@@ -150,11 +150,12 @@ autolangchat_plugin = add_autolangchat(
 
 ### Authentication
 
-| Env Variable                    | Default   | Description                                  |
-| ------------------------------- | --------- | -------------------------------------------- |
-| `AUTOCHAT_ENABLE_TOOL_AUTH`     | `false`   | Enable authentication for tool call requests |
-| `AUTOCHAT_SUPPORTED_AUTH_TYPES` | all types | Auth types accepted (list, set in code)      |
-| `AUTOCHAT_DEFAULT_AUTH_TYPE`    | _(none)_  | Pre-select this auth type in the UI modal    |
+| Env Variable                         | Default   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AUTOCHAT_ENABLE_TOOL_AUTH`          | `false`   | Enable authentication for tool call requests                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `AUTOCHAT_SUPPORTED_AUTH_TYPES`      | all types | Auth types accepted (list, set in code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `AUTOCHAT_DEFAULT_AUTH_TYPE`         | _(none)_  | Pre-select this auth type in the UI modal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `AUTOCHAT_AUTH_EXPIRATION_BEHAVIOUR` | `none`    | How to handle credential expiration mid-session: `none` (legacy — expired tool calls surface a plain HTTP 401 to the LLM), `proactive` (check the SSO access token's expiry at each message boundary and silently refresh it, or send `auth_expired` if no refresh path exists — never inspects tool-call results), `reactive` (intercept a tool call's 401, refresh once, and retry, or send `auth_expired` on failure), `both` (apply both checks). Manual bearer tokens have no server-side refresh path and always go straight to `auth_expired` once a tool call 401s under `reactive`/`both` (the only modes that intercept tool-call results at all). See [sso.md](sso.md#session-expired-vs-auth-expiration-handling) for details. |
 
 ### MCP (Model Context Protocol)
 
