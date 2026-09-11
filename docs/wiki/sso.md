@@ -355,6 +355,8 @@ SSO sessions expire after `sso_session_ttl` seconds (default 86400, i.e. 24h) �
 
 `sso_session_ttl` should be set comfortably longer than the IdP's access token lifetime (which `auth_expiration_behaviour` is refreshing within) — if the two are close together, a long idle gap between messages can let the _session_token JWT itself_ expire before a message ever arrives to trigger a refresh, forcing re-login regardless of `auth_expiration_behaviour`. `proactive` mode never inspects tool-call results — it only checks token freshness at the message boundary, before any tool call is made — so a credential (SSO or manual bearer token) that expires mid-turn is only caught by `reactive`/`both`. Manual bearer tokens have no server-side refresh path and always go straight to `auth_expired` once a tool call 401s under `reactive`/`both`.
 
+**Cookie renewal for long-lived tabs.** The proactive/reactive refresh paths above only reissue the WebSocket connection's in-memory `session_token` — they never touch the browser's HttpOnly `sso_session_token` cookie, since a WebSocket message can't set an HTTP cookie. That cookie's own `max_age` (set once, at login, to `sso_session_ttl`) would otherwise still expire a tab left open long enough, even though the server-side session was kept perfectly fresh. The bundled chat UI works around this with a periodic (hourly) same-origin `POST /auth/sso/refresh` call (`chat-client.js`'s `_startSsoSessionCookieRenewal()`), which now accepts the `sso_session_token` cookie itself (no token ever needs to be readable by JS) and reissues it with a fresh `max_age` in the response. A custom frontend integration should replicate this periodic call to get the same long-lived-tab behavior.
+
 ---
 
 ## Security Considerations

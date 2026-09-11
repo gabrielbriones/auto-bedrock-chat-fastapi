@@ -1292,9 +1292,17 @@ class AutoLangChatPlugin:
         async def sso_refresh(request: Request):
             """Refresh SSO tokens using the stored refresh token.
 
-            Expects the session token either as a Bearer Authorization header
-            or in the request JSON body as ``{"session_token": "..."}``.  Returns
-            the new session expiry on success.
+            Expects the session token either as a Bearer Authorization header,
+            in the request JSON body as ``{"session_token": "..."}``, or (for
+            same-origin browser calls that can't read the HttpOnly cookie
+            directly) the ``sso_session_token`` cookie itself. Returns the new
+            session expiry on success, and also reissues the ``sso_session_token``
+            cookie with a fresh ``max_age`` -- this is what lets a periodic
+            client-side call (see chat-client.js) keep a long-lived tab's
+            browser cookie from ever reaching its hard expiry, independent of
+            the in-memory session_token reissuing done by the proactive/reactive
+            WebSocket refresh paths (which only affect the current connection,
+            not the cookie the browser will present on a future reconnect).
             """
             # Extract session token
             session_token = None
@@ -1307,6 +1315,8 @@ class AutoLangChatPlugin:
                     session_token = body.get("session_token")
                 except Exception:
                     pass
+            if not session_token:
+                session_token = request.cookies.get("sso_session_token")
 
             if not session_token:
                 return JSONResponse({"error": "missing_session_token"}, status_code=401)
@@ -1340,12 +1350,23 @@ class AutoLangChatPlugin:
                 session_id=session_id,
                 sso_session_secret=self.config.sso_session_secret,
             )
-            return JSONResponse(
+            forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+            is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+            response = JSONResponse(
                 {
                     "session_token": new_session_token,
                     "expires_at": updated_session["expires_at"] if updated_session else None,
                 }
             )
+            response.set_cookie(
+                key="sso_session_token",
+                value=new_session_token,
+                httponly=True,
+                samesite="lax",
+                secure=is_secure,
+                max_age=self.config.sso_session_ttl,
+            )
+            return response
 
         @self.app.post(f"{self.config.chat_endpoint}/auth/sso/logout")
         async def sso_logout(request: Request):

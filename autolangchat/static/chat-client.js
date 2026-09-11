@@ -91,6 +91,33 @@ class ChatClient {
         this._renderVariablesSection();
         this.updateAuthButtonUI();  // Update button on page load (reflects current auth state)
         this.connect();
+        this._startSsoSessionCookieRenewal();
+    }
+
+    // The in-memory session_token reissued by the server's proactive/reactive
+    // WebSocket refresh paths only keeps the *current* connection alive -- it
+    // never touches the browser's HttpOnly sso_session_token cookie (which JS
+    // can't read or set directly), so that cookie's own max_age just counts
+    // down from initial login regardless of how many silent refreshes happen
+    // over the WebSocket. Periodically calling /auth/sso/refresh (same-origin,
+    // cookie sent automatically) re-issues that cookie with a fresh max_age,
+    // so a long-lived idle tab can still reconnect successfully well beyond
+    // the original login's cookie lifetime.
+    _startSsoSessionCookieRenewal() {
+        if (!window.CONFIG.ssoEnabled || !window.CONFIG.ssoAuthenticated) {
+            return;
+        }
+        const refreshUrl = (window.CONFIG.ssoLoginUrl || '').replace(/\/login$/, '/refresh');
+        if (!refreshUrl) {
+            return;
+        }
+        const oneHourMs = 60 * 60 * 1000;
+        setInterval(() => {
+            fetch(refreshUrl, { method: 'POST', credentials: 'same-origin' }).catch(() => {
+                // Best-effort -- a failed renewal just means the cookie keeps
+                // counting down to its existing expiry; nothing to recover here.
+            });
+        }, oneHourMs);
     }
 
     setupEventListeners() {
