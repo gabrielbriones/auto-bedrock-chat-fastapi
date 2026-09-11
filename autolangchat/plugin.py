@@ -36,11 +36,12 @@ SSODiscoveryError = None  # type: ignore[assignment]
 SSOTokenError = None  # type: ignore[assignment]
 SSOValidationError = None  # type: ignore[assignment]
 extract_user_id_from_sso_session = None  # type: ignore[assignment]
+refresh_sso_session_if_needed = None  # type: ignore[assignment]
 
 
 def _load_sso_imports():
     """Lazily import SSO modules; raises ImportError with a helpful message."""
-    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session  # noqa: E501
+    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session, refresh_sso_session_if_needed  # noqa: E501
     if SSOProvider is not None:
         return  # already loaded
     try:
@@ -50,6 +51,7 @@ def _load_sso_imports():
         from .sso.sso_handler import SSOValidationError as _SSOValidationError
         from .sso.sso_session_store import SSOSessionStore as _SSOSessionStore
         from .sso.sso_session_store import extract_user_id_from_sso_session as _extract_user_id
+        from .sso.sso_session_store import refresh_sso_session_if_needed as _refresh_sso_session_if_needed
     except ImportError as exc:
         raise ImportError("SSO dependencies are not installed. " "Install with: pip install autolangchat[sso]") from exc
     SSOProvider = _SSOProvider
@@ -58,6 +60,7 @@ def _load_sso_imports():
     SSOTokenError = _SSOTokenError
     SSOValidationError = _SSOValidationError
     extract_user_id_from_sso_session = _extract_user_id
+    refresh_sso_session_if_needed = _refresh_sso_session_if_needed
 
 
 # MCP imports are deferred — only loaded when mcp_enabled=True at runtime.
@@ -1318,24 +1321,25 @@ class AutoLangChatPlugin:
             if not session:
                 return JSONResponse({"error": "session_not_found"}, status_code=401)
 
-            refresh_tok = session.get("refresh_token")
-            if not refresh_tok:
+            if not session.get("refresh_token"):
                 return JSONResponse({"error": "no_refresh_token"}, status_code=400)
 
-            try:
-                new_tokens = await self.sso_provider.refresh_token(refresh_tok)
-            except (SSOTokenError, SSODiscoveryError) as exc:
-                logger.error("SSO token refresh failed: %s", exc)
-                return JSONResponse({"error": "refresh_failed", "detail": str(exc)}, status_code=502)
-
-            self.sso_session_store.update_tokens(session_id, new_tokens)
+            # Goes through the same lock-guarded helper as the proactive/reactive
+            # auto-refresh paths, so a manual refresh here can never race one of
+            # those and submit the same (often single-use/rotating) refresh
+            # token twice. The helper itself swallows IdP errors and returns
+            # None rather than raising -- it doesn't distinguish "no session"/
+            # "no refresh token" (already checked above) from an actual IdP
+            # failure, so this endpoint can no longer report IdP failure detail.
+            updated_session = await refresh_sso_session_if_needed(self.sso_session_store, self.sso_provider, session_id)
+            if updated_session is None:
+                return JSONResponse({"error": "refresh_failed"}, status_code=502)
 
             # Issue a new session token reflecting the updated expiry
             new_session_token = self.sso_session_store.generate_session_token(
                 session_id=session_id,
                 sso_session_secret=self.config.sso_session_secret,
             )
-            updated_session = self.sso_session_store.get_session(session_id)
             return JSONResponse(
                 {
                     "session_token": new_session_token,

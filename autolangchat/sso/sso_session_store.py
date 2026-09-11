@@ -128,6 +128,7 @@ class SSOSessionStore:
         if time.time() > session["expires_at"]:
             # Lazy expiry — evict and return None
             del self._sessions[session_id]
+            self._refresh_locks.pop(session_id, None)
             logger.debug("SSO session expired and evicted: %s", session_id)
             return None
         return session

@@ -334,6 +334,27 @@ class TestToolManagerExecuteCap:
         call_ids = {c["id"] for c in calls}
         assert result_ids == call_ids
 
+    @pytest.mark.asyncio
+    async def test_http_error_surfaces_error_and_status_code_at_top_level(self):
+        """A real HTTP 401 must surface 'error'/'status_code' at the top level of
+        the result entry, not nested under 'result' -- callers like
+        tools_execution_node's reactive auth-expiration handling check
+        r.get("status_code") directly on each entry (XMGPLAT-11046 PR review)."""
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 401
+        fake_response.text = "Unauthorized"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        results = await manager.execute_tool_calls(_make_calls(1))
+
+        assert len(results) == 1
+        entry = results[0]
+        assert "result" not in entry
+        assert entry["status_code"] == 401
+        assert entry["error"] == "HTTP 401"
+
 
 # ------------------------------------------------------
 # ToolManager.execute_tool_calls — concurrent execution

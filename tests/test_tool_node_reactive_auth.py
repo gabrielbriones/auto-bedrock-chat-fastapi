@@ -11,8 +11,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from autolangchat.auth_handler import AuthenticationHandler, AuthType, Credentials
-from autolangchat.graph.tools.manager import AuthInfo
+from autolangchat.config import ChatConfig
+from autolangchat.graph.tools.generator import ToolsGenerator
+from autolangchat.graph.tools.manager import AuthInfo, ToolManager
 from autolangchat.graph.tools.tool_node import tools_execution_node
+
+_GET_JOBS_SPEC = {
+    "openapi": "3.0.0",
+    "info": {"title": "Test API", "version": "1.0.0"},
+    "paths": {"/jobs": {"get": {"operationId": "get_jobs", "responses": {"200": {"description": "OK"}}}}},
+}
+
+
+def _make_real_tool_manager() -> ToolManager:
+    """A real ToolManager (not a MagicMock) so execute_tool_calls()'s actual
+    result-shape logic is exercised end-to-end, not bypassed by mocking."""
+    config = ChatConfig(model_id="test-model", excluded_paths=[])
+    generator = ToolsGenerator(openapi_spec=_GET_JOBS_SPEC, config=config)
+    return ToolManager(generated_tools=generator._generated_tools, config=config, base_url="http://test-api")
 
 
 def _make_sso_auth_info(session_token="sess-jwt", sso_session_id="sso-sess-1"):
@@ -249,3 +265,43 @@ class TestMixedResultsOrderingPreserved:
         assert tool_results[0]["result"] == {"fine": True}
         assert tool_results[1]["tool_call_id"] == "call_401"
         assert tool_results[1]["result"] == {"jobs": []}
+
+
+class TestEndToEndWithRealToolManager:
+    """Uses a real ToolManager (mocking only the httpx layer) so the full
+    execute_tool_calls() -> tools_execution_node() chain is exercised,
+    instead of mocking tool_manager.execute_tool_calls() directly (which
+    would mask the top-level-vs-nested result-shape bug fixed in
+    manager.py -- see PR #150 review)."""
+
+    @pytest.mark.asyncio
+    async def test_real_401_response_triggers_refresh_and_retry(self):
+        tm = _make_real_tool_manager()
+        ok_response = MagicMock(status_code=200)
+        ok_response.json.return_value = {"jobs": []}
+        unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
+        tm._http_client.request = AsyncMock(side_effect=[unauthorized_response, ok_response])
+
+        sso_session_store = MagicMock()
+        sso_session_store.get_session.return_value = {"refresh_token": "rt", "access_token": "old_access_token"}
+        sso_provider = MagicMock()
+
+        with patch(
+            "autolangchat.sso.sso_session_store.refresh_sso_session_if_needed",
+            new=AsyncMock(return_value={"access_token": "new_access_token", "refresh_token": "rt"}),
+        ):
+            config = {
+                "configurable": {
+                    "tool_manager": tm,
+                    "auth_info": _make_sso_auth_info(),
+                    "chat_config": SimpleNamespace(auth_expiration_behaviour="reactive"),
+                    "sso_session_store": sso_session_store,
+                    "sso_provider": sso_provider,
+                }
+            }
+            result = await tools_execution_node(_make_state_with_tool_call(name="get_jobs"), config)
+
+        assert tm._http_client.request.await_count == 2
+        assert "auth_expired" not in result["metadata"]
+        tool_results = result["messages"][-1]["tool_results"]
+        assert tool_results[0]["result"] == {"jobs": []}

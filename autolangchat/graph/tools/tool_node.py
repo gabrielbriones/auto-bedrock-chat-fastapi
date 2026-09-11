@@ -89,6 +89,18 @@ async def _handle_reactive_auth_expiration(
         return True
 
     credentials.bearer_token = refreshed_session.get("access_token")
+    # Reissue the session token too (not just the bearer token) -- otherwise
+    # its embedded JWT exp claim still reflects the pre-refresh app-session
+    # expiry, and the next message fails validation at that original deadline
+    # despite the store-side session having been successfully extended. Same
+    # reasoning as the proactive path in websocket_handler.py.
+    chat_config = configurable.get("chat_config")
+    sso_session_secret = getattr(chat_config, "sso_session_secret", None)
+    if sso_session_secret:
+        credentials.session_token = sso_session_store.generate_session_token(
+            session_id=sso_session_id,
+            sso_session_secret=sso_session_secret,
+        )
 
     retry_calls = [normalized_calls[i] for i in failed_indices]
     retry_results = await tool_manager.execute_tool_calls(retry_calls, auth_info=auth_info)

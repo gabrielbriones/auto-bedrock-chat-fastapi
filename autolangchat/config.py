@@ -576,7 +576,10 @@ class ChatConfig(BaseSettings):
             "sends an auth_expired WebSocket message if no refresh path exists). 'reactive' "
             "intercepts a tool call's 401, refreshes once, and retries (or sends auth_expired on "
             "failure). 'both' applies both checks. Manual bearer tokens have no server-side "
-            "refresh path and always go straight to auth_expired under proactive/reactive/both."
+            "refresh path and always go straight to auth_expired once a tool call 401s under "
+            "'reactive'/'both' (the only modes that intercept tool-call results at all -- "
+            "'proactive' only checks token freshness at the message boundary, before any tool "
+            "call is made)."
         ),
     )
 

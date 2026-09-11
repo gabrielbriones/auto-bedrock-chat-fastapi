@@ -353,7 +353,7 @@ SSO sessions expire after `sso_session_ttl` seconds (default 86400, i.e. 24h) �
 - `reactive` — when a tool call actually returns 401, refresh is attempted once and the call retried. Falls back to `auth_expired` on failure.
 - `both` — both checks are active.
 
-`sso_session_ttl` should be set comfortably longer than the IdP's access token lifetime (which `auth_expiration_behaviour` is refreshing within) — if the two are close together, a long idle gap between messages can let the _session_token JWT itself_ expire before a message ever arrives to trigger a refresh, forcing re-login regardless of `auth_expiration_behaviour`. Manual bearer tokens have no server-side refresh path and always go straight to `auth_expired` once expired, under any `auth_expiration_behaviour` setting other than `none`.
+`sso_session_ttl` should be set comfortably longer than the IdP's access token lifetime (which `auth_expiration_behaviour` is refreshing within) — if the two are close together, a long idle gap between messages can let the _session_token JWT itself_ expire before a message ever arrives to trigger a refresh, forcing re-login regardless of `auth_expiration_behaviour`. `proactive` mode never inspects tool-call results — it only checks token freshness at the message boundary, before any tool call is made — so a credential (SSO or manual bearer token) that expires mid-turn is only caught by `reactive`/`both`. Manual bearer tokens have no server-side refresh path and always go straight to `auth_expired` once a tool call 401s under `reactive`/`both`.
 
 ---
 

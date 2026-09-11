@@ -96,13 +96,13 @@ class WebSocketChatHandler:
         app_base_url: str = "http://localhost:8000",
         embedding_client: Optional[Any] = None,
         sso_session_store: Optional[SSOSessionStore] = None,
-        sso_provider: Optional[Any] = None,
         kb_store: Optional[BaseKBStore] = None,
         feedback_store: Optional[BaseFeedbackStore] = None,
         feedback_authorizer: Optional[FeedbackAuthorizer] = None,
         token_usage_store: Optional[BaseTokenUsageStore] = None,
         conversation_store: Optional[BaseConversationStore] = None,
         user_settings_store: Optional[BaseUserSettingsStore] = None,
+        sso_provider: Optional[Any] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -110,7 +110,6 @@ class WebSocketChatHandler:
         self.chat_graph = chat_graph
         self.embedding_client = embedding_client
         self.sso_session_store = sso_session_store
-        self.sso_provider = sso_provider
         self.kb_store = kb_store
         self.feedback_store = feedback_store
         self.feedback_authorizer: FeedbackAuthorizer = feedback_authorizer or AuthenticatedUserAuthorizer(
@@ -119,6 +118,7 @@ class WebSocketChatHandler:
         self.token_usage_store = token_usage_store
         self.conversation_store = conversation_store
         self.user_settings_store = user_settings_store
+        self.sso_provider = sso_provider
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.

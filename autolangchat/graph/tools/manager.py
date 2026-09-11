@@ -340,12 +340,23 @@ class ToolManager:
             for idx, outcome in zip(pending_indices, outcomes):
                 tool_call = capped_calls[idx]
                 function_name = tool_call.get("name")
-                is_error = isinstance(outcome, Exception)
-                if is_error:
+                is_exception = isinstance(outcome, Exception)
+                # _execute_single_tool_call() returns an {"error": ..., "status_code": ...}
+                # dict (rather than raising) for HTTP-level failures -- treat that the same
+                # as a raised exception here so status_code surfaces at the top level of the
+                # result entry (callers like tool_node.py's reactive auth-expiration handling
+                # check it there), instead of being buried under "result".
+                is_http_error = isinstance(outcome, dict) and "error" in outcome
+                if is_exception:
                     logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
 
-                result_entry = {"tool_call_id": tool_call.get("id"), "name": function_name}
-                result_entry["error" if is_error else "result"] = str(outcome) if is_error else outcome
+                result_entry: Dict[str, Any] = {"tool_call_id": tool_call.get("id"), "name": function_name}
+                if is_exception:
+                    result_entry["error"] = str(outcome)
+                elif is_http_error:
+                    result_entry.update(outcome)
+                else:
+                    result_entry["result"] = outcome
                 results[idx] = result_entry
 
         final_results: List[Dict[str, Any]] = [r for r in results if r is not None]
