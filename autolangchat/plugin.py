@@ -673,6 +673,7 @@ class AutoLangChatPlugin:
                             "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
                             "sso_authenticated": sso_authenticated,
                             "sso_user_display": sso_user_display,
+                            "auth_expiration_behaviour": self.config.auth_expiration_behaviour,
                             "feedback_enabled": feedback_enabled,
                             "lock_input_while_responding": self.config.ui_lock_input_while_responding,
                             # Admin Dashboard button visibility probe.
@@ -1306,6 +1307,7 @@ class AutoLangChatPlugin:
             """
             # Extract session token
             session_token = None
+            from_cookie_only = False
             auth_header = request.headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 session_token = auth_header[7:]
@@ -1317,6 +1319,7 @@ class AutoLangChatPlugin:
                     pass
             if not session_token:
                 session_token = request.cookies.get("sso_session_token")
+                from_cookie_only = bool(session_token)
 
             if not session_token:
                 return JSONResponse({"error": "missing_session_token"}, status_code=401)
@@ -1352,12 +1355,20 @@ class AutoLangChatPlugin:
             )
             forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
             is_secure = forwarded_proto == "https" or request.url.scheme == "https"
-            response = JSONResponse(
-                {
-                    "session_token": new_session_token,
-                    "expires_at": updated_session["expires_at"] if updated_session else None,
-                }
-            )
+            # When the caller authenticated purely via the HttpOnly cookie (the
+            # periodic same-origin renewal call from chat-client.js), the body
+            # must NOT also return the raw token -- same-origin JS (e.g. an XSS
+            # payload) could otherwise call this endpoint relying solely on the
+            # auto-attached cookie and read the token straight out of the JSON
+            # response, defeating the whole point of HttpOnly. Only a caller that
+            # explicitly supplied the token itself (Bearer header / body field --
+            # i.e. already had it, nothing new leaked) gets it echoed back.
+            response_body: Dict[str, Any] = {
+                "expires_at": updated_session["expires_at"] if updated_session else None,
+            }
+            if not from_cookie_only:
+                response_body["session_token"] = new_session_token
+            response = JSONResponse(response_body)
             response.set_cookie(
                 key="sso_session_token",
                 value=new_session_token,

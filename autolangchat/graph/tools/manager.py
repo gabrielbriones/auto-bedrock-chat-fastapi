@@ -341,12 +341,19 @@ class ToolManager:
                 tool_call = capped_calls[idx]
                 function_name = tool_call.get("name")
                 is_exception = isinstance(outcome, Exception)
-                # _execute_single_tool_call() returns an {"error": ..., "status_code": ...}
-                # dict (rather than raising) for HTTP-level failures -- treat that the same
-                # as a raised exception here so status_code surfaces at the top level of the
-                # result entry (callers like tool_node.py's reactive auth-expiration handling
-                # check it there), instead of being buried under "result".
-                is_http_error = isinstance(outcome, dict) and "error" in outcome
+                # _execute_single_tool_call() returns (rather than raises) either
+                # {"error": f"HTTP {code}", "status_code": code, "details": ...} for
+                # an HTTP >=400 response, or {"error": str(exc)} for a network-level
+                # failure -- both need to surface at the top level of the result
+                # entry (callers like tool_node.py's reactive auth-expiration
+                # handling check status_code there), instead of being buried under
+                # "result". Detected by shape, not just "'error' in outcome": a
+                # successful 2xx JSON body can legitimately contain its own
+                # "error" field (e.g. {"error": null, "data": ...}) and must not
+                # be misclassified as a tool failure.
+                is_http_error = isinstance(outcome, dict) and (
+                    "status_code" in outcome or set(outcome.keys()) == {"error"}
+                )
                 if is_exception:
                     logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
 

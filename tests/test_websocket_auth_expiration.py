@@ -20,6 +20,7 @@ for _name in [n for n in list(sys.modules) if n == "autolangchat" or n.startswit
 from autolangchat.auth_handler import AuthType, Credentials  # noqa: E402
 from autolangchat.config import ChatConfig  # noqa: E402
 from autolangchat.session_manager import ChatSession  # noqa: E402
+from autolangchat.sso.sso_handler import SSOTokenError  # noqa: E402
 from autolangchat.sso.sso_session_store import SSOSessionStore  # noqa: E402
 from autolangchat.websocket_handler import WebSocketChatHandler  # noqa: E402
 
@@ -202,3 +203,45 @@ class TestIntegrationTokenExpiryMidSession:
         assert chat_session.credentials is not None
         assert chat_session.credentials.bearer_token == "at2"
         assert sso_session_store.get_session(sid)["access_token"] == "at2"
+
+
+class TestRefreshSessionTokenMessage:
+    """Covers the refresh_session_token WS message (PR #150 round 2 review):
+    the periodic cookie-renewal HTTP call from chat-client.js deliberately
+    never returns the token for a cookie-only caller, so the live connection
+    needs its own independent path to pick up a renewal."""
+
+    @pytest.mark.asyncio
+    async def test_refreshes_live_connection_credentials_in_place(self):
+        handler, chat_session, websocket, sso_session_store, sid, sso_provider = _make_sso_handler(
+            auth_expiration_behaviour="both", expires_in=3600
+        )
+
+        await handler._handle_refresh_session_token(websocket, {})
+
+        sso_provider.refresh_token.assert_awaited_once_with("rt1")
+        assert chat_session.credentials.bearer_token == "at2"
+        assert SSOSessionStore.validate_session_token(chat_session.credentials.session_token, SSO_SECRET) == sid
+        # Best-effort/silent -- no message sent to the client for this.
+        assert _sent_messages(websocket) == []
+
+    @pytest.mark.asyncio
+    async def test_non_sso_credentials_are_a_silent_no_op(self):
+        handler, chat_session, websocket, *_rest = _make_sso_handler(auth_expiration_behaviour="both")
+        chat_session.credentials = None
+
+        await handler._handle_refresh_session_token(websocket, {})
+
+        assert _sent_messages(websocket) == []
+
+    @pytest.mark.asyncio
+    async def test_failed_refresh_is_a_silent_no_op_not_auth_expired(self):
+        handler, chat_session, websocket, sso_session_store, sid, sso_provider = _make_sso_handler(
+            auth_expiration_behaviour="both"
+        )
+        sso_provider.refresh_token = AsyncMock(side_effect=SSOTokenError("idp down"))
+
+        await handler._handle_refresh_session_token(websocket, {})
+
+        assert chat_session.credentials.bearer_token == "at1"  # unchanged
+        assert _sent_messages(websocket) == []

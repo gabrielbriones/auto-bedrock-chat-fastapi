@@ -355,6 +355,25 @@ class TestToolManagerExecuteCap:
         assert entry["status_code"] == 401
         assert entry["error"] == "HTTP 401"
 
+    @pytest.mark.asyncio
+    async def test_successful_response_with_an_error_field_is_not_misclassified(self):
+        """A 2xx response body that legitimately contains an "error" key (e.g.
+        {"error": null, "data": ...}) must still be treated as a successful
+        result, not flattened into a tool failure (PR #150 round 2 review)."""
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {"error": None, "data": {"jobs": []}}
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        results = await manager.execute_tool_calls(_make_calls(1))
+
+        assert len(results) == 1
+        entry = results[0]
+        assert "error" not in entry
+        assert entry["result"] == {"error": None, "data": {"jobs": []}}
+
 
 # ------------------------------------------------------
 # ToolManager.execute_tool_calls — concurrent execution

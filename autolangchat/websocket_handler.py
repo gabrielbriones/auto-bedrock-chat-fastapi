@@ -298,6 +298,8 @@ class WebSocketChatHandler:
                     await self._handle_config_update(websocket, message_data)
                 elif message_type == "config_reset":
                     await self._handle_config_reset(websocket, message_data)
+                elif message_type == "refresh_session_token":
+                    await self._handle_refresh_session_token(websocket, message_data)
                 else:
                     await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -2022,6 +2024,47 @@ class WebSocketChatHandler:
             logger.error(f"Error handling authentication message: {str(e)}")
             self._total_errors += 1
             await self._send_error(websocket, f"Authentication error: {str(e)}")
+
+    async def _handle_refresh_session_token(self, websocket: WebSocket, data: Dict[str, Any]):
+        """Best-effort: refresh this connection's own in-memory SSO credentials.
+
+        Companion to chat-client.js's periodic /auth/sso/refresh cookie renewal
+        -- that HTTP call only extends the browser cookie (deliberately never
+        returning the token, so a same-origin XSS can't read it out of the
+        response), so this WS message lets the same periodic cadence also keep
+        the *current* live connection's session_token from going stale,
+        without waiting for the next chat message or a reconnect. Silent no-op
+        on any failure -- the existing proactive/reactive checks in
+        _handle_chat_message remain the authoritative path for actually
+        reporting an expired session to the client.
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session or not session.credentials or session.credentials.auth_type != AuthType.SSO:
+            return
+        if not self.sso_session_store or not self.sso_provider:
+            return
+
+        session_token = session.credentials.session_token
+        if not session_token:
+            return
+        sso_session_id = _get_sso_session_store_class().validate_session_token(
+            session_token, self.config.sso_session_secret
+        )
+        if not sso_session_id:
+            return
+
+        refresh_sso_session_if_needed = _get_refresh_sso_session_if_needed()
+        refreshed_session = await refresh_sso_session_if_needed(
+            self.sso_session_store, self.sso_provider, sso_session_id
+        )
+        if refreshed_session is None:
+            return
+
+        session.credentials.bearer_token = refreshed_session.get("access_token")
+        session.credentials.session_token = self.sso_session_store.generate_session_token(
+            session_id=sso_session_id,
+            sso_session_secret=self.config.sso_session_secret,
+        )
 
     async def _handle_logout(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle logout message from client"""
