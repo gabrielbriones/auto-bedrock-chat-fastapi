@@ -351,15 +351,15 @@ class ToolManager:
                 if isinstance(outcome, ToolHTTPError):
                     logger.error(f"Error executing tool call {function_name}: {outcome}")
                     # Preserve the legacy (pre-auth-expiration-feature) shape --
-                    # the HTTP error nested under "result", exactly as every
-                    # caller/the LLM already saw it -- so auth_expiration_behaviour
-                    # ="none" (and any other caller not opted into the new
-                    # reactive-mode handling) keeps 100% the same tool_msg
-                    # content. status_code is additionally surfaced at the top
-                    # level purely for tool_node.py's reactive-mode detection.
+                    # the HTTP error nested under "result" as exactly {"error",
+                    # "details"}, with no other keys -- as every caller/the LLM
+                    # already saw it, so auth_expiration_behaviour="none" (and
+                    # any other caller not opted into the new reactive-mode
+                    # handling) keeps 100% the same tool_msg content. status_code
+                    # is only surfaced at the top level, purely for tool_node.py's
+                    # reactive-mode detection.
                     result_entry["result"] = {
                         "error": str(outcome),
-                        "status_code": outcome.status_code,
                         "details": outcome.details,
                     }
                     result_entry["status_code"] = outcome.status_code

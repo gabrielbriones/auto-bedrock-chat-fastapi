@@ -62,7 +62,10 @@ def access_token_expires_in(access_token: str) -> Optional[int]:
     exp = claims.get("exp")
     if exp is None:
         return None
-    return int(exp - time.time())
+    try:
+        return int(exp - time.time())
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------

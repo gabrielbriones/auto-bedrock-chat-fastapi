@@ -339,11 +339,12 @@ class TestToolManagerExecuteCap:
         """A real HTTP 401 must surface 'status_code' at the top level of the
         result entry (callers like tools_execution_node's reactive
         auth-expiration handling check r.get("status_code") directly), while
-        the full error/status_code/details dict stays nested under "result"
-        exactly as before this feature existed, so auth_expiration_behaviour
-        ="none" (and any caller not opted into reactive handling) sees the
-        exact same tool_msg content as pre-XMGPLAT-11046 (PR #150 round 5
-        review -- backward-compatibility regression)."""
+        the nested "result" dict stays exactly {"error", "details"} -- with
+        no other keys -- matching the pre-XMGPLAT-11046 shape byte-for-byte,
+        so auth_expiration_behaviour="none" (and any caller not opted into
+        reactive handling) sees the exact same tool_msg content as before
+        this feature existed (PR #150 round 6 review -- status_code must not
+        leak into the nested legacy dict)."""
         manager = _make_manager_with_limit(None)
 
         fake_response = MagicMock()
@@ -356,7 +357,7 @@ class TestToolManagerExecuteCap:
         assert len(results) == 1
         entry = results[0]
         assert entry["status_code"] == 401
-        assert entry["result"] == {"error": "HTTP 401", "status_code": 401, "details": "Unauthorized"}
+        assert entry["result"] == {"error": "HTTP 401", "details": "Unauthorized"}
         assert "error" not in entry
 
     @pytest.mark.asyncio

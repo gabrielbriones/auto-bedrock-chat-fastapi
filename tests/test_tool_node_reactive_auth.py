@@ -311,9 +311,11 @@ class TestEndToEndWithRealToolManager:
     async def test_none_mode_tool_msg_content_matches_pre_feature_shape(self):
         """auth_expiration_behaviour="none" must produce byte-identical
         tool_msg content to what every caller/the LLM saw before this
-        feature existed -- a real HTTP 401's error dict nested under
-        "result", not hoisted to the top level (PR #150 round 5 review:
-        backward-compatibility regression caught after round 4)."""
+        feature existed -- a real HTTP 401's error dict (just "error" and
+        "details", no "status_code") nested under "result", not hoisted to
+        the top level (PR #150 round 5/6 review: backward-compatibility
+        regression caught after round 4, then status_code leaking into the
+        nested dict caught after round 5)."""
         tm = _make_real_tool_manager()
         unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
         tm._http_client.request = AsyncMock(return_value=unauthorized_response)
@@ -328,9 +330,10 @@ class TestEndToEndWithRealToolManager:
         result = await tools_execution_node(_make_state_with_tool_call(name="get_jobs"), config)
 
         tool_results = result["messages"][-1]["tool_results"]
-        assert tool_results[0]["result"] == {"error": "HTTP 401", "status_code": 401, "details": "Unauthorized"}
+        assert tool_results[0]["result"] == {"error": "HTTP 401", "details": "Unauthorized"}
+        assert tool_results[0]["status_code"] == 401
         assert "auth_expired" not in result["metadata"]
         # tool_msg["content"] must be the legacy shape too -- json.dumps of the
         # nested "result" dict, not the bare error string.
         tool_msg = result["messages"][-1]
-        assert json.loads(tool_msg["content"]) == [{"error": "HTTP 401", "status_code": 401, "details": "Unauthorized"}]
+        assert json.loads(tool_msg["content"]) == [{"error": "HTTP 401", "details": "Unauthorized"}]

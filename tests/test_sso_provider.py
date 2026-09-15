@@ -166,3 +166,12 @@ class TestAccessTokenExpiresIn:
         token = jwt.encode({"sub": "user1"}, "any-secret-not-ours", algorithm="HS256")
 
         assert access_token_expires_in(token) is None
+
+    def test_returns_none_for_non_numeric_exp_claim(self):
+        """With signature/expiry verification disabled, PyJWT does not
+        validate the type of the exp claim -- a malformed external cookie
+        could carry a non-numeric exp, which must not raise (PR #150 round 6
+        review)."""
+        token = jwt.encode({"exp": "not-a-number", "sub": "user1"}, "any-secret-not-ours", algorithm="HS256")
+
+        assert access_token_expires_in(token) is None
