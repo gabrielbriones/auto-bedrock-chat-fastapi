@@ -5,6 +5,7 @@ component (no changes tested here beyond the status_code field it now
 returns); the catch/refresh/retry logic lives in tool_node.py instead.
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -305,3 +306,31 @@ class TestEndToEndWithRealToolManager:
         assert "auth_expired" not in result["metadata"]
         tool_results = result["messages"][-1]["tool_results"]
         assert tool_results[0]["result"] == {"jobs": []}
+
+    @pytest.mark.asyncio
+    async def test_none_mode_tool_msg_content_matches_pre_feature_shape(self):
+        """auth_expiration_behaviour="none" must produce byte-identical
+        tool_msg content to what every caller/the LLM saw before this
+        feature existed -- a real HTTP 401's error dict nested under
+        "result", not hoisted to the top level (PR #150 round 5 review:
+        backward-compatibility regression caught after round 4)."""
+        tm = _make_real_tool_manager()
+        unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
+        tm._http_client.request = AsyncMock(return_value=unauthorized_response)
+
+        config = {
+            "configurable": {
+                "tool_manager": tm,
+                "auth_info": None,
+                "chat_config": SimpleNamespace(auth_expiration_behaviour="none"),
+            }
+        }
+        result = await tools_execution_node(_make_state_with_tool_call(name="get_jobs"), config)
+
+        tool_results = result["messages"][-1]["tool_results"]
+        assert tool_results[0]["result"] == {"error": "HTTP 401", "status_code": 401, "details": "Unauthorized"}
+        assert "auth_expired" not in result["metadata"]
+        # tool_msg["content"] must be the legacy shape too -- json.dumps of the
+        # nested "result" dict, not the bare error string.
+        tool_msg = result["messages"][-1]
+        assert json.loads(tool_msg["content"]) == [{"error": "HTTP 401", "status_code": 401, "details": "Unauthorized"}]

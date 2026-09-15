@@ -37,11 +37,12 @@ SSOTokenError = None  # type: ignore[assignment]
 SSOValidationError = None  # type: ignore[assignment]
 extract_user_id_from_sso_session = None  # type: ignore[assignment]
 refresh_sso_session_if_needed = None  # type: ignore[assignment]
+access_token_expires_in = None  # type: ignore[assignment]
 
 
 def _load_sso_imports():
     """Lazily import SSO modules; raises ImportError with a helpful message."""
-    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session, refresh_sso_session_if_needed  # noqa: E501
+    global SSOProvider, SSOSessionStore, SSODiscoveryError, SSOTokenError, SSOValidationError, extract_user_id_from_sso_session, refresh_sso_session_if_needed, access_token_expires_in  # noqa: E501
     if SSOProvider is not None:
         return  # already loaded
     try:
@@ -49,6 +50,7 @@ def _load_sso_imports():
         from .sso.sso_handler import SSOProvider as _SSOProvider
         from .sso.sso_handler import SSOTokenError as _SSOTokenError
         from .sso.sso_handler import SSOValidationError as _SSOValidationError
+        from .sso.sso_handler import access_token_expires_in as _access_token_expires_in
         from .sso.sso_session_store import SSOSessionStore as _SSOSessionStore
         from .sso.sso_session_store import extract_user_id_from_sso_session as _extract_user_id
         from .sso.sso_session_store import refresh_sso_session_if_needed as _refresh_sso_session_if_needed
@@ -61,6 +63,7 @@ def _load_sso_imports():
     SSOValidationError = _SSOValidationError
     extract_user_id_from_sso_session = _extract_user_id
     refresh_sso_session_if_needed = _refresh_sso_session_if_needed
+    access_token_expires_in = _access_token_expires_in
 
 
 # MCP imports are deferred — only loaded when mcp_enabled=True at runtime.
@@ -1093,6 +1096,16 @@ class AutoLangChatPlugin:
             return None
 
         tokens = {"id_token": id_token, "access_token": access_token, "refresh_token": refresh_token}
+        # This access token wasn't obtained via our own token exchange, so
+        # there's no IdP-reported expires_in to attach -- read the token's own
+        # exp claim instead (trusted via its at_hash binding to the
+        # already-validated id_token above). Without this, create_session()
+        # would fall back to treating it as valid for the full app-session TTL
+        # (hours/days), so proactive/reactive checks would never refresh it
+        # before the real (much shorter) IdP expiry hits and a tool call 401s.
+        expires_in = access_token_expires_in(access_token)
+        if expires_in is not None:
+            tokens["expires_in"] = expires_in
         session_id = self.sso_session_store.create_session(
             tokens=tokens,
             user_info={},

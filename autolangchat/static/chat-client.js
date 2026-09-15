@@ -819,6 +819,9 @@ class ChatClient {
                     console.log('Logout: closing connection (intentional close flag already set)');
                     this.ws.close();
                 }
+                // Same reasoning as auth_expired -- don't keep renewing a
+                // cookie for a session that was just logged out.
+                this.destroy();
                 break;
 
             case 'connection_established':
@@ -982,6 +985,11 @@ class ChatClient {
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                     this.ws.close();
                 }
+                // Credentials are cleared and the connection is being torn
+                // down -- stop the periodic cookie-renewal timer too, or it
+                // keeps issuing IdP refresh grants hourly for a session that
+                // no longer exists.
+                this.destroy();
                 this.addMessage('system', `⏰ ${data.message || 'Session expired. Please log in again.'}`);
                 this.updateAuthButtonUI();
                 this._updateConversationSidebarVisibility();
