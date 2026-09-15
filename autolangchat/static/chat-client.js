@@ -143,7 +143,20 @@ class ChatClient {
         // tick fires an hour later.
         renew();
         const oneHourMs = 60 * 60 * 1000;
-        setInterval(renew, oneHourMs);
+        this._ssoRenewalIntervalId = setInterval(renew, oneHourMs);
+    }
+
+    // Stops the periodic SSO cookie-renewal timer. Callers that replace
+    // window.chatClient with a new instance (see auth.js) must call this on
+    // the outgoing instance first -- otherwise its timer keeps running
+    // forever in the background (a leaked closure keeps it alive), issuing
+    // cookie-only /refresh calls -- and IdP refresh-token rotations -- for a
+    // connection nobody uses anymore.
+    destroy() {
+        if (this._ssoRenewalIntervalId) {
+            clearInterval(this._ssoRenewalIntervalId);
+            this._ssoRenewalIntervalId = null;
+        }
     }
 
     setupEventListeners() {

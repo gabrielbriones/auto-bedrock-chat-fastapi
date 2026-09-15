@@ -20,7 +20,7 @@ import httpx
 
 from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
-from ...exceptions import ToolError
+from ...exceptions import ToolError, ToolHTTPError
 
 logger = logging.getLogger(__name__)
 
@@ -340,28 +340,22 @@ class ToolManager:
             for idx, outcome in zip(pending_indices, outcomes):
                 tool_call = capped_calls[idx]
                 function_name = tool_call.get("name")
-                is_exception = isinstance(outcome, Exception)
-                # _execute_single_tool_call() returns (rather than raises) either
-                # {"error": f"HTTP {code}", "status_code": code, "details": ...} for
-                # an HTTP >=400 response, or {"error": str(exc)} for a network-level
-                # failure -- both need to surface at the top level of the result
-                # entry (callers like tool_node.py's reactive auth-expiration
-                # handling check status_code there), instead of being buried under
-                # "result". Detected by shape, not just "'error' in outcome": a
-                # successful 2xx JSON body can legitimately contain its own
-                # "error" field (e.g. {"error": null, "data": ...}) and must not
-                # be misclassified as a tool failure.
-                is_http_error = isinstance(outcome, dict) and (
-                    "status_code" in outcome or set(outcome.keys()) == {"error"}
-                )
-                if is_exception:
-                    logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
-
                 result_entry: Dict[str, Any] = {"tool_call_id": tool_call.get("id"), "name": function_name}
-                if is_exception:
+                # _execute_single_tool_call() raises ToolHTTPError for an HTTP
+                # >=400 response, or lets a network-level exception propagate --
+                # both are real Exception instances here (asyncio.gather's own
+                # return_exceptions=True), so they're identified by type, never
+                # by sniffing dict keys (which would risk misclassifying an
+                # arbitrary successful JSON payload reusing the same key names,
+                # e.g. {"status_code": 200, "data": ...}).
+                if isinstance(outcome, ToolHTTPError):
+                    logger.error(f"Error executing tool call {function_name}: {outcome}")
                     result_entry["error"] = str(outcome)
-                elif is_http_error:
-                    result_entry.update(outcome)
+                    result_entry["status_code"] = outcome.status_code
+                    result_entry["details"] = outcome.details
+                elif isinstance(outcome, Exception):
+                    logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
+                    result_entry["error"] = str(outcome)
                 else:
                     result_entry["result"] = outcome
                 results[idx] = result_entry
@@ -429,7 +423,13 @@ class ToolManager:
             auth_info: Optional authentication data for the request.
 
         Returns:
-            The parsed response (JSON dict, or error dict on failure).
+            The parsed successful response (JSON dict/list, or plain text if
+            not JSON-decodable).
+
+        Raises:
+            ToolHTTPError: If the response status is >=400.
+            Exception: Network-level failures (connection, timeout, etc.)
+                propagate as raised by the underlying HTTP client.
         """
         method: str = tool_metadata["method"]
         path: str = tool_metadata["path"]
@@ -452,7 +452,9 @@ class ToolManager:
         if auth_info and auth_info.auth_handler and auth_info.credentials:
             headers = await auth_info.auth_handler.apply_auth_to_headers(headers)
 
-        # Make HTTP request
+        # Make HTTP request. Only the request itself is wrapped -- a raised
+        # ToolHTTPError below must propagate to the caller (execute_tool_calls()'s
+        # gather, or call_tool()'s direct await), not get swallowed here too.
         try:
             if method in ["GET", "DELETE"]:
                 response = await self._http_client.request(
@@ -469,23 +471,17 @@ class ToolManager:
                     json=query_params if query_params else None,
                     headers=headers,
                 )
-
-            # Parse response
-            if response.status_code >= 400:
-                return {
-                    "error": f"HTTP {response.status_code}",
-                    "status_code": response.status_code,
-                    "details": response.text[:500],
-                }
-
-            try:
-                return response.json()
-            except Exception:
-                return response.text
-
         except Exception as e:
             logger.error(f"Error executing HTTP request to {url}: {str(e)}")
-            return {"error": str(e)}
+            raise
+
+        if response.status_code >= 400:
+            raise ToolHTTPError(response.status_code, response.text[:500])
+
+        try:
+            return response.json()
+        except Exception:
+            return response.text
 
 
 # ---------------------------------------------------------------------------
