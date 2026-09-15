@@ -171,6 +171,37 @@ class TestRefreshSsoSessionIfNeeded:
         assert all(r is not None for r in results)
         assert store.get_session(sid)["access_token"] == "new_at_1"
 
+    @pytest.mark.asyncio
+    async def test_concurrent_callers_detected_even_if_idp_returns_same_access_token(self):
+        """Some IdPs return the *same* access_token on a refresh (e.g. sliding-
+        window opaque tokens). The double-checked-lock discriminator must not
+        rely on the access_token string changing, or a waiter could still
+        submit a second refresh_token grant with an already-rotated/single-use
+        refresh token (PR #150 round 7 review)."""
+        store = SSOSessionStore(session_ttl=3600)
+        sid = store.create_session(tokens={"access_token": "same_at", "refresh_token": "old_rt"})
+
+        call_count = 0
+
+        async def _slow_refresh(refresh_token):
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.05)
+            # IdP returns the same access_token every time.
+            return {"access_token": "same_at", "refresh_token": "new_rt", "expires_in": 3600}
+
+        provider = AsyncMock()
+        provider.refresh_token = _slow_refresh
+
+        results = await asyncio.gather(
+            refresh_sso_session_if_needed(store, provider, sid),
+            refresh_sso_session_if_needed(store, provider, sid),
+        )
+
+        assert call_count == 1
+        assert all(r is not None for r in results)
+        assert store.get_session(sid)["refresh_token"] == "new_rt"
+
 
 class TestCanRefresh:
     def test_false_for_none_credentials(self):

@@ -106,6 +106,9 @@ class SSOSessionStore:
             # handling checks this, not expires_at above).
             "access_token_expires_at": now + tokens.get("expires_in", self._session_ttl),
             "created_at": now,
+            # Bumped on every update_tokens() call -- a refresh happened, even
+            # if the IdP happened to return an unchanged access_token string.
+            "refresh_generation": 0,
         }
         logger.debug("SSO session created: %s (expires in %ds)", session_id, self._session_ttl)
 
@@ -162,6 +165,7 @@ class SSOSessionStore:
         # Extend expiry on refresh
         session["expires_at"] = now + self._session_ttl
         session["access_token_expires_at"] = now + new_tokens.get("expires_in", self._session_ttl)
+        session["refresh_generation"] = session.get("refresh_generation", 0) + 1
         logger.debug("SSO session tokens updated: %s", session_id)
         return True
 
@@ -327,9 +331,9 @@ async def refresh_sso_session_if_needed(
     token is available, and persists the new tokens via ``update_tokens()``.
     Safe to call concurrently for the same ``sso_session_id`` — only one
     caller actually performs the IdP round trip; the lock alone only
-    serializes callers, so a waiter re-checks ``access_token`` once it gets
-    the lock and, if it already changed while waiting, adopts the winner's
-    refreshed session instead of also calling the IdP.
+    serializes callers, so a waiter re-checks the session's ``refresh_generation``
+    counter once it gets the lock and, if it already changed while waiting,
+    adopts the winner's refreshed session instead of also calling the IdP.
 
     Args:
         sso_session_store: The store owning ``sso_session_id``.
@@ -348,13 +352,18 @@ async def refresh_sso_session_if_needed(
     refresh_tok = session_before_lock.get("refresh_token")
     if not refresh_tok:
         return None
-    access_token_before = session_before_lock.get("access_token")
+    # A monotonic counter, not the access_token string, is the discriminator:
+    # some IdPs return the *same* access token on refresh (e.g. sliding-window
+    # opaque tokens), which would otherwise make this check think no refresh
+    # happened and let a waiter submit a second refresh_token grant with a
+    # possibly-already-rotated/single-use refresh token.
+    refresh_generation_before = session_before_lock.get("refresh_generation", 0)
 
     async with sso_session_store.get_refresh_lock(sso_session_id):
         session = sso_session_store.get_session(sso_session_id)
         if session is None:
             return None
-        if session.get("access_token") != access_token_before:
+        if session.get("refresh_generation", 0) != refresh_generation_before:
             # Another caller already refreshed while we waited for the lock.
             return session
         try:
