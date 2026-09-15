@@ -127,8 +127,7 @@ class ChatClient {
         if (!refreshUrl) {
             return;
         }
-        const oneHourMs = 60 * 60 * 1000;
-        setInterval(() => {
+        const renew = () => {
             fetch(refreshUrl, { method: 'POST', credentials: 'same-origin' }).catch(() => {
                 // Best-effort -- a failed cookie renewal just means the cookie
                 // keeps counting down to its existing expiry; nothing to
@@ -137,7 +136,14 @@ class ChatClient {
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: 'refresh_session_token' }));
             }
-        }, oneHourMs);
+        };
+        // Renew immediately too -- the cookie's max_age counts down from
+        // login, not from page load/reload, so a tab opened near the 24h
+        // expiry would otherwise lose the cookie before the first interval
+        // tick fires an hour later.
+        renew();
+        const oneHourMs = 60 * 60 * 1000;
+        setInterval(renew, oneHourMs);
     }
 
     setupEventListeners() {
