@@ -245,4 +245,22 @@ class TestRefreshSessionTokenMessage:
         await handler._handle_refresh_session_token(websocket, {})
 
         assert chat_session.credentials.bearer_token == "at1"  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_none_mode_is_a_server_side_no_op_even_if_client_sends_it(self):
+        """The frontend only sends this message when auth_expiration_behaviour
+        != "none", but that's not an authorization guard -- a client could
+        still send it under "none" to force a real refresh_token grant and
+        extend the SSO session indefinitely. Must be rejected server-side
+        (PR #150 round 9 review)."""
+        handler, chat_session, websocket, sso_session_store, sid, sso_provider = _make_sso_handler(
+            auth_expiration_behaviour="none"
+        )
+
+        await handler._handle_refresh_session_token(websocket, {})
+
+        sso_provider.refresh_token.assert_not_awaited()
+        assert chat_session.credentials.bearer_token == "at1"  # unchanged
+        assert _sent_messages(websocket) == []
+
         assert _sent_messages(websocket) == []

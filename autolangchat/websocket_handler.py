@@ -2038,6 +2038,13 @@ class WebSocketChatHandler:
         _handle_chat_message remain the authoritative path for actually
         reporting an expired session to the client.
         """
+        # Client-controlled message -- chat-client.js only sends this when
+        # auth_expiration_behaviour != "none", but that's just UI behavior,
+        # not an authorization guard. Enforce it here too, or a caller could
+        # keep sending this message to force real refresh_token grants and
+        # extend the SSO session indefinitely even in "none" mode.
+        if self.config.auth_expiration_behaviour == "none":
+            return
         session = await self.session_manager.peek_session(websocket)
         if not session or not session.credentials or session.credentials.auth_type != AuthType.SSO:
             return
