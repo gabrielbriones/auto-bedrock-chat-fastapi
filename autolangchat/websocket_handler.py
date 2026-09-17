@@ -2038,7 +2038,7 @@ class WebSocketChatHandler:
         _handle_chat_message remain the authoritative path for actually
         reporting an expired session to the client.
         """
-        session = await self.session_manager.get_session(websocket)
+        session = await self.session_manager.peek_session(websocket)
         if not session or not session.credentials or session.credentials.auth_type != AuthType.SSO:
             return
         if not self.sso_session_store or not self.sso_provider:

@@ -81,6 +81,7 @@ def _make_sso_handler(auth_expiration_behaviour="none", expires_in=3600, graph_s
 
     session_manager = MagicMock()
     session_manager.get_session = AsyncMock(return_value=chat_session)
+    session_manager.peek_session = AsyncMock(return_value=chat_session)
 
     chat_graph = MagicMock()
     chat_graph.ainvoke = AsyncMock(return_value=graph_state or _assistant_graph_state())
