@@ -44,6 +44,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from .admin.admin_auth import AdminIdentity
 from .db.conversation_base import BaseConversationStore
 from .exceptions import ConversationNotFoundError
+from .history import format_history_messages
 from .models import (
     ConversationCreateRequest,
     ConversationDeleteAllResponse,
@@ -58,25 +59,8 @@ logger = logging.getLogger(__name__)
 
 
 def _format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[ConversationMessageItem]:
-    """Convert LangGraph checkpoint message dicts to the API response shape.
-
-    Mirrors ``WebSocketChatHandler._format_history_messages`` (kept as a
-    separate copy rather than importing from ``websocket_handler`` to avoid
-    a REST-routes -> WebSocket-handler import dependency for what is a
-    small, stable mapping).
-    """
-    return [
-        ConversationMessageItem(
-            message_id=m.get("metadata", {}).get("message_id"),
-            role=m.get("role"),
-            content=m.get("content", ""),
-            timestamp=m.get("metadata", {}).get("timestamp"),
-            tool_calls=m.get("tool_calls", []),
-            tool_results=m.get("tool_results", []),
-            metadata=m.get("metadata", {}),
-        )
-        for m in raw_messages
-    ]
+    """Convert LangGraph checkpoint message dicts to the API response shape."""
+    return [ConversationMessageItem(**m) for m in format_history_messages(raw_messages)]
 
 
 def _ensure_self(user_id: str, identity: AdminIdentity) -> None:
