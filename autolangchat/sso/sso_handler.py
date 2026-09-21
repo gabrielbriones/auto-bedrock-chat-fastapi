@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import logging
 import os
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urlencode
 
@@ -39,6 +40,32 @@ class SSOTokenError(Exception):
 
 class SSOValidationError(Exception):
     """Raised when ID token validation fails."""
+
+
+def access_token_expires_in(access_token: str) -> Optional[int]:
+    """Best-effort seconds-until-expiry read from an access token's own ``exp`` claim.
+
+    Used when a token wasn't obtained through this app's own token exchange
+    (so no ``expires_in`` value from an IdP response is available) -- e.g.
+    the silent external-IdP-cookie path, where the access token is trusted
+    via its binding (``at_hash``) to an already signature-validated ID token.
+    Only reads the claim; does not verify the access token's own signature.
+
+    Returns:
+        Seconds until expiry (may be negative if already expired), or
+        ``None`` if the token isn't a decodable JWT or has no ``exp`` claim.
+    """
+    try:
+        claims = jwt.decode(access_token, options={"verify_signature": False, "verify_exp": False})
+    except PyJWTError:
+        return None
+    exp = claims.get("exp")
+    if exp is None:
+        return None
+    try:
+        return int(exp - time.time())
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
