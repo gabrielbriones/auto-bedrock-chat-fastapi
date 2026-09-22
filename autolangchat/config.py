@@ -2,10 +2,10 @@
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
@@ -453,7 +453,23 @@ class ChatConfig(BaseSettings):
     ui_endpoint: str = Field(
         default="/chat/ui",
         alias="AUTOCHAT_UI_ENDPOINT",
-        description="Web UI endpoint",
+        description="Site-root mount path for the chat UI (the React SPA build, BC-002)",
+    )
+
+    ui_dist_dir: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_UI_DIST_DIR",
+        description=(
+            "Directory containing the built SPA (Vite ``dist/`` with ``index.html``). "
+            "Defaults to ``<repo>/frontend/dist`` next to the installed package."
+        ),
+    )
+
+    sso_allowed_return_prefixes: Annotated[List[str], NoDecode] = Field(
+        default_factory=list,
+        alias="AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES",
+        description="Same-site path prefixes allowed as post-SSO redirect targets",
+        validate_default=True,
     )
 
     enable_ui: bool = Field(default=True, alias="AUTOCHAT_ENABLE_UI", description="Enable built-in chat UI")
@@ -1369,6 +1385,7 @@ class ChatConfig(BaseSettings):
         "excluded_paths",
         "admin_required_groups",
         "feedback_authorized_users",
+        "sso_allowed_return_prefixes",
         "allowed_dynamic_overrides",
         "available_models",
         "providers",
@@ -1380,6 +1397,11 @@ class ChatConfig(BaseSettings):
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @field_validator("sso_allowed_return_prefixes")
+    @classmethod
+    def default_sso_allowed_return_prefixes(cls, v, info):
+        return v or [info.data["ui_endpoint"]]
 
     @field_validator("temperature")
     @classmethod

@@ -1,5 +1,14 @@
 # Docker configuration for auto-bedrock-chat-fastapi
-# Multi-stage build for optimal image size
+# Multi-stage build: Node builds the React SPA, Python builds the venv, slim runtime serves both.
+FROM node:24-alpine AS frontend
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+# Emits /frontend/dist, served by autolangchat at /ui (BC-002).
+RUN npm run build
+
 FROM python:3.14-slim AS builder
 
 # Set environment variables
@@ -58,6 +67,9 @@ WORKDIR /app
 
 # Copy application code
 COPY . .
+
+# Built SPA; resolved by autolangchat as <repo>/frontend/dist (override with AUTOCHAT_UI_DIST_DIR)
+COPY --from=frontend /frontend/dist ./frontend/dist
 
 # Change ownership to appuser
 RUN chown -R appuser:appuser /app

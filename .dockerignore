@@ -1,0 +1,18 @@
+# Keep the build context small; the SPA is built inside the Dockerfile's Node stage.
+.git
+.pytest_cache
+.ruff_cache
+.mypy_cache
+__pycache__
+*.pyc
+htmlcov
+coverage.xml
+.coverage
+.env
+!.env.example
+
+frontend/node_modules
+frontend/dist
+frontend/coverage
+frontend/.tanstack
+frontend/.env

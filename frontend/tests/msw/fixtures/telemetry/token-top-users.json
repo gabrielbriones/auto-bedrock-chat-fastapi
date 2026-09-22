@@ -1,0 +1,9 @@
+{
+  "items": [
+    {
+      "user_id": "alice@example.com",
+      "input_tokens": 100,
+      "output_tokens": 50
+    }
+  ]
+}

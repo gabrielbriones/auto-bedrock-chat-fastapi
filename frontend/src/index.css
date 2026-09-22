@@ -1,0 +1,351 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light dark;
+
+  /* Brand (Intel blue) ramp — 50/500/600 are pinned legacy anchors, rest derived (SPEC-020 §2.1) */
+  --palette-brand-50: #e8f2fb;
+  --palette-brand-100: color-mix(in oklch, white 75%, var(--palette-brand-500) 25%);
+  --palette-brand-200: color-mix(in oklch, white 55%, var(--palette-brand-500) 45%);
+  --palette-brand-300: color-mix(in oklch, white 35%, var(--palette-brand-500) 65%);
+  --palette-brand-400: color-mix(in oklch, white 15%, var(--palette-brand-500) 85%);
+  --palette-brand-500: #0071c5;
+  --palette-brand-600: #005a9e;
+  --palette-brand-700: color-mix(in oklch, black 20%, var(--palette-brand-600) 80%);
+  --palette-brand-800: color-mix(in oklch, black 40%, var(--palette-brand-600) 60%);
+  --palette-brand-900: color-mix(in oklch, black 60%, var(--palette-brand-600) 40%);
+  --palette-brand-950: color-mix(in oklch, black 75%, var(--palette-brand-600) 25%);
+
+  /* Neutral ramp — 200/400/500/800/950 are pinned legacy anchors, rest derived */
+  --palette-neutral-50: color-mix(in oklch, white 95%, var(--palette-neutral-500) 5%);
+  --palette-neutral-100: color-mix(in oklch, white 88%, var(--palette-neutral-500) 12%);
+  --palette-neutral-200: #e7e7e7;
+  --palette-neutral-300: color-mix(in oklch, white 30%, var(--palette-neutral-500) 70%);
+  --palette-neutral-400: #a0aec0;
+  --palette-neutral-500: #6c6c6c;
+  --palette-neutral-600: color-mix(in oklch, black 15%, var(--palette-neutral-500) 85%);
+  --palette-neutral-700: color-mix(in oklch, black 35%, var(--palette-neutral-500) 65%);
+  --palette-neutral-800: #333333;
+  --palette-neutral-900: color-mix(in oklch, black 15%, var(--palette-neutral-800) 85%);
+  --palette-neutral-950: #1a1a1a;
+
+  /* Success ramp — 500 is the pinned legacy anchor, rest derived */
+  --palette-success-50: color-mix(in oklch, white 90%, var(--palette-success-500) 10%);
+  --palette-success-100: color-mix(in oklch, white 75%, var(--palette-success-500) 25%);
+  --palette-success-200: color-mix(in oklch, white 55%, var(--palette-success-500) 45%);
+  --palette-success-300: color-mix(in oklch, white 35%, var(--palette-success-500) 65%);
+  --palette-success-400: color-mix(in oklch, white 15%, var(--palette-success-500) 85%);
+  --palette-success-500: #27ae60;
+  --palette-success-600: color-mix(in oklch, black 15%, var(--palette-success-500) 85%);
+  --palette-success-700: color-mix(in oklch, black 30%, var(--palette-success-500) 70%);
+  --palette-success-800: color-mix(in oklch, black 45%, var(--palette-success-500) 55%);
+  --palette-success-900: color-mix(in oklch, black 60%, var(--palette-success-500) 40%);
+  --palette-success-950: color-mix(in oklch, black 75%, var(--palette-success-500) 25%);
+
+  /* Warning ramp — 500 is the pinned legacy anchor, rest derived */
+  --palette-warning-50: color-mix(in oklch, white 90%, var(--palette-warning-500) 10%);
+  --palette-warning-100: color-mix(in oklch, white 75%, var(--palette-warning-500) 25%);
+  --palette-warning-200: color-mix(in oklch, white 55%, var(--palette-warning-500) 45%);
+  --palette-warning-300: color-mix(in oklch, white 35%, var(--palette-warning-500) 65%);
+  --palette-warning-400: color-mix(in oklch, white 15%, var(--palette-warning-500) 85%);
+  --palette-warning-500: #f39c12;
+  --palette-warning-600: color-mix(in oklch, black 15%, var(--palette-warning-500) 85%);
+  --palette-warning-700: color-mix(in oklch, black 30%, var(--palette-warning-500) 70%);
+  --palette-warning-800: color-mix(in oklch, black 45%, var(--palette-warning-500) 55%);
+  --palette-warning-900: color-mix(in oklch, black 60%, var(--palette-warning-500) 40%);
+  --palette-warning-950: color-mix(in oklch, black 75%, var(--palette-warning-500) 25%);
+
+  /* Danger ramp — 500 is the pinned legacy anchor, rest derived */
+  --palette-danger-50: color-mix(in oklch, white 90%, var(--palette-danger-500) 10%);
+  --palette-danger-100: color-mix(in oklch, white 75%, var(--palette-danger-500) 25%);
+  --palette-danger-200: color-mix(in oklch, white 55%, var(--palette-danger-500) 45%);
+  --palette-danger-300: color-mix(in oklch, white 35%, var(--palette-danger-500) 65%);
+  --palette-danger-400: color-mix(in oklch, white 15%, var(--palette-danger-500) 85%);
+  --palette-danger-500: #e53e3e;
+  --palette-danger-600: color-mix(in oklch, black 15%, var(--palette-danger-500) 85%);
+  --palette-danger-700: color-mix(in oklch, black 30%, var(--palette-danger-500) 70%);
+  --palette-danger-800: color-mix(in oklch, black 45%, var(--palette-danger-500) 55%);
+  --palette-danger-900: color-mix(in oklch, black 60%, var(--palette-danger-500) 40%);
+  --palette-danger-950: color-mix(in oklch, black 75%, var(--palette-danger-500) 25%);
+
+  /* Semantic tokens (light) — components consume these, never the palette above */
+  --background: white;
+  --foreground: var(--palette-neutral-950);
+  --card: white;
+  --card-foreground: var(--palette-neutral-950);
+  --popover: white;
+  --popover-foreground: var(--palette-neutral-950);
+  --primary: var(--palette-brand-500);
+  --primary-foreground: white;
+  --secondary: var(--palette-neutral-100);
+  --secondary-foreground: var(--palette-neutral-950);
+  --muted: var(--palette-neutral-100);
+  /* Darkened from palette-neutral-500 to clear 4.5:1 on --muted (NFR-A11Y-004) */
+  --muted-foreground: color-mix(in oklch, black 8%, var(--palette-neutral-500) 92%);
+  --accent: var(--palette-brand-50);
+  --accent-foreground: var(--palette-brand-600);
+  /* palette-danger-600, not -500: white text on -500 was 4.13:1, short of the 4.5:1 text target */
+  --destructive: var(--palette-danger-600);
+  --destructive-foreground: white;
+  --border: var(--palette-neutral-200);
+  /* Darkened from palette-neutral-200 (1.24:1) to clear the 3:1 UI-boundary target */
+  --input: color-mix(in oklch, black 30%, var(--palette-neutral-200) 70%);
+  --ring: var(--palette-brand-500);
+
+  /* Chat-specific semantic tokens (light) */
+  --message-user-bg: var(--palette-brand-500);
+  --message-user-fg: white;
+  --message-assistant-bg: var(--palette-neutral-100);
+  --message-assistant-fg: var(--palette-neutral-950);
+  --message-system-bg: var(--palette-neutral-50);
+  --message-system-fg: var(--palette-neutral-500);
+  --code-bg: #1e1e2e;
+  --code-fg: #cdd6f4;
+  --tool-bg: var(--palette-brand-50);
+  --tool-border: var(--palette-brand-200);
+
+  /* Status tokens (same both themes — success/warning/danger already read on light or dark) */
+  --status-connected: var(--palette-success-500);
+  --status-disconnected: var(--palette-danger-500);
+  --status-connecting: var(--palette-warning-500);
+  --credibility-good: var(--palette-success-500);
+  --credibility-warn: var(--palette-warning-500);
+  --credibility-danger: var(--palette-danger-500);
+
+  /* Non-colour tokens (SPEC-020 §2.3) */
+  --radius: 0.75rem;
+
+  --shadow-sm-value: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-md-value: 0 4px 24px rgb(0 0 0 / 0.08);
+  --shadow-lg-value: 0 12px 48px rgb(0 0 0 / 0.12);
+
+  --font-sans-family: 'Intel Clear', 'Segoe UI', system-ui, sans-serif;
+  --font-mono-family: ui-monospace, Consolas, monospace;
+
+  /* One z-index scale — no ad-hoc values (portalled Base UI popups sit above this by construction) */
+  --z-drawer: 40;
+  --z-overlay: 50;
+  --z-popover: 60;
+  --z-toast: 70;
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+.dark {
+  --background: var(--palette-neutral-950);
+  --foreground: var(--palette-neutral-50);
+  --card: var(--palette-neutral-900);
+  --card-foreground: var(--palette-neutral-50);
+  --popover: var(--palette-neutral-900);
+  --popover-foreground: var(--palette-neutral-50);
+  --primary: var(--palette-brand-500);
+  --primary-foreground: white;
+  --secondary: var(--palette-neutral-800);
+  --secondary-foreground: var(--palette-neutral-50);
+  --muted: var(--palette-neutral-800);
+  --muted-foreground: var(--palette-neutral-400);
+  --accent: color-mix(in oklch, var(--palette-brand-500) 20%, transparent);
+  /* palette-brand-300, not -400: 3.87:1 on the composited --accent was short of the 4.5:1 text target */
+  --accent-foreground: var(--palette-brand-300);
+  --destructive: var(--palette-danger-600);
+  --destructive-foreground: white;
+  --border: var(--palette-neutral-800);
+  /* palette-neutral-500, not -800 (1.38:1): clears the 3:1 UI-boundary target */
+  --input: var(--palette-neutral-500);
+  --ring: var(--palette-brand-500);
+
+  --message-user-bg: var(--palette-brand-600);
+  --message-user-fg: white;
+  --message-assistant-bg: var(--palette-neutral-800);
+  --message-assistant-fg: var(--palette-neutral-50);
+  --message-system-bg: var(--palette-neutral-900);
+  --message-system-fg: var(--palette-neutral-400);
+  --tool-bg: color-mix(in oklch, var(--palette-brand-500) 15%, transparent);
+  --tool-border: var(--palette-brand-700);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) {
+    --background: var(--palette-neutral-950);
+    --foreground: var(--palette-neutral-50);
+    --card: var(--palette-neutral-900);
+    --card-foreground: var(--palette-neutral-50);
+    --popover: var(--palette-neutral-900);
+    --popover-foreground: var(--palette-neutral-50);
+    --primary: var(--palette-brand-500);
+    --primary-foreground: white;
+    --secondary: var(--palette-neutral-800);
+    --secondary-foreground: var(--palette-neutral-50);
+    --muted: var(--palette-neutral-800);
+    --muted-foreground: var(--palette-neutral-400);
+    --accent: color-mix(in oklch, var(--palette-brand-500) 20%, transparent);
+    --accent-foreground: var(--palette-brand-300);
+    --destructive: var(--palette-danger-600);
+    --destructive-foreground: white;
+    --border: var(--palette-neutral-800);
+    --input: var(--palette-neutral-500);
+    --ring: var(--palette-brand-500);
+
+    --message-user-bg: var(--palette-brand-600);
+    --message-user-fg: white;
+    --message-assistant-bg: var(--palette-neutral-800);
+    --message-assistant-fg: var(--palette-neutral-50);
+    --message-system-bg: var(--palette-neutral-900);
+    --message-system-fg: var(--palette-neutral-400);
+    --tool-bg: color-mix(in oklch, var(--palette-brand-500) 15%, transparent);
+    --tool-border: var(--palette-brand-700);
+  }
+}
+
+/* Tailwind v4 theme registration. "inline" is required because every value below is a var()
+   reference (palette ramps, semantic tokens); Tailwind cannot bake a live reference at build time. */
+@theme inline {
+  --color-brand-50: var(--palette-brand-50);
+  --color-brand-100: var(--palette-brand-100);
+  --color-brand-200: var(--palette-brand-200);
+  --color-brand-300: var(--palette-brand-300);
+  --color-brand-400: var(--palette-brand-400);
+  --color-brand-500: var(--palette-brand-500);
+  --color-brand-600: var(--palette-brand-600);
+  --color-brand-700: var(--palette-brand-700);
+  --color-brand-800: var(--palette-brand-800);
+  --color-brand-900: var(--palette-brand-900);
+  --color-brand-950: var(--palette-brand-950);
+
+  --color-neutral-50: var(--palette-neutral-50);
+  --color-neutral-100: var(--palette-neutral-100);
+  --color-neutral-200: var(--palette-neutral-200);
+  --color-neutral-300: var(--palette-neutral-300);
+  --color-neutral-400: var(--palette-neutral-400);
+  --color-neutral-500: var(--palette-neutral-500);
+  --color-neutral-600: var(--palette-neutral-600);
+  --color-neutral-700: var(--palette-neutral-700);
+  --color-neutral-800: var(--palette-neutral-800);
+  --color-neutral-900: var(--palette-neutral-900);
+  --color-neutral-950: var(--palette-neutral-950);
+
+  --color-success-50: var(--palette-success-50);
+  --color-success-100: var(--palette-success-100);
+  --color-success-200: var(--palette-success-200);
+  --color-success-300: var(--palette-success-300);
+  --color-success-400: var(--palette-success-400);
+  --color-success-500: var(--palette-success-500);
+  --color-success-600: var(--palette-success-600);
+  --color-success-700: var(--palette-success-700);
+  --color-success-800: var(--palette-success-800);
+  --color-success-900: var(--palette-success-900);
+  --color-success-950: var(--palette-success-950);
+
+  --color-warning-50: var(--palette-warning-50);
+  --color-warning-100: var(--palette-warning-100);
+  --color-warning-200: var(--palette-warning-200);
+  --color-warning-300: var(--palette-warning-300);
+  --color-warning-400: var(--palette-warning-400);
+  --color-warning-500: var(--palette-warning-500);
+  --color-warning-600: var(--palette-warning-600);
+  --color-warning-700: var(--palette-warning-700);
+  --color-warning-800: var(--palette-warning-800);
+  --color-warning-900: var(--palette-warning-900);
+  --color-warning-950: var(--palette-warning-950);
+
+  --color-danger-50: var(--palette-danger-50);
+  --color-danger-100: var(--palette-danger-100);
+  --color-danger-200: var(--palette-danger-200);
+  --color-danger-300: var(--palette-danger-300);
+  --color-danger-400: var(--palette-danger-400);
+  --color-danger-500: var(--palette-danger-500);
+  --color-danger-600: var(--palette-danger-600);
+  --color-danger-700: var(--palette-danger-700);
+  --color-danger-800: var(--palette-danger-800);
+  --color-danger-900: var(--palette-danger-900);
+  --color-danger-950: var(--palette-danger-950);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-message-user-bg: var(--message-user-bg);
+  --color-message-user-fg: var(--message-user-fg);
+  --color-message-assistant-bg: var(--message-assistant-bg);
+  --color-message-assistant-fg: var(--message-assistant-fg);
+  --color-message-system-bg: var(--message-system-bg);
+  --color-message-system-fg: var(--message-system-fg);
+  --color-code-bg: var(--code-bg);
+  --color-code-fg: var(--code-fg);
+  --color-tool-bg: var(--tool-bg);
+  --color-tool-border: var(--tool-border);
+
+  --color-status-connected: var(--status-connected);
+  --color-status-disconnected: var(--status-disconnected);
+  --color-status-connecting: var(--status-connecting);
+  --color-credibility-good: var(--credibility-good);
+  --color-credibility-warn: var(--credibility-warn);
+  --color-credibility-danger: var(--credibility-danger);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+
+  --shadow-sm: var(--shadow-sm-value);
+  --shadow-md: var(--shadow-md-value);
+  --shadow-lg: var(--shadow-lg-value);
+
+  --font-sans: var(--font-sans-family);
+  --font-mono: var(--font-mono-family);
+}
+
+/* Base UI portal stacking (FR-DS-021) + iOS Safari full-viewport backdrops (FR-DS-022) */
+#root {
+  isolation: isolate;
+}
+
+body {
+  position: relative;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

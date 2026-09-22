@@ -1,0 +1,50 @@
+.conversation-title-viewport {
+  container-type: inline-size;
+  display: block;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.conversation-title-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .conversation-options {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .conversation-row:hover .conversation-options,
+  .conversation-row:focus-within .conversation-options,
+  .conversation-options[data-popup-open] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .conversation-row:hover .conversation-title-text,
+  .conversation-row > button:focus-visible .conversation-title-text {
+    width: max-content;
+    min-width: 100%;
+    overflow: visible;
+    mask-image: none;
+    animation: conversation-title-slide 6s linear 0.15s infinite alternate;
+  }
+}
+
+@keyframes conversation-title-slide {
+  0%, 5% {
+    transform: translateX(0);
+  }
+
+  85%, 100% {
+    transform: translateX(min(0px, calc(100cqi - 100%)));
+  }
+}

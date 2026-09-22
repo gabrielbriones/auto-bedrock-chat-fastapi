@@ -158,7 +158,7 @@ The SSO session stores:
 
 **Off by default** (`sso_trust_external_idp_cookies=False` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES`). This is a UX shortcut for a specific deployment shape: another internal app, on a related subdomain, deliberately shares an active Cognito session with this app via cookies (not the Cognito JS SDK's localStorage default) scoped to a shared parent domain, and registers the **exact same** Cognito App Client ID as this app's own `sso_client_id`.
 
-When enabled, `GET /chat/ui` looks for:
+When enabled, `GET /chat/config` looks for:
 
 ```
 CognitoIdentityServiceProvider.<sso_client_id>.LastAuthUser

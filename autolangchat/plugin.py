@@ -10,12 +10,10 @@ import re
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from .config import ChatConfig, load_config, validate_config
@@ -26,6 +24,7 @@ from .graph.tools.manager import ToolManager
 from .model_capabilities import build_bedrock_kwargs
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
+from .spa import mount_spa
 from .websocket_handler import WebSocketChatHandler
 
 # SSO imports are deferred — only loaded when sso_enabled=True at runtime.
@@ -178,6 +177,45 @@ def _setup_logging(config: ChatConfig):
         logging.getLogger("httpx").setLevel(logging.INFO)  # Keep INFO for httpx (less verbose)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+
+
+def _build_bootstrap_payload(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Map the ``chat.html`` template context (snake_case) to the camelCase
+    JSON wire payload for ``GET {chat_endpoint}/config`` (CONTRACT-001 §6,
+    BC-001). A pure function so the key list is easy to unit test in
+    isolation, and so it can never emit a field this explicit map doesn't
+    name (no credentials/connection-strings/secrets ever pass through).
+    """
+    return {
+        "websocketUrl": context["websocket_url"],
+        "authEnabled": context["auth_enabled"],
+        "requireAuth": context["require_tool_auth"],
+        "supportedAuthTypes": context["supported_auth_types"],
+        "defaultAuthType": context["default_auth_type"],
+        "modelId": context["model_id"],
+        "presetPrompts": context["preset_prompts"],
+        "variables": context["preset_variables"],
+        "ssoEnabled": context["sso_enabled"],
+        "ssoLoginUrl": context["sso_login_url"],
+        "ssoLogoutUrl": context["sso_logout_url"],
+        "ssoAuthenticated": context["sso_authenticated"],
+        "ssoUserDisplay": context["sso_user_display"],
+        "feedbackEnabled": context["feedback_enabled"],
+        "lockInputWhileResponding": context["lock_input_while_responding"],
+        "adminEnabled": context["admin_enabled"],
+        "adminPrefix": context["admin_prefix"],
+        "dashboardUrl": context["dashboard_url"],
+        "conversationPersistenceEnabled": context["conversation_persistence_enabled"],
+        "enableConfigSidebar": context["enable_config_sidebar"],
+        "allowedDynamicOverrides": context["allowed_dynamic_overrides"],
+        "availableModels": context["available_models"],
+        "availableModelGroups": context["available_model_groups"] or [],
+        "overrideDefaults": context["override_defaults"],
+        "uiTitle": context["ui_title"],
+        "appTitle": context["app_title"],
+        "modelDisplayName": context["model_display_name"],
+        "uiWelcomeMessage": context["ui_welcome_message"],
+    }
 
 
 class AutoLangChatPlugin:
@@ -396,14 +434,15 @@ class AutoLangChatPlugin:
             user_settings_store=self._user_settings_store,
         )
 
-        # Setup templates for UI
-        self.templates = None
-        if self.config.enable_ui:
-            self._setup_templates()
         # Check knowledge base status if RAG is enabled
         self._check_kb_status()
         # Setup routes
         self._setup_routes()
+        # Mount the React SPA last so it can never take precedence over an
+        # API route registered above (BC-002).
+        self.spa_dist_dir = None
+        if self.config.enable_ui:
+            self.spa_dist_dir = mount_spa(self.app, self.config)
 
         # Setup shutdown handler
         self._setup_shutdown()
@@ -457,20 +496,168 @@ class AutoLangChatPlugin:
         slug = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
         return slug or "prompt"
 
-    def _setup_templates(self):
-        """Setup Jinja2 templates for UI and mount static files"""
+    async def _build_chat_bootstrap_context(self, request: Request) -> Tuple[Dict[str, Any], Optional[str]]:
+        """Assemble the chat bootstrap context.
 
-        # Create templates directory if it doesn't exist
-        template_dir = os.path.join(os.path.dirname(__file__), "templates")
-        if not os.path.exists(template_dir):
-            os.makedirs(template_dir)
+        Single source of truth for ``GET {chat_endpoint}/config`` (JSON,
+        BC-001), which the React SPA reads before rendering (CONTRACT-001
+        §6). Returns ``(context, new_sso_session_token)``
+        — the token is only set when a silent external-IdP-cookie session
+        was just minted and must be persisted as a ``Set-Cookie`` by the
+        caller.
+        """
+        # Get supported auth types from config
+        supported_auth_types = []
+        if self.config.enable_tool_auth:
+            supported_auth_types = self.config.supported_auth_types
 
-        self.templates = Jinja2Templates(directory=template_dir)
+        # Check for active SSO session from HttpOnly cookie
+        sso_user_display = ""
+        sso_user_id: Optional[str] = None
+        sso_authenticated = False
+        # Set below only when a silent external-IdP-cookie session was
+        # just minted (see _try_silent_external_idp_cookie_auth) — the
+        # response must carry this as a new sso_session_token cookie so
+        # subsequent requests (including the WebSocket handshake) see it.
+        session, new_sso_session_token = await self._resolve_sso_session(request)
+        if session:
+            sso_authenticated = True
+            user_info = session.get("user_info", {})
+            claims = session.get("id_token_claims", {})
+            # Canonical identity — same precedence as WS handler
+            # so allowlist checks match what session.user_id holds.
+            sso_user_id = extract_user_id_from_sso_session(user_info, claims)
+            # Display name is presentation-only; kept separate.
+            sso_user_display = (
+                user_info.get("email")
+                or claims.get("email")
+                or user_info.get("username")
+                or claims.get("cognito:username", "")
+            )
 
-        # Mount static files
-        static_dir = os.path.join(os.path.dirname(__file__), "static")
-        if os.path.exists(static_dir):
-            self.app.mount(f"{self.config.chat_endpoint}/static", StaticFiles(directory=static_dir), name="static")
+        # Feedback rendering gate (server-side, feature-only).
+        #
+        # At HTTP-render time we cannot reliably know the
+        # caller's identity: SSO is one mechanism, but tool-
+        # auth (oauth2/api_key/…) delivers ``user_id`` via the
+        # WebSocket ``auth`` message, not via cookies. Rather
+        # than guess, we render the controls whenever the
+        # feature is configured and defer per-user
+        # authorization to the WebSocket handler, which
+        # re-checks every submit against ``session.user_id``
+        # via the configured :class:`FeedbackAuthorizer`.
+        #
+        # Hiding the UI is not a security boundary; the
+        # authorizer in ``_handle_feedback_message`` is.
+        #
+        # Exception: when no mechanism that produces a
+        # ``user_id`` is configured (no SSO and no
+        # auth_verification_endpoint) AND anonymous feedback
+        # is disabled, no submit can ever succeed, so we
+        # suppress the UI to avoid showing controls that
+        # would always error.
+        #
+        # Note: ``enable_tool_auth`` alone is NOT a user-
+        # identity signal — tool-auth credentials are only
+        # turned into ``session.metadata['verified_user_info']``
+        # (and therefore a ``user_id``) when an
+        # ``auth_verification_endpoint`` is configured.
+        user_identity_available = bool(self.config.sso_enabled or self.config.auth_verification_endpoint)
+        feedback_enabled = bool(
+            self.config.feedback_enabled
+            and self._feedback_store is not None
+            and (user_identity_available or self.config.feedback_allow_anonymous)
+        )
+        # Per-user allowlist gate for SSO users: identity is
+        # available at render time via cookie, so we can suppress
+        # the UI immediately for unlisted users. Non-SSO (tool-auth)
+        # identity only arrives via the WebSocket ``auth`` message;
+        # those users see the controls but are gated server-side by
+        # the FeedbackAuthorizer on every submission.
+        if feedback_enabled and self.config.feedback_authorized_users and sso_authenticated:
+            feedback_enabled = bool(sso_user_id) and self._feedback_authorizer.can_submit(sso_user_id)
+        logger.debug(
+            "Feedback UI gate resolved: feedback_enabled=%s",
+            feedback_enabled,
+        )
+
+        # Same principle as feedback_enabled above: gate on the
+        # store actually being configured, not just the raw
+        # config flag, so the sidebar isn't shown when the
+        # backend failed to construct (misconfiguration, missing
+        # optional dependency, etc.).
+        conversation_persistence_enabled = bool(
+            self.config.conversation_persistence_enabled and self._conversation_store is not None
+        )
+
+        context = {
+            "websocket_url": self.config.websocket_endpoint,
+            "auth_enabled": self.config.enable_tool_auth,
+            "require_tool_auth": self.config.require_tool_auth,
+            "supported_auth_types": supported_auth_types,
+            "default_auth_type": self.config.default_auth_type or "",
+            "ui_title": self.config.ui_title,
+            "model_id": self.config.model_id,
+            "model_display_name": self.config.get_model_display_name(),
+            "ui_welcome_message": self.config.ui_welcome_message,
+            "app_title": self.app.title or "API",
+            "preset_prompts": self._preset_prompts,
+            "preset_variables": self._preset_variables,
+            "sso_enabled": self.config.sso_enabled,
+            "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
+            "sso_logout_url": f"{self.config.chat_endpoint}/auth/sso/logout",
+            "sso_authenticated": sso_authenticated,
+            "sso_user_display": sso_user_display,
+            "auth_expiration_behaviour": self.config.auth_expiration_behaviour,
+            "feedback_enabled": feedback_enabled,
+            "lock_input_while_responding": self.config.ui_lock_input_while_responding,
+            # Admin Dashboard button visibility probe.
+            # When admin_enabled=False the button is never
+            # rendered; the capability endpoint is also
+            # absent so any stale client request gets 404.
+            "admin_enabled": self.config.admin_enabled,
+            "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
+
+            "dashboard_url": (f"{self.config.ui_endpoint}/admin" if self.config.admin_enabled else ""),
+            "conversation_persistence_enabled": conversation_persistence_enabled,
+            # Dynamic parameter overrides settings sidebar.
+            "enable_config_sidebar": bool(self.config.enable_config_sidebar and self.config.enable_dynamic_overrides),
+            "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,
+            # Model choices for the sidebar's model_id dropdown, sourced from
+            # AUTOCHAT_AVAILABLE_MODELS (falls back to the full langchain-aws
+            # catalog). Each entry is {"id": model_id, "name": display_name,
+            # ...} -- the UI only ever renders "name"; the backend keeps using
+            # "id" (model_id). The grouped variant drives the two-level
+            # provider -> model dropdown; the flat list is still used for
+            # per-model capability lookups by id.
+            "available_models": self.config.get_available_models_for_ui(),
+            "available_model_groups": self.config.get_available_models_grouped_for_ui(),
+            # Current global values for every overridable parameter, so the
+            # sidebar's controls start at the actual effective defaults rather
+            # than an arbitrary client-side fallback.
+            "override_defaults": self.config.get_override_defaults(),
+        }
+        return context, new_sso_session_token
+
+    def _apply_new_sso_cookie(self, response, request: Request, new_sso_session_token: Optional[str]) -> None:
+        """Persist a freshly-minted silent-cookie SSO session token, if any.
+
+        Called after the JSON bootstrap route so a session minted via the
+        silent-cookie path (see ``_resolve_sso_session``) is set the same way
+        as a normal SSO callback.
+        """
+        if not new_sso_session_token:
+            return
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+        is_secure = forwarded_proto == "https" or request.url.scheme == "https"
+        response.set_cookie(
+            key="sso_session_token",
+            value=new_sso_session_token,
+            httponly=True,
+            samesite="lax",
+            secure=is_secure,
+            max_age=self.config.sso_session_ttl,
+        )
 
     def _setup_routes(self):
         """Setup FastAPI routes for chat functionality"""
@@ -552,187 +739,29 @@ class AutoLangChatPlugin:
 
             await self.websocket_handler.handle_connection(websocket, user_id, preferred_session_id=session_id)
 
-        # Chat UI endpoint
+        # Chat UI (BC-001/BC-002): the React SPA is mounted at ``ui_endpoint``
+        # after this method returns (see ``mount_spa`` in ``__init__``), so this
+        # block only registers the JSON bootstrap endpoint it reads at start-up.
         if self.config.enable_ui:
 
-            @self.app.get(self.config.ui_endpoint, response_class=HTMLResponse)
-            async def chat_ui(request: Request):
-                """Serve chat UI"""
-                logger.debug("chat_ui invoked")
-
-                if not self.templates:
-                    template_dir = os.path.join(os.path.dirname(__file__), "templates")
-                    return HTMLResponse(
-                        content="<html><body><h1>Chat UI Error</h1>"
-                        f"<p>Template rendering is unavailable. The template system failed to initialize.</p>"
-                        f"<p>Expected template directory: <code>{html.escape(template_dir)}</code></p>"
-                        "<p>Please check that the templates directory exists, is readable, and contains the required files.</p>"
-                        "</body></html>",
-                        status_code=500,
-                    )
-
+            # JSON bootstrap endpoint (BC-001): mapped to the camelCase
+            # payload in CONTRACT-001 §6, so the SPA can start without any
+            # Jinja-interpolated <script> (incompatible with a strict CSP).
+            @self.app.get(f"{self.config.chat_endpoint}/config")
+            async def chat_bootstrap_config(request: Request):
+                """Serve the chat bootstrap configuration as JSON"""
                 try:
-                    # Get supported auth types from config
-                    supported_auth_types = []
-                    if self.config.enable_tool_auth:
-                        supported_auth_types = self.config.supported_auth_types
-
-                    # Check for active SSO session from HttpOnly cookie
-                    sso_user_display = ""
-                    sso_user_id: Optional[str] = None
-                    sso_authenticated = False
-                    # Set below only when a silent external-IdP-cookie session was
-                    # just minted (see _try_silent_external_idp_cookie_auth) — the
-                    # response must carry this as a new sso_session_token cookie so
-                    # subsequent requests (including the WebSocket handshake) see it.
-                    session, new_sso_session_token = await self._resolve_sso_session(request)
-                    if session:
-                        sso_authenticated = True
-                        user_info = session.get("user_info", {})
-                        claims = session.get("id_token_claims", {})
-                        # Canonical identity — same precedence as WS handler
-                        # so allowlist checks match what session.user_id holds.
-                        sso_user_id = extract_user_id_from_sso_session(user_info, claims)
-                        # Display name is presentation-only; kept separate.
-                        sso_user_display = (
-                            user_info.get("email")
-                            or claims.get("email")
-                            or user_info.get("username")
-                            or claims.get("cognito:username", "")
-                        )
-
-                    # Feedback rendering gate (server-side, feature-only).
-                    #
-                    # At HTTP-render time we cannot reliably know the
-                    # caller's identity: SSO is one mechanism, but tool-
-                    # auth (oauth2/api_key/…) delivers ``user_id`` via the
-                    # WebSocket ``auth`` message, not via cookies. Rather
-                    # than guess, we render the controls whenever the
-                    # feature is configured and defer per-user
-                    # authorization to the WebSocket handler, which
-                    # re-checks every submit against ``session.user_id``
-                    # via the configured :class:`FeedbackAuthorizer`.
-                    #
-                    # Hiding the UI is not a security boundary; the
-                    # authorizer in ``_handle_feedback_message`` is.
-                    #
-                    # Exception: when no mechanism that produces a
-                    # ``user_id`` is configured (no SSO and no
-                    # auth_verification_endpoint) AND anonymous feedback
-                    # is disabled, no submit can ever succeed, so we
-                    # suppress the UI to avoid showing controls that
-                    # would always error.
-                    #
-                    # Note: ``enable_tool_auth`` alone is NOT a user-
-                    # identity signal — tool-auth credentials are only
-                    # turned into ``session.metadata['verified_user_info']``
-                    # (and therefore a ``user_id``) when an
-                    # ``auth_verification_endpoint`` is configured.
-                    user_identity_available = bool(self.config.sso_enabled or self.config.auth_verification_endpoint)
-                    feedback_enabled = bool(
-                        self.config.feedback_enabled
-                        and self._feedback_store is not None
-                        and (user_identity_available or self.config.feedback_allow_anonymous)
-                    )
-                    # Per-user allowlist gate for SSO users: identity is
-                    # available at render time via cookie, so we can suppress
-                    # the UI immediately for unlisted users. Non-SSO (tool-auth)
-                    # identity only arrives via the WebSocket ``auth`` message;
-                    # those users see the controls but are gated server-side by
-                    # the FeedbackAuthorizer on every submission.
-                    if feedback_enabled and self.config.feedback_authorized_users and sso_authenticated:
-                        feedback_enabled = bool(sso_user_id) and self._feedback_authorizer.can_submit(sso_user_id)
-                    logger.debug(
-                        "Feedback UI gate resolved: feedback_enabled=%s",
-                        feedback_enabled,
-                    )
-
-                    # Same principle as feedback_enabled above: gate on the
-                    # store actually being configured, not just the raw
-                    # config flag, so the sidebar isn't shown when the
-                    # backend failed to construct (misconfiguration, missing
-                    # optional dependency, etc.).
-                    conversation_persistence_enabled = bool(
-                        self.config.conversation_persistence_enabled and self._conversation_store is not None
-                    )
-
-                    response = self.templates.TemplateResponse(
-                        request,
-                        "chat.html",
-                        context={
-                            "websocket_url": self.config.websocket_endpoint,
-                            "auth_enabled": self.config.enable_tool_auth,
-                            "require_tool_auth": self.config.require_tool_auth,
-                            "supported_auth_types": supported_auth_types,
-                            "default_auth_type": self.config.default_auth_type or "",
-                            "ui_title": self.config.ui_title,
-                            "model_id": self.config.model_id,
-                            "model_display_name": self.config.get_model_display_name(),
-                            "ui_welcome_message": self.config.ui_welcome_message,
-                            "app_title": self.app.title or "API",
-                            "preset_prompts": self._preset_prompts,
-                            "preset_variables": self._preset_variables,
-                            "sso_enabled": self.config.sso_enabled,
-                            "sso_login_url": f"{self.config.chat_endpoint}/auth/sso/login",
-                            "sso_authenticated": sso_authenticated,
-                            "sso_user_display": sso_user_display,
-                            "auth_expiration_behaviour": self.config.auth_expiration_behaviour,
-                            "feedback_enabled": feedback_enabled,
-                            "lock_input_while_responding": self.config.ui_lock_input_while_responding,
-                            # Admin Dashboard button visibility probe.
-                            # When admin_enabled=False the button is never
-                            # rendered; the capability endpoint is also
-                            # absent so any stale client request gets 404.
-                            "admin_enabled": self.config.admin_enabled,
-                            "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
-                            "dashboard_url": (
-                                f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""
-                            ),
-                            "conversation_persistence_enabled": conversation_persistence_enabled,
-                            # Dynamic parameter overrides settings sidebar.
-                            "enable_config_sidebar": bool(
-                                self.config.enable_config_sidebar and self.config.enable_dynamic_overrides
-                            ),
-                            "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,
-                            # Model choices for the sidebar's model_id dropdown, sourced from
-                            # AUTOCHAT_AVAILABLE_MODELS (falls back to the full langchain-aws
-                            # catalog). Each entry is {"id": model_id, "name": display_name,
-                            # ...} -- the UI only ever renders "name"; the backend keeps using
-                            # "id" (model_id). The grouped variant drives the two-level
-                            # provider -> model dropdown; the flat list is still used for
-                            # per-model capability lookups by id.
-                            "available_models": self.config.get_available_models_for_ui(),
-                            "available_model_groups": self.config.get_available_models_grouped_for_ui(),
-                            # Current global values for every overridable parameter, so the
-                            # sidebar's controls start at the actual effective defaults rather
-                            # than an arbitrary client-side fallback.
-                            "override_defaults": self.config.get_override_defaults(),
-                        },
-                    )
-                    if new_sso_session_token:
-                        # A silent external-IdP-cookie session was just minted for
-                        # this render — persist it exactly like a normal SSO
-                        # callback does, so subsequent requests (WebSocket
-                        # handshake included) are already authenticated.
-                        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
-                        is_secure = forwarded_proto == "https" or request.url.scheme == "https"
-                        response.set_cookie(
-                            key="sso_session_token",
-                            value=new_sso_session_token,
-                            httponly=True,
-                            samesite="lax",
-                            secure=is_secure,
-                            max_age=self.config.sso_session_ttl,
-                        )
-                    return response
+                    context, new_sso_session_token = await self._build_chat_bootstrap_context(request)
                 except Exception as e:
-                    logger.error(f"Template rendering failed: {str(e)}")
-                    return HTMLResponse(
-                        content=f"<html><body><h1>Chat UI Error</h1>"
-                        f"<p>Failed to render template: {html.escape(str(e))}</p>"
-                        "</body></html>",
-                        status_code=500,
-                    )
+                    logger.error(f"Bootstrap config build failed: {str(e)}")
+                    return JSONResponse({"error": str(e)}, status_code=500)
+
+                response = JSONResponse(_build_bootstrap_payload(context))
+                # ssoAuthenticated reflects the caller's own per-request session,
+                # so this response must never be cached.
+                response.headers["Cache-Control"] = "no-store"
+                self._apply_new_sso_cookie(response, request, new_sso_session_token)
+                return response
 
         # Statistics endpoint
         @self.app.get(f"{self.config.chat_endpoint}/stats")
@@ -896,8 +925,6 @@ class AutoLangChatPlugin:
             logger.info(f"  Conversations: {self.config.chat_endpoint}/conversations")
         if self.config.admin_enabled:
             logger.info(f"  Admin Capabilities: {self.config.chat_endpoint}/admin/_capabilities")
-            if self.config.enable_ui:
-                logger.info(f"  Dashboard: {self.config.chat_endpoint}/dashboard")
         if self.config.sso_enabled:
             logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
             logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
@@ -912,8 +939,7 @@ class AutoLangChatPlugin:
         (``(scope, receive, send) -> None``); mounting it directly means
         every HTTP method the Streamable HTTP transport needs (POST for
         JSON-RPC, GET for the SSE stream, DELETE for session termination)
-        reaches it, matching how static files are mounted in
-        ``_setup_templates``.
+        reaches it, matching how the SPA build is mounted in ``spa.mount_spa``.
 
         The session manager's ``run()`` context (which starts its internal
         task group) is entered during ``plugin.startup()`` — see
@@ -958,10 +984,10 @@ class AutoLangChatPlugin:
     def _safe_return_to(self, next_param: Optional[str]) -> Optional[str]:
         """Validate a client-supplied post-SSO-login redirect target.
 
-        Only same-site, relative paths under this app's own chat UI
-        endpoint are allowed. This rejects absolute URLs, protocol-relative
-        URLs (``//evil.com``), and any value containing a scheme, which
-        together prevent an open-redirect via a crafted ``next`` value.
+        Only same-site, relative paths under a configured return prefix are
+        allowed. This rejects absolute URLs, protocol-relative URLs
+        (``//evil.com``), and any value containing a scheme, which together
+        prevent an open-redirect via a crafted ``next`` value.
 
         The prefix check is done against the *decoded and normalized* path
         (percent-encoding decoded, then dot-segments collapsed via
@@ -970,25 +996,37 @@ class AutoLangChatPlugin:
         per the WHATWG URL spec's dot-segment handling) when resolving a
         redirect's ``Location``, so a raw value like
         ``/chat/ui/../../admin`` or ``/chat/ui/%2e%2e/%2e%2e/admin`` would
-        otherwise pass a naive ``str.startswith(ui_endpoint)`` check while
+        otherwise pass a naive prefix check while
         actually navigating outside the UI subtree once resolved
         client-side.
 
         Returns ``None`` when ``next_param`` is missing or fails validation
         (falls back to the plain chat UI root).
         """
+
+        def reject(reason: str) -> Optional[str]:
+            logger.warning("Rejected SSO return target: %s", reason)
+            return None
+
         if not next_param:
             return None
-        if "://" in next_param or next_param.startswith("//") or next_param.startswith("\\"):
-            return None
+        if "://" in next_param:
+            return reject("absolute URL")
+        if next_param.startswith("//"):
+            return reject("protocol-relative URL")
+        if "\\" in next_param:
+            return reject("backslash")
         if not next_param.startswith("/"):
-            return None
-        ui_endpoint = self.config.ui_endpoint
-        decoded_path = unquote(urlsplit(next_param).path)
+            return reject("non-relative path")
+        parsed_target = urlsplit(next_param)
+        decoded_path = unquote(parsed_target.path)
         normalized_path = posixpath.normpath(decoded_path)
-        if normalized_path != ui_endpoint and not normalized_path.startswith(f"{ui_endpoint}/"):
-            return None
-        return next_param
+        if not any(
+            normalized_path == prefix or normalized_path.startswith(f"{prefix.rstrip('/')}/")
+            for prefix in self.config.sso_allowed_return_prefixes
+        ):
+            return reject("path is not allow-listed")
+        return urlunsplit(("", "", parsed_target.path, parsed_target.query, parsed_target.fragment))
 
     async def _resolve_sso_session(self, request: Request) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """Resolve the SSO session (if any) that applies to this request.
@@ -1439,8 +1477,6 @@ class AutoLangChatPlugin:
         logger.info("RAG is enabled (ENABLE_RAG=true) - checking knowledge base status")
 
         try:
-            import os
-
             storage_type = self.config.kb_storage_type
 
             logger.info(f"  KB Storage: {storage_type}")
@@ -1902,37 +1938,6 @@ class AutoLangChatPlugin:
             except Exception:
                 logger.exception("Failed to resolve admin capabilities")
                 return JSONResponse({"is_admin": False, "anonymous": False, **caps})
-
-        # ----------------------------------------------------------------
-        # Admin Dashboard UI — GET {chat_endpoint}/dashboard
-        #
-        # Server-rendered shell page.  Wired only when the UI is enabled
-        # (templates are initialised) so the endpoint can't 500 if the
-        # template directory is absent.
-        # ----------------------------------------------------------------
-
-        if self.config.enable_ui and getattr(self, "templates", None) is not None:
-            dashboard_url = f"{self.config.chat_endpoint}/dashboard"
-
-            import time as _time
-
-            _static_ver = str(int(_time.time()))
-
-            @self.app.get(dashboard_url, response_class=HTMLResponse, include_in_schema=False)
-            async def admin_dashboard_page(request: Request):
-                """Serve the Admin Dashboard shell page."""
-                return self.templates.TemplateResponse(
-                    request,
-                    "dashboard.html",
-                    context={
-                        "app_title": self.app.title or "API",
-                        "admin_prefix": admin_prefix,
-                        "chat_url": self.config.ui_endpoint,
-                        "static_ver": _static_ver,
-                    },
-                )
-
-            logger.info("  Dashboard UI: %s", dashboard_url)
 
         # Feedback Review endpoints. Only registered when a feedback
         # store is actually wired; otherwise ``/admin/feedback`` would 500

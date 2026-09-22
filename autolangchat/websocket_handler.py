@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from .auth_handler import AuthenticationHandler, AuthType, Credentials, can_refresh
 from .config import ChatConfig
 from .conversation_titler import generate_conversation_title
+from .history import format_history_messages
 from .db import (
     AuthenticatedUserAuthorizer,
     BaseConversationStore,
@@ -1386,18 +1387,7 @@ class WebSocketChatHandler:
     @staticmethod
     def _format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert LangGraph checkpoint message dicts to the client-facing history shape."""
-        return [
-            {
-                "message_id": m.get("metadata", {}).get("message_id"),
-                "role": m.get("role"),
-                "content": m.get("content", ""),
-                "timestamp": m.get("metadata", {}).get("timestamp"),
-                "tool_calls": m.get("tool_calls", []),
-                "tool_results": m.get("tool_results", []),
-                "metadata": m.get("metadata", {}),
-            }
-            for m in raw_messages
-        ]
+        return format_history_messages(raw_messages)
 
     async def _conversation_guard(self, websocket: WebSocket) -> Optional[ChatSession]:
         """Common preamble for every ``conversation_*`` message handler.
