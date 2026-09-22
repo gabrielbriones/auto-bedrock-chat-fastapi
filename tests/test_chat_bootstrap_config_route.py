@@ -52,7 +52,6 @@ def _make_bare_plugin(config, sso_session_store=None):
     plugin.embedding_client = None
     plugin.websocket_handler = None
     plugin.chat_graph = None
-    plugin._setup_templates()
     plugin._setup_routes()
     return plugin
 
@@ -95,19 +94,18 @@ def test_config_route_authenticated_reflects_sso_session():
     assert body["ssoUserDisplay"] == "user@example.com"
 
 
-def test_config_route_matches_ui_endpoint_builder_context():
-    # Both routes are built from the exact same _build_chat_bootstrap_context
-    # dict (BC-001 acceptance criterion), so every JSON field must match its
-    # snake_case counterpart in the chat.html context.
+def test_setup_routes_leaves_ui_endpoint_for_the_spa_mount():
+    # The Jinja page at ui_endpoint is gone (BC-002); _setup_routes() itself no
+    # longer registers anything there, so mount_spa (called separately by
+    # __init__, after _setup_routes) is free to serve the SPA from that exact
+    # path without colliding with a route registered here.
     plugin = _make_bare_plugin(_make_config(sso_enabled=False))
     client = TestClient(plugin.app)
 
-    config_resp = client.get("/chat/config").json()
-    ui_html = client.get("/chat/ui").text
+    resp = client.get("/chat/ui")
 
-    assert config_resp["modelId"] in ui_html
-    assert config_resp["uiTitle"] in ui_html
-    assert config_resp["websocketUrl"] == "/chat/ws"
+    assert resp.status_code == 404
+    assert client.get("/chat/config").json()["websocketUrl"] == "/chat/ws"
 
 
 def test_config_route_never_leaks_credentials_or_secrets():

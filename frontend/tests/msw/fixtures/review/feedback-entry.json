@@ -1,0 +1,31 @@
+{
+  "id": "0f0a4a4e-3f4c-4f2c-9a1a-1c6b5f0d1004",
+  "session_id": "sess-7f24",
+  "user_id": "aholt",
+  "query": "Explain the branch misprediction spike in bm07.",
+  "ai_response": "The scan loop's data-dependent branch defeats the predictor above 4k entries.",
+  "rating": "positive",
+  "score": 4,
+  "correction_text": null,
+  "user_comment": null,
+  "conversation_history": [
+    { "role": "user", "content": "Explain the branch misprediction spike in bm07." },
+    { "role": "assistant", "content": "The scan loop's data-dependent branch defeats the predictor." }
+  ],
+  "kb_sources_used": [
+    { "document_id": "kb-118", "title": null, "source": "notes/branching.md", "url": null, "score": 0.64 }
+  ],
+  "model_id": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+  "entry_metadata": { "job_id": "9001" },
+  "review_status": "approved",
+  "reviewer_id": "aholt",
+  "reviewer_tags": ["branch-prediction"],
+  "reviewer_comment": "Correct; promoted then reverted pending a second opinion.",
+  "reviewed_at": "2026-09-04T09:30:00Z",
+  "integrated_into_kb_id": null,
+  "integrated_at": null,
+  "rolled_back_at": "2026-09-05T14:22:07Z",
+  "rolled_back_by": "mokoye",
+  "rollback_reason": "Superseded by the updated branching runbook.",
+  "created_at": "2026-09-04T08:55:19.400000Z"
+}

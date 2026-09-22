@@ -1,6 +1,6 @@
 # Chat UI
 
-The plugin includes a built-in web chat interface. Enable it with `enable_ui=True` (the default) and access it at `/chat/ui`.
+The plugin includes a built-in React web chat interface. Enable it with `enable_ui=True` (the default) and access it at `/chat/ui`.
 
 ---
 
@@ -10,11 +10,13 @@ The plugin includes a built-in web chat interface. Enable it with `enable_ui=Tru
 autolangchat_plugin = add_autolangchat(
     app,
     enable_ui=True,           # default: True
-  ui_endpoint="/chat/ui"  # default
+    ui_endpoint="/chat/ui",   # default; the React SPA is served here
 )
 ```
 
-Open your browser to `http://localhost:8000/chat/ui`.
+Open your browser to `http://localhost:8000/chat/ui`. The build directory is
+`AUTOCHAT_UI_DIST_DIR` (defaults to `<repo>/frontend/dist`). Build it with
+`cd frontend && npm ci && npm run build`; the `Dockerfile` does this automatically.
 
 ---
 
@@ -33,8 +35,9 @@ Open your browser to `http://localhost:8000/chat/ui`.
 ## Endpoints Registered by the Plugin
 
 | Method | Path                     | Description                                  |
-| ------ | ------------------------ | -------------------------------------------- |
-| `GET`  | `/chat/ui`               | Serves the chat HTML page                    |
+| ------ | ------------------------ | --------------------------------------------- |
+| `GET`  | `/chat/ui`, `/chat/ui/*` | Serves the React SPA (deep links fall back to `index.html`) |
+| `GET`  | `/chat/config`           | JSON bootstrap payload read by the SPA       |
 | `WS`   | `/chat/ws`               | WebSocket chat connection                    |
 | `GET`  | `/chat/health`           | Plugin health check                          |
 | `GET`  | `/chat/stats`            | Chat statistics                              |
@@ -81,19 +84,12 @@ See [Authentication](authentication.md) for all supported auth types.
 
 ## UI Customization
 
-The UI templates are in `autolangchat/templates/`:
+The UI is a React + TypeScript + Vite SPA in [`frontend/`](../../frontend/README.md). It reads everything it needs
+from `GET {chat_endpoint}/config` at start-up, so titles, preset prompts, auth types and feature flags are all
+controlled through the plugin configuration rather than by editing the UI.
 
-- `chat.html` — main chat interface
-- `auth_modal.html` — authentication modal
-
-Static assets are in `autolangchat/static/`:
-
-- `styles.css` — UI styles
-- `chat-client.js` — WebSocket client logic
-- `auth.js` — authentication handling
-- `app.js` — application entry point
-
-To customize the UI, override the templates or serve your own frontend using the WebSocket endpoint directly. See [WebSocket Client](websocket-client.md) for building a custom client.
+To change the UI itself, edit the sources under `frontend/src/` and rebuild. To replace it entirely, serve your own
+frontend against the WebSocket endpoint directly. See [WebSocket Client](websocket-client.md) for building a custom client.
 
 ---
 
@@ -107,7 +103,7 @@ To allow users to send messages at any time (original behavior):
 AUTOCHAT_UI_LOCK_INPUT_WHILE_RESPONDING=false
 ```
 
-When locked, the textarea shows a "Waiting for response..." placeholder and receives the CSS class `input-locked`. The input is automatically re-enabled on `ai_response`, `error`, `auth_expired`, or WebSocket reconnect.
+When locked, the composer shows a "Waiting for response..." state and is disabled. The input is automatically re-enabled on `ai_response`, `error`, `auth_expired`, or WebSocket reconnect.
 
 ---
 

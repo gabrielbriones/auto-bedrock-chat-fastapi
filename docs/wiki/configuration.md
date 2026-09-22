@@ -60,7 +60,8 @@ autolangchat_plugin = add_autolangchat(
 | ----------------------------------------- | ---------- | ------------------------------------------------------- |
 | `AUTOCHAT_CHAT_ENDPOINT`                  | `/chat`    | Chat route base path                                    |
 | `AUTOCHAT_WEBSOCKET_ENDPOINT`             | `/chat/ws` | WebSocket endpoint                                      |
-| `AUTOCHAT_UI_ENDPOINT`                    | `/chat/ui` | Chat UI path                                            |
+| `AUTOCHAT_UI_ENDPOINT`                    | `/chat/ui` | Site-root mount for the chat UI (React SPA)             |
+| `AUTOCHAT_UI_DIST_DIR`                    | `frontend/dist` | Directory containing the built SPA                 |
 | `AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES`    | UI path    | Comma-separated allowed post-SSO return path prefixes   |
 | `AUTOCHAT_ENABLE_UI`                      | `true`     | Enable built-in chat UI                                 |
 | `AUTOCHAT_UI_LOCK_INPUT_WHILE_RESPONDING` | `true`     | Disable chat input while waiting for assistant response |

@@ -1,0 +1,18 @@
+{
+  "type": "ai_response",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "message_id": "message-1",
+  "message": "Response",
+  "tool_calls": [],
+  "tool_results": [],
+  "metadata": {
+    "model_id": "model-1",
+    "model_name": "Test model",
+    "tool_call_rounds": 0,
+    "total_tool_calls": 0,
+    "preprocessing_applied": false,
+    "kb_used": false,
+    "kb_chunks": 0
+  },
+  "conversation_id": "conversation-1"
+}

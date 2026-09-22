@@ -14,8 +14,6 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from .config import ChatConfig, load_config, validate_config
@@ -26,6 +24,7 @@ from .graph.tools.manager import ToolManager
 from .model_capabilities import build_bedrock_kwargs
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
+from .spa import mount_spa
 from .websocket_handler import WebSocketChatHandler
 
 # SSO imports are deferred — only loaded when sso_enabled=True at runtime.
@@ -421,14 +420,15 @@ class AutoLangChatPlugin:
             user_settings_store=self._user_settings_store,
         )
 
-        # Setup templates for UI
-        self.templates = None
-        if self.config.enable_ui:
-            self._setup_templates()
         # Check knowledge base status if RAG is enabled
         self._check_kb_status()
         # Setup routes
         self._setup_routes()
+        # Mount the React SPA last so it can never take precedence over an
+        # API route registered above (BC-002).
+        self.spa_dist_dir = None
+        if self.config.enable_ui:
+            self.spa_dist_dir = mount_spa(self.app, self.config)
 
         # Setup shutdown handler
         self._setup_shutdown()
@@ -482,27 +482,12 @@ class AutoLangChatPlugin:
         slug = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
         return slug or "prompt"
 
-    def _setup_templates(self):
-        """Setup Jinja2 templates for UI and mount static files"""
-
-        # Create templates directory if it doesn't exist
-        template_dir = os.path.join(os.path.dirname(__file__), "templates")
-        if not os.path.exists(template_dir):
-            os.makedirs(template_dir)
-
-        self.templates = Jinja2Templates(directory=template_dir)
-
-        # Mount static files
-        static_dir = os.path.join(os.path.dirname(__file__), "static")
-        if os.path.exists(static_dir):
-            self.app.mount(f"{self.config.chat_endpoint}/static", StaticFiles(directory=static_dir), name="static")
-
     async def _build_chat_bootstrap_context(self, request: Request) -> Tuple[Dict[str, Any], Optional[str]]:
-        """Assemble the ``chat.html`` template context.
+        """Assemble the chat bootstrap context.
 
-        Single source of truth for both ``GET {ui_endpoint}`` (Jinja) and
-        ``GET {chat_endpoint}/config`` (JSON, BC-001) so the two can never
-        drift (CONTRACT-001 §6). Returns ``(context, new_sso_session_token)``
+        Single source of truth for ``GET {chat_endpoint}/config`` (JSON,
+        BC-001), which the React SPA reads before rendering (CONTRACT-001
+        §6). Returns ``(context, new_sso_session_token)``
         — the token is only set when a silent external-IdP-cookie session
         was just minted and must be persisted as a ``Set-Cookie`` by the
         caller.
@@ -617,7 +602,8 @@ class AutoLangChatPlugin:
             # absent so any stale client request gets 404.
             "admin_enabled": self.config.admin_enabled,
             "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
-            "dashboard_url": (f"{self.config.chat_endpoint}/dashboard" if self.config.admin_enabled else ""),
+            # The Jinja dashboard shell is gone; the SPA's admin area replaces it.
+            "dashboard_url": (f"{self.config.ui_endpoint}/admin" if self.config.admin_enabled else ""),
             "conversation_persistence_enabled": conversation_persistence_enabled,
             # Dynamic parameter overrides settings sidebar.
             "enable_config_sidebar": bool(self.config.enable_config_sidebar and self.config.enable_dynamic_overrides),
@@ -641,9 +627,9 @@ class AutoLangChatPlugin:
     def _apply_new_sso_cookie(self, response, request: Request, new_sso_session_token: Optional[str]) -> None:
         """Persist a freshly-minted silent-cookie SSO session token, if any.
 
-        Shared by ``chat_ui`` and the JSON bootstrap route so a session
-        minted via either entry point is set the same way (see
-        ``_resolve_sso_session``).
+        Called after the JSON bootstrap route so a session minted via the
+        silent-cookie path (see ``_resolve_sso_session``) is set the same way
+        as a normal SSO callback.
         """
         if not new_sso_session_token:
             return
@@ -738,47 +724,14 @@ class AutoLangChatPlugin:
 
             await self.websocket_handler.handle_connection(websocket, user_id, preferred_session_id=session_id)
 
-        # Chat UI endpoint
+        # Chat UI (BC-001/BC-002): the React SPA is mounted at ``ui_endpoint``
+        # after this method returns (see ``mount_spa`` in ``__init__``), so this
+        # block only registers the JSON bootstrap endpoint it reads at start-up.
         if self.config.enable_ui:
 
-            @self.app.get(self.config.ui_endpoint, response_class=HTMLResponse)
-            async def chat_ui(request: Request):
-                """Serve chat UI"""
-                logger.debug("chat_ui invoked")
-
-                if not self.templates:
-                    template_dir = os.path.join(os.path.dirname(__file__), "templates")
-                    return HTMLResponse(
-                        content="<html><body><h1>Chat UI Error</h1>"
-                        f"<p>Template rendering is unavailable. The template system failed to initialize.</p>"
-                        f"<p>Expected template directory: <code>{html.escape(template_dir)}</code></p>"
-                        "<p>Please check that the templates directory exists, is readable, and contains the required files.</p>"
-                        "</body></html>",
-                        status_code=500,
-                    )
-
-                try:
-                    context, new_sso_session_token = await self._build_chat_bootstrap_context(request)
-                    response = self.templates.TemplateResponse(request, "chat.html", context=context)
-                    # A silent external-IdP-cookie session may have just been minted for
-                    # this render — persist it exactly like a normal SSO callback does,
-                    # so subsequent requests (WebSocket handshake included) are already
-                    # authenticated.
-                    self._apply_new_sso_cookie(response, request, new_sso_session_token)
-                    return response
-                except Exception as e:
-                    logger.error(f"Template rendering failed: {str(e)}")
-                    return HTMLResponse(
-                        content=f"<html><body><h1>Chat UI Error</h1>"
-                        f"<p>Failed to render template: {html.escape(str(e))}</p>"
-                        "</body></html>",
-                        status_code=500,
-                    )
-
-            # JSON bootstrap endpoint (BC-001): same builder as chat_ui, mapped to
-            # the camelCase wire payload in CONTRACT-001 §6, so the SPA can start
-            # without any Jinja-interpolated <script> (incompatible with a strict
-            # CSP). Registered alongside chat_ui under the same enable_ui flag.
+            # JSON bootstrap endpoint (BC-001): mapped to the camelCase
+            # payload in CONTRACT-001 §6, so the SPA can start without any
+            # Jinja-interpolated <script> (incompatible with a strict CSP).
             @self.app.get(f"{self.config.chat_endpoint}/config")
             async def chat_bootstrap_config(request: Request):
                 """Serve the chat bootstrap configuration as JSON"""
@@ -957,8 +910,6 @@ class AutoLangChatPlugin:
             logger.info(f"  Conversations: {self.config.chat_endpoint}/conversations")
         if self.config.admin_enabled:
             logger.info(f"  Admin Capabilities: {self.config.chat_endpoint}/admin/_capabilities")
-            if self.config.enable_ui:
-                logger.info(f"  Dashboard: {self.config.chat_endpoint}/dashboard")
         if self.config.sso_enabled:
             logger.info(f"  SSO Login: {self.config.chat_endpoint}/auth/sso/login")
             logger.info(f"  SSO Callback: {self.config.sso_callback_path}")
@@ -973,8 +924,7 @@ class AutoLangChatPlugin:
         (``(scope, receive, send) -> None``); mounting it directly means
         every HTTP method the Streamable HTTP transport needs (POST for
         JSON-RPC, GET for the SSE stream, DELETE for session termination)
-        reaches it, matching how static files are mounted in
-        ``_setup_templates``.
+        reaches it, matching how the SPA build is mounted in ``spa.mount_spa``.
 
         The session manager's ``run()`` context (which starts its internal
         task group) is entered during ``plugin.startup()`` — see
@@ -1038,6 +988,7 @@ class AutoLangChatPlugin:
         Returns ``None`` when ``next_param`` is missing or fails validation
         (falls back to the plain chat UI root).
         """
+
         def reject(reason: str) -> Optional[str]:
             logger.warning("Rejected SSO return target: %s", reason)
             return None
@@ -1469,8 +1420,6 @@ class AutoLangChatPlugin:
         logger.info("RAG is enabled (ENABLE_RAG=true) - checking knowledge base status")
 
         try:
-            import os
-
             storage_type = self.config.kb_storage_type
 
             logger.info(f"  KB Storage: {storage_type}")
@@ -1932,37 +1881,6 @@ class AutoLangChatPlugin:
             except Exception:
                 logger.exception("Failed to resolve admin capabilities")
                 return JSONResponse({"is_admin": False, "anonymous": False, **caps})
-
-        # ----------------------------------------------------------------
-        # Admin Dashboard UI — GET {chat_endpoint}/dashboard
-        #
-        # Server-rendered shell page.  Wired only when the UI is enabled
-        # (templates are initialised) so the endpoint can't 500 if the
-        # template directory is absent.
-        # ----------------------------------------------------------------
-
-        if self.config.enable_ui and getattr(self, "templates", None) is not None:
-            dashboard_url = f"{self.config.chat_endpoint}/dashboard"
-
-            import time as _time
-
-            _static_ver = str(int(_time.time()))
-
-            @self.app.get(dashboard_url, response_class=HTMLResponse, include_in_schema=False)
-            async def admin_dashboard_page(request: Request):
-                """Serve the Admin Dashboard shell page."""
-                return self.templates.TemplateResponse(
-                    request,
-                    "dashboard.html",
-                    context={
-                        "app_title": self.app.title or "API",
-                        "admin_prefix": admin_prefix,
-                        "chat_url": self.config.ui_endpoint,
-                        "static_ver": _static_ver,
-                    },
-                )
-
-            logger.info("  Dashboard UI: %s", dashboard_url)
 
         # Feedback Review endpoints. Only registered when a feedback
         # store is actually wired; otherwise ``/admin/feedback`` would 500

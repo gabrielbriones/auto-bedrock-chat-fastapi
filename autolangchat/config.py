@@ -453,7 +453,16 @@ class ChatConfig(BaseSettings):
     ui_endpoint: str = Field(
         default="/chat/ui",
         alias="AUTOCHAT_UI_ENDPOINT",
-        description="Web UI endpoint",
+        description="Site-root mount path for the chat UI (the React SPA build, BC-002)",
+    )
+
+    ui_dist_dir: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_UI_DIST_DIR",
+        description=(
+            "Directory containing the built SPA (Vite ``dist/`` with ``index.html``). "
+            "Defaults to ``<repo>/frontend/dist`` next to the installed package."
+        ),
     )
 
     sso_allowed_return_prefixes: Annotated[List[str], NoDecode] = Field(

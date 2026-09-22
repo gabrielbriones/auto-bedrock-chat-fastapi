@@ -1,0 +1,133 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`SanitizedMarkdown > keeps the shared allow-list stable 1`] = `
+{
+  "attributes": {
+    "*": [
+      "dir",
+      "lang",
+      "title",
+    ],
+    "a": [
+      "href",
+      "title",
+    ],
+    "code": [
+      [
+        "className",
+        /\\^language-/,
+      ],
+    ],
+    "img": [
+      "alt",
+      "height",
+      "src",
+      "title",
+      "width",
+    ],
+    "input": [
+      [
+        "checked",
+        true,
+      ],
+      [
+        "disabled",
+        true,
+      ],
+      [
+        "type",
+        "checkbox",
+      ],
+    ],
+    "li": [
+      [
+        "className",
+        "task-list-item",
+      ],
+    ],
+    "ol": [
+      [
+        "className",
+        "contains-task-list",
+      ],
+    ],
+    "table": [
+      "align",
+    ],
+    "td": [
+      "align",
+      "colSpan",
+      "rowSpan",
+    ],
+    "th": [
+      "align",
+      "colSpan",
+      "rowSpan",
+    ],
+  },
+  "protocols": {
+    "href": [
+      "http",
+      "https",
+      "mailto",
+    ],
+    "src": [
+      "http",
+      "https",
+      "data",
+    ],
+  },
+  "required": {
+    "input": {
+      "disabled": true,
+      "type": "checkbox",
+    },
+  },
+  "strip": [
+    "embed",
+    "form",
+    "iframe",
+    "object",
+    "script",
+    "style",
+  ],
+  "tagNames": [
+    "a",
+    "blockquote",
+    "br",
+    "code",
+    "del",
+    "details",
+    "div",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "img",
+    "input",
+    "kbd",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "s",
+    "span",
+    "strong",
+    "sub",
+    "summary",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+  ],
+}
+`;

@@ -72,6 +72,14 @@ class TestAutochatEnvVarPrefix:
         config = _load_config(AUTOCHAT_UI_ENDPOINT="/custom/chat/ui")
         assert config.sso_allowed_return_prefixes == ["/custom/chat/ui"]
 
+    def test_ui_dist_dir_defaults_to_none(self):
+        config = _load_config()
+        assert config.ui_dist_dir is None
+
+    def test_ui_dist_dir_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_UI_DIST_DIR="/srv/spa")
+        assert config.ui_dist_dir == "/srv/spa"
+
     def test_sso_allowed_return_prefixes_from_autochat_var(self):
         config = _load_config(AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES="/chat/ui,/ui")
         assert config.sso_allowed_return_prefixes == ["/chat/ui", "/ui"]

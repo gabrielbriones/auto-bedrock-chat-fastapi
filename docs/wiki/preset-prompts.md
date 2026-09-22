@@ -215,8 +215,8 @@ AUTOCHAT_PRESET_PROMPTS_FILE=/etc/myapp/prompts.yaml
 
 ## Security Notes
 
-- Button labels and descriptions are set as `textContent` / `title` attributes — no HTML injection risk.
-- Prompt templates are passed through `marked.parse()` then sanitized with **DOMPurify** before being rendered in the chat bubble, preventing XSS from raw HTML in templates.
+- Button labels and descriptions are rendered as plain text — no HTML injection risk.
+- Prompt templates are rendered as markdown via **react-markdown**, sanitized with **rehype-sanitize** before display in the chat bubble, preventing XSS from raw HTML in templates.
 - Placeholder substitution uses `String.replaceAll()` on the resolved plain-text template before it is rendered as markdown — there is no risk of a placeholder expanding into executable code.
 
 ---

@@ -1,0 +1,6 @@
+{
+  "type": "conversation_bulk_deleted",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "deleted_ids": ["conversation-1"],
+  "active_conversation_deleted": true
+}
