@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 
 from ._autolangchat_imports import load_module
@@ -9,6 +10,7 @@ SSOProvider = sso_handler_mod.SSOProvider
 SSODiscoveryError = sso_handler_mod.SSODiscoveryError
 SSOTokenError = sso_handler_mod.SSOTokenError
 SSOValidationError = sso_handler_mod.SSOValidationError
+access_token_expires_in = sso_handler_mod.access_token_expires_in
 
 
 def _make_config(**overrides):
@@ -139,3 +141,37 @@ class TestValidationErrors:
 
         with pytest.raises(SSODiscoveryError):
             provider.build_authorization_url(state="abc")
+
+
+class TestAccessTokenExpiresIn:
+    """Covers the silent external-IdP-cookie path's expiry inference
+    (PR #150 round 5 review) -- that path has no IdP-reported expires_in
+    since the token wasn't obtained via our own token exchange."""
+
+    def test_reads_exp_claim_without_verifying_signature(self):
+        import time
+
+        exp = int(time.time()) + 1800
+        token = jwt.encode({"exp": exp, "sub": "user1"}, "any-secret-not-ours", algorithm="HS256")
+
+        result = access_token_expires_in(token)
+
+        assert result is not None
+        assert 1795 <= result <= 1800
+
+    def test_returns_none_for_undecodable_token(self):
+        assert access_token_expires_in("not-a-jwt") is None
+
+    def test_returns_none_when_no_exp_claim(self):
+        token = jwt.encode({"sub": "user1"}, "any-secret-not-ours", algorithm="HS256")
+
+        assert access_token_expires_in(token) is None
+
+    def test_returns_none_for_non_numeric_exp_claim(self):
+        """With signature/expiry verification disabled, PyJWT does not
+        validate the type of the exp claim -- a malformed external cookie
+        could carry a non-numeric exp, which must not raise (PR #150 round 6
+        review)."""
+        token = jwt.encode({"exp": "not-a-number", "sub": "user1"}, "any-secret-not-ours", algorithm="HS256")
+
+        assert access_token_expires_in(token) is None
