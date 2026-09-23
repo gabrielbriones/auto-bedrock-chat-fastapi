@@ -53,6 +53,43 @@ from autolangchat.rag.kb_ingestion import ingest_uploaded_files  # noqa: E402
 _LONG_TEXT = "hello world " * 60
 
 
+def _build_minimal_pdf(text: bytes) -> bytes:
+    """Build a minimal single-page real PDF with a text-drawing content stream.
+
+    Hand-rolled (rather than via a fixture file) so the exact xref byte
+    offsets are always valid; used to exercise the real pypdf integration
+    end-to-end through the route, not just a mocked extract_pdf_text.
+    """
+    objects = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "
+        b"/MediaBox [0 0 200 200] /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    ]
+    stream = b"BT /F1 24 Tf 10 100 Td (" + text + b") Tj ET"
+    objects.append(
+        b"5 0 obj\n<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream\nendobj\n"
+    )
+
+    body = b"%PDF-1.4\n"
+    offsets = []
+    for obj in objects:
+        offsets.append(len(body))
+        body += obj
+
+    xref_start = len(body)
+    xref = b"xref\n0 " + str(len(objects) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n".encode()
+
+    trailer = (
+        b"trailer\n<< /Size " + str(len(objects) + 1).encode() + b" /Root 1 0 R >>\n"
+        b"startxref\n" + str(xref_start).encode() + b"\n%%EOF"
+    )
+    return body + xref + trailer
+
+
 class _Identity(SimpleNamespace):
     user_id: str = "admin"
 
@@ -358,6 +395,31 @@ def test_trigger_file_source_ingests_pdf_upload_into_kb_store():
             "/bedrock-chat/admin/kb/sources/file",
             data={"name": "uploads"},
             files=[("files", ("guide.pdf", b"%PDF-1.4 fake bytes", "application/pdf"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["files_processed"] == 1
+    assert final.json()["chunks_written"] >= 1
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_trigger_file_source_ingests_real_pdf_upload_into_kb_store():
+    """Unlike the mocked test above, uploads a real (hand-built) PDF and lets
+    the actual pypdf-based extract_pdf_text() run, end-to-end through the route.
+    """
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads"},
+            files=[("files", ("guide.pdf", pdf_bytes, "application/pdf"))],
         )
         assert resp.status_code == 202
 

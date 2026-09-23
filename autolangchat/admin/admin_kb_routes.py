@@ -931,7 +931,12 @@ def register_admin_kb_routes(
                     return _error_json(422, "upload_too_large", exc.message)
                 total_bytes_read += len(raw)
                 filename = upload.filename or "unnamed"
-                if filename.lower().endswith(".pdf") or upload.content_type == "application/pdf":
+                # Media type may include parameters/casing (e.g. "Application/PDF",
+                # "application/pdf; charset=binary") — strip params and lowercase
+                # before comparing, same normalization the crawler applies to
+                # Content-Type in content_crawler.py.
+                content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
+                if filename.lower().endswith(".pdf") or content_type == "application/pdf":
                     try:
                         text = await asyncio.to_thread(extract_pdf_text, raw)
                     except PDFExtractionError as exc:
