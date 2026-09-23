@@ -265,6 +265,20 @@ def test_file_source_rejects_non_utf8_file():
     assert resp.json()["code"] == "invalid_file_encoding"
 
 
+def test_file_source_rejects_unparseable_pdf():
+    app = _build_app(embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    with patch.object(kb_routes_mod, "extract_pdf_text", side_effect=kb_routes_mod.PDFExtractionError("bad pdf")):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s"},
+            files=[("files", ("bad.pdf", b"%PDF-not-really", "application/pdf"))],
+        )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "invalid_pdf_file"
+
+
 def test_ingestion_unavailable_without_embedding_client():
     app = _build_app(embedding_client=None)
     client = TestClient(app)
@@ -323,6 +337,27 @@ def test_trigger_file_source_ingests_upload_into_kb_store():
             "/bedrock-chat/admin/kb/sources/file",
             data={"name": "uploads"},
             files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["files_processed"] == 1
+    assert final.json()["chunks_written"] >= 1
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_trigger_file_source_ingests_pdf_upload_into_kb_store():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    with TestClient(app) as client, patch.object(kb_routes_mod, "extract_pdf_text", return_value=_LONG_TEXT):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads"},
+            files=[("files", ("guide.pdf", b"%PDF-1.4 fake bytes", "application/pdf"))],
         )
         assert resp.status_code == 202
 
