@@ -499,7 +499,7 @@ class ContentCrawler:
             chunks.append(chunk)
 
         try:
-            text = extract_pdf_text(b"".join(chunks))
+            text = await asyncio.to_thread(extract_pdf_text, b"".join(chunks))
         except PDFExtractionError as exc:
             message = f"failed to extract linked PDF {url}: {exc.message}"
             logger.warning(message)
@@ -597,9 +597,14 @@ class ContentCrawler:
                             # pre-redirect address.
                             return self._parse_html(html_content, current_url, source, topic)
 
-                        if not ingest_linked_files or not self._is_supported_linked_file(
+                        # Check both the final and original URL for a supported
+                        # extension -- a linked "/guide.pdf" can redirect to an
+                        # extensionless CDN URL served with a generic Content-Type,
+                        # and the original link is still a reliable PDF hint.
+                        is_supported_linked_file = self._is_supported_linked_file(
                             current_url, normalized_content_type
-                        ):
+                        ) or self._is_supported_linked_file(url, normalized_content_type)
+                        if not ingest_linked_files or not is_supported_linked_file:
                             logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {current_url}")
                             return None
 

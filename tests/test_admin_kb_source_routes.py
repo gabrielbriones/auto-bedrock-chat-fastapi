@@ -1569,3 +1569,45 @@ async def test_exclude_patterns_excludes_linked_pdf():
 
     assert not any(u.endswith(".pdf") for u in fetched)
     assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_detected_via_original_url_extension_after_redirect():
+    """A linked .pdf URL that redirects to an extensionless URL served with a
+    generic Content-Type must still be detected as a PDF, using the original
+    (pre-redirect) URL as an extension hint."""
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+
+    class _RedirectResponse:
+        def __init__(self):
+            self.status = 302
+            self.headers = {"Location": "https://example.com/downloads/final-blob"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _RedirectThenFileSession:
+        def __init__(self):
+            self._calls = 0
+
+        def get(self, url, **kwargs):
+            self._calls += 1
+            if self._calls == 1:
+                return _RedirectResponse()
+            return _FakeFileResponse(pdf_bytes, content_type="application/octet-stream")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=_RedirectThenFileSession()):
+        doc = await crawler._fetch_and_parse("https://example.com/guide.pdf", "src", None, ingest_linked_files=True)
+
+    assert doc is not None
+    assert doc["url"] == "https://example.com/downloads/final-blob"
