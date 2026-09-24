@@ -195,6 +195,9 @@ class KBSourceWebRequest(BaseModel):
     # Pass [] explicitly to disable domain restriction entirely.
     allowed_domains: Optional[List[str]] = None
     exclude_patterns: Optional[List[str]] = None
+    # Opt-in: download and index linked non-HTML files (currently PDF only)
+    # discovered during the crawl, instead of silently skipping them.
+    ingest_linked_files: bool = False
     # Real cap on pages fetched per URL (see ContentCrawler._crawl_recursive) —
     # previously a no-op in the CLI populate pipeline; kept usable here too.
     # Bounded so it can't be set to 0/negative (would look like a clean but
@@ -347,6 +350,7 @@ async def _run_web_source_ingestion(
             allowed_domains=body.allowed_domains,
             exclude_patterns=body.exclude_patterns,
             max_pages=body.max_pages,
+            ingest_linked_files=body.ingest_linked_files,
             extra_headers=body.headers,
             cookies=body.cookies,
             progress_cb=state.record_progress,
