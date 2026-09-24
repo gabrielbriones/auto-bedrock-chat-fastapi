@@ -401,14 +401,15 @@ Response shape (`POST` and `GET status` share it):
 | `error`           | Set only if the whole run crashed with an unhandled exception (`phase: "failed"`).                                                                                                                                         |
 | `errors`          | Per-item failures (a page that failed to fetch, a file that failed to chunk/embed) that did **not** abort the run — a `"completed"` run with 0 results and a non-empty `errors` list means everything failed individually. |
 
-| HTTP | `code`                              | When                                                           |
-| ---- | ----------------------------------- | -------------------------------------------------------------- |
-| 202  | —                                   | Run accepted; poll `GET .../status`.                           |
-| 409  | `kb_source_run_already_in_progress` | Another run is already in flight.                              |
-| 422  | `no_files_uploaded`                 | `POST .../file` with zero files attached.                      |
-| 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text (e.g. a PDF or image). |
-| 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
-| 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup. |
+| HTTP | `code`                              | When                                                                                                |
+| ---- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 202  | —                                   | Run accepted; poll `GET .../status`.                                                                |
+| 409  | `kb_source_run_already_in_progress` | Another run is already in flight.                                                                   |
+| 422  | `no_files_uploaded`                 | `POST .../file` with zero files attached.                                                           |
+| 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text and isn't a recognized PDF (e.g. an image or zip).          |
+| 422  | `invalid_pdf_file`                  | An uploaded `.pdf` (or `application/pdf`) file is corrupted, encrypted, or has no extractable text. |
+| 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                      |
+| 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup.                                      |
 
 `GET /admin/kb/sources` lists every distinct `source` value across KB
 documents — not just ones ingested via the two routes above; the
@@ -539,18 +540,18 @@ All admin errors share a single flat shape:
 }
 ```
 
-| HTTP | `code`                                        | When                                                                       |
-| ---- | --------------------------------------------- | -------------------------------------------------------------------------- |
-| 400  | `invalid_filters`                             | Bad date window, malformed query value.                                    |
-| 401  | `not_authenticated`                           | No identity source resolved the caller.                                    |
-| 403  | `not_admin`                                   | Identity resolved but `AdminAuthorizer` rejected it.                       |
-| 404  | `not_found`                                   | Target id doesn't exist.                                                   |
-| 409  | `invalid_status_transition`                   | Feedback PATCH attempts a forbidden review-status transition.              |
-| 409  | `kb_source_run_already_in_progress`           | Another KB source-ingestion run is already in flight.                      |
-| 422  | (validation error from FastAPI)               | Body / path / query failed Pydantic validation.                            |
-| 422  | `no_files_uploaded` / `invalid_file_encoding` | KB source file upload has no files, or one isn't UTF-8 text.               |
-| 422  | `upload_too_large`                            | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
-| 503  | `kb_source_ingestion_unavailable`             | KB source-ingestion routes called without an embedding client/model wired. |
+| HTTP | `code`                                                             | When                                                                                                                    |
+| ---- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 400  | `invalid_filters`                                                  | Bad date window, malformed query value.                                                                                 |
+| 401  | `not_authenticated`                                                | No identity source resolved the caller.                                                                                 |
+| 403  | `not_admin`                                                        | Identity resolved but `AdminAuthorizer` rejected it.                                                                    |
+| 404  | `not_found`                                                        | Target id doesn't exist.                                                                                                |
+| 409  | `invalid_status_transition`                                        | Feedback PATCH attempts a forbidden review-status transition.                                                           |
+| 409  | `kb_source_run_already_in_progress`                                | Another KB source-ingestion run is already in flight.                                                                   |
+| 422  | (validation error from FastAPI)                                    | Body / path / query failed Pydantic validation.                                                                         |
+| 422  | `no_files_uploaded` / `invalid_file_encoding` / `invalid_pdf_file` | KB source file upload has no files, one isn't UTF-8 text (and isn't a recognized PDF), or a PDF is corrupted/encrypted. |
+| 422  | `upload_too_large`                                                 | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                              |
+| 503  | `kb_source_ingestion_unavailable`                                  | KB source-ingestion routes called without an embedding client/model wired.                                              |
 
 ---
 

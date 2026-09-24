@@ -67,6 +67,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ..db.kb_base import BaseKBStore
 from ..exceptions import AdminAPIError
 from ..models import ErrorResponse, KBDocument, KBDocumentListFilters, KBDocumentListResponse
+from ..rag.pdf_extraction import PDFExtractionError, extract_pdf_text
 from .admin_errors import ADMIN_COMMON_RESPONSES
 
 logger = logging.getLogger(__name__)
@@ -852,9 +853,15 @@ def register_admin_kb_routes(
             409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
             422: {
                 "model": ErrorResponse,
-                "description": "No files uploaded, a file is not valid UTF-8 text, or an upload exceeds the size limit",
+                "description": (
+                    "No files uploaded, a file is not valid UTF-8 text, a PDF is corrupted/encrypted/unreadable, "
+                    "or an upload exceeds the size limit"
+                ),
             },
-            503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
+            503: {
+                "model": ErrorResponse,
+                "description": "KB source ingestion is not configured",
+            },
         },
         summary="Trigger a KB ingestion run from uploaded file content",
     )
@@ -923,15 +930,27 @@ def register_admin_kb_routes(
                 except UploadTooLargeError as exc:
                     return _error_json(422, "upload_too_large", exc.message)
                 total_bytes_read += len(raw)
-                try:
-                    text = raw.decode("utf-8")
-                except UnicodeDecodeError:
-                    return _error_json(
-                        422,
-                        "invalid_file_encoding",
-                        f"file {upload.filename!r} is not valid UTF-8 text",
-                    )
-                decoded_files.append((upload.filename or "unnamed", text))
+                filename = upload.filename or "unnamed"
+                # Media type may include parameters/casing (e.g. "Application/PDF",
+                # "application/pdf; charset=binary") — strip params and lowercase
+                # before comparing, same normalization the crawler applies to
+                # Content-Type in content_crawler.py.
+                content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
+                if filename.lower().endswith(".pdf") or content_type == "application/pdf":
+                    try:
+                        text = await asyncio.to_thread(extract_pdf_text, raw)
+                    except PDFExtractionError as exc:
+                        return _error_json(422, "invalid_pdf_file", f"file {filename!r}: {exc.message}")
+                else:
+                    try:
+                        text = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        return _error_json(
+                            422,
+                            "invalid_file_encoding",
+                            f"file {filename!r} is not valid UTF-8 text",
+                        )
+                decoded_files.append((filename, text))
             finally:
                 await upload.close()
 
