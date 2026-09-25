@@ -106,13 +106,15 @@
     function apiGet(path)          { return apiRequest('GET',    path); }
     function apiPost(path, body)   { return apiRequest('POST',   path, body); }
     function apiPatch(path, body)  { return apiRequest('PATCH',  path, body); }
+    function apiPut(path, body)    { return apiRequest('PUT',    path, body); }
     function apiDelete(path)       { return apiRequest('DELETE', path); }
 
-    /** POST a FormData body (multipart) — used by the KB Sources file-upload
-     * form, which sends actual file content rather than a JSON body.
-     * Content-Type (with boundary) is left for the browser to set. */
-    function apiPostForm(path, formData) {
-        return fetch(P + path, { method: 'POST', credentials: 'include', body: formData }).then(function (r) {
+    /** POST/PUT a FormData body (multipart) — used by the KB Sources
+     * file-upload form, which sends actual file content rather than a
+     * JSON body. Content-Type (with boundary) is left for the browser to
+     * set. */
+    function apiFormRequest(method, path, formData) {
+        return fetch(P + path, { method: method, credentials: 'include', body: formData }).then(function (r) {
             if (r.status === 204) return null;
             return r.json().then(function (data) {
                 if (!r.ok) {
@@ -127,6 +129,9 @@
             });
         });
     }
+
+    function apiPostForm(path, formData) { return apiFormRequest('POST', path, formData); }
+    function apiPutForm(path, formData)  { return apiFormRequest('PUT',  path, formData); }
 
     // ----------------------------------------------------------------
     // Toast notifications
@@ -874,7 +879,11 @@
      * `source` name (not a run id — completed runs aren't tracked, only
      * the document rows they left behind are) with a Delete button that
      * hard-deletes every document under that name via
-     * `DELETE /kb/sources?name=...`. */
+     * `DELETE /kb/sources?name=...`. To override/re-run a source instead,
+     * submit the matching form below with the same name — a `409
+     * source_already_exists` response prompts a confirm-then-PUT flow
+     * (no dedicated row action here: this list doesn't track `source_type`,
+     * so it can't tell which form — web or file — a given row needs). */
     function renderKBSourcesList(rows) {
         var wrap = document.getElementById('kbsrc-list-wrap');
         if (!wrap) return;
@@ -1028,6 +1037,14 @@
         return parts.length ? parts : undefined;
     }
 
+    /** Shallow-copy `obj` without `key` — used to build a PUT-override
+     * body from the POST body (PUT takes `name` from the path instead). */
+    function withoutKey(obj, key) {
+        var copy = {};
+        Object.keys(obj).forEach(function (k) { if (k !== key) copy[k] = obj[k]; });
+        return copy;
+    }
+
     function buildKBSourceWebForm() {
         var sec = el('div', 'drawer-section kb-source-form');
         sec.appendChild(el('h4', null, 'Web Crawl'));
@@ -1127,6 +1144,45 @@
         footer.appendChild(submitBtn);
         sec.appendChild(footer);
 
+        /** POST to start a fresh crawl, or PUT `/kb/sources/web/{name}` to
+         * override an existing one. `body` always carries `name` (used as
+         * the PUT path param and stripped from the PUT request body). */
+        function startWebSourceRun(body, override) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = override ? 'Overriding…' : 'Starting…';
+            var req = override
+                ? apiPut('/kb/sources/web/' + encodeURIComponent(body.name), withoutKey(body, 'name'))
+                : apiPost('/kb/sources/web', body);
+            req.then(function (status) {
+                showToast(
+                    (override ? 'Override crawl' : 'Web crawl') + ' started (run ' +
+                        (status && status.run_id ? status.run_id : '—') + ').',
+                    'success'
+                );
+                submitBtn.textContent = 'Start Web Crawl';
+                kbSourcesRenderStatus(status);
+                kbSourcesStartPolling();
+            }).catch(function (e) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Start Web Crawl';
+                if (e && e.status === 409 && e.code === 'source_already_exists') {
+                    showConfirm(
+                        'Source Already Exists',
+                        'A KB source named \u201c' + body.name + '\u201d already has documents. Override and ' +
+                            'replace them with this crawl?',
+                        'Override'
+                    ).then(function (confirmed) { if (confirmed) startWebSourceRun(body, true); });
+                    return;
+                }
+                if (e && e.status === 409) {
+                    showToast('A KB source run is already in progress — showing its status.', 'info');
+                    kbSourcesStartPolling();
+                    return;
+                }
+                showToast('Failed to start web crawl: ' + String(e), 'error');
+            });
+        }
+
         submitBtn.addEventListener('click', function () {
             var showErr = function (msg) { formErr.textContent = msg; formErr.classList.add('visible'); };
             formErr.classList.remove('visible');
@@ -1155,25 +1211,7 @@
                 catch (e) { cookiesErr.textContent = 'Cookies must be valid JSON.'; cookiesErr.classList.add('visible'); return; }
             }
 
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Starting…';
-            apiPost('/kb/sources/web', body)
-                .then(function (status) {
-                    showToast('Web crawl started (run ' + (status && status.run_id ? status.run_id : '—') + ').', 'success');
-                    submitBtn.textContent = 'Start Web Crawl';
-                    kbSourcesRenderStatus(status);
-                    kbSourcesStartPolling();
-                })
-                .catch(function (e) {
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Start Web Crawl';
-                    if (e && e.status === 409) {
-                        showToast('A KB source run is already in progress — showing its status.', 'info');
-                        kbSourcesStartPolling();
-                        return;
-                    }
-                    showToast('Failed to start web crawl: ' + String(e), 'error');
-                });
+            startWebSourceRun(body, false);
         });
 
         return sec;
@@ -1211,6 +1249,52 @@
         footer.appendChild(submitBtn);
         sec.appendChild(footer);
 
+        /** POST to start a fresh ingestion, or PUT `/kb/sources/file/{name}`
+         * to override an existing one. `formData` always carries a `name`
+         * field; the PUT path takes the name instead, so it's rebuilt
+         * without that field for the PUT call. */
+        function startFileSourceRun(name, formData, override) {
+            var req;
+            if (override) {
+                var putData = new FormData();
+                formData.forEach(function (value, key) { if (key !== 'name') putData.append(key, value); });
+                req = apiPutForm('/kb/sources/file/' + encodeURIComponent(name), putData);
+            } else {
+                req = apiPostForm('/kb/sources/file', formData);
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = override ? 'Overriding…' : 'Uploading…';
+            req.then(function (status) {
+                showToast(
+                    (override ? 'Override ingestion' : 'File ingestion') + ' started (run ' +
+                        (status && status.run_id ? status.run_id : '—') + ').',
+                    'success'
+                );
+                submitBtn.textContent = 'Upload & Ingest';
+                filesInp.value = '';
+                kbSourcesRenderStatus(status);
+                kbSourcesStartPolling();
+            }).catch(function (e) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Upload & Ingest';
+                if (e && e.status === 409 && e.code === 'source_already_exists') {
+                    showConfirm(
+                        'Source Already Exists',
+                        'A KB source named \u201c' + name + '\u201d already has documents. Override and replace ' +
+                            'them with these files?',
+                        'Override'
+                    ).then(function (confirmed) { if (confirmed) startFileSourceRun(name, formData, true); });
+                    return;
+                }
+                if (e && e.status === 409) {
+                    showToast('A KB source run is already in progress — showing its status.', 'info');
+                    kbSourcesStartPolling();
+                    return;
+                }
+                showToast('Failed to start file ingestion: ' + String(e), 'error');
+            });
+        }
+
         submitBtn.addEventListener('click', function () {
             var showErr = function (msg) { formErr.textContent = msg; formErr.classList.add('visible'); };
             formErr.classList.remove('visible');
@@ -1225,26 +1309,7 @@
             var topic = topicInp.value.trim(); if (topic) formData.append('topic', topic);
             for (var i = 0; i < files.length; i++) formData.append('files', files[i]);
 
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Uploading…';
-            apiPostForm('/kb/sources/file', formData)
-                .then(function (status) {
-                    showToast('File ingestion started (run ' + (status && status.run_id ? status.run_id : '—') + ').', 'success');
-                    submitBtn.textContent = 'Upload & Ingest';
-                    filesInp.value = '';
-                    kbSourcesRenderStatus(status);
-                    kbSourcesStartPolling();
-                })
-                .catch(function (e) {
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Upload & Ingest';
-                    if (e && e.status === 409) {
-                        showToast('A KB source run is already in progress — showing its status.', 'info');
-                        kbSourcesStartPolling();
-                        return;
-                    }
-                    showToast('Failed to start file ingestion: ' + String(e), 'error');
-                });
+            startFileSourceRun(name, formData, false);
         });
 
         return sec;

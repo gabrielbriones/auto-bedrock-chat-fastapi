@@ -637,8 +637,8 @@ class SQLiteKBStore(BaseKBStore):
         return [{"topic": row[0], "count": row[1]} for row in cursor.fetchall()]
 
     @_locked
-    def delete_document(self, doc_id: str) -> None:
-        """Delete a document and all its chunks."""
+    def delete_document(self, doc_id: str) -> int:
+        """Delete a document and all its chunks. Returns the chunk count deleted."""
         cursor = self.conn.cursor()
 
         # Get chunk IDs to delete from vector table
@@ -656,6 +656,7 @@ class SQLiteKBStore(BaseKBStore):
         cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
 
         self.conn.commit()
+        return len(chunk_ids)
 
     # ------------------------------------------------------------------
     # Admin operations

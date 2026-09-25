@@ -302,13 +302,15 @@ on the same document.
 
 ### KB Source Ingestion
 
-| Method | Path                       | Description                                                            |
-| ------ | -------------------------- | ---------------------------------------------------------------------- |
-| POST   | `/admin/kb/sources/web`    | Trigger a background web crawl; indexes the crawled pages into the KB. |
-| POST   | `/admin/kb/sources/file`   | Trigger a background ingestion of uploaded file content into the KB.   |
-| GET    | `/admin/kb/sources/status` | Poll the single global ingestion run's state.                          |
-| GET    | `/admin/kb/sources`        | List distinct KB document `source` names with their document counts.   |
-| DELETE | `/admin/kb/sources`        | Delete every document (and chunks) whose `source` matches `?name=`.    |
+| Method | Path                            | Description                                                               |
+| ------ | ------------------------------- | ------------------------------------------------------------------------- |
+| POST   | `/admin/kb/sources/web`         | Trigger a background web crawl; indexes the crawled pages into the KB.    |
+| POST   | `/admin/kb/sources/file`        | Trigger a background ingestion of uploaded file content into the KB.      |
+| PUT    | `/admin/kb/sources/web/{name}`  | Delete `name`'s existing documents/chunks, then re-run a web crawl.       |
+| PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
+| GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                             |
+| GET    | `/admin/kb/sources`             | List distinct KB document `source` names with their document counts.      |
+| DELETE | `/admin/kb/sources`             | Delete every document (and chunks) whose `source` matches `?name=`.       |
 
 Both `POST` routes return **`202 Accepted`** immediately with a
 `run_id` and `phase: "running"` — the crawl/ingest itself runs as a
@@ -323,6 +325,12 @@ kb_source_run_already_in_progress`. This is intentional: admins can
 > see in the UI that a run is active and simply wait. There is no
 > per-run history — `GET /admin/kb/sources/status` always reports the
 > most recent run, resetting to `idle` on process restart.
+>
+> **Duplicate source names:** `POST` rejects a `name` that already has
+> KB documents with `409 source_already_exists` — re-running the same
+> source no longer silently creates a second, independent set of
+> documents. Use `PUT /admin/kb/sources/{web,file}/{name}` to
+> intentionally replace an existing source's documents/chunks.
 
 `POST /admin/kb/sources/web` body:
 
@@ -392,6 +400,19 @@ Response shape (`POST` and `GET status` share it):
   "errors": []
 }
 ```
+
+`PUT /admin/kb/sources/web/{name}` and
+`PUT /admin/kb/sources/file/{name}` take the _same body_ as the
+corresponding `POST` route minus `name` (taken from the path instead),
+and return the same `202`/status response shape. Unlike `POST`, they
+don't reject an existing source — that's the point: all of `name`'s
+existing documents and chunks are deleted first (a no-op if `name` has
+no documents yet), then the normal ingestion runs exactly like `POST`.
+If ingestion fails partway after the delete, the old content is already
+gone — there is no partial rollback. Emits a `kb.source.override` audit
+record (start + complete) noting the prior document/chunk counts
+removed. Subject to the same single-global-run lock as `POST` (`409
+kb_source_run_already_in_progress`).
 
 | Field             | Notes                                                                                                                                                                                                                      |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

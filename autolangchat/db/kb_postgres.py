@@ -196,13 +196,16 @@ class PgVectorKBStore(BaseKBStore):
                     "removal_flagged": bool(row[10]) if row[10] is not None else False,
                 }
 
-    def delete_document(self, doc_id: str) -> None:
+    def delete_document(self, doc_id: str) -> int:
+        """Delete a document and all its chunks. Returns the chunk count deleted."""
         with self._get_conn() as conn:
             with conn.cursor() as cur:
                 # Delete chunks first (FK constraint)
                 cur.execute("DELETE FROM chunks WHERE document_id = %s", (doc_id,))
+                chunks_deleted = cur.rowcount
                 cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
             conn.commit()
+            return chunks_deleted
 
     def list_sources(self) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
