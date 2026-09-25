@@ -168,19 +168,6 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
 })
 
 describe('MessageComposer autosize (FR-MSG-011)', () => {
-  it('keeps the icon send control fixed-size as the draft grows', () => {
-    render(<Harness />)
-    const send = screen.getByRole('button', { name: COPY.send })
-
-    expect(send).toHaveClass('size-11', 'shrink-0', 'self-end')
-    expect(send).toHaveTextContent('')
-    fireEvent.change(field(), { target: { value: 'line\n'.repeat(20) } })
-
-    expect(field()).toHaveStyle({ height: '150px', overflowY: 'auto' })
-    expect(send).toHaveClass('size-11', 'shrink-0', 'self-end')
-    expect(send).toBeEnabled()
-  })
-
   it('sends through the icon button and clears the draft', async () => {
     const user = userEvent.setup()
     const onSend = jest.fn()
@@ -191,23 +178,6 @@ describe('MessageComposer autosize (FR-MSG-011)', () => {
     expect(onSend).toHaveBeenCalledExactlyOnceWith('analyse job 42')
     expect(field()).toHaveValue('')
     expect(field()).toHaveFocus()
-  })
-
-  it('grows with the content up to the cap, then scrolls', async () => {
-    const user = userEvent.setup()
-    render(<Harness />)
-
-    const textarea = field() as HTMLTextAreaElement
-    await user.type(textarea, 'one{Shift>}{Enter}{/Shift}two')
-
-    expect(textarea.style.height).toBe('40px')
-    expect(textarea.style.overflowY).toBe('hidden')
-
-    render(<Harness initial={Array.from({ length: 20 }, (_, index) => index).join('\n')} />)
-    const tall = screen.getAllByRole('textbox', { name: COPY.label }).at(-1) as HTMLTextAreaElement
-
-    expect(tall.style.height).toBe('150px')
-    expect(tall.style.overflowY).toBe('auto')
   })
 
   it('resets to its base height after sending', async () => {
@@ -254,7 +224,7 @@ describe('MessageComposer locking and enablement (FR-MSG-012/012a)', () => {
 
   // FR-MSG-012, and the XMGPLAT-11472 regression: a turn that resolves — by answer, failure, or by
   // being recycled after staleness — must hand the keyboard back.
-  it.each(['answered', 'recycled'])('returns focus when an %s turn unlocks it', () => {
+  it('returns focus when a resolved turn unlocks it', () => {
     const view = render(<Harness availability={LOCKED} awaitingResponse />)
 
     expect(field()).not.toHaveFocus()

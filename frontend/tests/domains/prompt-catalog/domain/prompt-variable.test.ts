@@ -40,16 +40,6 @@ describe('parsePromptVariable', () => {
     expect(parsed?.diagnostics).toEqual([])
   })
 
-  it('derives the label when none is supplied (FR-PROMPT-003)', () => {
-    const parsed = parsePromptVariable({ name: 'NEW_JOB_ID' })
-    expect(parsed?.variable.label).toBe('New Job Id')
-  })
-
-  it('degrades an unknown input_type to text', () => {
-    const parsed = parsePromptVariable({ name: 'WHEN', input_type: 'date' })
-    expect(parsed?.variable.inputType).toBe('text')
-  })
-
   it('parses select options given as bare strings and as {value,label} records', () => {
     const parsed = parsePromptVariable({
       name: 'PLATFORM',

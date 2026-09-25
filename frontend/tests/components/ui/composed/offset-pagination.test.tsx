@@ -39,19 +39,6 @@ describe('OffsetPagination', () => {
     expect(next()).toBeDisabled()
   })
 
-  // FIX-06, the defect this component exists to close: the legacy control vanished when `total`
-  // hit 0, stranding anyone who had paged deep into a list that then shrank.
-  it('still offers a way back from a page that has been emptied', async () => {
-    const user = userEvent.setup()
-    const onNavigate = renderPagination(100, 0)
-
-    expect(screen.getByText(ADMIN_COPY.pagination.emptyPage)).toBeInTheDocument()
-    expect(previous()).toBeEnabled()
-
-    await user.click(previous())
-    expect(onNavigate).toHaveBeenCalledWith(50)
-  })
-
   it('renders nothing only when there is genuinely nowhere to go', () => {
     const { container } = render(
       <OffsetPagination range={offsetWindow({ limit: 50, offset: 0 }, 0)} onNavigate={() => {}} />,

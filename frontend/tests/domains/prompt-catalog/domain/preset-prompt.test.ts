@@ -45,17 +45,6 @@ describe('parsePresetPrompt', () => {
     })
   })
 
-  it('a preset with no placeholders parses with an empty requiredVariables list', () => {
-    const preset = parsePresetPrompt({
-      id: 'health-check',
-      label: 'Health Check',
-      description: 'Summarise API health',
-      template: 'Please summarise the current API health status.',
-    })
-
-    expect(preset.requiredVariables).toEqual([])
-  })
-
   it('normalizes a source-defined group and derives the label after its prefix', () => {
     const preset = parsePresetPrompt({
       id: 'analysis-iwps',

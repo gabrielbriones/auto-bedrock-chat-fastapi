@@ -42,18 +42,13 @@ describe('ReviewQueue paging', () => {
     expect(withFilters(paged, { ...noFilters, rating: 'negative' }).page.offset).toBe(0)
   })
 
-  it('drops the selection when the page or filters change', () => {
+  // FR-REV-011c / FIX-16: a refetch is a new page too, so nothing survives pointing at a deleted row.
+  it('drops the selection when the page or filters change, or on refetch', () => {
     const selected = toggleSelection(loaded, rejected.id)
 
     expect(selected.selection.size).toBe(1)
     expect(withOffset(selected, 50).selection.size).toBe(0)
     expect(withFilters(selected, noFilters).selection.size).toBe(0)
-  })
-
-  // FR-REV-011c / FIX-16: a refetch is a new page, so nothing survives pointing at a deleted row.
-  it('drops the selection on refetch', () => {
-    const selected = toggleSelection(loaded, rejected.id)
-
     expect(withPage(selected, { entries: [rejected], total: 1, offset: 0 }).selection.size).toBe(0)
   })
 

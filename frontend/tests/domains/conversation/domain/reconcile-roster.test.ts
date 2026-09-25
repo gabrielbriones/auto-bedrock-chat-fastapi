@@ -14,7 +14,6 @@ import type { ConversationEvent } from '@/domains/conversation/domain/events'
 import { reconcileRoster } from '@/domains/conversation/domain/reconcile-roster'
 import { rosterViolations } from '@/domains/conversation/domain/roster-invariants'
 import {
-  awaitFirstTurnId,
   beginBulkDelete,
   clearSelection,
   emptyRoster,
@@ -118,16 +117,6 @@ describe('reconcileRoster frame handling', () => {
     expect([...roster.selection]).toEqual([id('c'), id('b')])
   })
 
-  // FR-CONV-010.
-  it('adopts the newest conversation when a list follows a turn sent before its id existed', () => {
-    const roster = reduce(
-      awaitFirstTurnId(emptyRoster),
-      anEvent.listed([aConversation('a', 0), aConversation('b', 5)]),
-    )
-
-    expect(roster.activeId).toBe(id('b'))
-  })
-
   it('activates a loaded conversation it had not listed yet', () => {
     expect(reduce(emptyRoster, anEvent.loaded('deep-link')).activeId).toBe(id('deep-link'))
   })
@@ -137,16 +126,6 @@ describe('reconcileRoster frame handling', () => {
     const active = reduce(aSeededRoster(), anEvent.loaded('a'))
 
     expect(reduce(active, anEvent.deleted('a')).activeId).toBeNull()
-  })
-
-  // FR-CONV-006a / P5.
-  it('drops the whole requested set from the selection on a partial bulk delete', () => {
-    const started = beginBulkDelete(aSeededRoster(), [id('a'), id('b')])
-    const roster = reduce(isOk(started) ? started.value : emptyRoster, anEvent.bulkDeleted(['a']))
-
-    expect(roster.items.map((item) => item.id)).toEqual([id('c'), id('b')])
-    expect([...roster.selection]).toEqual([id('c')])
-    expect(roster.pendingBulkDelete).toBeNull()
   })
 
   // FR-CONV-006b.

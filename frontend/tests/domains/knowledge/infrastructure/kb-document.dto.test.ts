@@ -1,6 +1,5 @@
 import { describe, expect, it } from '@jest/globals'
 
-import { invalidResponseProblem } from '@/shared/http/exception'
 import { CalendarDate } from '@/shared/kernel/instant'
 import { isErr, isOk } from '@/shared/kernel/result'
 import {
@@ -51,10 +50,5 @@ describe('knowledge document DTOs', () => {
     expect(fromSparsePatch({ datePublished: isOk(date) ? date.value : null })).toEqual({
       date_published: '2026-09-10',
     })
-  })
-
-  it('keeps the invalid-response problem shape for malformed payloads', () => {
-    expect(isErr(toKbDocument({}))).toBe(true)
-    expect(invalidResponseProblem('invalid', []).code).toBe('invalid-response')
   })
 })

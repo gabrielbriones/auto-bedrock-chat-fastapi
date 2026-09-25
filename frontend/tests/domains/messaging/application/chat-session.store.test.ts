@@ -97,15 +97,11 @@ describe('ChatSessionStore', () => {
   })
 
   describe('connection state (FR-MSG-002)', () => {
-    it('reports the socket state it was constructed with', () => {
-      const { store } = createHarness(state('connecting'))
+    it('follows connect, drop, reconnect and intentional close', () => {
+      const { store, changeConnection } = createHarness(state('connecting'))
 
       expect(store.getSnapshot().connection).toEqual({ kind: 'connecting' })
       expect(store.getSnapshot().canSend).toBe(false)
-    })
-
-    it('follows connect, drop, reconnect and intentional close', () => {
-      const { store, changeConnection } = createHarness(state('connecting'))
 
       changeConnection(state('open'))
       expect(store.getSnapshot().connection).toEqual({ kind: 'connected' })

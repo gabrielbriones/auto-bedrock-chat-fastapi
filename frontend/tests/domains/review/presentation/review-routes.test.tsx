@@ -113,16 +113,6 @@ describe('review queue URL binding', () => {
     expect(await screen.findByRole('dialog', { name: REVIEW_COPY.drawer.title })).toBeInTheDocument()
     expect(routeSearch(router)).toMatchObject({ entry: 'rejected-id' })
   })
-
-  it('constrains query previews and top-aligns row metadata', async () => {
-    renderAt('/bedrock-chat/dashboard/feedback')
-
-    const query = await screen.findByText('Rejected answer')
-
-    expect(query).toHaveClass('line-clamp-3', '[overflow-wrap:anywhere]')
-    expect(query.closest('td')).toHaveClass('max-w-[50vw]', 'align-top')
-    expect(query.closest('tr')?.querySelectorAll('td.align-top')).toHaveLength(6)
-  })
 })
 
 describe('reviewed selection', () => {

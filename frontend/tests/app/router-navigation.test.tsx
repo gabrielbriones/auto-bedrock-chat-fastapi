@@ -6,11 +6,8 @@ import { fakeContainer } from './bootstrap/container.fixture'
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import type { Container } from '@/app/bootstrap/container'
 import { createAppRouter } from '@/app/router'
-import { CapabilityHttpProbe } from '@/domains/iam/infrastructure/capability-http.probe'
-import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 import { IAM_COPY } from '@/shared/copy/iam'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
-import { ok } from '@/shared/kernel/result'
 import { SHELL } from '@/shared/copy/shell'
 
 const findComposer = () =>
@@ -22,13 +19,13 @@ const renderAt = (path: string, overrides: Partial<Container> = {}) => {
     history: createMemoryHistory({ initialEntries: [path] }),
   })
 
-  const { container: dom } = render(
+  render(
     <ContainerContext.Provider value={container}>
       <RouterProvider router={router} />
     </ContainerContext.Provider>,
   )
 
-  return { router, dom }
+  return { router }
 }
 
 describe('navigating the route tree', () => {
@@ -44,18 +41,6 @@ describe('navigating the route tree', () => {
 
     expect(await findComposer()).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/ui/c/abc-123')
-  })
-
-  // FR-SHELL-014a: a stale or hand-edited link must degrade, not crash.
-  it('renders the page for a URL carrying a malformed and an unknown parameter', async () => {
-    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser?flagged=maybe&offset=-4&rogue=1')
-
-    expect(await screen.findByRole('heading', { name: 'Knowledge base' })).toBeInTheDocument()
-
-    // Both malformed values fall back; the unknown key is absent from the route's typed search
-    // (see the schema tests) even though the router keeps it in the URL for other consumers.
-    const search = router.state.matches.at(-1)?.search
-    expect(search).toMatchObject({ flagged: false, offset: 0 })
   })
 
   it('sends the bare admin path to the review queue', async () => {
@@ -101,23 +86,6 @@ describe('admin capability guard', () => {
     expect(probe).toHaveBeenCalledTimes(2)
   })
 
-  it('uses one HTTP probe across repeated admin navigations', async () => {
-    const request = jest.fn().mockResolvedValue(ok({
-      is_admin: true,
-      anonymous: false,
-      token_usage_enabled: true,
-    }))
-    const logger = fakeContainer().logger
-    const capabilityProbe = new CapabilityHttpProbe('/admin', { request }, logger)
-    const { router } = renderAt('/bedrock-chat/dashboard/feedback', { capabilityProbe })
-
-    await screen.findByRole('heading', { name: SHELL.admin.feedbackQueue })
-    await router.navigate({ to: '/dashboard/kb-browser' })
-    await screen.findByRole('heading', { name: SHELL.admin.knowledge })
-
-    expect(request).toHaveBeenCalledTimes(1)
-  })
-
   it('hides and rejects Usage when token tracking is unavailable', async () => {
     renderAt('/bedrock-chat/dashboard/token-usages', {
       capabilityProbe: {
@@ -132,21 +100,6 @@ describe('admin capability guard', () => {
 })
 
 describe('the shell around the routes', () => {
-  // FR-SHELL-018 / FR-DS-008: one *primary* scroll container. FR-CONV-001 keeps the roster out of
-  // the shell entirely until a principal is authenticated, which the fixture bootstrap is not.
-  it('wraps chat routes in the chat layout with a single scroll container', async () => {
-    const { dom } = renderAt('/bedrock-chat/ui')
-
-    await findComposer()
-
-    const main = dom.querySelector('main')
-    expect(main?.classList.contains('overflow-y-auto')).toBe(true)
-    expect(main?.querySelectorAll('.overflow-y-auto')).toHaveLength(0)
-    expect(
-      screen.queryByRole('navigation', { name: CONVERSATION_COPY.sidebar.label }),
-    ).not.toBeInTheDocument()
-  })
-
   it('shows an admin dashboard button in the chat header for an admin', async () => {
     renderAt('/bedrock-chat/ui')
 

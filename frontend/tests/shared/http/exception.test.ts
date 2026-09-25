@@ -58,41 +58,26 @@ describe('httpErrorProblem', () => {
     });
   });
 
-  it('synthesises a Problem for an empty body', async () => {
-    const response = new Response(null, { status: 503, statusText: 'Service Unavailable' });
+  it.each([
+    ['an empty body', null, 503, 'Service Unavailable', 'Service Unavailable'],
+    ['malformed JSON', '{not valid json', 500, '', 'Internal Server Error'],
+    ['a non-record JSON body (e.g. an array)', '[1,2,3]', 500, '', 'Internal Server Error'],
+  ])(
+    'synthesises a Problem from the status for %s rather than throwing',
+    async (_label, body, status, statusText, title) => {
+      const response = new Response(body, {
+        status,
+        statusText,
+        headers: { 'content-type': 'application/json' },
+      });
 
-    await expect(httpErrorProblem(response)).resolves.toEqual({
-      code: 'http-error',
-      status: 503,
-      title: 'Service Unavailable',
-    });
-  });
-
-  it('synthesises a Problem for malformed JSON rather than throwing a parse error', async () => {
-    const response = new Response('{not valid json', {
-      status: 500,
-      headers: { 'content-type': 'application/json' },
-    });
-
-    await expect(httpErrorProblem(response)).resolves.toEqual({
-      code: 'http-error',
-      status: 500,
-      title: 'Internal Server Error',
-    });
-  });
-
-  it('synthesises a Problem when the JSON body parses to a non-record (e.g. an array)', async () => {
-    const response = new Response('[1,2,3]', {
-      status: 500,
-      headers: { 'content-type': 'application/json' },
-    });
-
-    await expect(httpErrorProblem(response)).resolves.toEqual({
-      code: 'http-error',
-      status: 500,
-      title: 'Internal Server Error',
-    });
-  });
+      await expect(httpErrorProblem(response)).resolves.toEqual({
+        code: 'http-error',
+        status,
+        title,
+      });
+    },
+  );
 
   it('prefers a numeric status field from the body and falls back to titleForStatus when title is not a string', async () => {
     const response = new Response(JSON.stringify({ status: 400, title: 123 }), {

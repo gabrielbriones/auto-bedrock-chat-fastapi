@@ -65,21 +65,13 @@ describe('createReviewDecisionDraft', () => {
   })
 
   // FIX-05: a cleared field has to survive as an explicit empty value all the way to the body.
-  it('keeps a cleared comment as an explicit null rather than dropping it', () => {
-    const result = createReviewDecisionDraft({ decision: 'rejected', tags: [], comment: null })
+  it.each([
+    ['an explicit null', null, null],
+    ['whitespace-only', '   ', null],
+    ['padded content', '  good  ', 'good'],
+  ])('normalises a %s comment', (_label, comment, expected) => {
+    const result = createReviewDecisionDraft({ decision: 'approved', tags: ['emon'], comment })
 
-    expect(isOk(result) && result.value).toEqual({ decision: 'rejected', tags: [], comment: null })
-  })
-
-  it('treats a whitespace-only comment as cleared', () => {
-    const result = createReviewDecisionDraft({ decision: 'approved', tags: [], comment: '   ' })
-
-    expect(isOk(result) && result.value.comment).toBeNull()
-  })
-
-  it('trims a comment that has content', () => {
-    const result = createReviewDecisionDraft({ decision: 'approved', tags: ['emon'], comment: '  good  ' })
-
-    expect(isOk(result) && result.value).toEqual({ decision: 'approved', tags: ['emon'], comment: 'good' })
+    expect(isOk(result) && result.value).toEqual({ decision: 'approved', tags: ['emon'], comment: expected })
   })
 })

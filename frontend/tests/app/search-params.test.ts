@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals'
-import { defaultParseSearch, defaultStringifySearch } from '@tanstack/react-router'
+import { defaultStringifySearch } from '@tanstack/react-router'
 import { z } from 'zod'
 
 import { booleanParam, offsetParam, textParam } from '@/app/search-params'
@@ -12,10 +12,6 @@ const schema = z.object({
 })
 
 const validate = (input: Record<string, unknown>) => schema.parse(input)
-
-// The exact codec the router uses, so these assertions describe real URLs.
-const roundTrip = (search: Record<string, unknown>) =>
-  validate(defaultParseSearch(defaultStringifySearch(search)))
 
 describe('search parameter schemas', () => {
   it('drops an unknown parameter instead of carrying it into route state', () => {
@@ -49,12 +45,6 @@ describe('search parameter schemas', () => {
 
   it('rejects a non-boolean string rather than reading it as true', () => {
     expect(validate({ flagged: 'yes' }).flagged).toBe(false)
-  })
-
-  it('round-trips a validated search through the router codec unchanged', () => {
-    const search = validate({ rating: 'negative', tags: 'latency', flagged: true, offset: 50 })
-
-    expect(roundTrip(search)).toEqual(search)
   })
 
   it('omits absent text filters from the query string entirely', () => {

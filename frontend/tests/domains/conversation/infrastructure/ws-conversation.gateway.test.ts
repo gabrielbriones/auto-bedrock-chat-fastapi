@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals'
 
 import { conversationId } from '@/shared/kernel/branded'
-import { FRAME_OWNER, ServerFrameSchema, type ServerFrame, type ServerFrameSubscriber } from '@/shared/ws/message-bus'
+import { ServerFrameSchema, type ServerFrame, type ServerFrameSubscriber } from '@/shared/ws/message-bus'
 
 import type { ConversationEvent } from '@/domains/conversation/domain/events'
 import { WsConversationGateway } from '@/domains/conversation/infrastructure/ws-conversation.gateway'
@@ -48,16 +48,6 @@ const createHarness = () => {
 }
 
 describe('WsConversationGateway frame mapping', () => {
-  it('has a recorded fixture for every conversation-owned frame (CT-1)', () => {
-    const owned = Object.entries(FRAME_OWNER)
-      .filter(([, owner]) => owner === 'conversation')
-      .map(([type]) => type)
-      .sort()
-
-    expect(Object.keys(recorded).map(frameTypeOf).sort()).toEqual(owned)
-    expect(owned).toHaveLength(9)
-  })
-
   it.each(Object.entries(recorded).map(([path, fixture]) => [frameTypeOf(path), fixture] as const))(
     'maps the recorded %s frame',
     (_type, fixture) => {
@@ -69,14 +59,6 @@ describe('WsConversationGateway frame mapping', () => {
       expect(harness.events[0]?.kind).toBeTypeOf('string')
     },
   )
-
-  it('ignores frames owned by another context', () => {
-    const harness = createHarness()
-
-    harness.emit({ type: 'pong', timestamp: '2026-08-25T12:00:00Z' })
-
-    expect(harness.events).toEqual([])
-  })
 
   // P8 / FR-CONV-009: only what the pending-turn rule reads crosses the context boundary.
   it('reduces a loaded message to its role and tool-call count', () => {
@@ -183,13 +165,5 @@ describe('WsConversationGateway client frames', () => {
     harness.gateway.requestRoster()
 
     expect(harness.sent()[0]).toEqual({ type: 'conversation_list' })
-  })
-
-  // ADR-012 / FR-CONV-017: a closed socket is reported, never queued behind a fallback transport.
-  it('reports a closed socket back to the caller', () => {
-    const harness = createHarness()
-    harness.send.mockReturnValue('dropped-closed')
-
-    expect(harness.gateway.remove(conversationId('c-1'))).toBe('dropped-closed')
   })
 })

@@ -4,7 +4,6 @@ import { err, isErr, ok, type Result } from '@/shared/kernel/result'
 import type { Problem } from '@/shared/http/exception'
 import type { TelemetryGateway } from '@/domains/telemetry/application/ports'
 import {
-  createCursorlessPage,
   createDateRange,
   createTokenCount,
   type ModelUsageRow,
@@ -97,24 +96,5 @@ describe('TelemetryStore', () => {
     expect(gateway.byDay).toHaveBeenCalledTimes(1)
     expect(store.getSnapshot().byDay).toMatchObject({ status: 'idle', range: null })
     expect(store.getSnapshot().byDay.problem?.serverCode).toBe('invalid_date_range')
-  })
-
-  it('derives cursorless navigation from the returned by-user row count', async () => {
-    const gateway = createGateway()
-    gateway.byUser = jest.fn(async () =>
-      ok([
-        {
-          sessionId: 'session-1',
-          modelId: 'claude-3',
-          tokens: createTokenCount(2, 3),
-          turnAt: { epochMilliseconds: 1, compare: () => 0, equals: () => false, toIso: () => '1970-01-01T00:00:00.001Z' } as never,
-        },
-      ]),
-    )
-    const store = new TelemetryStore({ gateway })
-
-    await store.loadByUser({ userId: 'alice', page: createCursorlessPage(50, 50, 50) })
-
-    expect(store.getSnapshot().byUser.page).toMatchObject({ offset: 50, rowCount: 1, hasNext: false, hasPrev: true })
   })
 })

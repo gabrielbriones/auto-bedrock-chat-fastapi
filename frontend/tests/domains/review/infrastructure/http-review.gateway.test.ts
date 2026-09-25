@@ -64,13 +64,11 @@ describe('HttpReviewGateway.list', () => {
     })
   })
 
-  it('omits absent filters and always sends the page', async () => {
+  it('encodes every filter the server understands, omitting absent ones, and always sends the page', async () => {
     await gateway.list(query(), AbortSignal.timeout(1_000))
 
     expect(lastUrl()).toBe(`${ADMIN}/feedback?limit=50&offset=0`)
-  })
 
-  it('encodes every filter the server understands', async () => {
     await gateway.list(
       query({
         status: 'pending_review',
@@ -178,14 +176,12 @@ describe('HttpReviewGateway reads', () => {
       negative: 40,
       oldestPendingHours: 73.5,
     })
-  })
 
-  it('treats a bucket the server omits as zero', async () => {
     server.use(http.get(`${ADMIN}/feedback/stats`, () => HttpResponse.json({ total: 0 })))
 
-    const result = await gateway.stats(AbortSignal.timeout(1_000))
+    const sparse = await gateway.stats(AbortSignal.timeout(1_000))
 
-    expect(isOk(result) && result.value).toMatchObject({ pendingReview: 0, oldestPendingHours: null })
+    expect(isOk(sparse) && sparse.value).toMatchObject({ pendingReview: 0, oldestPendingHours: null })
   })
 
   // FR-REV-020: the badge asks for one row and reads the total off the envelope.
