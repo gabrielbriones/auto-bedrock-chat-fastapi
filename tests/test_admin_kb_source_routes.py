@@ -1,6 +1,7 @@
 """Tests for the ``/admin/kb/sources/{web,file}`` ingestion routes and status endpoint."""
 
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -106,6 +107,23 @@ class _FakeKBStore:
 
     def get_document(self, doc_id):
         return self.documents.get(doc_id)
+
+    def count_documents(self, filters):
+        source = getattr(filters, "source", None)
+        if source is None:
+            return len(self.documents)
+        return sum(1 for doc in self.documents.values() if doc.get("source") == source)
+
+    def list_document_ids(self, filters, limit=200, offset=0):
+        source = getattr(filters, "source", None)
+        ids = [doc_id for doc_id, doc in self.documents.items() if source is None or doc.get("source") == source]
+        return ids[offset : offset + limit]
+
+    def delete_document(self, doc_id):
+        self.documents.pop(doc_id, None)
+        removed_chunks = [c for c in self.chunks if c.get("document_id") == doc_id]
+        self.chunks = [c for c in self.chunks if c.get("document_id") != doc_id]
+        return len(removed_chunks)
 
     def update_document(self, doc_id, *, content=None, **kwargs):
         doc = self.documents.setdefault(doc_id, {})
@@ -452,6 +470,226 @@ def test_second_concurrent_run_is_rejected():
         assert second.json()["code"] == "kb_source_run_already_in_progress"
 
         _wait_until_not_running(client)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate source-name rejection (POST)
+# ---------------------------------------------------------------------------
+
+
+def test_web_source_rejects_duplicate_name():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/existing", source="docs", content="old content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bedrock-chat/admin/kb/sources/web",
+        json={"name": "docs", "urls": ["https://example.com/"]},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "source_already_exists"
+
+
+def test_file_source_rejects_duplicate_name():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="uploads/existing.txt", source="uploads", content="old content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bedrock-chat/admin/kb/sources/file",
+        data={"name": "uploads"},
+        files=[("files", ("a.txt", b"hello", "text/plain"))],
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "source_already_exists"
+
+
+def test_file_source_rejects_duplicate_name_without_reading_uploads():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="uploads/existing.txt", source="uploads", content="old content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    # Duplicate-name check runs before the (expensive) upload-decode loop --
+    # a huge/slow file here must not add latency to the 409 response.
+    with patch.object(kb_routes_mod, "_read_upload_capped") as mock_read:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads"},
+            files=[("files", ("a.txt", b"hello", "text/plain"))],
+        )
+        assert resp.status_code == 409
+        mock_read.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# PATCH override (delete existing source, then re-ingest)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_web_source_clears_old_documents_before_reingesting():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.patch(
+            "/bedrock-chat/admin/kb/sources/web/docs",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+        assert resp.json()["phase"] == "running"
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert "docs/old-page" not in kb_store.documents
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_patch_web_source_delete_failure_marks_run_failed_not_stuck_running():
+    """A failure during the delete phase (before ingestion even starts) must
+    still mark the run failed and release the global run lock -- otherwise
+    it stays stuck at "running" forever and blocks every future run."""
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated store failure")
+
+    kb_store.list_document_ids = _boom
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    with TestClient(app) as client:
+        resp = client.patch(
+            "/bedrock-chat/admin/kb/sources/web/docs",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+        assert final.json()["phase"] == "failed"
+        assert "simulated store failure" in (final.json()["error"] or "")
+
+        # The lock must be released -- a subsequent run should not be
+        # rejected with kb_source_run_already_in_progress.
+        kb_store.list_document_ids = _FakeKBStore.list_document_ids.__get__(kb_store)
+        second = client.patch(
+            "/bedrock-chat/admin/kb/sources/web/other",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert second.status_code == 202
+
+
+def test_patch_file_source_clears_old_documents_before_reingesting():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="uploads/old.txt", source="uploads", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    with TestClient(app) as client:
+        resp = client.patch(
+            "/bedrock-chat/admin/kb/sources/file/uploads",
+            data={},
+            files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert "uploads/old.txt" not in kb_store.documents
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_patch_web_source_on_nonexistent_name_behaves_like_fresh_ingest():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.patch(
+            "/bedrock-chat/admin/kb/sources/web/brand-new",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["errors"] == []
+    assert kb_store.documents
+
+
+def test_patch_web_source_rejects_while_another_run_is_in_progress():
+    app = _build_app(embedding_client=_slow_embedding_client())
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s1"},
+            files=[("files", ("a.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert first.status_code == 202
+
+        second = client.patch(
+            "/bedrock-chat/admin/kb/sources/web/s2",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert second.status_code == 409
+        assert second.json()["code"] == "kb_source_run_already_in_progress"
+
+        _wait_until_not_running(client)
+
+
+def test_patch_web_source_requires_admin_auth():
+    app = _build_app(authenticated=False, embedding_client=_embedding_client())
+    client = TestClient(app)
+    resp = client.patch(
+        "/bedrock-chat/admin/kb/sources/web/docs",
+        json={"urls": ["https://example.com/"]},
+    )
+    assert resp.status_code == 401
+
+
+def test_patch_file_source_requires_admin_auth():
+    app = _build_app(authenticated=False, embedding_client=_embedding_client())
+    client = TestClient(app)
+    resp = client.patch(
+        "/bedrock-chat/admin/kb/sources/file/uploads",
+        data={},
+        files=[("files", ("a.txt", b"hello", "text/plain"))],
+    )
+    assert resp.status_code == 401
+
+
+def test_patch_web_source_audit_log_reports_removed_counts(caplog):
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with caplog.at_level(logging.INFO, logger="bedrock.audit"):
+        with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+            resp = client.patch(
+                "/bedrock-chat/admin/kb/sources/web/docs",
+                json={"urls": ["https://example.com/"]},
+            )
+            assert resp.status_code == 202
+            _wait_until_not_running(client)
+
+    complete_records = [
+        r
+        for r in caplog.records
+        if getattr(r, "action", None) == "kb.source.override" and getattr(r, "phase", None) == "complete"
+    ]
+    assert len(complete_records) == 1
+    assert complete_records[0].documents_removed == 1
+    assert complete_records[0].chunks_removed == 0
 
 
 # ---------------------------------------------------------------------------

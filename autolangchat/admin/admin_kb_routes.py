@@ -15,6 +15,9 @@ Endpoints
 * ``POST   /admin/kb/sources/file``    — trigger an ingestion run from
   uploaded file content (multipart form; admins don't have filesystem
   access to the running service).
+* ``PATCH  /admin/kb/sources/web/{name}``/``PATCH /admin/kb/sources/file/{name}``
+  — delete an existing source's documents/chunks, then re-run the same
+  ingestion as the corresponding ``POST`` to replace them.
 * ``GET    /admin/kb/sources/status``  — poll the in-flight ingestion run.
 
 Concurrency
@@ -178,12 +181,15 @@ class KBSourcePhase(str, Enum):
     FAILED = "failed"
 
 
-class KBSourceWebRequest(BaseModel):
-    """Request body for ``POST /admin/kb/sources/web``."""
+class KBSourceWebBody(BaseModel):
+    """Fields shared by ``POST /admin/kb/sources/web`` and
+    ``PATCH /admin/kb/sources/web/{name}`` — everything except ``name``,
+    which the ``POST`` body carries directly and the ``PATCH`` route takes
+    from the path instead.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
     # max_pages applies per URL, so the list itself is capped too -- an
     # unbounded list of URLs would otherwise multiply the total crawl work
     # without limit.
@@ -215,6 +221,12 @@ class KBSourceWebRequest(BaseModel):
         if not v:
             raise ValueError("urls must contain at least one URL")
         return v
+
+
+class KBSourceWebRequest(KBSourceWebBody):
+    """Request body for ``POST /admin/kb/sources/web``."""
+
+    name: str
 
 
 class KBSourceStatus(BaseModel):
@@ -431,6 +443,153 @@ async def _run_file_source_ingestion(
                 "source_type": "file",
                 "phase": "complete",
                 "run_status": state.status.phase.value,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
+#: Async ``(name: str) -> (documents_deleted, chunks_deleted, found_any)``,
+#: bound to a live ``kb_store``/lock registry by ``register_admin_kb_routes``.
+DeleteBySourceFn = Callable[[str], Any]
+
+
+async def _run_web_source_override(
+    *,
+    state: _KBSourceRunState,
+    actor: str,
+    run_id: str,
+    kb_store: BaseKBStore,
+    embedding_client: Any,
+    embedding_model: str,
+    chunker: Any,
+    name: str,
+    body: KBSourceWebBody,
+    delete_fn: DeleteBySourceFn,
+) -> None:
+    """Delete ``name``'s existing documents/chunks, then re-run a web-crawl
+    ingestion, as an ``asyncio.create_task`` background task.
+
+    A no-op delete (``name`` had no documents) is not an error — this run
+    then behaves like a fresh ``POST``.
+    """
+    from ..rag.kb_ingestion import ingest_web_source
+
+    documents_removed = 0
+    chunks_removed = 0
+    try:
+        documents_removed, chunks_removed, _ = await delete_fn(name)
+        result = await ingest_web_source(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model=embedding_model,
+            source_name=name,
+            urls=body.urls,
+            topic=body.topic,
+            max_depth=body.max_depth,
+            allowed_domains=body.allowed_domains,
+            exclude_patterns=body.exclude_patterns,
+            max_pages=body.max_pages,
+            ingest_linked_files=body.ingest_linked_files,
+            extra_headers=body.headers,
+            cookies=body.cookies,
+            progress_cb=state.record_progress,
+        )
+        state._mark_completed(errors=result["errors"])
+        logger.info(
+            "KB web source override complete: source=%s documents=%d chunks=%d errors=%d "
+            "(removed %d prior document(s), %d prior chunk(s))",
+            name,
+            result["documents"],
+            result["chunks"],
+            len(result["errors"]),
+            documents_removed,
+            chunks_removed,
+        )
+    except Exception as exc:  # pragma: no cover — defensive outer catch
+        logger.exception("KB web source override failed for run %s: %s", run_id, exc)
+        state._mark_failed(str(exc))
+    finally:
+        audit_logger.info(
+            "kb.source.override",
+            extra={
+                "action": "kb.source.override",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": name,
+                "source_type": "web",
+                "phase": "complete",
+                "run_status": state.status.phase.value,
+                "documents_removed": documents_removed,
+                "chunks_removed": chunks_removed,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
+async def _run_file_source_override(
+    *,
+    state: _KBSourceRunState,
+    actor: str,
+    run_id: str,
+    kb_store: BaseKBStore,
+    embedding_client: Any,
+    embedding_model: str,
+    chunker: Any,
+    source_name: str,
+    topic: Optional[str],
+    files: List[Tuple[str, str]],
+    delete_fn: DeleteBySourceFn,
+) -> None:
+    """Delete ``source_name``'s existing documents/chunks, then re-ingest
+    newly uploaded file content, as an ``asyncio.create_task`` background task.
+
+    A no-op delete (``source_name`` had no documents) is not an error — this
+    run then behaves like a fresh ``POST``.
+    """
+    from ..rag.kb_ingestion import ingest_uploaded_files
+
+    documents_removed = 0
+    chunks_removed = 0
+    try:
+        documents_removed, chunks_removed, _ = await delete_fn(source_name)
+        result = await ingest_uploaded_files(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model=embedding_model,
+            source_name=source_name,
+            files=files,
+            topic=topic,
+            progress_cb=state.record_progress,
+        )
+        state._mark_completed(errors=result["errors"])
+        logger.info(
+            "KB file source override complete: source=%s documents=%d chunks=%d errors=%d "
+            "(removed %d prior document(s), %d prior chunk(s))",
+            source_name,
+            result["documents"],
+            result["chunks"],
+            len(result["errors"]),
+            documents_removed,
+            chunks_removed,
+        )
+    except Exception as exc:  # pragma: no cover — defensive outer catch
+        logger.exception("KB file source override failed for run %s: %s", run_id, exc)
+        state._mark_failed(str(exc))
+    finally:
+        audit_logger.info(
+            "kb.source.override",
+            extra={
+                "action": "kb.source.override",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": source_name,
+                "source_type": "file",
+                "phase": "complete",
+                "run_status": state.status.phase.value,
+                "documents_removed": documents_removed,
+                "chunks_removed": chunks_removed,
                 "ts": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -785,13 +944,70 @@ def register_admin_kb_routes(
             )
         return None
 
+    async def _decode_uploaded_files(
+        files: List[UploadFile],
+    ) -> Tuple[Optional[List[Tuple[str, str]]], Optional[JSONResponse]]:
+        """Read + decode ``files`` (UTF-8 text or PDF) for the ``/file``
+        ingestion routes, enforcing per-file/aggregate size caps.
+
+        Shared by ``POST`` and ``PATCH`` (same upload handling, per the
+        ticket's "same body as POST minus name" requirement). Reads now
+        rather than deferring to the background task: uploads' temporary
+        storage is cleaned up once the request handler returns.
+
+        Returns ``(decoded_files, None)`` on success, or ``(None, error)``
+        on the first validation failure.
+        """
+        decoded_files: List[Tuple[str, str]] = []
+        total_bytes_read = 0
+        for upload in files:
+            try:
+                remaining_total = _MAX_TOTAL_UPLOAD_BYTES - total_bytes_read
+                if remaining_total <= 0:
+                    return None, _error_json(422, "upload_too_large", "total upload size exceeds the aggregate limit")
+                try:
+                    raw = await _read_upload_capped(upload, max_bytes=_MAX_FILE_BYTES, remaining_total=remaining_total)
+                except UploadTooLargeError as exc:
+                    return None, _error_json(422, "upload_too_large", exc.message)
+                total_bytes_read += len(raw)
+                filename = upload.filename or "unnamed"
+                # Media type may include parameters/casing (e.g. "Application/PDF",
+                # "application/pdf; charset=binary") — strip params and lowercase
+                # before comparing, same normalization the crawler applies to
+                # Content-Type in content_crawler.py.
+                content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
+                if filename.lower().endswith(".pdf") or content_type == "application/pdf":
+                    try:
+                        text = await asyncio.to_thread(extract_pdf_text, raw)
+                    except PDFExtractionError as exc:
+                        return None, _error_json(422, "invalid_pdf_file", f"file {filename!r}: {exc.message}")
+                else:
+                    try:
+                        text = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        return None, _error_json(
+                            422,
+                            "invalid_file_encoding",
+                            f"file {filename!r} is not valid UTF-8 text",
+                        )
+                decoded_files.append((filename, text))
+            finally:
+                await upload.close()
+        return decoded_files, None
+
     @sources_router.post(
         "/web",
         response_model=KBSourceStatus,
         status_code=202,
         responses={
             **ADMIN_COMMON_RESPONSES,
-            409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
+            409: {
+                "model": ErrorResponse,
+                "description": (
+                    "A KB source ingestion run is already in progress, or `name` already has "
+                    "existing documents (use PATCH to override)"
+                ),
+            },
             503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
         },
         summary="Trigger a web-crawl KB ingestion run",
@@ -804,11 +1020,20 @@ def register_admin_kb_routes(
 
         Returns ``202 Accepted`` immediately with a ``run_id`` and the
         ``running`` state. Poll ``GET /admin/kb/sources/status`` for
-        completion. Returns ``409`` if a run is already in progress.
+        completion. Returns ``409`` if a run is already in progress, or if
+        ``name`` already has documents (use ``PATCH`` to override those).
         """
         unavailable = _ingestion_unavailable_response()
         if unavailable is not None:
             return unavailable
+
+        existing_count = await asyncio.to_thread(kb_store.count_documents, KBDocumentListFilters(source=body.name))
+        if existing_count > 0:
+            return _error_json(
+                409,
+                "source_already_exists",
+                f"source {body.name!r} already has {existing_count} document(s); use PATCH to override",
+            )
 
         actor = identity.user_id
         run_id = str(uuid4())
@@ -854,7 +1079,13 @@ def register_admin_kb_routes(
         status_code=202,
         responses={
             **ADMIN_COMMON_RESPONSES,
-            409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
+            409: {
+                "model": ErrorResponse,
+                "description": (
+                    "A KB source ingestion run is already in progress, or `name` already has "
+                    "existing documents (use PATCH to override)"
+                ),
+            },
             422: {
                 "model": ErrorResponse,
                 "description": (
@@ -902,14 +1133,22 @@ def register_admin_kb_routes(
         if not files:
             return _error_json(422, "no_files_uploaded", "at least one file must be uploaded")
 
-        # Cheap fast-path rejection before doing the expensive read/decode
-        # work below — a request arriving while a run is already in flight
-        # would otherwise pay the cost of reading every upload just to be
-        # rejected anyway. This is a lock-free peek (eventual consistency is
-        # fine here); the real atomic claim still happens via
-        # try_claim_run(...) after decoding, so a narrow race window between
-        # this check and the claim is only ever a missed optimization, not a
-        # correctness issue.
+        # Cheap fast-path rejections before doing the expensive read/decode
+        # work below — a request arriving while a run is already in flight,
+        # or targeting a name that already has documents, would otherwise
+        # pay the cost of reading every upload just to be rejected anyway.
+        existing_count = await asyncio.to_thread(kb_store.count_documents, KBDocumentListFilters(source=name))
+        if existing_count > 0:
+            return _error_json(
+                409,
+                "source_already_exists",
+                f"source {name!r} already has {existing_count} document(s); use PATCH to override",
+            )
+
+        # This is a lock-free peek (eventual consistency is fine here); the
+        # real atomic claim still happens via try_claim_run(...) after
+        # decoding, so a narrow race window between this check and the claim
+        # is only ever a missed optimization, not a correctness issue.
         if _source_state.phase == KBSourcePhase.RUNNING:
             return _error_json(
                 409,
@@ -922,41 +1161,9 @@ def register_admin_kb_routes(
         # returns, so the background task (which runs after the response is
         # sent) cannot read them itself. Reads are capped per-file and in
         # aggregate so a handful of oversized uploads can't exhaust memory.
-        decoded_files: List[Tuple[str, str]] = []
-        total_bytes_read = 0
-        for upload in files:
-            try:
-                remaining_total = _MAX_TOTAL_UPLOAD_BYTES - total_bytes_read
-                if remaining_total <= 0:
-                    return _error_json(422, "upload_too_large", "total upload size exceeds the aggregate limit")
-                try:
-                    raw = await _read_upload_capped(upload, max_bytes=_MAX_FILE_BYTES, remaining_total=remaining_total)
-                except UploadTooLargeError as exc:
-                    return _error_json(422, "upload_too_large", exc.message)
-                total_bytes_read += len(raw)
-                filename = upload.filename or "unnamed"
-                # Media type may include parameters/casing (e.g. "Application/PDF",
-                # "application/pdf; charset=binary") — strip params and lowercase
-                # before comparing, same normalization the crawler applies to
-                # Content-Type in content_crawler.py.
-                content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
-                if filename.lower().endswith(".pdf") or content_type == "application/pdf":
-                    try:
-                        text = await asyncio.to_thread(extract_pdf_text, raw)
-                    except PDFExtractionError as exc:
-                        return _error_json(422, "invalid_pdf_file", f"file {filename!r}: {exc.message}")
-                else:
-                    try:
-                        text = raw.decode("utf-8")
-                    except UnicodeDecodeError:
-                        return _error_json(
-                            422,
-                            "invalid_file_encoding",
-                            f"file {filename!r} is not valid UTF-8 text",
-                        )
-                decoded_files.append((filename, text))
-            finally:
-                await upload.close()
+        decoded_files, decode_error = await _decode_uploaded_files(files)
+        if decode_error is not None:
+            return decode_error
 
         actor = identity.user_id
         run_id = str(uuid4())
@@ -993,6 +1200,175 @@ def register_admin_kb_routes(
                 source_name=name,
                 topic=topic,
                 files=decoded_files,
+            )
+        )
+
+        return _source_state.status
+
+    @sources_router.patch(
+        "/web/{name}",
+        response_model=KBSourceStatus,
+        status_code=202,
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
+            503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
+        },
+        summary="Override an existing web-crawl KB source (delete + re-ingest)",
+    )
+    async def override_web_source(
+        name: str,
+        body: KBSourceWebBody,
+        identity=Depends(require_admin),
+    ) -> KBSourceStatus | JSONResponse:
+        """Delete all existing documents/chunks for ``name`` (a no-op if none
+        exist) and re-run a background web crawl to replace them.
+
+        Same body as ``POST /admin/kb/sources/web`` minus ``name`` (taken
+        from the path instead). Returns ``202 Accepted`` immediately with a
+        ``run_id`` and the ``running`` state. Poll ``GET
+        /admin/kb/sources/status`` for completion. Returns ``409`` if a run
+        is already in progress — unlike ``POST``, there is no
+        ``source_already_exists`` check here, since overriding an existing
+        (or not-yet-existing) source is the whole point.
+        """
+        unavailable = _ingestion_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        actor = identity.user_id
+        run_id = str(uuid4())
+
+        if not await _source_state.try_claim_run(run_id=run_id, source_name=name, source_type="web"):
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
+
+        audit_logger.info(
+            "kb.source.override",
+            extra={
+                "action": "kb.source.override",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": name,
+                "source_type": "web",
+                "phase": "start",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        asyncio.create_task(
+            _run_web_source_override(
+                state=_source_state,
+                actor=actor,
+                run_id=run_id,
+                kb_store=kb_store,
+                embedding_client=embedding_client,
+                embedding_model=embedding_model,
+                chunker=_source_chunker,
+                name=name,
+                body=body,
+                delete_fn=_delete_documents_for_source,
+            )
+        )
+
+        return _source_state.status
+
+    @sources_router.patch(
+        "/file/{name}",
+        response_model=KBSourceStatus,
+        status_code=202,
+        responses={
+            **ADMIN_COMMON_RESPONSES,
+            409: {"model": ErrorResponse, "description": "A KB source ingestion run is already in progress"},
+            422: {
+                "model": ErrorResponse,
+                "description": (
+                    "No files uploaded, a file is not valid UTF-8 text, a PDF is corrupted/encrypted/unreadable, "
+                    "or an upload exceeds the size limit"
+                ),
+            },
+            503: {
+                "model": ErrorResponse,
+                "description": "KB source ingestion is not configured",
+            },
+        },
+        summary="Override an existing file-upload KB source (delete + re-ingest)",
+    )
+    async def override_file_source(
+        name: str,
+        topic: Optional[str] = Form(None),
+        files: Optional[List[UploadFile]] = File(
+            default=None, json_schema_extra={"items": {"type": "string", "format": "binary"}}
+        ),
+        identity=Depends(require_admin),
+    ) -> KBSourceStatus | JSONResponse:
+        """Delete all existing documents/chunks for ``name`` (a no-op if none
+        exist) and re-ingest newly uploaded file content to replace them.
+
+        Same body as ``POST /admin/kb/sources/file`` minus ``name`` (taken
+        from the path instead) — same upload handling, size caps, and
+        fast-path ``409`` while a run is already in progress. Unlike
+        ``POST``, there is no ``source_already_exists`` check.
+        """
+        unavailable = _ingestion_unavailable_response()
+        if unavailable is not None:
+            return unavailable
+
+        if not files:
+            return _error_json(422, "no_files_uploaded", "at least one file must be uploaded")
+
+        # Cheap fast-path rejection before doing the expensive read/decode
+        # work below — see the equivalent check in trigger_file_source.
+        if _source_state.phase == KBSourcePhase.RUNNING:
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
+
+        decoded_files, decode_error = await _decode_uploaded_files(files)
+        if decode_error is not None:
+            return decode_error
+
+        actor = identity.user_id
+        run_id = str(uuid4())
+
+        if not await _source_state.try_claim_run(run_id=run_id, source_name=name, source_type="file"):
+            return _error_json(
+                409,
+                "kb_source_run_already_in_progress",
+                "a KB source ingestion run is already in progress",
+            )
+
+        audit_logger.info(
+            "kb.source.override",
+            extra={
+                "action": "kb.source.override",
+                "actor_user_id": actor,
+                "target_id": run_id,
+                "source_name": name,
+                "source_type": "file",
+                "phase": "start",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        asyncio.create_task(
+            _run_file_source_override(
+                state=_source_state,
+                actor=actor,
+                run_id=run_id,
+                kb_store=kb_store,
+                embedding_client=embedding_client,
+                embedding_model=embedding_model,
+                chunker=_source_chunker,
+                source_name=name,
+                topic=topic,
+                files=decoded_files,
+                delete_fn=_delete_documents_for_source,
             )
         )
 
@@ -1042,6 +1418,51 @@ def register_admin_kb_routes(
             if row.get("source") and row["source"].strip()
         ]
 
+    async def _delete_documents_for_source(name: str) -> Tuple[int, int, bool]:
+        """Hard-delete every document (and its chunks) whose ``source``
+        equals ``name`` exactly. Type-agnostic — shared by the bulk
+        ``DELETE`` route and the ``PATCH`` override flow, regardless of
+        whether the source was ingested via a web crawl or a file upload.
+
+        Returns ``(documents_deleted, chunks_deleted, found_any)``. A
+        caller that wants a no-op when nothing matches (e.g. ``PATCH`` on
+        a not-yet-ingested source) just ignores ``found_any``.
+        """
+        filters = KBDocumentListFilters(source=name)
+
+        # List/delete a batch at a time rather than materializing every
+        # matching doc id up front -- avoids unbounded memory for large
+        # sources and a redundant second pass. Re-list at offset=0 each
+        # time since deleting shrinks the underlying result set (the
+        # "next" page becomes page 0 once the current page is gone).
+        # Uses list_document_ids (id-only, no chunk-count JOIN) rather
+        # than list_documents -- this loop doesn't need chunk_count, and
+        # that JOIN would otherwise re-run for every batch.
+        batch_size = 200
+        documents_deleted = 0
+        chunks_deleted = 0
+        found_any = False
+        while True:
+            batch = await asyncio.to_thread(kb_store.list_document_ids, filters, batch_size, 0)
+            if not batch:
+                break
+            found_any = True
+            for doc_id in batch:
+                lock = await _lock_for(doc_id)
+                async with lock:
+                    # Re-check under the lock — a concurrent single-document
+                    # DELETE (or another overlapping bulk delete) may have
+                    # already removed this one, and a concurrent PATCH may
+                    # have re-sourced it away from `name` since it was
+                    # listed; either way it no longer belongs to this run.
+                    current = await asyncio.to_thread(kb_store.get_document, doc_id)
+                    if current is None or current.get("source") != name:
+                        continue
+                    chunks_deleted += await asyncio.to_thread(kb_store.delete_document, doc_id)
+                    documents_deleted += 1
+
+        return documents_deleted, chunks_deleted, found_any
+
     @sources_router.delete(
         "",
         responses={
@@ -1060,37 +1481,7 @@ def register_admin_kb_routes(
         behind are.
         """
         actor = identity.user_id
-        filters = KBDocumentListFilters(source=name)
-
-        # List/delete a batch at a time rather than materializing every
-        # matching doc id up front -- avoids unbounded memory for large
-        # sources and a redundant second pass. Re-list at offset=0 each
-        # time since deleting shrinks the underlying result set (the
-        # "next" page becomes page 0 once the current page is gone).
-        # Uses list_document_ids (id-only, no chunk-count JOIN) rather
-        # than list_documents -- this loop doesn't need chunk_count, and
-        # that JOIN would otherwise re-run for every batch.
-        batch_size = 200
-        deleted = 0
-        found_any = False
-        while True:
-            batch = await asyncio.to_thread(kb_store.list_document_ids, filters, batch_size, 0)
-            if not batch:
-                break
-            found_any = True
-            for doc_id in batch:
-                lock = await _lock_for(doc_id)
-                async with lock:
-                    # Re-check under the lock — a concurrent single-document
-                    # DELETE (or another overlapping bulk delete) may have
-                    # already removed this one, and a concurrent PATCH may
-                    # have re-sourced it away from `name` since it was
-                    # listed; either way it no longer belongs to this run.
-                    current = await asyncio.to_thread(kb_store.get_document, doc_id)
-                    if current is None or current.get("source") != name:
-                        continue
-                    await asyncio.to_thread(kb_store.delete_document, doc_id)
-                    deleted += 1
+        documents_deleted, chunks_deleted, found_any = await _delete_documents_for_source(name)
 
         if not found_any:
             return _error_json(404, "kb_source_not_found", f"no documents found for source {name!r}")
@@ -1101,11 +1492,12 @@ def register_admin_kb_routes(
                 "action": "kb.source.delete",
                 "actor_user_id": actor,
                 "target_id": name,
-                "deleted_count": deleted,
+                "deleted_count": documents_deleted,
+                "chunks_deleted": chunks_deleted,
                 "ts": datetime.now(timezone.utc).isoformat(),
             },
         )
-        return {"source": name, "deleted": deleted}
+        return {"source": name, "deleted": documents_deleted}
 
     app.include_router(sources_router)
 

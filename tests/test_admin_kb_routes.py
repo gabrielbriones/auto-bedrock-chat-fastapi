@@ -69,6 +69,7 @@ class _FakeKBStore:
 
     def delete_document(self, doc_id):
         self.documents.pop(doc_id, None)
+        return 0
 
     def list_sources(self):
         counts = {}
