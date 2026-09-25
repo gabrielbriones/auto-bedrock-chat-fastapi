@@ -306,8 +306,8 @@ on the same document.
 | ------ | ------------------------------- | ------------------------------------------------------------------------- |
 | POST   | `/admin/kb/sources/web`         | Trigger a background web crawl; indexes the crawled pages into the KB.    |
 | POST   | `/admin/kb/sources/file`        | Trigger a background ingestion of uploaded file content into the KB.      |
-| PATCH  | `/admin/kb/sources/web/{name}`  | Delete `name`'s existing documents/chunks, then re-run a web crawl.       |
-| PATCH  | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
+| PUT    | `/admin/kb/sources/web/{name}`  | Delete `name`'s existing documents/chunks, then re-run a web crawl.       |
+| PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
 | GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                             |
 | GET    | `/admin/kb/sources`             | List distinct KB document `source` names with their document counts.      |
 | DELETE | `/admin/kb/sources`             | Delete every document (and chunks) whose `source` matches `?name=`.       |
@@ -329,7 +329,7 @@ kb_source_run_already_in_progress`. This is intentional: admins can
 > **Duplicate source names:** `POST` rejects a `name` that already has
 > KB documents with `409 source_already_exists` — re-running the same
 > source no longer silently creates a second, independent set of
-> documents. Use `PATCH /admin/kb/sources/{web,file}/{name}` to
+> documents. Use `PUT /admin/kb/sources/{web,file}/{name}` to
 > intentionally replace an existing source's documents/chunks.
 
 `POST /admin/kb/sources/web` body:
@@ -401,8 +401,8 @@ Response shape (`POST` and `GET status` share it):
 }
 ```
 
-`PATCH /admin/kb/sources/web/{name}` and
-`PATCH /admin/kb/sources/file/{name}` take the _same body_ as the
+`PUT /admin/kb/sources/web/{name}` and
+`PUT /admin/kb/sources/file/{name}` take the _same body_ as the
 corresponding `POST` route minus `name` (taken from the path instead),
 and return the same `202`/status response shape. Unlike `POST`, they
 don't reject an existing source — that's the point: all of `name`'s

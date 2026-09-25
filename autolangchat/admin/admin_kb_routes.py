@@ -15,7 +15,7 @@ Endpoints
 * ``POST   /admin/kb/sources/file``    — trigger an ingestion run from
   uploaded file content (multipart form; admins don't have filesystem
   access to the running service).
-* ``PATCH  /admin/kb/sources/web/{name}``/``PATCH /admin/kb/sources/file/{name}``
+* ``PUT    /admin/kb/sources/web/{name}``/``PUT /admin/kb/sources/file/{name}``
   — delete an existing source's documents/chunks, then re-run the same
   ingestion as the corresponding ``POST`` to replace them.
 * ``GET    /admin/kb/sources/status``  — poll the in-flight ingestion run.
@@ -183,8 +183,8 @@ class KBSourcePhase(str, Enum):
 
 class KBSourceWebBody(BaseModel):
     """Fields shared by ``POST /admin/kb/sources/web`` and
-    ``PATCH /admin/kb/sources/web/{name}`` — everything except ``name``,
-    which the ``POST`` body carries directly and the ``PATCH`` route takes
+    ``PUT /admin/kb/sources/web/{name}`` — everything except ``name``,
+    which the ``POST`` body carries directly and the ``PUT`` route takes
     from the path instead.
     """
 
@@ -955,7 +955,7 @@ def register_admin_kb_routes(
         """Read + decode ``files`` (UTF-8 text or PDF) for the ``/file``
         ingestion routes, enforcing per-file/aggregate size caps.
 
-        Shared by ``POST`` and ``PATCH`` (same upload handling, per the
+        Shared by ``POST`` and ``PUT`` (same upload handling, per the
         ticket's "same body as POST minus name" requirement). Reads now
         rather than deferring to the background task: uploads' temporary
         storage is cleaned up once the request handler returns.
@@ -1010,7 +1010,7 @@ def register_admin_kb_routes(
                 "model": ErrorResponse,
                 "description": (
                     "A KB source ingestion run is already in progress, or `name` already has "
-                    "existing documents (use PATCH to override)"
+                    "existing documents (use PUT to override)"
                 ),
             },
             503: {"model": ErrorResponse, "description": "KB source ingestion is not configured"},
@@ -1026,7 +1026,7 @@ def register_admin_kb_routes(
         Returns ``202 Accepted`` immediately with a ``run_id`` and the
         ``running`` state. Poll ``GET /admin/kb/sources/status`` for
         completion. Returns ``409`` if a run is already in progress, or if
-        ``name`` already has documents (use ``PATCH`` to override those).
+        ``name`` already has documents (use ``PUT`` to override those).
         """
         unavailable = _ingestion_unavailable_response()
         if unavailable is not None:
@@ -1037,7 +1037,7 @@ def register_admin_kb_routes(
             return _error_json(
                 409,
                 "source_already_exists",
-                f"source {body.name!r} already has {existing_count} document(s); use PATCH to override",
+                f"source {body.name!r} already has {existing_count} document(s); use PUT to override",
             )
 
         actor = identity.user_id
@@ -1088,7 +1088,7 @@ def register_admin_kb_routes(
                 "model": ErrorResponse,
                 "description": (
                     "A KB source ingestion run is already in progress, or `name` already has "
-                    "existing documents (use PATCH to override)"
+                    "existing documents (use PUT to override)"
                 ),
             },
             422: {
@@ -1147,7 +1147,7 @@ def register_admin_kb_routes(
             return _error_json(
                 409,
                 "source_already_exists",
-                f"source {name!r} already has {existing_count} document(s); use PATCH to override",
+                f"source {name!r} already has {existing_count} document(s); use PUT to override",
             )
 
         # This is a lock-free peek (eventual consistency is fine here); the
@@ -1210,7 +1210,7 @@ def register_admin_kb_routes(
 
         return _source_state.status
 
-    @sources_router.patch(
+    @sources_router.put(
         "/web/{name:path}",
         response_model=KBSourceStatus,
         status_code=202,
@@ -1281,7 +1281,7 @@ def register_admin_kb_routes(
 
         return _source_state.status
 
-    @sources_router.patch(
+    @sources_router.put(
         "/file/{name:path}",
         response_model=KBSourceStatus,
         status_code=202,
@@ -1429,11 +1429,11 @@ def register_admin_kb_routes(
     ) -> Tuple[int, int, bool]:
         """Hard-delete every document (and its chunks) whose ``source``
         equals ``name`` exactly. Type-agnostic — shared by the bulk
-        ``DELETE`` route and the ``PATCH`` override flow, regardless of
+        ``DELETE`` route and the ``PUT`` override flow, regardless of
         whether the source was ingested via a web crawl or a file upload.
 
         Returns ``(documents_deleted, chunks_deleted, found_any)``. A
-        caller that wants a no-op when nothing matches (e.g. ``PATCH`` on
+        caller that wants a no-op when nothing matches (e.g. ``PUT`` on
         a not-yet-ingested source) just ignores ``found_any``.
 
         ``running_counts``, if given, is a mutable ``[documents_deleted,

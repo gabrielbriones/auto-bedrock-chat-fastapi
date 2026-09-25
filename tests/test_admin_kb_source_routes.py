@@ -525,18 +525,18 @@ def test_file_source_rejects_duplicate_name_without_reading_uploads():
 
 
 # ---------------------------------------------------------------------------
-# PATCH override (delete existing source, then re-ingest)
+# PUT override (delete existing source, then re-ingest)
 # ---------------------------------------------------------------------------
 
 
-def test_patch_web_source_clears_old_documents_before_reingesting():
+def test_put_web_source_clears_old_documents_before_reingesting():
     kb_store = _FakeKBStore()
     kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
     app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
     html = f"<html><body>{_LONG_TEXT}</body></html>"
 
     with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
-        resp = client.patch(
+        resp = client.put(
             "/bedrock-chat/admin/kb/sources/web/docs",
             json={"urls": ["https://example.com/"]},
         )
@@ -551,7 +551,7 @@ def test_patch_web_source_clears_old_documents_before_reingesting():
     assert kb_store.chunks
 
 
-def test_patch_web_source_delete_failure_marks_run_failed_not_stuck_running():
+def test_put_web_source_delete_failure_marks_run_failed_not_stuck_running():
     """A failure during the delete phase (before ingestion even starts) must
     still mark the run failed and release the global run lock -- otherwise
     it stays stuck at "running" forever and blocks every future run."""
@@ -565,7 +565,7 @@ def test_patch_web_source_delete_failure_marks_run_failed_not_stuck_running():
     app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
 
     with TestClient(app) as client:
-        resp = client.patch(
+        resp = client.put(
             "/bedrock-chat/admin/kb/sources/web/docs",
             json={"urls": ["https://example.com/"]},
         )
@@ -578,14 +578,14 @@ def test_patch_web_source_delete_failure_marks_run_failed_not_stuck_running():
         # The lock must be released -- a subsequent run should not be
         # rejected with kb_source_run_already_in_progress.
         kb_store.list_document_ids = _FakeKBStore.list_document_ids.__get__(kb_store)
-        second = client.patch(
+        second = client.put(
             "/bedrock-chat/admin/kb/sources/web/other",
             json={"urls": ["https://example.com/"]},
         )
         assert second.status_code == 202
 
 
-def test_patch_web_source_partial_delete_failure_preserves_removed_counts(caplog):
+def test_put_web_source_partial_delete_failure_preserves_removed_counts(caplog):
     """If the delete phase fails partway through a multi-document source,
     the audit record must reflect however many documents were actually
     removed before the failure, not 0 -- the tuple-unpack in the caller
@@ -608,7 +608,7 @@ def test_patch_web_source_partial_delete_failure_preserves_removed_counts(caplog
 
     with caplog.at_level(logging.INFO, logger="bedrock.audit"):
         with TestClient(app) as client:
-            resp = client.patch(
+            resp = client.put(
                 "/bedrock-chat/admin/kb/sources/web/docs",
                 json={"urls": ["https://example.com/"]},
             )
@@ -626,9 +626,9 @@ def test_patch_web_source_partial_delete_failure_preserves_removed_counts(caplog
     assert complete_records[0].documents_removed == 1
 
 
-def test_patch_web_source_name_with_slash_routes_correctly():
+def test_put_web_source_name_with_slash_routes_correctly():
     """Source names may legitimately contain `/` (POST accepts any string
-    and persists it verbatim); the PATCH path param must use the `:path`
+    and persists it verbatim); the PUT path param must use the `:path`
     converter -- like the existing `{doc_id:path}` document routes -- or
     such a name 404s instead of being overridable."""
     kb_store = _FakeKBStore()
@@ -637,7 +637,7 @@ def test_patch_web_source_name_with_slash_routes_correctly():
     html = f"<html><body>{_LONG_TEXT}</body></html>"
 
     with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
-        resp = client.patch(
+        resp = client.put(
             "/bedrock-chat/admin/kb/sources/web/team/docs",
             json={"urls": ["https://example.com/"]},
         )
@@ -650,13 +650,13 @@ def test_patch_web_source_name_with_slash_routes_correctly():
     assert kb_store.documents
 
 
-def test_patch_file_source_clears_old_documents_before_reingesting():
+def test_put_file_source_clears_old_documents_before_reingesting():
     kb_store = _FakeKBStore()
     kb_store.add_document(doc_id="uploads/old.txt", source="uploads", content="stale content")
     app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
 
     with TestClient(app) as client:
-        resp = client.patch(
+        resp = client.put(
             "/bedrock-chat/admin/kb/sources/file/uploads",
             data={},
             files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
@@ -671,13 +671,13 @@ def test_patch_file_source_clears_old_documents_before_reingesting():
     assert kb_store.chunks
 
 
-def test_patch_web_source_on_nonexistent_name_behaves_like_fresh_ingest():
+def test_put_web_source_on_nonexistent_name_behaves_like_fresh_ingest():
     kb_store = _FakeKBStore()
     app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
     html = f"<html><body>{_LONG_TEXT}</body></html>"
 
     with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
-        resp = client.patch(
+        resp = client.put(
             "/bedrock-chat/admin/kb/sources/web/brand-new",
             json={"urls": ["https://example.com/"]},
         )
@@ -690,7 +690,7 @@ def test_patch_web_source_on_nonexistent_name_behaves_like_fresh_ingest():
     assert kb_store.documents
 
 
-def test_patch_web_source_rejects_while_another_run_is_in_progress():
+def test_put_web_source_rejects_while_another_run_is_in_progress():
     app = _build_app(embedding_client=_slow_embedding_client())
 
     with TestClient(app) as client:
@@ -701,7 +701,7 @@ def test_patch_web_source_rejects_while_another_run_is_in_progress():
         )
         assert first.status_code == 202
 
-        second = client.patch(
+        second = client.put(
             "/bedrock-chat/admin/kb/sources/web/s2",
             json={"urls": ["https://example.com/"]},
         )
@@ -711,20 +711,20 @@ def test_patch_web_source_rejects_while_another_run_is_in_progress():
         _wait_until_not_running(client)
 
 
-def test_patch_web_source_requires_admin_auth():
+def test_put_web_source_requires_admin_auth():
     app = _build_app(authenticated=False, embedding_client=_embedding_client())
     client = TestClient(app)
-    resp = client.patch(
+    resp = client.put(
         "/bedrock-chat/admin/kb/sources/web/docs",
         json={"urls": ["https://example.com/"]},
     )
     assert resp.status_code == 401
 
 
-def test_patch_file_source_requires_admin_auth():
+def test_put_file_source_requires_admin_auth():
     app = _build_app(authenticated=False, embedding_client=_embedding_client())
     client = TestClient(app)
-    resp = client.patch(
+    resp = client.put(
         "/bedrock-chat/admin/kb/sources/file/uploads",
         data={},
         files=[("files", ("a.txt", b"hello", "text/plain"))],
@@ -732,7 +732,7 @@ def test_patch_file_source_requires_admin_auth():
     assert resp.status_code == 401
 
 
-def test_patch_web_source_audit_log_reports_removed_counts(caplog):
+def test_put_web_source_audit_log_reports_removed_counts(caplog):
     kb_store = _FakeKBStore()
     kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
     app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
@@ -740,7 +740,7 @@ def test_patch_web_source_audit_log_reports_removed_counts(caplog):
 
     with caplog.at_level(logging.INFO, logger="bedrock.audit"):
         with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
-            resp = client.patch(
+            resp = client.put(
                 "/bedrock-chat/admin/kb/sources/web/docs",
                 json={"urls": ["https://example.com/"]},
             )

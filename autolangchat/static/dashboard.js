@@ -106,9 +106,10 @@
     function apiGet(path)          { return apiRequest('GET',    path); }
     function apiPost(path, body)   { return apiRequest('POST',   path, body); }
     function apiPatch(path, body)  { return apiRequest('PATCH',  path, body); }
+    function apiPut(path, body)    { return apiRequest('PUT',    path, body); }
     function apiDelete(path)       { return apiRequest('DELETE', path); }
 
-    /** POST/PATCH a FormData body (multipart) — used by the KB Sources
+    /** POST/PUT a FormData body (multipart) — used by the KB Sources
      * file-upload form, which sends actual file content rather than a
      * JSON body. Content-Type (with boundary) is left for the browser to
      * set. */
@@ -129,8 +130,8 @@
         });
     }
 
-    function apiPostForm(path, formData)  { return apiFormRequest('POST',  path, formData); }
-    function apiPatchForm(path, formData) { return apiFormRequest('PATCH', path, formData); }
+    function apiPostForm(path, formData) { return apiFormRequest('POST', path, formData); }
+    function apiPutForm(path, formData)  { return apiFormRequest('PUT',  path, formData); }
 
     // ----------------------------------------------------------------
     // Toast notifications
@@ -880,7 +881,7 @@
      * hard-deletes every document under that name via
      * `DELETE /kb/sources?name=...`. To override/re-run a source instead,
      * submit the matching form below with the same name — a `409
-     * source_already_exists` response prompts a confirm-then-PATCH flow
+     * source_already_exists` response prompts a confirm-then-PUT flow
      * (no dedicated row action here: this list doesn't track `source_type`,
      * so it can't tell which form — web or file — a given row needs). */
     function renderKBSourcesList(rows) {
@@ -1036,8 +1037,8 @@
         return parts.length ? parts : undefined;
     }
 
-    /** Shallow-copy `obj` without `key` — used to build a PATCH-override
-     * body from the POST body (PATCH takes `name` from the path instead). */
+    /** Shallow-copy `obj` without `key` — used to build a PUT-override
+     * body from the POST body (PUT takes `name` from the path instead). */
     function withoutKey(obj, key) {
         var copy = {};
         Object.keys(obj).forEach(function (k) { if (k !== key) copy[k] = obj[k]; });
@@ -1143,14 +1144,14 @@
         footer.appendChild(submitBtn);
         sec.appendChild(footer);
 
-        /** POST to start a fresh crawl, or PATCH `/kb/sources/web/{name}` to
+        /** POST to start a fresh crawl, or PUT `/kb/sources/web/{name}` to
          * override an existing one. `body` always carries `name` (used as
-         * the PATCH path param and stripped from the PATCH request body). */
+         * the PUT path param and stripped from the PUT request body). */
         function startWebSourceRun(body, override) {
             submitBtn.disabled = true;
             submitBtn.textContent = override ? 'Overriding…' : 'Starting…';
             var req = override
-                ? apiPatch('/kb/sources/web/' + encodeURIComponent(body.name), withoutKey(body, 'name'))
+                ? apiPut('/kb/sources/web/' + encodeURIComponent(body.name), withoutKey(body, 'name'))
                 : apiPost('/kb/sources/web', body);
             req.then(function (status) {
                 showToast(
@@ -1248,16 +1249,16 @@
         footer.appendChild(submitBtn);
         sec.appendChild(footer);
 
-        /** POST to start a fresh ingestion, or PATCH `/kb/sources/file/{name}`
+        /** POST to start a fresh ingestion, or PUT `/kb/sources/file/{name}`
          * to override an existing one. `formData` always carries a `name`
-         * field; the PATCH path takes the name instead, so it's rebuilt
-         * without that field for the PATCH call. */
+         * field; the PUT path takes the name instead, so it's rebuilt
+         * without that field for the PUT call. */
         function startFileSourceRun(name, formData, override) {
             var req;
             if (override) {
-                var patchData = new FormData();
-                formData.forEach(function (value, key) { if (key !== 'name') patchData.append(key, value); });
-                req = apiPatchForm('/kb/sources/file/' + encodeURIComponent(name), patchData);
+                var putData = new FormData();
+                formData.forEach(function (value, key) { if (key !== 'name') putData.append(key, value); });
+                req = apiPutForm('/kb/sources/file/' + encodeURIComponent(name), putData);
             } else {
                 req = apiPostForm('/kb/sources/file', formData);
             }
