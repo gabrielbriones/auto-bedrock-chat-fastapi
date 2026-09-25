@@ -1,6 +1,14 @@
-import '@testing-library/jest-dom/vitest'
+import '@testing-library/jest-dom/jest-globals'
+import type { TestingLibraryMatchers } from '@testing-library/jest-dom/matchers'
 import { cleanup } from '@testing-library/react'
-import { afterEach } from 'vitest'
+import { afterEach, expect } from '@jest/globals'
+
+// jest-dom's own `jest-globals` typing augments `@jest/expect`, but Jest 30 defines `Matchers` in
+// the `expect` package, so the DOM matchers are declared against that module here instead.
+declare module 'expect' {
+  interface Matchers<R extends void | Promise<void>, T = unknown>
+    extends TestingLibraryMatchers<ReturnType<typeof expect.stringContaining>, R> {}
+}
 
 // jsdom has no matchMedia, and the theme provider (FR-DS-002) needs one. Tests that care about
 // the system preference replace this with their own controllable stub.
@@ -29,8 +37,12 @@ if (typeof globalThis.ResizeObserver !== 'function') {
   } as unknown as typeof ResizeObserver
 }
 
-// Testing Library doesn't auto-unmount between tests outside of Jest; without this every
-// component test after the first would render into a DOM still holding the previous test's tree.
+// jsdom defines `scrollTo` only to log "Not implemented"; the router's scroll restoration calls
+// it on every navigation. There is no layout to scroll, so a silent no-op is the honest stub.
+window.scrollTo = () => {}
+
+// Testing Library auto-unmounts only when it detects a global `afterEach` at import time; kept
+// explicit so the guarantee does not hinge on import order.
 afterEach(() => {
   cleanup()
 })

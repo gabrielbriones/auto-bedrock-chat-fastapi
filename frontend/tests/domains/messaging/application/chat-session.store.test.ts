@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, jest } from '@jest/globals'
 
 import { FixedClock, Instant } from '@/shared/kernel/instant'
 import { isOk } from '@/shared/kernel/result'
@@ -22,8 +22,8 @@ const state = (
 ): ConnectionState => ({ status, attempt, nextRetryAt: null })
 
 const createHarness = (initial: ConnectionState = state('open')) => {
-  const sendChat = vi.fn<(text: string) => 'sent' | 'dropped-closed'>(() => 'sent')
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  const sendChat = jest.fn<(text: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+  const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 
   let emitEvent: ((event: MessagingEvent) => void) | undefined
   let emitState: ((next: ConnectionState) => void) | undefined
@@ -132,7 +132,7 @@ describe('ChatSessionStore', () => {
 
     it('notifies subscribers on every change', () => {
       const { store, changeConnection } = createHarness(state('connecting'))
-      const listener = vi.fn()
+      const listener = jest.fn()
       store.subscribe(listener)
 
       changeConnection(state('open'))
@@ -354,7 +354,7 @@ describe('ChatSessionStore', () => {
 
   it('stops listening once disposed', () => {
     const { store, emit } = createHarness()
-    const listener = vi.fn()
+    const listener = jest.fn()
     store.subscribe(listener)
 
     store.dispose()

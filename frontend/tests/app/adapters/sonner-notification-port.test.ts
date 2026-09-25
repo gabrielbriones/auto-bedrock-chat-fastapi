@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, jest } from '@jest/globals'
 import { toast } from 'sonner'
 
 import { SonnerNotificationPort } from '@/app/adapters/sonner-notification-port'
@@ -24,10 +24,10 @@ class MovableClock implements Clock {
 }
 
 const spies = {
-  success: vi.spyOn(toast, 'success'),
-  error: vi.spyOn(toast, 'error'),
-  info: vi.spyOn(toast, 'info'),
-  warning: vi.spyOn(toast, 'warning'),
+  success: jest.spyOn(toast, 'success'),
+  error: jest.spyOn(toast, 'error'),
+  info: jest.spyOn(toast, 'info'),
+  warning: jest.spyOn(toast, 'warning'),
 }
 
 beforeEach(() => {

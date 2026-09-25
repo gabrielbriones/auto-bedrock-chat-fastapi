@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -6,7 +6,7 @@ import { OffsetPagination } from '@/components/ui/composed/offset-pagination'
 import { ADMIN_COPY } from '@/shared/copy/admin'
 import { offsetWindow } from '@/shared/kernel/pagination'
 
-const renderPagination = (offset: number, total: number, onNavigate = vi.fn()) => {
+const renderPagination = (offset: number, total: number, onNavigate = jest.fn()) => {
   render(<OffsetPagination range={offsetWindow({ limit: 50, offset }, total)} onNavigate={onNavigate} />)
   return onNavigate
 }

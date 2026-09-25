@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals'
 import { By, until, type WebDriver } from 'selenium-webdriver'
 
 import { startAccessibilityServer, type AccessibilityServer } from './helpers/accessibility-server.js'
@@ -17,6 +18,16 @@ const VIEWPORTS: readonly Viewport[] = [
 type ViewCase = {
   readonly name: string
   readonly open: (driver: WebDriver, origin: string) => Promise<void>
+}
+
+// Base UI keeps `data-starting-style` on the popup for one frame before the slide-in transition
+// starts, so waiting for its removal guarantees the transition is already running (or done) by
+// the time the global getAnimations() settle check runs.
+const waitForSheetOpen = async (driver: WebDriver): Promise<void> => {
+  await driver.wait(
+    until.elementLocated(By.css('[data-slot="sheet-content"]:not([data-starting-style])')),
+    15_000,
+  )
 }
 
 const VIEWS: readonly ViewCase[] = [
@@ -40,7 +51,7 @@ const VIEWS: readonly ViewCase[] = [
       await driver.get(`${origin}/bedrock-chat/dashboard/kb-browser`)
       const rowAction = await driver.wait(until.elementLocated(By.css('main tbody button[aria-label^="Open "]')), 15_000)
       await rowAction.click()
-      await driver.wait(until.elementLocated(By.css('[data-slot="sheet-content"]')), 15_000)
+      await waitForSheetOpen(driver)
     },
   },
   {
@@ -49,7 +60,7 @@ const VIEWS: readonly ViewCase[] = [
       await driver.get(`${origin}/bedrock-chat/ui/`)
       const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 15_000)
       await driver.executeScript('arguments[0].click()', settings)
-      await driver.wait(until.elementLocated(By.css('[data-slot="sheet-content"]')), 15_000)
+      await waitForSheetOpen(driver)
     },
   },
 ]
@@ -69,18 +80,18 @@ const waitForTheme = async (driver: WebDriver, theme: Theme): Promise<void> => {
 // T-185 (PLAN-002, SPEC-020 §8): visual regression baselines for every combination of view,
 // theme and viewport. First run records a baseline PNG per combination; reruns fail on any
 // byte-for-byte drift (see helpers/visual-snapshot.ts).
-describe('Phase 10 visual regression baselines', function () {
-  this.timeout(180_000)
+describe('Phase 10 visual regression baselines', () => {
+  jest.setTimeout(180_000)
 
   let driver: WebDriver
   let server: AccessibilityServer
 
-  before(async () => {
+  beforeAll(async () => {
     server = await startAccessibilityServer()
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
     await server?.close()
   })
@@ -93,6 +104,11 @@ describe('Phase 10 visual regression baselines', function () {
           await setTheme(driver, server.origin, theme)
           await view.open(driver, server.origin)
           await waitForTheme(driver, theme)
+          await driver.executeAsyncScript('document.fonts.ready.then(() => arguments[0]())')
+          await driver.executeAsyncScript(
+            'Promise.all(document.getAnimations().map((animation) => animation.finished))' +
+              '.then(() => requestAnimationFrame(() => requestAnimationFrame(() => arguments[0]())))',
+          )
 
           await matchScreenshot(driver, `vr-${view.name}-${theme}-${viewport.name}`)
         })

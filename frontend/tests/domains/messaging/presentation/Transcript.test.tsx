@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ReactNode } from 'react'
-import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest, afterEach, beforeEach } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { MAIN_SCROLL_CONTAINER_ID } from '@/components/ui/composed/scroll-container'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
@@ -193,7 +193,7 @@ describe('Transcript live region (NFR-A11Y-006)', () => {
 describe('Transcript welcome state (FR-MSG-031)', () => {
   it('shows the supplied presets in place of canned suggestions', async () => {
     const user = userEvent.setup()
-    const activate = vi.fn()
+    const activate = jest.fn()
     render(
       <Scroller>
         <Transcript
@@ -208,7 +208,7 @@ describe('Transcript welcome state (FR-MSG-031)', () => {
     expect(screen.getByRole('region', { name: MESSAGING_COPY.welcome.label })).toContainElement(preset)
     expect(screen.queryByRole('button', { name: MESSAGING_COPY.welcome.suggestions[0]! })).not.toBeInTheDocument()
     await user.click(preset)
-    expect(activate).toHaveBeenCalledOnce()
+    expect(activate).toHaveBeenCalledTimes(1)
   })
 
   it('disappears as soon as the transcript has content', () => {

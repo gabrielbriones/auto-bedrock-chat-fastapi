@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 import { renderHook } from '@testing-library/react'
 
 import { useContainer } from '@/app/bootstrap/container-context'

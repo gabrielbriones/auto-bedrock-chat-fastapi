@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 
 import { assertBoundedGrowth, HeapGrowthExceeded, type HeapSample } from './helpers/memory-soak.js'
 
@@ -17,7 +17,7 @@ describe('Memory soak ceiling check', function () {
       sampleAt(i * 1_000, 50 * 1_048_576 + (i % 2) * 1_048_576),
     )
 
-    expect(() => assertBoundedGrowth(samples, ceiling)).not.to.throw()
+    expect(() => assertBoundedGrowth(samples, ceiling)).not.toThrow()
   })
 
   it('fails when the heap climbs monotonically, as a leaked subscription would', () => {
@@ -25,7 +25,7 @@ describe('Memory soak ceiling check', function () {
       sampleAt(i * 1_000, 50 * 1_048_576 + i * 2 * 1_048_576),
     )
 
-    expect(() => assertBoundedGrowth(samples, ceiling)).to.throw(HeapGrowthExceeded)
+    expect(() => assertBoundedGrowth(samples, ceiling)).toThrow(HeapGrowthExceeded)
   })
 
   it('ignores growth confined to the warmup window', () => {
@@ -35,6 +35,6 @@ describe('Memory soak ceiling check', function () {
       ...Array.from({ length: 10 }, (_, i) => sampleAt((i + 2) * 1_000, 70 * 1_048_576 + (i % 2) * 1_048_576)),
     ]
 
-    expect(() => assertBoundedGrowth(samples, ceiling)).not.to.throw()
+    expect(() => assertBoundedGrowth(samples, ceiling)).not.toThrow()
   })
 })

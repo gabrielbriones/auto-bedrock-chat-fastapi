@@ -13,11 +13,11 @@ import { DevModeBanner } from '@/domains/iam/presentation/dev-mode-banner'
 import { PendingBadge } from '@/domains/review/presentation/PendingBadge'
 
 const NAV_ITEMS = [
-  { to: '/admin/feedback', label: SHELL.admin.feedbackQueue },
-  { to: '/admin/feedback/reviewed', label: SHELL.admin.reviewed },
-  { to: '/admin/feedback/stats', label: SHELL.admin.stats },
-  { to: '/admin/knowledge', label: SHELL.admin.knowledge },
-  { to: '/admin/usage', label: SHELL.admin.usage },
+  { to: '/dashboard/feedback', label: SHELL.admin.feedbackQueue },
+  { to: '/dashboard/reviewed', label: SHELL.admin.reviewed },
+  { to: '/dashboard/feedback/stats', label: SHELL.admin.stats },
+  { to: '/dashboard/kb-browser', label: SHELL.admin.knowledge },
+  { to: '/dashboard/token-usages', label: SHELL.admin.usage },
 ] as const
 
 export type AdminLayoutProps = {
@@ -28,7 +28,7 @@ export type AdminLayoutProps = {
 function AdminNav({ capabilities }: { readonly capabilities: Capabilities }) {
   return (
     <nav aria-label={SHELL.admin.navigation} className="flex flex-col gap-1 p-4">
-      {NAV_ITEMS.filter((item) => item.to !== '/admin/usage' || capabilities.tokenUsageEnabled).map((item) => (
+      {NAV_ITEMS.filter((item) => item.to !== '/dashboard/token-usages' || capabilities.tokenUsageEnabled).map((item) => (
         <Link
           key={item.to}
           to={item.to}
@@ -36,7 +36,7 @@ function AdminNav({ capabilities }: { readonly capabilities: Capabilities }) {
           className="flex items-center justify-between rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium"
         >
           <span>{item.label}</span>
-          {item.to === '/admin/feedback' ? <PendingBadge /> : null}
+          {item.to === '/dashboard/feedback' ? <PendingBadge /> : null}
         </Link>
       ))}
     </nav>
@@ -76,7 +76,7 @@ export function AdminLayout({ children, capabilities }: AdminLayoutProps) {
       header={
         <header className="flex h-14 items-center justify-between border-b border-border px-4">
           <p className="truncate font-medium text-foreground">{bootstrap.uiTitle}</p>
-          <Link to="/" className={buttonVariants({ variant: 'ghost' })}>
+          <Link to="/ui" className={buttonVariants({ variant: 'ghost' })}>
             <ArrowLeftIcon aria-hidden />
             {SHELL.admin.backToChat}
           </Link>

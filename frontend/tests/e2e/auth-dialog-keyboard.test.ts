@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import path from 'node:path'
 
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { buildChromeDriver } from './helpers/webdriver.js'
@@ -17,7 +17,6 @@ const contentType = (filePath: string): string => {
 // SPEC-010 §7 "Component"/"E2E": the focus trap and Escape behaviour depend on `inert`, which
 // jsdom does not implement — so they can only be proven in a real browser.
 describe('Auth dialog keyboard journey', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: Server
@@ -25,7 +24,7 @@ describe('Auth dialog keyboard journey', function () {
   let baseConfig: Record<string, unknown>
   let requireAuth = true
 
-  before(async () => {
+  beforeAll(async () => {
     const dist = path.resolve(process.cwd(), 'dist')
     const raw = await readFile(
       path.resolve(process.cwd(), 'tests/msw/fixtures/bootstrap-config.json'),
@@ -79,7 +78,7 @@ describe('Auth dialog keyboard journey', function () {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error === undefined ? resolve() : reject(error)))
@@ -138,7 +137,7 @@ describe('Auth dialog keyboard journey', function () {
     it(`inerts the application root while the dialog is open (${suffix})`, async () => {
       await openDialog(authRequired)
 
-      expect(await isRootInert()).to.equal(true)
+      expect(await isRootInert()).toBe(true)
     })
 
     it(`traps Tab and Shift+Tab inside the dialog (${suffix})`, async () => {
@@ -147,8 +146,8 @@ describe('Auth dialog keyboard journey', function () {
       const forwards = await tabTrail(12)
       const backwards = await tabTrail(12, true)
 
-      expect(forwards.filter((entry) => entry.startsWith('OUTSIDE'))).to.deep.equal([])
-      expect(backwards.filter((entry) => entry.startsWith('OUTSIDE'))).to.deep.equal([])
+      expect(forwards.filter((entry) => entry.startsWith('OUTSIDE'))).toEqual([])
+      expect(backwards.filter((entry) => entry.startsWith('OUTSIDE'))).toEqual([])
     })
   }
 
@@ -158,7 +157,7 @@ describe('Auth dialog keyboard journey', function () {
 
     await driver.actions().sendKeys(Key.ESCAPE).perform()
 
-    expect(await driver.findElements(By.css('[role="dialog"]'))).to.have.lengthOf(1)
+    expect(await driver.findElements(By.css('[role="dialog"]'))).toHaveLength(1)
   })
 
   // FR-IAM-008: with auth required there is no Skip control to reach by keyboard.
@@ -169,7 +168,7 @@ describe('Auth dialog keyboard journey', function () {
       (await driver.findElements(By.css('[role="dialog"] button'))).map((button) => button.getText()),
     )
 
-    expect(labels.some((label) => label.trim() === 'Skip')).to.equal(false)
+    expect(labels.some((label) => label.trim() === 'Skip')).toBe(false)
   })
 
   // FR-IAM-008: dismissing an optional dialog releases the page behind it again.
@@ -184,7 +183,7 @@ describe('Auth dialog keyboard journey', function () {
       5_000,
     )
 
-    expect(await isRootInert()).to.equal(false)
+    expect(await isRootInert()).toBe(false)
   })
 
   // FR-IAM-004
@@ -198,6 +197,6 @@ describe('Auth dialog keyboard journey', function () {
       'return document.activeElement?.getAttribute("name") ?? ""',
     )
 
-    expect(focusedName).to.equal('username')
+    expect(focusedName).toBe('username')
   })
 })

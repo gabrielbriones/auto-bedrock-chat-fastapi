@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { startChatServer, conversationSummary, type ChatServer } from './helpers/chat-server.js'
@@ -13,7 +13,6 @@ const ROSTER = [
 // each step. Drives the built bundle against a scripted backend, so the whole wire contract of
 // SPEC-011 is exercised rather than mocked away at the gateway.
 describe('E5 — conversation lifecycle', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: ChatServer
@@ -61,11 +60,11 @@ describe('E5 — conversation lifecycle', function () {
   const pathname = () =>
     driver.executeScript<string>('return window.location.pathname')
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -136,8 +135,8 @@ describe('E5 — conversation lifecycle', function () {
 
     // FR-CONV-002: a new conversation has no id yet, so it lives at /ui.
     await (await driver.findElement(By.xpath("//button[normalize-space()='New chat']"))).click()
-    expect(server.sentOf('conversation_new')).to.have.length(1)
-    expect(await pathname()).to.equal('/bedrock-chat/ui')
+    expect(server.sentOf('conversation_new')).toHaveLength(1)
+    expect(await pathname()).toBe('/bedrock-chat/ui')
 
     // FR-CONV-010 / FR-CONV-011: the id the first turn produces becomes the address.
     const composer = await driver.findElement(By.css('textarea'))
@@ -152,14 +151,14 @@ describe('E5 — conversation lifecycle', function () {
     await titleField.clear()
     await titleField.sendKeys('GEMM tuning v2', Key.ENTER)
     await byText('GEMM tuning v2')
-    expect(server.sentOf('conversation_rename')[0]?.title).to.equal('GEMM tuning v2')
+    expect(server.sentOf('conversation_rename')[0]?.title).toBe('GEMM tuning v2')
 
     // FR-CONV-003 / FR-CONV-011.
     await (await driver.findElement(By.xpath("//button[normalize-space()='Stream triad']"))).click()
     await driver.wait(async () => (await pathname()) === '/bedrock-chat/ui/c/conv-2', 10_000)
     await byText('The measured bandwidth was 118 GB/s.')
     expect(await driver.findElements(By.xpath("//article[normalize-space(.)='Here is the analysis.']")))
-      .to.have.length(0)
+      .toHaveLength(0)
 
     // A response already in flight for the previous thread must not roll the route or transcript
     // back. The following rename is an ordered marker proving the browser consumed both frames.
@@ -185,20 +184,20 @@ describe('E5 — conversation lifecycle', function () {
       title: 'GEMM tuning settled',
     })
     await byText('GEMM tuning settled')
-    expect(await pathname()).to.equal('/bedrock-chat/ui/c/conv-2')
+    expect(await pathname()).toBe('/bedrock-chat/ui/c/conv-2')
     expect(
       await driver.findElements(
         By.xpath("//article[normalize-space(.)='Stale response from the previous conversation.']"),
       ),
-    ).to.have.length(0)
+    ).toHaveLength(0)
 
     // FR-CONV-005 / FIX-15: a confirmation naming the conversation, never window.confirm.
     await (await driver.findElement(By.css('[aria-label="Options for Stream triad"]'))).click()
     await clickMenuItem('Delete')
-    expect(await dialogText()).to.contain('Delete "Stream triad"? This cannot be undone.')
+    expect(await dialogText()).toContain('Delete "Stream triad"? This cannot be undone.')
     await clickDialogButton('Delete')
 
-    expect(server.sentOf('conversation_delete')[0]?.conversation_id).to.equal('conv-2')
+    expect(server.sentOf('conversation_delete')[0]?.conversation_id).toBe('conv-2')
     // FR-CONV-016 / FIX-16: the list is refetched, never patched in place.
     await driver.wait(async () => server.sentOf('conversation_list').length >= 2, 10_000)
   })

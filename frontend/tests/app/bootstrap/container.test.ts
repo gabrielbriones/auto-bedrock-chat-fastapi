@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { Logger } from '@/shared/logging/logger'
 import { HttpClient } from '@/shared/http/http-client'
@@ -8,7 +8,7 @@ import { toChatBootstrap } from '@/app/bootstrap/bootstrap-config.dto'
 import { createContainer } from '@/app/bootstrap/container'
 import { isOk } from '@/shared/kernel/result'
 
-const fakeLogger: Logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+const fakeLogger: Logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 
 const chatBootstrap = () => {
   const result = toChatBootstrap(bootstrapConfigFixture)

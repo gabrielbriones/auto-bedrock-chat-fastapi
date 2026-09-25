@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { parseDeepLink, scrubDeepLink } from '@/domains/prompt-catalog/domain/deep-link'
 import { parsePromptCatalog } from '@/domains/prompt-catalog/domain/prompt-catalog'

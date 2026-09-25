@@ -37,9 +37,9 @@ export const useConversationRoute = (routeId: ConversationId | null): void => {
       conversations.open(next.command.id)
     } else if (next.command.kind === 'navigate') {
       void (next.command.id === null
-        ? navigate({ to: '/', replace: true })
+        ? navigate({ to: '/ui', replace: true })
         : navigate({
-            to: '/c/$conversationId',
+          to: '/ui/c/$conversationId',
             params: { conversationId: next.command.id },
             replace: true,
           }))

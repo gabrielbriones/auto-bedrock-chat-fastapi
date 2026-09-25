@@ -17,11 +17,9 @@
     "allowJs": true,
     "types": [
       "node",
-      "mocha",
-      "chai",
+      "jest",
       "selenium-webdriver",
-      "vite/client",
-      "@testing-library/jest-dom/vitest"
+      "vite/client"
     ],
 
     /* Linting — kept in step with tsconfig.app.json so a spec is held to the same bar

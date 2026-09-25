@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { deriveLabel } from '@/domains/prompt-catalog/domain/label'
 

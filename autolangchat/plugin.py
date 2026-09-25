@@ -24,7 +24,7 @@ from .graph.tools.manager import ToolManager
 from .model_capabilities import build_bedrock_kwargs
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
-from .spa import mount_spa
+from .spa import dashboard_path, mount_spa
 from .websocket_handler import WebSocketChatHandler
 
 # SSO imports are deferred — only loaded when sso_enabled=True at runtime.
@@ -618,7 +618,7 @@ class AutoLangChatPlugin:
             "admin_enabled": self.config.admin_enabled,
             "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
 
-            "dashboard_url": (f"{self.config.ui_endpoint}/admin" if self.config.admin_enabled else ""),
+            "dashboard_url": dashboard_path(self.config.ui_endpoint) if self.config.admin_enabled else "",
             "conversation_persistence_enabled": conversation_persistence_enabled,
             # Dynamic parameter overrides settings sidebar.
             "enable_config_sidebar": bool(self.config.enable_config_sidebar and self.config.enable_dynamic_overrides),

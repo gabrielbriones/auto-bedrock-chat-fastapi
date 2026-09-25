@@ -1,14 +1,16 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { WebDriver } from 'selenium-webdriver'
+import pixelmatch from 'pixelmatch'
+import { PNG } from 'pngjs'
 
 const SNAPSHOT_DIR = path.resolve(import.meta.dirname, '../__screenshots__')
 
 /**
- * Captures a screenshot and compares it byte-for-byte against a committed baseline,
- * writing the baseline on first run. This is a capture/compare scaffold only — pixel-diffing
- * with a tolerance (for anti-aliasing/font-rendering drift) is deferred to the visual-regression
- * task that consumes this helper (STD-002 §1's "Visual" row).
+ * Captures a screenshot and compares its pixels against a committed baseline,
+ * writing the baseline on first run. Anti-aliasing drift is ignored, but any
+ * meaningful pixel difference still fails the test.
  */
 export async function matchScreenshot(driver: WebDriver, name: string): Promise<void> {
   await mkdir(SNAPSHOT_DIR, { recursive: true })
@@ -21,10 +23,19 @@ export async function matchScreenshot(driver: WebDriver, name: string): Promise<
     return
   }
 
-  if (!current.equals(baseline)) {
+  const actualImage = PNG.sync.read(current)
+  const baselineImage = PNG.sync.read(baseline)
+  const sameDimensions = actualImage.width === baselineImage.width && actualImage.height === baselineImage.height
+  const differentPixels = sameDimensions
+    ? pixelmatch(actualImage.data, baselineImage.data, null, actualImage.width, actualImage.height, { threshold: 0.1 })
+    : 1
+
+  if (differentPixels !== 0) {
+    const actualPath = path.join(tmpdir(), `${name}.actual.png`)
+    await writeFile(actualPath, current)
     throw new Error(
-      `Screenshot "${name}" does not match its baseline at ${screenshotPath}. ` +
-        'Delete the file to record a new baseline if the change is intentional.',
+      `Screenshot "${name}" differs by ${differentPixels} pixels from ${screenshotPath}; ` +
+        `review the capture at ${actualPath} before updating the baseline.`,
     )
   }
 }

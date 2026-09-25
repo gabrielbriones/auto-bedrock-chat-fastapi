@@ -1,5 +1,5 @@
 import { act, render } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { Instant } from '@/shared/kernel/instant'
 import { turnId } from '@/shared/kernel/branded'
@@ -12,19 +12,21 @@ import {
   createTurn,
   type Turn,
 } from '@/domains/messaging/domain/turn'
-import { Transcript } from '@/domains/messaging/presentation/Transcript'
 
 // T-084 / NFR-PERF-005. The budget is a render count first and a clock second: counts are exact and
 // CI-stable, and every regression this benchmark exists to catch (a lost `memo`, an inline prop, a
 // context read that widens) shows up as one. The wall clock is the coarse backstop underneath.
-const { markdownRenders } = vi.hoisted(() => ({ markdownRenders: vi.fn() }))
+const markdownRenders = jest.fn()
 
-vi.mock('@/domains/messaging/presentation/MarkdownView', () => ({
+// No `jest.mock` hoisting under native ESM: register the mock, then import the subject.
+jest.unstable_mockModule('@/domains/messaging/presentation/MarkdownView', () => ({
   MarkdownView: ({ content }: { readonly content: string }) => {
     markdownRenders(content)
     return <span>{content}</span>
   },
 }))
+
+const { Transcript } = await import('@/domains/messaging/presentation/Transcript')
 
 const FRAMES = 100
 /** Turns, not entries: each answers into a request and a response, and 49 of them keep the

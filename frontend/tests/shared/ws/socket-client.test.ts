@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, jest } from '@jest/globals'
 
 import { FakeConnectivityPort } from '../ports/fake-connectivity-port'
 import { FixedClock, Instant } from '@/shared/kernel/instant'
@@ -47,12 +47,12 @@ const createClient = (
   })
 
 afterEach(() => {
-  vi.useRealTimers()
+  jest.useRealTimers()
 })
 
 describe('SocketClient', () => {
   it('connects once and only sends after the socket opens', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const socketFactory = createSocketFactory()
     const client = createClient({ socketFactory: socketFactory.factory })
 
@@ -70,7 +70,7 @@ describe('SocketClient', () => {
   })
 
   it('delivers raw frames to subscribers until they unsubscribe', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const socketFactory = createSocketFactory([
       { type: 'open' },
       { type: 'frame', data: PONG_FRAME },
@@ -92,7 +92,7 @@ describe('SocketClient', () => {
   })
 
   it('reports a send that fails mid-flight as dropped', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const socketFactory = createSocketFactory([{ type: 'open' }, { type: 'close-during-send' }])
     const client = createClient({ socketFactory: socketFactory.factory })
 
@@ -106,7 +106,7 @@ describe('SocketClient', () => {
   })
 
   it('cancels a pending reconnect after an intentional close', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const socketFactory = createSocketFactory()
     const client = createClient({ socketFactory: socketFactory.factory })
 
@@ -116,31 +116,31 @@ describe('SocketClient', () => {
 
     expect(client.state.status).toBe('reconnecting')
     client.close()
-    vi.advanceTimersByTime(30_000)
+    jest.advanceTimersByTime(30_000)
 
     expect(socketFactory.sockets).toHaveLength(1)
     expect(client.state).toMatchObject({ status: 'closed', attempt: 0, nextRetryAt: null })
   })
 
   it('retries when the handshake never completes', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const socketFactory = createSocketFactory()
     const client = createClient({ openTimeoutMs: 5_000, socketFactory: socketFactory.factory })
 
     client.connect()
-    vi.advanceTimersByTime(5_000)
+    jest.advanceTimersByTime(5_000)
 
     expect(client.state).toMatchObject({ status: 'reconnecting', attempt: 1 })
     expect(socketFactory.sockets).toHaveLength(1)
 
-    vi.advanceTimersByTime(1_000)
+    jest.advanceTimersByTime(1_000)
 
     expect(socketFactory.sockets).toHaveLength(2)
     client.close()
   })
 
   it('suspends a pending retry offline and reconnects immediately when online', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const connectivity = new FakeConnectivityPort()
     const socketFactory = createSocketFactory()
     const client = createClient({ connectivity, socketFactory: socketFactory.factory })
@@ -149,7 +149,7 @@ describe('SocketClient', () => {
     socketFactory.sockets[0]?.playNext()
     socketFactory.sockets[0]?.close()
     connectivity.set('offline')
-    vi.advanceTimersByTime(30_000)
+    jest.advanceTimersByTime(30_000)
 
     expect(socketFactory.sockets).toHaveLength(1)
     expect(client.state).toMatchObject({ status: 'reconnecting', attempt: 1, nextRetryAt: null })
@@ -162,7 +162,7 @@ describe('SocketClient', () => {
   })
 
   it('waits to create the first socket until connectivity returns', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const connectivity = new FakeConnectivityPort('offline')
     const socketFactory = createSocketFactory()
     const client = createClient({ connectivity, socketFactory: socketFactory.factory })
@@ -180,7 +180,7 @@ describe('SocketClient', () => {
   })
 
   it('publishes every status transition to state listeners', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const socketFactory = createSocketFactory()
     const client = createClient({ socketFactory: socketFactory.factory })
     const statuses: string[] = []
@@ -196,7 +196,7 @@ describe('SocketClient', () => {
   })
 
   it('stops reacting to connectivity once disposed', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const connectivity = new FakeConnectivityPort('offline')
     const socketFactory = createSocketFactory()
     const client = createClient({ connectivity, socketFactory: socketFactory.factory })
@@ -210,7 +210,7 @@ describe('SocketClient', () => {
   })
 
   it('stops automatic retries at the cap and allows a manual reconnect', () => {
-    vi.useFakeTimers()
+    jest.useFakeTimers()
     const connectivity = new FakeConnectivityPort()
     const socketFactory = createSocketFactory()
     const client = createClient({
@@ -228,9 +228,9 @@ describe('SocketClient', () => {
 
     client.connect()
     socketFactory.sockets[0]?.close()
-    vi.advanceTimersByTime(1)
+    jest.advanceTimersByTime(1)
     socketFactory.sockets[1]?.close()
-    vi.runAllTimers()
+    jest.runAllTimers()
 
     expect(socketFactory.sockets).toHaveLength(2)
     expect(client.state).toMatchObject({ status: 'closed', attempt: 1, nextRetryAt: null })
@@ -249,7 +249,7 @@ describe('SocketClient', () => {
 
   describe('heartbeat and staleness (FR-MSG-005)', () => {
     it('sends a ping on every heartbeat interval while the socket stays open', () => {
-      vi.useFakeTimers()
+      jest.useFakeTimers()
       const socketFactory = createSocketFactory()
       const client = createClient({
         heartbeatIntervalMs: 30_000,
@@ -259,7 +259,7 @@ describe('SocketClient', () => {
 
       client.connect()
       socketFactory.sockets[0]?.playNext()
-      vi.advanceTimersByTime(30_000)
+      jest.advanceTimersByTime(30_000)
 
       expect(socketFactory.sockets[0]?.sent).toEqual(['{"type":"ping"}'])
 
@@ -267,7 +267,7 @@ describe('SocketClient', () => {
     })
 
     it('resets staleness whenever any frame arrives, not only on a pong', () => {
-      vi.useFakeTimers()
+      jest.useFakeTimers()
       const socketFactory = createSocketFactory([
         { type: 'open' },
         { type: 'frame', data: PONG_FRAME },
@@ -280,9 +280,9 @@ describe('SocketClient', () => {
 
       client.connect()
       socketFactory.sockets[0]?.playNext()
-      vi.advanceTimersByTime(30_000)
+      jest.advanceTimersByTime(30_000)
       socketFactory.sockets[0]?.playNext()
-      vi.advanceTimersByTime(60_000)
+      jest.advanceTimersByTime(60_000)
 
       // Two heartbeat intervals elapsed since the connection opened, but a frame reset the
       // staleness count after the first, so the connection is still alive, not recycled.
@@ -293,7 +293,7 @@ describe('SocketClient', () => {
     })
 
     it('recycles a connection that receives no frame within the stale timeout', () => {
-      vi.useFakeTimers()
+      jest.useFakeTimers()
       const socketFactory = createSocketFactory()
       const client = createClient({
         heartbeatIntervalMs: 30_000,
@@ -306,7 +306,7 @@ describe('SocketClient', () => {
       client.connect()
       socketFactory.sockets[0]?.playNext()
       // Three missed heartbeat intervals (90s) with no inbound frame: stale.
-      vi.advanceTimersByTime(90_000)
+      jest.advanceTimersByTime(90_000)
 
       expect(client.state.status).toBe('reconnecting')
       expect(statuses).toContain('reconnecting')
@@ -315,7 +315,7 @@ describe('SocketClient', () => {
     })
 
     it('stops the heartbeat once the socket is closed intentionally', () => {
-      vi.useFakeTimers()
+      jest.useFakeTimers()
       const socketFactory = createSocketFactory()
       const client = createClient({
         heartbeatIntervalMs: 30_000,
@@ -326,7 +326,7 @@ describe('SocketClient', () => {
       client.connect()
       socketFactory.sockets[0]?.playNext()
       client.close()
-      vi.advanceTimersByTime(90_000)
+      jest.advanceTimersByTime(90_000)
 
       expect(socketFactory.sockets[0]?.sent).toEqual([])
       expect(socketFactory.sockets).toHaveLength(1)

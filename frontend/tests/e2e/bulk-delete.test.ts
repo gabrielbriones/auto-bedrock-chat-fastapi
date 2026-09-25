@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, until, type WebDriver } from 'selenium-webdriver'
 
 import { startChatServer, conversationSummary, type ChatServer } from './helpers/chat-server.js'
@@ -14,7 +14,6 @@ const ROSTER = [
 // point — the legacy client mutated its list in place and reported a partly-failed batch as a
 // success, leaving skipped ids stuck selected.
 describe('E6 — bulk delete with a partial server result', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: ChatServer
@@ -22,11 +21,11 @@ describe('E6 — bulk delete with a partial server result', function () {
   const byText = async (text: string) =>
     driver.wait(until.elementLocated(By.xpath(`//*[normalize-space(text())='${text}']`)), 10_000)
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -63,11 +62,11 @@ describe('E6 — bulk delete with a partial server result', function () {
     // FR-CONV-006: the select-all control carries a real indeterminate state.
     const selectAll = await driver.findElement(By.css('[aria-label="Select all conversations"]'))
     await (await driver.findElement(By.css('[aria-label="Select GEMM tuning"]'))).click()
-    expect(await selectAll.getAttribute('aria-checked')).to.equal('mixed')
+    expect(await selectAll.getAttribute('aria-checked')).toBe('mixed')
 
     await selectAll.click()
     await byText('3 selected')
-    expect(await selectAll.getAttribute('aria-checked')).to.equal('true')
+    expect(await selectAll.getAttribute('aria-checked')).toBe('true')
 
     // FR-CONV-006: a guard before the destructive confirm, with the count in the question.
     await (await driver.findElement(By.xpath("//button[normalize-space()='Delete selected']"))).click()
@@ -80,7 +79,7 @@ describe('E6 — bulk delete with a partial server result', function () {
     )
     await confirm.click()
 
-    expect(server.sentOf('conversation_delete_bulk')[0]?.conversation_ids).to.have.length(3)
+    expect(server.sentOf('conversation_delete_bulk')[0]?.conversation_ids).toHaveLength(3)
 
     // P5: two of three survive, and the user is told rather than shown a success.
     await byText('2 conversations could not be deleted.')
@@ -94,6 +93,6 @@ describe('E6 — bulk delete with a partial server result', function () {
     // FR-CONV-016 / FIX-16: the surviving list comes from a refetch.
     await driver.wait(async () => server.sentOf('conversation_list').length >= 2, 10_000)
     await byText('Stream triad')
-    expect(await driver.findElements(By.xpath("//button[normalize-space()='GEMM tuning']"))).to.have.length(0)
+    expect(await driver.findElements(By.xpath("//button[normalize-space()='GEMM tuning']"))).toHaveLength(0)
   })
 })

@@ -1,7 +1,7 @@
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import { fakeContainer } from '../../../app/bootstrap/container.fixture'

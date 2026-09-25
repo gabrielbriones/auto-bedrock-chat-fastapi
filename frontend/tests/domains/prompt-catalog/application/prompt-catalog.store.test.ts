@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { Logger } from '@/shared/logging/logger'
 
@@ -23,7 +23,7 @@ const catalog = parsePromptCatalog(
   ],
 )
 
-const silentLogger: Logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+const silentLogger: Logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 
 // A fake `UrlNavigator` whose `replace` mutates the state a later `current()` reads back, so a
 // scrub is observable exactly the way the real browser adapter would behave.
@@ -39,7 +39,7 @@ const fakeNavigator = (initial: UrlState): UrlNavigator & { state: UrlState } =>
 }
 
 const harness = (url: UrlState = {}) => {
-  const sink: ComposedPromptSink = { submit: vi.fn() }
+  const sink: ComposedPromptSink = { submit: jest.fn() }
   const urlNavigator = fakeNavigator(url)
   const store = new PromptCatalogStore({ catalog, sink, urlNavigator, logger: silentLogger })
   return { store, sink, urlNavigator }
@@ -72,7 +72,7 @@ describe('PromptCatalogStore — bindings', () => {
 
   it('notifies subscribers on every mutating call', () => {
     const { store } = harness()
-    const listener = vi.fn()
+    const listener = jest.fn()
     store.subscribe(listener)
 
     store.bindVariable('JOB_ID', { kind: 'text', value: 'x' })
@@ -113,7 +113,7 @@ describe('PromptCatalogStore — activatePreset', () => {
   it('a preset with no required variables always activates', () => {
     const { store, sink } = harness()
     expect(store.activatePreset('health-check')).toEqual({ kind: 'sent' })
-    expect(sink.submit).toHaveBeenCalledOnce()
+    expect(sink.submit).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -140,7 +140,7 @@ describe('PromptCatalogStore — deep links', () => {
     store.tryAutoSend(false)
     store.tryAutoSend(true)
 
-    expect(sink.submit).toHaveBeenCalledOnce()
+    expect(sink.submit).toHaveBeenCalledTimes(1)
   })
 
   it('autosend=0 pre-fills but never sends, however many times readiness changes', () => {
@@ -198,7 +198,7 @@ describe('PromptCatalogStore — deep links', () => {
         store.tryAutoSend(true)
       }
 
-      expect(sink.submit).toHaveBeenCalledOnce()
+      expect(sink.submit).toHaveBeenCalledTimes(1)
     })
 
     it('reconnect: readiness flapping false→true→false→true sends only once', () => {
@@ -208,20 +208,20 @@ describe('PromptCatalogStore — deep links', () => {
       store.tryAutoSend(false)
       store.tryAutoSend(true)
 
-      expect(sink.submit).toHaveBeenCalledOnce()
+      expect(sink.submit).toHaveBeenCalledTimes(1)
     })
 
     it('back-navigation: the browser restoring the pre-scrub URL still never resends', () => {
       const { store, sink, urlNavigator } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
 
       store.tryAutoSend(true)
-      expect(sink.submit).toHaveBeenCalledOnce()
+      expect(sink.submit).toHaveBeenCalledTimes(1)
 
       // Simulate a back-navigation restoring the original, un-scrubbed query string.
       urlNavigator.state = { prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' }
       store.tryAutoSend(true)
 
-      expect(sink.submit).toHaveBeenCalledOnce()
+      expect(sink.submit).toHaveBeenCalledTimes(1)
     })
 
     it('a fresh reload (new store instance) with the already-scrubbed URL sends nothing', () => {

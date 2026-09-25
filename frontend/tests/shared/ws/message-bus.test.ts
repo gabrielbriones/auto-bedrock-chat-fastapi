@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { Logger } from '@/shared/logging/logger'
 import { FRAME_OWNER, MessageBus, ServerFrameSchema } from '@/shared/ws/message-bus'
 
-const logger = (): Logger => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })
+const logger = (): Logger => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() })
 
 describe('ServerFrameSchema', () => {
   it('parses contract frames with their required envelope and payload fields', () => {
@@ -199,7 +199,7 @@ describe('MessageBus', () => {
   it('logs and drops malformed, unknown, and schema-invalid frames while later valid frames arrive', () => {
     const testLogger = logger()
     const bus = new MessageBus(testLogger)
-    const subscriber = vi.fn()
+    const subscriber = jest.fn()
     bus.subscribe(subscriber)
 
     bus.receive('{invalid json')
@@ -243,7 +243,7 @@ describe('MessageBus', () => {
 
   it('stops delivering frames after a subscriber unsubscribes', () => {
     const bus = new MessageBus(logger())
-    const subscriber = vi.fn()
+    const subscriber = jest.fn()
     const unsubscribe = bus.subscribe(subscriber)
     unsubscribe()
 

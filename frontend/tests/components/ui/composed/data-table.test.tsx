@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { axe } from 'vitest-axe'
+import { axe } from 'jest-axe'
 
 import { DataTable, type DataTableColumn } from '@/components/ui/composed/data-table'
 import { ADMIN_COPY } from '@/shared/copy/admin'
@@ -48,7 +48,7 @@ describe('DataTable', () => {
   })
 
   it('activates a row from the keyboard', async () => {
-    const onActivate = vi.fn()
+    const onActivate = jest.fn()
     const user = userEvent.setup()
     renderTable({ rowAction: { label: (row) => row.query, onActivate } })
 
@@ -63,7 +63,7 @@ describe('DataTable', () => {
   })
 
   it('gives a row exactly one tab stop even though the whole row is clickable', async () => {
-    const onActivate = vi.fn()
+    const onActivate = jest.fn()
     const user = userEvent.setup()
     renderTable({ rowAction: { label: (row) => row.query, onActivate } })
 

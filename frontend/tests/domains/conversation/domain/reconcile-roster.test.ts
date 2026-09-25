@@ -1,5 +1,5 @@
 import fc from 'fast-check'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { isOk } from '@/shared/kernel/result'
 
@@ -70,7 +70,7 @@ describe('reconcileRoster', () => {
   // Pure: `at` is the only source of time. A reducer that read the clock would make the same
   // sequence reconcile differently on every run.
   it('never reads the wall clock', () => {
-    const now = vi.spyOn(Date, 'now')
+    const now = jest.spyOn(Date, 'now')
 
     for (const event of EVERY_EVENT) {
       reduce(aSeededRoster(), event)

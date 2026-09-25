@@ -1,4 +1,5 @@
-import { expect } from 'chai'
+import { jest } from '@jest/globals'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver, type WebElement } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
@@ -39,7 +40,7 @@ const tabTo = async (driver: WebDriver, selector: string): Promise<WebElement> =
            ((style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0) ||
             style.boxShadow !== 'none');`,
       )
-      expect(hasVisibleFocus, `${selector} must expose a visible keyboard focus indicator`).to.equal(true)
+      expect({ selector, hasVisibleFocus }).toEqual({ selector, hasVisibleFocus: true })
       return element
     }
   }
@@ -84,17 +85,17 @@ const ROUTES: readonly RouteCase[] = [
 ]
 
 describe('Phase 10 accessibility route matrix', function () {
-  this.timeout(180_000)
+  jest.setTimeout(180_000)
 
   let driver: WebDriver
   let server: AccessibilityServer
 
-  before(async () => {
+  beforeAll(async () => {
     server = await startAccessibilityServer()
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
     await server?.close()
   })
@@ -113,8 +114,8 @@ describe('Phase 10 accessibility route matrix', function () {
           10_000,
         )
 
-        expect(new URL(await driver.getCurrentUrl()).pathname).to.equal(route.expectedPath)
-        expect(await heading.getText()).to.equal(route.heading)
+        expect(new URL(await driver.getCurrentUrl()).pathname).toBe(route.expectedPath)
+        expect(await heading.getText()).toBe(route.heading)
         await assertNoAxeViolations(driver)
         await route.journey(driver, server)
       })

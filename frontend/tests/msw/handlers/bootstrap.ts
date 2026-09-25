@@ -1,6 +1,6 @@
 import { HttpResponse, http } from 'msw'
 
-import bootstrapConfig from '../fixtures/bootstrap-config.json'
+import bootstrapConfig from '../fixtures/bootstrap-config.json' with { type: 'json' }
 
 // BC-001 (CONTRACT-001 §6): GET {CHAT}/config. Base path matches the
 // VITE_CHAT_BASE default (`/bedrock-chat`) documented in STD-001 §9.

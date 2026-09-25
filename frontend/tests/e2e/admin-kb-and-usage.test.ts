@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import path from 'node:path'
 
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver, type WebElement } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
@@ -206,7 +206,6 @@ const startAdminTestServer = async (): Promise<AdminTestServer> => {
 }
 
 describe('E14/E15 — admin knowledge base and usage analytics', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: AdminTestServer
@@ -240,11 +239,11 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
     await driver.wait(async () => (await (await dateInput(index)).getAttribute('value')) === value, 10_000)
   }
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -284,7 +283,7 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
     await (await drawer.findElement(By.css('form button[type="submit"]'))).click()
 
     await byText('This will re-embed the document')
-    expect(server.patchBodies).to.have.length(0)
+    expect(server.patchBodies).toHaveLength(0)
     await (
       await driver.findElement(
         By.xpath("//*[@role='dialog']//button[normalize-space()='Save and re-embed']"),
@@ -292,7 +291,7 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
     ).click()
     await driver.wait(async () => server.patchBodies.length === 1, 10_000)
 
-    expect(server.patchBodies[0]).to.deep.equal({
+    expect(server.patchBodies[0]).toEqual({
       topic: 'vectorization',
       content: UPDATED_KB_CONTENT,
     })
@@ -312,7 +311,7 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
       )
     ).click()
     await byText('End date must be after start date.')
-    expect(server.byDayQueries).to.have.length(0)
+    expect(server.byDayQueries).toHaveLength(0)
 
     await setDate('Start date', '2026-05-01')
     await setDate('End date', '2026-05-31')
@@ -322,21 +321,21 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
       )
     ).click()
     await driver.wait(async () => server.byDayQueries.length === 1, 10_000)
-    expect(await driver.getCurrentUrl()).to.contain('from=2026-05-01')
-    expect(await driver.getCurrentUrl()).to.contain('to=2026-05-31')
+    expect(await driver.getCurrentUrl()).toContain('from=2026-05-01')
+    expect(await driver.getCurrentUrl()).toContain('to=2026-05-31')
 
     await driver.navigate().refresh()
     const start = await dateInput(0)
     const end = await dateInput(1)
     await driver.wait(async () => (await start.getAttribute('value')) === '2026-05-01', 10_000)
-    expect(await end.getAttribute('value')).to.equal('2026-05-31')
+    expect(await end.getAttribute('value')).toBe('2026-05-31')
 
     const user = await driver.findElement(
       By.xpath("//label[normalize-space()='User ID']/following-sibling::input"),
     )
     await user.sendKeys('alice@example.com', Key.ENTER)
     await driver.wait(async () => server.byUserRequests.length === 1, 10_000)
-    expect(server.byUserRequests[0]).to.deep.include({
+    expect(server.byUserRequests[0]).toMatchObject({
       userId: 'alice@example.com',
       offset: 0,
       limit: 50,
@@ -344,10 +343,10 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
 
     const nextLocator = By.xpath("//nav[@aria-label='User usage pagination']//button[normalize-space()='Next']")
     const next = await driver.findElement(nextLocator)
-    expect(await next.isEnabled()).to.equal(true)
+    expect(await next.isEnabled()).toBe(true)
     await next.click()
     await driver.wait(async () => server.byUserRequests.length === 2, 10_000)
-    expect(server.byUserRequests[1]).to.deep.include({
+    expect(server.byUserRequests[1]).toMatchObject({
       userId: 'alice@example.com',
       offset: 50,
       limit: 50,
@@ -356,9 +355,9 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
       until.elementLocated(By.xpath("//nav[@aria-label='User usage pagination']//p")),
       10_000,
     )
-    expect(await range.getText()).to.equal('Showing 51\u201351')
+    expect(await range.getText()).toBe('Showing 51\u201351')
     const nextAfterPageChange = await driver.findElement(nextLocator)
-    expect(await nextAfterPageChange.isEnabled()).to.equal(false)
+    expect(await nextAfterPageChange.isEnabled()).toBe(false)
     await assertNoAxeViolations(driver)
   })
 })

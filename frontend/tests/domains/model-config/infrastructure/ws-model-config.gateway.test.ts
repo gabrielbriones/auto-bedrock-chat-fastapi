@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { ServerFrame, ServerFrameSubscriber } from '@/shared/ws/message-bus'
 import type { ConfigUpdatedEvent } from '@/domains/model-config/application/ports'
 import { WsModelConfigGateway } from '@/domains/model-config/infrastructure/ws-model-config.gateway'
 
 const harness = () => {
-  const send = vi.fn<(frame: string) => 'sent'>(() => 'sent')
+  const send = jest.fn<(frame: string) => 'sent'>(() => 'sent')
   let subscriber: ServerFrameSubscriber | undefined
   const gateway = new WsModelConfigGateway({ send }, {
     subscribe(next) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { OVERRIDE_FIELDS, overrideFieldFor } from '@/domains/model-config/domain/override-field'
 import { OVERRIDE_KEYS } from '@/domains/model-config/domain/override-key'

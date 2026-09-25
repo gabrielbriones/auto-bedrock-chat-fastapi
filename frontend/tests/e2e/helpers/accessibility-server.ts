@@ -13,6 +13,7 @@ export type AccessibilityServer = {
 }
 
 const TIMESTAMP = '2026-09-01T12:00:00Z'
+const frontendRoot = path.resolve(import.meta.dirname, '../../..')
 
 const contentType = (filePath: string): string => {
   if (filePath.endsWith('.js')) return 'text/javascript'
@@ -23,11 +24,11 @@ const contentType = (filePath: string): string => {
 
 const fixture = async (relativePath: string): Promise<unknown> =>
   JSON.parse(
-    await readFile(path.resolve(process.cwd(), 'tests/msw/fixtures', relativePath), 'utf8'),
+    await readFile(path.resolve(frontendRoot, 'tests/msw/fixtures', relativePath), 'utf8'),
   )
 
 export async function startAccessibilityServer(): Promise<AccessibilityServer> {
-  const dist = path.resolve(process.cwd(), 'dist')
+  const dist = path.resolve(frontendRoot, 'dist')
   const [
     baseConfig,
     feedbackList,

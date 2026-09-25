@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -9,7 +9,7 @@ import { anEntry } from '../domain/feedback-entry.fixture'
 
 describe('ReviewForm', () => {
   it('requires a decision before sending a request', async () => {
-    const onSave = vi.fn()
+    const onSave = jest.fn()
     const user = userEvent.setup()
     render(<ReviewForm entry={anEntry()} pending={false} problem={null} onSave={onSave} />)
 
@@ -23,7 +23,7 @@ describe('ReviewForm', () => {
   })
 
   it('submits cleared tags and comment as explicit empty values', async () => {
-    const onSave = vi.fn()
+    const onSave = jest.fn()
     const user = userEvent.setup()
     const entry = anEntry({
       reviewStatus: 'approved',

@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
@@ -18,17 +18,29 @@ const CORRECTION = 'The measured IPC is 1.8, not 0.9.'
 // conversation switch. Drives the built bundle against a scripted backend, so the `feedback` /
 // `feedback_ack` / `feedback_error` wire contract of SPEC-015 is exercised rather than mocked.
 describe('E9 — feedback', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: ChatServer
 
-  const byText = async (text: string) =>
-    driver.wait(until.elementLocated(By.xpath(`//*[normalize-space(text())='${text}']`)), 10_000)
+  const byText = async (text: string) => {
+    try {
+      return await driver.wait(until.elementLocated(By.xpath(`//*[normalize-space(text())='${text}']`)), 10_000)
+    } catch (error) {
+      const body = await driver.executeScript<string>('return document.body.innerText')
+      throw new Error(`Missing ${text}; visible body: ${body}`, { cause: error })
+    }
+  }
 
   const ratingButton = (label: string) => By.css(`[aria-label="${label}"]`)
 
   const pathname = () => driver.executeScript<string>('return window.location.pathname')
+  const waitForPath = async (expected: string) => {
+    try {
+      await driver.wait(async () => (await pathname()) === expected, 10_000)
+    } catch (error) {
+      throw new Error(`Expected ${expected}, got ${await pathname()}`, { cause: error })
+    }
+  }
 
   const submittedIds = () =>
     driver.executeScript<string | null>(
@@ -44,11 +56,11 @@ describe('E9 — feedback', function () {
     await byText('Here is the analysis.')
   }
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -62,7 +74,17 @@ describe('E9 — feedback', function () {
         type: 'conversation_loaded',
         conversation_id: frame.conversation_id,
         conversation: {},
-        messages: [],
+          messages: frame.conversation_id === 'conv-3'
+          ? [{
+              role: 'assistant',
+              content: 'Here is the analysis.',
+              message_id: MESSAGE_ID,
+              timestamp: null,
+              tool_calls: [],
+              tool_results: [],
+              metadata: {},
+            }]
+            : [],
       })
     })
     server.on('conversation_new', () => undefined)
@@ -113,7 +135,7 @@ describe('E9 — feedback', function () {
     await driver.wait(async () => (await negative.getAttribute('aria-expanded')) === 'true', 10_000)
     expect(
       await driver.executeScript<string>('return document.activeElement.tagName'),
-    ).to.equal('TEXTAREA')
+    ).toBe('TEXTAREA')
 
     const correction = await driver.findElement(
       By.xpath(
@@ -128,7 +150,7 @@ describe('E9 — feedback', function () {
 
     // FR-FB-002b: the blank comment is omitted rather than sent as an empty string.
     await driver.wait(async () => server.sentOf('feedback').length === 1, 10_000)
-    expect(server.sentOf('feedback')[0]).to.deep.equal({
+    expect(server.sentOf('feedback')[0]).toEqual({
       type: 'feedback',
       message_id: MESSAGE_ID,
       rating: 'negative',
@@ -137,21 +159,21 @@ describe('E9 — feedback', function () {
 
     // FR-FB-003: the controls are replaced by the submitted status region.
     await byText('✓ Feedback submitted')
-    expect(await driver.findElements(ratingButton('Rate response helpful'))).to.have.length(0)
+    expect(await driver.findElements(ratingButton('Rate response helpful'))).toHaveLength(0)
 
     // FR-FB-004: the id is persisted for the session, not held in component state.
-    expect(JSON.parse((await submittedIds()) ?? '[]')).to.deep.equal([MESSAGE_ID])
+    expect(JSON.parse((await submittedIds()) ?? '[]')).toEqual([MESSAGE_ID])
 
     // FR-FB-004a: switching away and back leaves the rating in place, never a blank control.
     await (await driver.findElement(By.xpath("//button[normalize-space()='Stream triad']"))).click()
-    await driver.wait(async () => (await pathname()) === '/bedrock-chat/ui/c/conv-2', 10_000)
+    await waitForPath('/bedrock-chat/ui/c/conv-2')
     await (
       await driver.findElement(By.xpath("//button[normalize-space()='Job 42 analysis']"))
     ).click()
-    await driver.wait(async () => (await pathname()) === '/bedrock-chat/ui/c/conv-3', 10_000)
+    await waitForPath('/bedrock-chat/ui/c/conv-3')
 
     await byText('✓ Feedback submitted')
-    expect(await driver.findElements(ratingButton('Rate response unhelpful'))).to.have.length(0)
+    expect(await driver.findElements(ratingButton('Rate response unhelpful'))).toHaveLength(0)
 
     await assertNoAxeViolations(driver)
     await matchScreenshot(driver, 'e9-feedback-submitted')
@@ -174,12 +196,12 @@ describe('E9 — feedback', function () {
 
     // FR-FB-003b / FR-FB-009: the server code decides the copy, not its message.
     const alert = await driver.wait(until.elementLocated(By.css('[role=alert]')), 10_000)
-    expect(await alert.getText()).to.equal('You are not allowed to rate this message.')
+    expect(await alert.getText()).toBe('You are not allowed to rate this message.')
 
     const positive = await driver.findElement(ratingButton('Rate response helpful'))
-    expect(await positive.isEnabled()).to.equal(true)
-    expect(await positive.getAttribute('aria-describedby')).to.equal(`feedback-error-${MESSAGE_ID}`)
-    expect(JSON.parse((await submittedIds()) ?? '[]')).to.deep.equal([])
+    expect(await positive.isEnabled()).toBe(true)
+    expect(await positive.getAttribute('aria-describedby')).toBe(`feedback-error-${MESSAGE_ID}`)
+    expect(JSON.parse((await submittedIds()) ?? '[]')).toEqual([])
 
     await assertNoAxeViolations(driver)
   })

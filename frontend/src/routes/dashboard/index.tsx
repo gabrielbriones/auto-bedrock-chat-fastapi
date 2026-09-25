@@ -1,8 +1,8 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
 
-// SPEC-021 §2: /chat/ui/admin itself has no view — it lands on the review queue.
+// The dashboard index lands on the feedback queue.
 export const Route = createFileRoute('/dashboard/')({
   beforeLoad: () => {
-    throw redirect({ to: '/admin/feedback', search: {} });
+    throw redirect({ to: '/dashboard/feedback', search: {} });
   },
 });

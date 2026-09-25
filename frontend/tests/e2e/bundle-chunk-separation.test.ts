@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { analyzeChatRouteBundle } from './helpers/manifest-graph.js'
@@ -14,16 +14,15 @@ import { buildChromeDriver } from './helpers/webdriver.js'
 // would not catch a chunk that is technically split but gets prefetched/loaded eagerly anyway;
 // resource timing does.
 describe('Chat route bundle separation (production build)', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: ChatServer
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -86,10 +85,10 @@ describe('Chat route bundle separation (production build)', function () {
 
     // Sanity check: the analysis (and this assertion) is meaningless if the entry itself never
     // shows up as a loaded resource.
-    expect([...loadedFiles].some((file) => /^assets\/index-.*\.js$/.test(file))).to.equal(true)
+    expect([...loadedFiles].some((file) => /^assets\/index-.*\.js$/.test(file))).toBe(true)
 
     const violations = [...forbiddenFiles].filter((file) => loadedFiles.has(file))
 
-    expect(violations, `forbidden chunks fetched during a chat turn: ${violations.join(', ')}`).to.deep.equal([])
+    expect(violations).toEqual([])
   })
 })

@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { axe } from 'vitest-axe'
+import { axe } from 'jest-axe'
 
 import { IAM_COPY } from '@/shared/copy/iam'
 
@@ -30,9 +30,9 @@ const renderDialog = (
   overrides: Partial<AuthDialogProps> = {},
   source: Partial<AuthPolicySource> = {},
 ) => {
-  const onSubmit = vi.fn<(credential: Credential) => void>()
-  const onSkip = vi.fn()
-  const onSsoLogin = vi.fn()
+  const onSubmit = jest.fn<(credential: Credential) => void>()
+  const onSkip = jest.fn()
+  const onSsoLogin = jest.fn()
 
   const { unmount } = render(
     <AuthDialog

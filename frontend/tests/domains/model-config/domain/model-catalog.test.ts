@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { buildModelCatalog, familyOf, findModel } from '@/domains/model-config/domain/model-catalog'
 import type { ModelDescriptor } from '@/domains/model-config/domain/model-descriptor'

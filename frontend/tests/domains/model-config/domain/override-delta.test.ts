@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { buildModelCatalog } from '@/domains/model-config/domain/model-catalog'
 import { toConfigurationProfile } from '@/domains/model-config/domain/configuration-profile'

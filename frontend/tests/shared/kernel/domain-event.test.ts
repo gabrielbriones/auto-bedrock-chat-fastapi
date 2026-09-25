@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@jest/globals';
 
 import { domainEventId } from '@/shared/kernel/branded';
 import { InMemoryDomainEventPublisher, type DomainEvent } from '@/shared/kernel/domain-event';

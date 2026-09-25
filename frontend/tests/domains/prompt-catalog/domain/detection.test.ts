@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { detectBindings } from '@/domains/prompt-catalog/domain/detection'
 import { inferPromptVariable, type PromptVariable } from '@/domains/prompt-catalog/domain/prompt-variable'

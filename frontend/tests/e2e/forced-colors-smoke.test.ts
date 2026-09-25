@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver, type WebElement } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
@@ -39,7 +39,7 @@ const tabTo = async (driver: WebDriver, selector: string): Promise<WebElement> =
          }
          return false;`,
       )
-      expect(hasVisibleFocus, `${selector} must stay visibly focusable in forced-colors mode`).to.equal(true)
+      expect({ selector, hasVisibleFocus }).toEqual({ selector, hasVisibleFocus: true })
       return element
     }
   }
@@ -51,33 +51,32 @@ const tabTo = async (driver: WebDriver, selector: string): Promise<WebElement> =
 // mode strips author colors, but it must not collapse layout or hide content (NFR-A11Y-007).
 const assertVisible = async (driver: WebDriver, selector: string): Promise<void> => {
   const elements = await driver.findElements(By.css(selector))
-  expect(elements, `expected at least one match for ${selector}`).to.not.have.lengthOf(0)
+  expect({ selector, matches: elements.length }).not.toEqual({ selector, matches: 0 })
 
   for (const element of elements) {
     const box = await element.getRect()
-    expect(box.width, `${selector} must have a non-zero width`).to.be.greaterThan(0)
-    expect(box.height, `${selector} must have a non-zero height`).to.be.greaterThan(0)
+    expect(box.width).toBeGreaterThan(0)
+    expect(box.height).toBeGreaterThan(0)
 
     const visibility = await driver.executeScript<string>(
       'return getComputedStyle(arguments[0]).visibility',
       element,
     )
-    expect(visibility, `${selector} must not be visibility:hidden`).to.equal('visible')
+    expect({ selector, visibility }).toEqual({ selector, visibility: 'visible' })
   }
 }
 
 describe('Phase 10 forced-colors smoke test', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: AccessibilityServer
 
-  before(async () => {
+  beforeAll(async () => {
     server = await startAccessibilityServer()
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
     await server?.close()
   })
@@ -101,7 +100,7 @@ describe('Phase 10 forced-colors smoke test', function () {
     // FR-DS-005: credibility is conveyed by icon + text, not color alone — both must still render.
     await assertVisible(driver, 'main tbody span svg')
     const badgeText = await driver.findElement(By.css('main tbody span')).getText()
-    expect(badgeText.trim().length, 'credibility badge must still carry visible text').to.be.greaterThan(0)
+    expect(badgeText.trim()).not.toBe('')
 
     await tabTo(driver, 'main tbody button[aria-label^="Open "]')
     await assertNoAxeViolations(driver)

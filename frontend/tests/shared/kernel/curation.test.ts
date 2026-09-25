@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@jest/globals';
 
 import { MAX_TAGS, validateTags } from '@/shared/kernel/curation';
 import { isErr, isOk } from '@/shared/kernel/result';

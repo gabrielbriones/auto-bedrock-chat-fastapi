@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
@@ -9,7 +9,6 @@ import { buildChromeDriver } from './helpers/webdriver.js'
 // selection APIs, real layout and `scrollHeight`, none of which jsdom implements: the component
 // tests prove the intent, this proves the behaviour in a browser.
 describe('E7 — messaging keyboard journey', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: ChatServer
@@ -27,11 +26,11 @@ describe('E7 — messaging keyboard journey', function () {
       'return Math.round(parseFloat(document.querySelector(\'textarea[aria-label="Message"]\').style.height))',
     )
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -76,11 +75,11 @@ describe('E7 — messaging keyboard journey', function () {
     // Shift+Enter and Ctrl+Enter both break the line; only a bare Enter leaves the client.
     await field.sendKeys('first', Key.chord(Key.SHIFT, Key.ENTER), 'second')
     await field.sendKeys(Key.chord(Key.CONTROL, Key.ENTER), 'third')
-    expect(server.sentOf('chat')).to.have.length(0)
+    expect(server.sentOf('chat')).toHaveLength(0)
 
     await field.sendKeys(Key.ENTER)
     await driver.wait(async () => server.sentOf('chat').length === 1, 10_000)
-    expect(server.sentOf('chat')[0]?.message).to.equal('first\nsecond\nthird')
+    expect(server.sentOf('chat')[0]?.message).toBe('first\nsecond\nthird')
 
     // FR-MSG-012: locked until the turn resolves, then focused again without a mouse.
     await driver.wait(until.elementLocated(By.css('textarea[aria-label="Message"][disabled]')), 5_000)
@@ -89,7 +88,7 @@ describe('E7 — messaging keyboard journey', function () {
       10_000,
     )
     await driver.wait(async () => composerIsFocused(), 5_000)
-    expect(await (await composer()).getAttribute('disabled')).to.equal(null)
+    expect(await (await composer()).getAttribute('disabled')).toBe(null)
 
     // Scoped to the chat region: `page-has-heading-one` belongs to the shell, not to this ticket.
     await assertNoAxeViolations(driver, { include: 'main' })
@@ -107,18 +106,18 @@ describe('E7 — messaging keyboard journey', function () {
     for (let line = 0; line < 4; line += 1) {
       await field.sendKeys(Key.chord(Key.SHIFT, Key.ENTER), `line ${line}`)
     }
-    expect(await composerHeight()).to.be.greaterThan(base)
+    expect(await composerHeight()).toBeGreaterThan(base)
 
     for (let line = 0; line < 20; line += 1) {
       await field.sendKeys(Key.chord(Key.SHIFT, Key.ENTER), `line ${line}`)
     }
 
-    expect(await composerHeight()).to.equal(150)
+    expect(await composerHeight()).toBe(150)
     expect(
       await driver.executeScript<string>(
         'return document.querySelector(\'textarea[aria-label="Message"]\').style.overflowY',
       ),
-    ).to.equal('auto')
+    ).toBe('auto')
   })
 
   it('reaches the send action from the composer by keyboard alone', async () => {
@@ -143,9 +142,9 @@ describe('E7 — messaging keyboard journey', function () {
 
     expect(
       await driver.executeScript<string>(
-        'return (document.activeElement?.textContent ?? "").trim()',
+        'return document.activeElement?.getAttribute("aria-label") ?? ""',
       ),
-    ).to.equal('Send')
+    ).toBe('Send')
 
     await assertNoAxeViolations(driver, { include: 'main' })
   })

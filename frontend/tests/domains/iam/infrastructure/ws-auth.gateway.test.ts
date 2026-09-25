@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { ServerFrame, ServerFrameSubscriber } from '@/shared/ws/message-bus'
 
@@ -10,15 +10,15 @@ const ORIGIN = 'https://analyzer.test'
 const credentialValue = 'fixture-credential'
 
 const createHarness = () => {
-  const send = vi.fn<(frame: string) => 'sent'>(() => 'sent')
+  const send = jest.fn<(frame: string) => 'sent'>(() => 'sent')
   let subscriber: ServerFrameSubscriber | undefined
-  const subscribe = vi.fn((next: ServerFrameSubscriber) => {
+  const subscribe = jest.fn((next: ServerFrameSubscriber) => {
     subscriber = next
     return () => {
       subscriber = undefined
     }
   })
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
   const gateway = new WsAuthGateway({ send }, { subscribe }, logger, ORIGIN)
 
   return {
@@ -234,13 +234,13 @@ describe('WsAuthGateway', () => {
       message: 'Expired',
       redirectUrl: `${ORIGIN}/bedrock-chat/auth/sso/login`,
     })
-    expect(logger.warn).toHaveBeenCalledOnce()
+    expect(logger.warn).toHaveBeenCalledTimes(1)
     expect(logger.warn.mock.calls[0]?.[0]).toBe('auth_redirect_rejected')
   })
 
   it('ignores unknown auth types and stops events after unsubscribe', () => {
     const { emit, gateway } = createHarness()
-    const listener = vi.fn()
+    const listener = jest.fn()
     const unsubscribe = gateway.onAuthEvent(listener)
 
     emit({

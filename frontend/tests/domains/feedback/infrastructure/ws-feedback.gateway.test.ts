@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { ServerFrame, ServerFrameSubscriber } from '@/shared/ws/message-bus'
 
@@ -9,9 +9,9 @@ import { WsFeedbackGateway } from '@/domains/feedback/infrastructure/ws-feedback
 const TIMESTAMP = '2026-08-25T12:00:00Z'
 
 const createHarness = () => {
-  const send = vi.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+  const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
   const subscribers = new Set<ServerFrameSubscriber>()
-  const subscribe = vi.fn((next: ServerFrameSubscriber) => {
+  const subscribe = jest.fn((next: ServerFrameSubscriber) => {
     subscribers.add(next)
     return () => subscribers.delete(next)
   })

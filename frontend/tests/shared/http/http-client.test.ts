@@ -1,6 +1,6 @@
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 import { isErr, isOk } from '@/shared/kernel/result';
 
@@ -143,10 +143,10 @@ describe('HttpClient', () => {
   it('logs a warning through the injected logger on failure', async () => {
     server.use(http.get(`${BASE}/logged`, () => new HttpResponse(null, { status: 404 })));
 
-    const warn = vi.fn();
+    const warn = jest.fn();
     await client.request(`${BASE}/logged`, {
       retry: { maxAttempts: 1, baseDelayMs: 0, methods: [] },
-      logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
+      logger: { debug: jest.fn(), info: jest.fn(), warn, error: jest.fn() },
     });
 
     expect(warn).toHaveBeenCalledWith(

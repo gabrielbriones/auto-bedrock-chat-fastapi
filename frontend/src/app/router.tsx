@@ -10,12 +10,11 @@ export type CreateAppRouterOptions = {
   readonly history?: RouterHistory
 }
 
-// ADR-014: a client-only router over a static SPA build. `basepath` must stay in step with
-// `base: '/chat/ui/'` in vite.config.ts — the deployed sub-path from BC-002.
+// Both the chat and dashboard routes live under the same deployed prefix.
 export const createAppRouter = (container: Container, options: CreateAppRouterOptions = {}) =>
   createRouter({
     routeTree,
-    basepath: '/chat/ui',
+    basepath: '/bedrock-chat',
     context: { container },
     defaultPreload: 'intent',
     scrollRestoration: true,

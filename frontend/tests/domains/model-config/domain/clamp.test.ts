@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { clampMaxTokens, maxTokensCap, wasClamped } from '@/domains/model-config/domain/clamp'
 import type { ModelDescriptor } from '@/domains/model-config/domain/model-descriptor'

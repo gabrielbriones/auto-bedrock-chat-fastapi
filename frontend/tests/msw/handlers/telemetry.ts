@@ -1,9 +1,9 @@
 import { HttpResponse, http } from 'msw'
 
-import byDay from '../fixtures/telemetry/token-by-day.json'
-import byUser from '../fixtures/telemetry/token-by-user.json'
-import summary from '../fixtures/telemetry/token-summary.json'
-import topUsers from '../fixtures/telemetry/token-top-users.json'
+import byDay from '../fixtures/telemetry/token-by-day.json' with { type: 'json' }
+import byUser from '../fixtures/telemetry/token-by-user.json' with { type: 'json' }
+import summary from '../fixtures/telemetry/token-summary.json' with { type: 'json' }
+import topUsers from '../fixtures/telemetry/token-top-users.json' with { type: 'json' }
 
 const ADMIN = '*/bedrock-chat/admin'
 

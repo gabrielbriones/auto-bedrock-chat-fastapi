@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { CapabilityHttpProbe } from '@/domains/iam/infrastructure/capability-http.probe'
 import { err, ok } from '@/shared/kernel/result'
@@ -14,7 +14,7 @@ const logger: Logger = {
 
 describe('CapabilityHttpProbe', () => {
   it('maps and caches one request for the browsing identity', async () => {
-    const request = vi.fn().mockResolvedValue(ok({
+    const request = jest.fn().mockResolvedValue(ok({
       is_admin: true,
       anonymous: true,
       token_usage_enabled: false,
@@ -28,7 +28,7 @@ describe('CapabilityHttpProbe', () => {
     })
     await probe.probe()
 
-    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledTimes(1)
     expect(request).toHaveBeenCalledWith('/bedrock-chat/admin/_capabilities', {
       credentials: 'include',
       logger,
@@ -36,7 +36,7 @@ describe('CapabilityHttpProbe', () => {
   })
 
   it('re-probes after an identity change invalidates the cache', async () => {
-    const request = vi.fn()
+    const request = jest.fn()
       .mockResolvedValueOnce(ok({ is_admin: false, anonymous: false, token_usage_enabled: false }))
       .mockResolvedValueOnce(ok({ is_admin: true, anonymous: false, token_usage_enabled: true }))
     const probe = new CapabilityHttpProbe('/admin', { request }, logger)
@@ -52,7 +52,7 @@ describe('CapabilityHttpProbe', () => {
     err(networkErrorProblem(new Error('offline'))),
     ok({ is_admin: 'yes' }),
   ])('degrades a failed or malformed response to no capabilities', async (response) => {
-    const request = vi.fn().mockResolvedValue(response)
+    const request = jest.fn().mockResolvedValue(response)
     const probe = new CapabilityHttpProbe('/admin', { request }, logger)
 
     await expect(probe.probe()).resolves.toEqual({

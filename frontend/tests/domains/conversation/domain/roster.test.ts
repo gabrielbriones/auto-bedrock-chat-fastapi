@@ -1,5 +1,5 @@
 import fc from 'fast-check'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import type { ConversationId } from '@/shared/kernel/branded'
 import { isErr, isOk } from '@/shared/kernel/result'

@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import { ESLint } from 'eslint'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from '@jest/globals'
 
 // FR-TOOL-010 and FR-TOOL-011 are configuration over a published plugin, and a misconfigured rule
 // reports nothing at all — which is indistinguishable from a clean tree. This lints one module of

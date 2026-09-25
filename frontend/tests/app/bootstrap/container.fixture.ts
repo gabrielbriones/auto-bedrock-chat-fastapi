@@ -18,7 +18,7 @@ const adminCapabilityProbe: CapabilityProbe = {
 }
 
 // STD-002 §4: a container built entirely from fakes, so anything needing one — the router, a
-// guard, a use case — is exercisable without `fetch`, a DOM or `vi.mock`.
+// guard, a use case — is exercisable without `fetch`, a DOM or `jest.mock`.
 export const fakeContainer = (overrides: Partial<Container> = {}): Container => {
   const bootstrap = toChatBootstrap(bootstrapConfigFixture)
 

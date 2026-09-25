@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -11,7 +11,7 @@ function Thrower(): never {
 }
 
 // React logs a caught render error to console.error; the boundary is what the test is about.
-const silenceReactErrorLog = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+const silenceReactErrorLog = () => jest.spyOn(console, 'error').mockImplementation(() => {})
 
 describe('error boundaries', () => {
   it('keeps the shell alive when a route body throws', () => {
@@ -50,7 +50,7 @@ describe('error boundaries', () => {
 
   it('reports the failure once to the observability sink', () => {
     silenceReactErrorLog()
-    const onCatch = vi.fn()
+    const onCatch = jest.fn()
 
     render(
       <RouteBoundary resetKey="/" onCatch={onCatch}>

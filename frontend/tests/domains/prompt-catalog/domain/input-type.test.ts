@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { normalizeInputType, PROMPT_INPUT_TYPES } from '@/domains/prompt-catalog/domain/input-type'
 

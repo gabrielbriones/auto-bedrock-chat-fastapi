@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { turnId } from '@/shared/kernel/branded'
 import { Instant } from '@/shared/kernel/instant'

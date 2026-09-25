@@ -12,9 +12,8 @@ const proxyTarget = env.VITE_API_URL;
 const port = env.PORT === undefined || env.PORT.length === 0 ? undefined : Number(env.PORT);
 
 return {
-  // Must match ChatConfig.ui_endpoint on the backend serving this build (AUTOCHAT_UI_ENDPOINT,
-  // default /chat/ui) and src/app/router.tsx's `basepath` — kept in step by hand, same as before.
-  base: '/chat/ui/',
+  // Assets are served at the chat mount; the router also serves dashboard routes beside it.
+  base: '/bedrock-chat/ui/',
   plugins: [
     // Must precede @vitejs/plugin-react: it generates routeTree.gen.ts from src/routes/ and
     // rewrites route modules for code splitting before React's transform runs (FR-TOOL-005).
@@ -37,14 +36,16 @@ return {
     port,
     strictPort: true,
     proxy: {
-      '/bedrock-chat': { target: proxyTarget, changeOrigin: false, ws: true },
-      // '/chat' also matches this app's own base ('/chat/ui/'); bypass the proxy for that
-      // prefix so Vite serves the SPA locally instead of forwarding it to the backend.
-      '/chat': {
+      '/bedrock-chat': {
         target: proxyTarget,
         changeOrigin: false,
-        bypass: (req) => (req.url?.startsWith('/chat/ui') ? req.url : undefined),
+        bypass: (req) => {
+          if (/^\/bedrock-chat\/dashboard(?:\/|\?|$)/.test(req.url ?? '')) return '/bedrock-chat/ui/'
+          if (/^\/bedrock-chat\/ui(?:\/|\?|$)/.test(req.url ?? '')) return req.url
+          return undefined
+        },
       },
+      '/chat': { target: proxyTarget, changeOrigin: false, ws: true },
       '/api': { target: proxyTarget, changeOrigin: false },
     },
   },
@@ -60,7 +61,7 @@ return {
         // something to assert against. Grouping them into one chunk instead was rejected — it
         // duplicated React, the router and Zod into the admin bundle.
         chunkFileNames: (chunk) =>
-          chunk.facadeModuleId?.includes('/src/routes/admin/') === true
+          chunk.facadeModuleId?.includes('/src/routes/dashboard/') === true
             ? 'assets/admin.[name]-[hash].js'
             : 'assets/[name]-[hash].js',
       },
