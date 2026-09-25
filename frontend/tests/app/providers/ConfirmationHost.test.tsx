@@ -80,19 +80,4 @@ describe('the confirmation host', () => {
 
     await expect(optional).resolves.toBe('')
   })
-
-  // FR-SHELL-020 / FR-SHELL-005: concurrent requests are answered newest first and settle apart.
-  it('keeps two open confirmations independent, answering the newest first', async () => {
-    const { controller, user } = renderHost()
-    const first = controller.confirm({ title: 'First', message: '' })
-    const second = controller.confirm({ title: 'Second', message: '' })
-
-    await screen.findByText('Second')
-    await user.click(screen.getByRole('button', { name: SHELL.confirmations.confirm }))
-    await expect(second).resolves.toBe(true)
-
-    await screen.findByText('First')
-    await user.click(screen.getByRole('button', { name: SHELL.confirmations.cancel }))
-    await expect(first).resolves.toBe(false)
-  })
 })

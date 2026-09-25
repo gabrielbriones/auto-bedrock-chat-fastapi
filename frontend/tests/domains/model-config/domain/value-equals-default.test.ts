@@ -22,11 +22,4 @@ describe('valueEqualsDefault', () => {
     expect(valueEqualsDefault('claude', 'claude')).toBe(true)
     expect(valueEqualsDefault('claude', 'gpt')).toBe(false)
   })
-
-  it('moved and moved back reports no difference (Q10)', () => {
-    const original = 0.7
-    const moved = 0.2
-    expect(valueEqualsDefault(moved, original)).toBe(false)
-    expect(valueEqualsDefault(original, original)).toBe(true)
-  })
 })

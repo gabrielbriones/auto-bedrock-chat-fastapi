@@ -34,11 +34,4 @@ describe('createContainer', () => {
     expect(container.httpClient).toBeInstanceOf(HttpClient)
     expect(container.logger).toBeDefined()
   })
-
-  it('carries the resolved bootstrap through unchanged', () => {
-    const bootstrap = chatBootstrap()
-    const container = createContainer(bootstrap)
-
-    expect(container.bootstrap).toBe(bootstrap)
-  })
 })

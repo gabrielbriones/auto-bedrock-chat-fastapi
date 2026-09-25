@@ -35,20 +35,12 @@ describe('resolveEffectiveModel', () => {
   it('resolves the effective model id against the catalog', () => {
     const profile = toConfigurationProfile({ model_id: 'claude' }, null, catalog)
     expect(resolveEffectiveModel(profile)).toEqual(claude)
+    expect(resolveModel(catalog, 'claude')).toEqual(claude)
   })
 
-  it('is null when the effective id is not in the catalog', () => {
+  it('is null when the effective id is not in the catalog or absent', () => {
     const profile = toConfigurationProfile({ model_id: 'missing' }, null, catalog)
     expect(resolveEffectiveModel(profile)).toBeNull()
-  })
-})
-
-describe('resolveModel', () => {
-  it('returns null when modelId is null', () => {
     expect(resolveModel(catalog, null)).toBeNull()
-  })
-
-  it('finds the model by id otherwise', () => {
-    expect(resolveModel(catalog, 'claude')).toEqual(claude)
   })
 })

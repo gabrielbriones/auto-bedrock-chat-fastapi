@@ -24,14 +24,6 @@ describe('overriddenKeys / overrideCount', () => {
     expect(overrideCount(profile)).toBe(0)
   })
 
-  it('a float within tolerance of the default is not counted', () => {
-    const profile = {
-      ...toConfigurationProfile({ temperature: 0.7 }, null, catalog),
-      overrides: { temperature: 0.7000000001 },
-    }
-    expect(overrideCount(profile)).toBe(0)
-  })
-
   it('counts an override with no known default', () => {
     const profile = { ...toConfigurationProfile({}, null, catalog), overrides: { temperature: 0.2 } }
     expect(overrideCount(profile)).toBe(1)

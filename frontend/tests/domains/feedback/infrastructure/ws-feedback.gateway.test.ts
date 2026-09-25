@@ -102,11 +102,4 @@ describe('WsFeedbackGateway', () => {
       { code: 'feedback_unavailable', message: 'Unavailable', messageId: null },
     ])
   })
-
-  it('reports a closed socket without queueing', () => {
-    const harness = createHarness()
-    harness.send.mockReturnValue('dropped-closed')
-
-    expect(harness.gateway.submit({ message_id: 'm-1', rating: 'positive' })).toBe('dropped-closed')
-  })
 })

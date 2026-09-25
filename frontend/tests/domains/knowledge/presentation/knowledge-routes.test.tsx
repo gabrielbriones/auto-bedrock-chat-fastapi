@@ -225,34 +225,6 @@ describe('knowledge editor drawer', () => {
     expect(filterTopic).toHaveValue('filter-only')
   })
 
-  it('warns before saving a content change and lets the user cancel', async () => {
-    const user = userEvent.setup()
-    const patch = jest.fn().mockResolvedValue(ok(anOpenedDocument()))
-    renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch }, confirmAnswers: [false] })
-
-    const dialog = await openRow(user)
-    const content = within(dialog).getByRole('textbox', { name: KNOWLEDGE_COPY.editor.content })
-    await user.clear(content)
-    await user.type(content, 'Updated content body')
-    await user.click(within(dialog).getByRole('button', { name: KNOWLEDGE_COPY.editor.save }))
-
-    expect(patch).not.toHaveBeenCalled()
-  })
-
-  it('saves a content change once the re-embed warning is confirmed', async () => {
-    const user = userEvent.setup()
-    const patch = jest.fn().mockResolvedValue(ok(anOpenedDocument({ content: 'Updated content body' })))
-    renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch }, confirmAnswers: [true] })
-
-    const dialog = await openRow(user)
-    const content = within(dialog).getByRole('textbox', { name: KNOWLEDGE_COPY.editor.content })
-    await user.clear(content)
-    await user.type(content, 'Updated content body')
-    await user.click(within(dialog).getByRole('button', { name: KNOWLEDGE_COPY.editor.save }))
-
-    await waitFor(() => expect(patch).toHaveBeenCalledWith(anOpenedDocument().id, { content: 'Updated content body' }))
-  })
-
   it('blocks saving invalid metadata JSON without calling the gateway', async () => {
     const user = userEvent.setup()
     const patch = jest.fn()

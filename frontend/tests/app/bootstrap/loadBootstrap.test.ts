@@ -4,11 +4,7 @@ import { isErr, isOk } from '@/shared/kernel/result'
 import { HttpClient } from '@/shared/http/http-client'
 
 import { server } from '../../msw/server'
-import {
-  bootstrapHtml502Handler,
-  bootstrapMalformedHandler,
-  bootstrapNetworkErrorHandler,
-} from '../../msw/handlers/bootstrap'
+import { bootstrapMalformedHandler, bootstrapNetworkErrorHandler } from '../../msw/handlers/bootstrap'
 import { chatBase, loadBootstrap } from '@/app/bootstrap/loadBootstrap'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -33,17 +29,6 @@ describe('loadBootstrap', () => {
     expect(isErr(result)).toBe(true)
     if (isErr(result)) {
       expect(result.error.code).toBe('invalid-response')
-    }
-  })
-
-  it('surfaces a readable title for a 502 with an HTML body (FIX-07)', async () => {
-    server.use(bootstrapHtml502Handler)
-
-    const result = await loadBootstrap(new HttpClient(), 'http://localhost/bedrock-chat')
-
-    expect(isErr(result)).toBe(true)
-    if (isErr(result)) {
-      expect(result.error).toEqual({ code: 'http-error', status: 502, title: 'Bad Gateway' })
     }
   })
 

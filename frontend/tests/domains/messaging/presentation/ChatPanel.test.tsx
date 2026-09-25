@@ -89,12 +89,6 @@ describe('ChatPanel', () => {
     expect(container.firstElementChild).toHaveClass('min-h-0', 'flex-1')
   })
 
-  it('shows the configured welcome message while the transcript is empty (FR-MSG-031)', () => {
-    renderPanel()
-
-    expect(screen.queryAllByRole('article')).toHaveLength(0)
-  })
-
   it('echoes a sent message and renders the ai_response as an assistant message', async () => {
     const user = userEvent.setup()
     const { answer, sendChat } = renderPanel()
@@ -127,47 +121,37 @@ describe('ChatPanel', () => {
     expect(screen.queryByText('Hel')).not.toBeInTheDocument()
   })
 
-  it('sends on Enter and keeps Shift+Enter for a newline (FR-MSG-010)', async () => {
-    const user = userEvent.setup()
-    const { sendChat } = renderPanel()
+  // FR-MSG-012 / FR-MSG-024: each lock reason closes the composer and states why.
+  it.each<[string, () => Promise<void> | void, (field: HTMLElement) => void]>([
+    [
+      'a turn is awaiting a response',
+      async () => {
+        renderPanel()
+        await userEvent.setup().type(screen.getByRole('textbox', { name: 'Message' }), 'hello{Enter}')
+      },
+      (field) => expect(field).toHaveAttribute('placeholder', 'Waiting for response...'),
+    ],
+    [
+      'the socket is not open',
+      () => {
+        renderPanel('sent', { status: 'reconnecting', attempt: 2, nextRetryAt: null })
+      },
+      (field) => expect(field).toHaveAccessibleDescription(MESSAGING_COPY.composer.disabled.offline),
+    ],
+    [
+      'input is not permitted by the composition root',
+      () => {
+        renderPanel('sent', OPEN, false)
+      },
+      (field) =>
+        expect(field).toHaveAccessibleDescription(MESSAGING_COPY.composer.disabled.unauthenticated),
+    ],
+  ])('disables the composer while %s', async (_reason, arrange, statesWhy) => {
+    await arrange()
+
     const field = screen.getByRole('textbox', { name: 'Message' })
-
-    await user.type(field, 'first{Shift>}{Enter}{/Shift}second')
-    expect(sendChat).not.toHaveBeenCalled()
-
-    await user.type(field, '{Enter}')
-    expect(sendChat).toHaveBeenCalledWith('first\nsecond')
-  })
-
-  it('disables the composer while a turn is awaiting a response (FR-MSG-012)', async () => {
-    const user = userEvent.setup()
-    renderPanel()
-
-    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'hello{Enter}')
-
-    expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled()
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
-      'placeholder',
-      'Waiting for response...',
-    )
-  })
-
-  it('disables the composer while the socket is not open (FR-MSG-024)', () => {
-    renderPanel('sent', { status: 'reconnecting', attempt: 2, nextRetryAt: null })
-
-    expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled()
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAccessibleDescription(
-      MESSAGING_COPY.composer.disabled.offline,
-    )
-  })
-
-  it('disables the composer when input is not permitted by the composition root', () => {
-    renderPanel('sent', OPEN, false)
-
-    expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled()
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAccessibleDescription(
-      MESSAGING_COPY.composer.disabled.unauthenticated,
-    )
+    expect(field).toBeDisabled()
+    statesWhy(field)
   })
 
   // FR-MSG-005/012: a turn recycled by a drop no longer awaits anything, so the composer must

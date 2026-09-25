@@ -10,34 +10,21 @@ describe('addTag', () => {
     expect(isOk(result) && result.value).toEqual(['emon', 'ipc'])
   })
 
-  it('rejects a blank candidate', () => {
-    const result = addTag([], '   ')
+  it.each<[string, readonly string[], string, Record<string, unknown>]>([
+    ['a blank candidate', [], '   ', { kind: 'empty-tag' }],
+    ['a tag outside the policy character class', [], 'not a tag', { kind: 'invalid-tag' }],
+    ['a tag over the length limit', [], 'x'.repeat(33), { kind: 'invalid-tag' }],
+    ['a duplicate', ['emon'], 'emon', { kind: 'duplicate-tag', tag: 'emon' }],
+    [
+      'one more than the maximum',
+      Array.from({ length: MAX_TAGS }, (_, index) => `tag-${index}`),
+      'one-more',
+      { kind: 'too-many-tags' },
+    ],
+  ])('rejects %s', (_label, existing, candidate, error) => {
+    const result = addTag(existing, candidate)
 
-    expect(isErr(result) && result.error).toEqual({ kind: 'empty-tag' })
-  })
-
-  it('rejects a tag outside the policy character class', () => {
-    const result = addTag([], 'not a tag')
-
-    expect(isErr(result) && result.error).toMatchObject({ kind: 'invalid-tag' })
-  })
-
-  it('rejects a tag over the length limit', () => {
-    const result = addTag([], 'x'.repeat(33))
-
-    expect(isErr(result) && result.error).toMatchObject({ kind: 'invalid-tag' })
-  })
-
-  it('rejects a duplicate', () => {
-    const result = addTag(['emon'], 'emon')
-
-    expect(isErr(result) && result.error).toEqual({ kind: 'duplicate-tag', tag: 'emon' })
-  })
-
-  it('refuses to exceed the maximum', () => {
-    const full = Array.from({ length: MAX_TAGS }, (_, index) => `tag-${index}`)
-
-    expect(isErr(addTag(full, 'one-more'))).toBe(true)
+    expect(isErr(result) && result.error).toMatchObject(error)
   })
 
   it('does not mutate the input list', () => {

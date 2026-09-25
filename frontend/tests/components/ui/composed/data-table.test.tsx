@@ -72,12 +72,6 @@ describe('DataTable', () => {
     expect(onActivate).toHaveBeenCalledTimes(1)
   })
 
-  it('states an empty result rather than rendering an empty body', () => {
-    renderTable({ rows: [], emptyTitle: 'No feedback entries match the current filters.' })
-
-    expect(screen.getByText('No feedback entries match the current filters.')).toBeInTheDocument()
-  })
-
   it('keeps loading, error and empty distinct', () => {
     const { rerender } = renderTable({ rows: [], isLoading: true })
     expect(screen.getByRole('status')).toBeInTheDocument()
@@ -94,6 +88,18 @@ describe('DataTable', () => {
     )
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load feedback.')
     expect(screen.queryByText('No feedback entries match the current filters.')).not.toBeInTheDocument()
+
+    rerender(
+      <DataTable
+        caption="Feedback queue"
+        columns={columns}
+        rows={[]}
+        rowKey={(row) => row.id}
+        emptyTitle="No feedback entries match the current filters."
+      />,
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('No feedback entries match the current filters.')).toBeInTheDocument()
   })
 
   it('marks the selected rows for assistive tech', () => {
