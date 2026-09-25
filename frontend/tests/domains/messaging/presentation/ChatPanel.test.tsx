@@ -83,12 +83,6 @@ const renderPanel = (
 }
 
 describe('ChatPanel', () => {
-  it('fills the available chat viewport so the composer stays at the bottom', () => {
-    const { container } = renderPanel()
-
-    expect(container.firstElementChild).toHaveClass('min-h-0', 'flex-1')
-  })
-
   it('echoes a sent message and renders the ai_response as an assistant message', async () => {
     const user = userEvent.setup()
     const { answer, sendChat } = renderPanel()

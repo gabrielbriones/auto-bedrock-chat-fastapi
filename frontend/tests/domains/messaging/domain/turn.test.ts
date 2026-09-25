@@ -71,25 +71,6 @@ describe('Turn', () => {
     expect(isOk(result) && result.value.conversationId).toBe('conv-1')
   })
 
-  it('refuses every transition out of a resolved turn (I3)', () => {
-    const answer = answerTurn(aTurn(), aResponse())
-    if (!isOk(answer)) {
-      throw new Error('first answer should succeed')
-    }
-
-    for (const attempt of [
-      answerTurn(answer.value, aResponse()),
-      failTurn(answer.value, aResponse()),
-      abandonTurn(answer.value),
-    ]) {
-      expect(isErr(attempt) && attempt.error).toEqual({
-        kind: 'illegal-transition',
-        from: 'answered',
-        to: expect.any(String),
-      })
-    }
-  })
-
   // I3, exhaustively: every `TurnStatus` pair is exercised, not just the paths above.
   describe('transition table (I3)', () => {
     const ALL_STATUSES: readonly TurnStatus[] = [

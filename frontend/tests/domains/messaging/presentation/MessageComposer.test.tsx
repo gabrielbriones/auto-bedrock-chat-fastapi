@@ -224,7 +224,7 @@ describe('MessageComposer locking and enablement (FR-MSG-012/012a)', () => {
 
   // FR-MSG-012, and the XMGPLAT-11472 regression: a turn that resolves — by answer, failure, or by
   // being recycled after staleness — must hand the keyboard back.
-  it.each(['answered', 'recycled'])('returns focus when an %s turn unlocks it', () => {
+  it('returns focus when a resolved turn unlocks it', () => {
     const view = render(<Harness availability={LOCKED} awaitingResponse />)
 
     expect(field()).not.toHaveFocus()

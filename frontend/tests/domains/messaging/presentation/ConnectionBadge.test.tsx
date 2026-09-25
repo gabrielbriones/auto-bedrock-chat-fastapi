@@ -11,22 +11,13 @@ describe('ConnectionBadge (FR-MSG-002)', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it.each([[{ kind: 'disconnected' } as const, 'Disconnected']])(
-    'renders %o as its label',
-    (connection, label) => {
-      render(<ConnectionBadge connection={connection} />)
-
-      expect(screen.getByRole('alert', { name: 'Connection status' })).toHaveTextContent(label)
-    },
-  )
-
   it('shows the disconnected banner immediately on connection loss, with no intermediate reconnecting state', () => {
     const { rerender } = render(<ConnectionBadge connection={{ kind: 'connected' }} />)
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 
     rerender(<ConnectionBadge connection={{ kind: 'disconnected' }} />)
-    expect(screen.getByRole('alert')).toHaveTextContent('Disconnected')
+    expect(screen.getByRole('alert', { name: 'Connection status' })).toHaveTextContent('Disconnected')
 
     rerender(<ConnectionBadge connection={{ kind: 'connected' }} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
