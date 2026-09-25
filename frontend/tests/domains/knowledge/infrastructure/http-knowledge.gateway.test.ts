@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from '@jest/globals'
 import { HttpResponse, http } from 'msw'
 
 import { kbDocumentId } from '@/shared/kernel/branded'
@@ -8,7 +8,7 @@ import { isErr, isOk } from '@/shared/kernel/result'
 import type { KbQuery } from '@/domains/knowledge/application/ports'
 import { HttpKnowledgeGateway } from '@/domains/knowledge/infrastructure/http-knowledge.gateway'
 
-import kbDocument from '../../../msw/fixtures/knowledge/kb-document.json'
+import kbDocument from '../../../msw/fixtures/knowledge/kb-document.json' with { type: 'json' }
 import { server } from '../../../msw/server'
 
 const ADMIN = 'http://localhost/bedrock-chat/admin'
@@ -64,13 +64,11 @@ describe('HttpKnowledgeGateway.list', () => {
     })
   })
 
-  it('omits empty filters and always sends the page', async () => {
+  it('encodes every list filter, omits empty ones, and sends flagged only without an unflagged mode', async () => {
     await gateway.list(query(), AbortSignal.timeout(1_000))
 
     expect(lastUrl()).toBe(`${ADMIN}/kb/documents?limit=50&offset=0`)
-  })
 
-  it('encodes every list filter and sends flagged only without an unflagged mode', async () => {
     await gateway.list(
       query({
         source: 'ISS docs',
@@ -121,13 +119,11 @@ describe('HttpKnowledgeGateway document paths', () => {
     })
   })
 
-  it('percent-encodes a slash-bearing id for a detail request', async () => {
+  it('percent-encodes a slash-bearing id for detail, patch, reset, and delete requests', async () => {
     await gateway.get(kbDocumentId('https://example.com/kb/perf-guide'), AbortSignal.timeout(1_000))
 
     expect(lastUrl()).toBe(`${ADMIN}/kb/documents/https%3A%2F%2Fexample.com%2Fkb%2Fperf-guide`)
-  })
 
-  it('uses the encoded id for patch, reset, and delete requests', async () => {
     const id = kbDocumentId('kb/2026/perf-guide')
     let patchBody: unknown
 

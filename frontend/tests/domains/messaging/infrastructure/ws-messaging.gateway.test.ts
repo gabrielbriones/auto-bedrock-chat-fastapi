@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { ServerFrame, ServerFrameSubscriber } from '@/shared/ws/message-bus'
 
@@ -8,9 +8,9 @@ import { WsMessagingGateway } from '@/domains/messaging/infrastructure/ws-messag
 const TIMESTAMP = '2026-08-28T10:00:00Z'
 
 const createHarness = () => {
-  const send = vi.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+  const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
   let subscriber: ServerFrameSubscriber | undefined
-  const subscribe = vi.fn((next: ServerFrameSubscriber) => {
+  const subscribe = jest.fn((next: ServerFrameSubscriber) => {
     subscriber = next
     return () => {
       subscriber = undefined
@@ -316,7 +316,7 @@ describe('WsMessagingGateway', () => {
   })
 
   it('drops history rejected by the conversation selection coordinator', () => {
-    const send = vi.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+    const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
     let subscriber: ServerFrameSubscriber | undefined
     const gateway = new WsMessagingGateway(
       { send },

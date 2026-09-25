@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { inferPromptVariable } from '@/domains/prompt-catalog/domain/prompt-variable'
 import type { PromptVariable } from '@/domains/prompt-catalog/domain/prompt-variable'
@@ -12,7 +12,7 @@ const jobId: PromptVariable = { ...inferPromptVariable('JOB_ID') }
 
 describe('VariableField', () => {
   it('renders a text field and reports typed input', async () => {
-    const onChange = vi.fn<(value: VariableValue) => void>()
+    const onChange = jest.fn<(value: VariableValue) => void>()
     const user = userEvent.setup()
 
     render(<VariableField variable={jobId} value={{ kind: 'text', value: '' }} error={null} onChange={onChange} />)
@@ -28,7 +28,7 @@ describe('VariableField', () => {
         variable={jobId}
         value={{ kind: 'text', value: '' }}
         error="This field is required."
-        onChange={vi.fn()}
+        onChange={jest.fn()}
       />,
     )
 
@@ -39,13 +39,13 @@ describe('VariableField', () => {
   })
 
   it('renders no error element when valid', () => {
-    render(<VariableField variable={jobId} value={{ kind: 'text', value: 'ok' }} error={null} onChange={vi.fn()} />)
+    render(<VariableField variable={jobId} value={{ kind: 'text', value: 'ok' }} error={null} onChange={jest.fn()} />)
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('renders a number field honouring min/max/step and reports the numeric value', async () => {
-    const onChange = vi.fn<(value: VariableValue) => void>()
+    const onChange = jest.fn<(value: VariableValue) => void>()
     const user = userEvent.setup()
     const topN: PromptVariable = { ...jobId, name: 'TOP_N', label: 'Top N', inputType: 'number', min: 1, max: 10, step: 1 }
 
@@ -61,7 +61,7 @@ describe('VariableField', () => {
   })
 
   it('renders a checkbox field and toggles independently', async () => {
-    const onChange = vi.fn<(value: VariableValue) => void>()
+    const onChange = jest.fn<(value: VariableValue) => void>()
     const user = userEvent.setup()
     const verbose: PromptVariable = { ...jobId, name: 'VERBOSE', label: 'Verbose', inputType: 'checkbox' }
 
@@ -73,7 +73,7 @@ describe('VariableField', () => {
   })
 
   it('renders a select field with its options and a placeholder when unset', async () => {
-    const onChange = vi.fn<(value: VariableValue) => void>()
+    const onChange = jest.fn<(value: VariableValue) => void>()
     const user = userEvent.setup()
     const platform: PromptVariable = {
       ...jobId,
@@ -102,7 +102,7 @@ describe('VariableField', () => {
         variable={jobId}
         value={{ kind: 'text', value: '' }}
         error="This field is required."
-        onChange={vi.fn()}
+        onChange={jest.fn()}
       />,
     )
 

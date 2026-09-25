@@ -1,10 +1,9 @@
 """Serve the React SPA build from FastAPI (CONTRACT-002 BC-002, Mechanism A).
 
 The SPA under ``frontend/`` is built by Vite into ``frontend/dist`` and mounted
-here at ``config.ui_endpoint`` — the same path the chat UI has always been
-served from — so the API, the SSO cookie and the chat WebSocket all share one
-origin (ADR-006). No standalone Vite server is involved in the served
-application.
+at ``config.ui_endpoint`` and its sibling ``/dashboard`` when the UI endpoint
+ends in ``/ui``. The API, SSO cookie, and chat WebSocket share one origin
+(ADR-006). No standalone Vite server is involved in the served application.
 """
 
 import logging
@@ -38,15 +37,20 @@ def resolve_dist_dir(config: ChatConfig) -> Path:
     return Path(config.ui_dist_dir).expanduser() if config.ui_dist_dir else default_dist_dir()
 
 
+def dashboard_path(ui_endpoint: str) -> str:
+    endpoint = ui_endpoint.rstrip("/")
+    return f"{endpoint.removesuffix('/ui')}/dashboard"
+
+
 class SPAStaticFiles(StaticFiles):
     """``StaticFiles`` with SPA fallback and cache headers.
 
     * Existing files are served as-is; hashed ``assets/*`` get an immutable
       cache header, ``index.html`` is ``no-store``.
     * Extension-less unmatched paths (client-side routes such as
-      ``/chat/ui/admin/knowledge``) fall back to ``index.html`` so deep links
+    ``/bedrock-chat/dashboard/kb-browser``) fall back to ``index.html`` so deep links
       survive a reload.
-    * Unmatched paths that look like files (``/chat/ui/assets/missing.js``) stay
+    * Unmatched paths that look like files (``/bedrock-chat/ui/assets/missing.js``) stay
       404 so a broken asset URL fails loudly instead of loading HTML as JS.
     """
 
@@ -93,16 +97,17 @@ def _shadowed_routes(app: FastAPI, mount_path: str) -> list:
 
 
 def mount_spa(app: FastAPI, config: ChatConfig) -> Optional[Path]:
-    """Mount the built SPA at ``config.ui_endpoint``.
+    """Mount the built SPA at the UI path and, when applicable, its dashboard sibling.
 
     Returns the served ``dist`` directory, or ``None`` when no build was found
     (in which case a 503 placeholder is registered so the path explains
     itself instead of 404-ing).
     """
     mount_path = config.ui_endpoint.rstrip("/") or "/"
+    admin_path = dashboard_path(mount_path)
     dist_dir = resolve_dist_dir(config)
 
-    for path in _shadowed_routes(app, mount_path):
+    for path in _shadowed_routes(app, mount_path) + _shadowed_routes(app, admin_path):
         # Starlette matches in registration order, so these keep winning; the
         # SPA fallback silently loses those paths, which is almost never intended.
         logger.warning(
@@ -127,6 +132,8 @@ def mount_spa(app: FastAPI, config: ChatConfig) -> Optional[Path]:
 
         app.add_api_route(mount_path, spa_missing, methods=["GET"], include_in_schema=False)
         app.add_api_route(f"{mount_path}/{{path:path}}", spa_missing, methods=["GET"], include_in_schema=False)
+        app.add_api_route(admin_path, spa_missing, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{admin_path}/{{path:path}}", spa_missing, methods=["GET"], include_in_schema=False)
         return None
 
     static = SPAStaticFiles(directory=dist_dir)
@@ -138,5 +145,7 @@ def mount_spa(app: FastAPI, config: ChatConfig) -> Optional[Path]:
 
     app.add_api_route(mount_path, spa_root, methods=["GET", "HEAD"], include_in_schema=False)
     app.mount(mount_path, static, name="spa")
+    app.add_api_route(admin_path, spa_root, methods=["GET", "HEAD"], include_in_schema=False)
+    app.mount(admin_path, static, name="spa_dashboard")
     logger.info("SPA mounted at %s from %s", mount_path, dist_dir)
     return dist_dir

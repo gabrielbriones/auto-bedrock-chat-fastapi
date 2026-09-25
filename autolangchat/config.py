@@ -451,7 +451,7 @@ class ChatConfig(BaseSettings):
     )
 
     ui_endpoint: str = Field(
-        default="/chat/ui",
+        default="/bedrock-chat/ui",
         alias="AUTOCHAT_UI_ENDPOINT",
         description="Site-root mount path for the chat UI (the React SPA build, BC-002)",
     )

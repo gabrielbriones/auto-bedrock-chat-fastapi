@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import { fakeContainer } from '../../../app/bootstrap/container.fixture'
@@ -22,7 +22,7 @@ const renderPanel = (
   connectionState: ConnectionState = OPEN,
   inputEnabled = true,
 ) => {
-  const sendChat = vi.fn<(text: string) => 'sent' | 'dropped-closed'>(() => sendResult)
+  const sendChat = jest.fn<(text: string) => 'sent' | 'dropped-closed'>(() => sendResult)
   const notifications = new RecordingNotificationPort()
   let emit: ((event: MessagingEvent) => void) | undefined
   let changeConnection: ((state: ConnectionState) => void) | undefined
@@ -37,7 +37,7 @@ const renderPanel = (
 
   const chatSession = new ChatSessionStore({
     clock: new SystemClock(),
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     connection,
     gateway: {
       sendChat,

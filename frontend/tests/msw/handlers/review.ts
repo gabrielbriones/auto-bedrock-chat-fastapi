@@ -1,11 +1,11 @@
 import { HttpResponse, http } from 'msw'
 
-import feedbackEntry from '../fixtures/review/feedback-entry.json'
-import feedbackList from '../fixtures/review/feedback-list.json'
-import feedbackStats from '../fixtures/review/feedback-stats.json'
-import rollbackResult from '../fixtures/review/rollback-result.json'
-import synthesisResult from '../fixtures/review/synthesis-result.json'
-import synthesisStatus from '../fixtures/review/synthesis-status.json'
+import feedbackEntry from '../fixtures/review/feedback-entry.json' with { type: 'json' }
+import feedbackList from '../fixtures/review/feedback-list.json' with { type: 'json' }
+import feedbackStats from '../fixtures/review/feedback-stats.json' with { type: 'json' }
+import rollbackResult from '../fixtures/review/rollback-result.json' with { type: 'json' }
+import synthesisResult from '../fixtures/review/synthesis-result.json' with { type: 'json' }
+import synthesisStatus from '../fixtures/review/synthesis-status.json' with { type: 'json' }
 
 // CT-2: every REST endpoint of SPEC-016 §3 has a handler here and a fixture beside it, and
 // `review.contract.test.ts` parses each fixture through the production schema. The base path

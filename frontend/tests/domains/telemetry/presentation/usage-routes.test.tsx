@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import { createAppRouter } from '@/app/router'
@@ -62,10 +62,10 @@ const problem = (overrides: Partial<Problem> = {}): Problem => ({
 })
 
 const createGateway = (overrides: Partial<TelemetryGateway> = {}): TelemetryGateway => ({
-  summary: vi.fn(async () => ok(summaryRows)),
-  topUsers: vi.fn(async () => ok(topUserRows)),
-  byDay: vi.fn(async () => ok(dailyRows)),
-  byUser: vi.fn(async () => ok([sessionRow])),
+  summary: jest.fn(async () => ok(summaryRows)),
+  topUsers: jest.fn(async () => ok(topUserRows)),
+  byDay: jest.fn(async () => ok(dailyRows)),
+  byUser: jest.fn(async () => ok([sessionRow])),
   ...overrides,
 })
 
@@ -97,7 +97,7 @@ const routeSearch = (router: ReturnType<typeof createAppRouter>): Record<string,
   router.state.matches.at(-1)?.search ?? {}
 
 const lastByUserQuery = (gateway: TelemetryGateway): ByUserUsageQuery | undefined =>
-  vi.mocked(gateway.byUser).mock.calls.at(-1)?.[0] as ByUserUsageQuery | undefined
+  jest.mocked(gateway.byUser).mock.calls.at(-1)?.[0] as ByUserUsageQuery | undefined
 
 describe('usage analytics route', () => {
   it('restores applied filters from the URL and fetches each selected section', async () => {
@@ -110,13 +110,13 @@ describe('usage analytics route', () => {
     expect(screen.getByLabelText(TELEMETRY_COPY.byUser.user)).toHaveValue('alice@example.com')
 
     await waitFor(() => {
-      expect(gateway.summary).toHaveBeenCalledOnce()
+      expect(gateway.summary).toHaveBeenCalledTimes(1)
       expect(gateway.topUsers).toHaveBeenCalledWith(20, expect.any(AbortSignal))
-      expect(gateway.byDay).toHaveBeenCalledOnce()
-      expect(gateway.byUser).toHaveBeenCalledOnce()
+      expect(gateway.byDay).toHaveBeenCalledTimes(1)
+      expect(gateway.byUser).toHaveBeenCalledTimes(1)
     })
 
-    const byDayRange = vi.mocked(gateway.byDay).mock.calls[0]?.[0]
+    const byDayRange = jest.mocked(gateway.byDay).mock.calls[0]?.[0]
     expect(byDayRange?.start.toIso()).toBe('2026-05-01')
     expect(byDayRange?.end.toIso()).toBe('2026-05-31')
     expect(lastByUserQuery(gateway)).toMatchObject({
@@ -147,7 +147,7 @@ describe('usage analytics route', () => {
 
     await user.click(within(byDayCard).getByRole('button', { name: TELEMETRY_COPY.byDay.apply }))
     await waitFor(() => expect(routeSearch(router)).toMatchObject({ from: '2026-05-01', to: '2026-05-31' }))
-    await waitFor(() => expect(gateway.byDay).toHaveBeenCalledOnce())
+    await waitFor(() => expect(gateway.byDay).toHaveBeenCalledTimes(1))
 
     const userInput = within(byUserCard).getByRole('searchbox')
     await user.type(userInput, 'alice@example.com')
@@ -155,7 +155,7 @@ describe('usage analytics route', () => {
 
     await waitFor(() => {
       expect(routeSearch(router)).toMatchObject({ user: 'alice@example.com', offset: 0 })
-      expect(gateway.byUser).toHaveBeenCalledOnce()
+      expect(gateway.byUser).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -175,9 +175,9 @@ describe('usage analytics route', () => {
 
   it('keeps section errors independent while other sections render data', async () => {
     const gateway = createGateway({
-      summary: vi.fn(async () => err(problem())),
-      byDay: vi.fn(async () => err(problem())),
-      byUser: vi.fn(async () => err(problem())),
+      summary: jest.fn(async () => err(problem())),
+      byDay: jest.fn(async () => err(problem())),
+      byUser: jest.fn(async () => err(problem())),
     })
 
     renderAt('/bedrock-chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice', gateway)
@@ -197,8 +197,8 @@ describe('usage analytics route', () => {
     await user.click(within(topUsersCard).getByRole('combobox', { name: TELEMETRY_COPY.topUsers.limit }))
     await user.click(await screen.findByRole('option', { name: '20' }))
 
-    await waitFor(() => expect(vi.mocked(gateway.topUsers).mock.calls.at(-1)?.[0]).toBe(20))
-    expect(vi.mocked(gateway.summary)).toHaveBeenCalledOnce()
+    await waitFor(() => expect(jest.mocked(gateway.topUsers).mock.calls.at(-1)?.[0]).toBe(20))
+    expect(jest.mocked(gateway.summary)).toHaveBeenCalledTimes(1)
     expect(gateway.byDay).not.toHaveBeenCalled()
     expect(gateway.byUser).not.toHaveBeenCalled()
     expect(routeSearch(router)).toMatchObject({ topLimit: 20 })
@@ -211,7 +211,7 @@ describe('usage analytics route', () => {
       sessionId: `session-${index}`,
     }))
     const gateway = createGateway({
-      byUser: vi.fn(async (query: ByUserUsageQuery) =>
+      byUser: jest.fn(async (query: ByUserUsageQuery) =>
         ok(query.page.offset === 0 ? firstPage : [sessionRow])),
     })
     const { router } = renderAt('/bedrock-chat/dashboard/token-usages?user=alice', gateway)
@@ -229,7 +229,7 @@ describe('usage analytics route', () => {
 
   it('keeps empty states exact and exposes chart data through tables', async () => {
     const gateway = createGateway({
-      byUser: vi.fn(async () => ok([])),
+      byUser: jest.fn(async () => ok([])),
     })
     const { dom } = renderAt('/bedrock-chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice', gateway)
 

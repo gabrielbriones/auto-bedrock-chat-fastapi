@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { CalendarDate } from '@/shared/kernel/instant'
 import { isErr, isOk } from '@/shared/kernel/result'

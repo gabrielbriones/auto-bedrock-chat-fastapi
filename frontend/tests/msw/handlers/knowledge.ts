@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 
-import documentList from '../fixtures/knowledge/kb-document-list.json'
-import document from '../fixtures/knowledge/kb-document.json'
+import documentList from '../fixtures/knowledge/kb-document-list.json' with { type: 'json' }
+import document from '../fixtures/knowledge/kb-document.json' with { type: 'json' }
 
 const ADMIN = '*/bedrock-chat/admin'
 

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { Instant } from '@/shared/kernel/instant'
 import { messageId } from '@/shared/kernel/branded'

@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver, type WebElement } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
@@ -55,16 +55,15 @@ const configUpdate = (frame: ClientFrame): Record<string, unknown> =>
 
 // E4/E7/E8 (STD-002 section 3.4): drives the built SPA against an actual HTTP/WebSocket server.
 describe('E4, E7 and E8 - prompt and model configuration', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: ChatServer
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -97,7 +96,7 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     await (await visibleElement(driver, By.xpath("//button[contains(normalize-space(), 'Workload Analysis')]"))).click()
 
     await driver.wait(() => server.sentOf('chat').length === 1, 10_000)
-    expect(server.sentOf('chat')[0]?.message).to.equal('Analyze workload job-42')
+    expect(server.sentOf('chat')[0]?.message).toBe('Analyze workload job-42')
 
     await assertNoAxeViolations(driver)
     await matchScreenshot(driver, 'e4-preset-with-variables')
@@ -139,7 +138,7 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
 
     await driver.get(`${server.origin}/bedrock-chat/ui`)
     const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 10_000)
-    expect(await settings.getText()).to.contain(LARGE_MODEL.name)
+    expect(await settings.getText()).toContain(LARGE_MODEL.name)
     await driver.executeScript('arguments[0].click()', settings)
 
     const picker = await visibleElement(driver, By.xpath("//*[@data-slot='sheet-content']//button[normalize-space()='Large Model']"))
@@ -150,10 +149,10 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     await model.click()
 
     await driver.wait(() => server.sentOf('config_update').length === 1, 10_000)
-    expect(configUpdate(server.sentOf('config_update')[0] ?? { type: '' })).to.deep.equal({ model_id: SMALL_MODEL.id })
-    expect(await settings.getText()).to.contain(LARGE_MODEL.name)
-    expect(await settings.findElements(By.css('[data-slot="badge"]'))).to.have.length(0)
-    expect(await driver.findElements(By.xpath("//*[@role='status']//*[normalize-space()='Waiting for server confirmation']"))).to.have.length.greaterThan(0)
+    expect(configUpdate(server.sentOf('config_update')[0] ?? { type: '' })).toEqual({ model_id: SMALL_MODEL.id })
+    expect(await settings.getText()).toContain(LARGE_MODEL.name)
+    expect(await settings.findElements(By.css('[data-slot="badge"]'))).toHaveLength(0)
+    expect(await driver.findElements(By.xpath("//*[@role='status']//*[normalize-space()='Waiting for server confirmation']"))).not.toHaveLength(0)
 
     server.send({
       type: 'config_updated',
@@ -163,13 +162,13 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     })
 
     await driver.wait(() => server.sentOf('config_update').length === 2, 10_000)
-    expect(configUpdate(server.sentOf('config_update')[1] ?? { type: '' })).to.deep.equal({ max_tokens: 4096 })
+    expect(configUpdate(server.sentOf('config_update')[1] ?? { type: '' })).toEqual({ max_tokens: 4096 })
     await driver.wait(async () => (await settings.getText()).includes(SMALL_MODEL.name), 10_000)
-    expect(await settings.getText()).to.contain('2')
+    expect(await settings.getText()).toContain('2')
 
     const maxTokens = await driver.findElement(By.css('[data-slot="sheet-content"] #override-max_tokens'))
-    expect(await maxTokens.getAttribute('max')).to.equal('4096')
-    expect(await maxTokens.getAttribute('value')).to.equal('4096')
+    expect(await maxTokens.getAttribute('max')).toBe('4096')
+    expect(await maxTokens.getAttribute('value')).toBe('4096')
 
     await assertNoAxeViolations(driver, { include: '[data-slot="sheet-content"]' })
     await matchScreenshot(driver, 'e7-confirmed-model-clamp')
@@ -214,8 +213,8 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     await driver.wait(() => server.sentOf('config_reset').length === 1, 10_000, 'config_reset was not sent')
     await driver.wait(async () => (await settings.findElements(By.css('[data-slot="badge"]'))).length === 0, 10_000, 'override badge did not clear')
     const resetTemperature = await driver.findElement(By.css('[data-slot="sheet-content"] input[aria-label="Temperature"]'))
-    expect(await resetTemperature.getAttribute('value')).to.equal('0.7')
-    expect(await driver.findElements(By.css('[data-slot="sheet-content"] [data-slot="override-marker"]'))).to.have.length(0)
+    expect(await resetTemperature.getAttribute('value')).toBe('0.7')
+    expect(await driver.findElements(By.css('[data-slot="sheet-content"] [data-slot="override-marker"]'))).toHaveLength(0)
 
     await assertNoAxeViolations(driver, { include: '[data-slot="sheet-content"]' })
     await matchScreenshot(driver, 'e8-reset-model-defaults')

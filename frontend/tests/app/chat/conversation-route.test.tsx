@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import { fakeContainer } from '../bootstrap/container.fixture'
@@ -216,7 +216,7 @@ describe('conversation URL binding', () => {
       store.startNew()
     })
 
-    await waitFor(() => expect(pathname()).toBe('/'))
+    await waitFor(() => expect(pathname()).toBe('/ui'))
   })
 
   // FR-MSG-008 / T-096: a recovery state, not an error boundary and not a blank transcript.

@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@jest/globals';
 
 import { MARKDOWN_SANITIZE_SCHEMA } from '@/shared/markdown/sanitize-schema';
 import { SanitizedMarkdown } from '@/shared/markdown/sanitized-markdown';

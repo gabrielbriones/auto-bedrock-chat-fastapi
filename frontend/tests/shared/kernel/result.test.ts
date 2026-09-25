@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@jest/globals';
 
 import { andThen, combine, err, isErr, isOk, map, mapErr, ok, unwrapOr } from '@/shared/kernel/result';
 

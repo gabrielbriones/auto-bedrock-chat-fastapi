@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import { expect, jest } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { startChatServer, type ChatServer } from './helpers/chat-server.js'
@@ -16,27 +16,21 @@ const SAMPLE_INTERVAL_MS = Number(process.env.SOAK_SAMPLE_INTERVAL_MS ?? 15_000)
 const CEILING_MB = Number(process.env.SOAK_CEILING_MB ?? 20)
 const WARMUP_MS = Math.min(2 * 60 * 1000, Math.floor(DURATION_MS / 4))
 
-describe('NFR-PERF-009 — 30-minute streaming memory soak', function () {
-  this.timeout(DURATION_MS + 5 * 60_000)
+const describeSoak = process.env.RUN_SOAK === '1' ? describe : describe.skip
+
+describeSoak('NFR-PERF-009 — 30-minute streaming memory soak', () => {
+  jest.setTimeout(DURATION_MS + 5 * 60_000)
 
   let driver: WebDriver
   let server: ChatServer
 
-  before(function () {
-    // Opt-in only: `RUN_SOAK=1 npm run test:e2e:soak`. A real run takes 30 minutes by design and
-    // must not slow down the default `npm run test:e2e` suite.
-    if (process.env.RUN_SOAK !== '1') {
-      this.skip()
-    }
-  })
-
-  before(async () => {
+  beforeAll(async () => {
     // --expose-gc lets the sampler force a collection before each reading, so growth reflects
     // retained memory rather than whatever GC happened not to have run yet.
     driver = await buildChromeDriver(['--js-flags=--expose-gc', '--enable-precise-memory-info'])
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -118,6 +112,6 @@ describe('NFR-PERF-009 — 30-minute streaming memory soak', function () {
 
     expect(() =>
       assertBoundedGrowth(samples, { warmupSamples, ceilingBytes: CEILING_MB * 1_048_576 }),
-    ).not.to.throw()
+    ).not.toThrow()
   })
 })

@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { jest } from '@jest/globals'
 
 import type { ConversationId } from '@/shared/kernel/branded'
 import { FixedClock, type Clock } from '@/shared/kernel/instant'
@@ -155,7 +155,7 @@ export const createHarness = ({
   const scheduler = createFakeScheduler()
   const confirmations = new ScriptedConfirmationPort(answers)
   const notifications = new RecordingNotificationPort()
-  const logger = { ...silentLogger, warn: vi.fn() }
+  const logger = { ...silentLogger, warn: jest.fn() }
 
   const store = new ConversationStore({
     gateway: gateway.gateway,

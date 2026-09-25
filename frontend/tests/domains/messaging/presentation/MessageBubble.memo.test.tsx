@@ -1,22 +1,25 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { Instant } from '@/shared/kernel/instant'
 import { messageId } from '@/shared/kernel/branded'
 import { isOk } from '@/shared/kernel/result'
 import type { TranscriptEntry } from '@/domains/messaging/domain/transcript'
-import { Transcript } from '@/domains/messaging/presentation/Transcript'
 
 // NFR-PERF-006. Deliberately *not* memoised, so it re-renders whenever its parent bubble does:
 // the count below therefore measures `MessageBubble` renders rather than React's own bailouts.
-const { markdownRenders } = vi.hoisted(() => ({ markdownRenders: vi.fn() }))
+const markdownRenders = jest.fn()
 
-vi.mock('@/domains/messaging/presentation/MarkdownView', () => ({
+// ESM modules are linked before any test code runs, so the mock must be registered and the
+// subject imported dynamically afterwards (there is no `jest.mock` hoisting under native ESM).
+jest.unstable_mockModule('@/domains/messaging/presentation/MarkdownView', () => ({
   MarkdownView: ({ content }: { readonly content: string }) => {
     markdownRenders(content)
     return <span>{content}</span>
   },
 }))
+
+const { Transcript } = await import('@/domains/messaging/presentation/Transcript')
 
 const atResult = Instant.fromEpochMilliseconds(0)
 if (!isOk(atResult)) {

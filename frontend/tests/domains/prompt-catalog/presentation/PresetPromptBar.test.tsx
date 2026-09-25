@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { parsePromptCatalog } from '@/domains/prompt-catalog/domain/prompt-catalog'
 import { defaultBindingFor } from '@/domains/prompt-catalog/domain/prompt-variable'
@@ -41,7 +41,7 @@ const groupedCatalog = parsePromptCatalog(
 
 describe('PresetPromptBar', () => {
   it('renders every preset label', () => {
-    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={vi.fn()} />)
+    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />)
 
     expect(screen.getByRole('button', { name: /Workload Analysis/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Health Check/ })).toBeInTheDocument()
@@ -49,7 +49,7 @@ describe('PresetPromptBar', () => {
 
   it('renders source-defined groups as columns and strips their repeated label prefix', () => {
     const { container } = render(
-      <PresetPromptBar catalog={groupedCatalog} bindings={{}} locked={false} lockedReason="" onActivate={vi.fn()} />,
+      <PresetPromptBar catalog={groupedCatalog} bindings={{}} locked={false} lockedReason="" onActivate={jest.fn()} />,
     )
 
     expect(screen.getByRole('heading', { name: 'Category A' })).toBeInTheDocument()
@@ -61,21 +61,21 @@ describe('PresetPromptBar', () => {
   })
 
   it('keeps catalogs without group metadata in the original flat layout', () => {
-    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={vi.fn()} />)
+    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />)
 
     expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
   })
 
   it('renders nothing at all for an empty catalogue (FR-PROMPT-011)', () => {
     const { container } = render(
-      <PresetPromptBar catalog={parsePromptCatalog([], [])} bindings={{}} locked={false} lockedReason="" onActivate={vi.fn()} />,
+      <PresetPromptBar catalog={parsePromptCatalog([], [])} bindings={{}} locked={false} lockedReason="" onActivate={jest.fn()} />,
     )
 
     expect(container).toBeEmptyDOMElement()
   })
 
   it('disables a preset whose required variable is missing/invalid, and states why (FR-PROMPT-005/012)', () => {
-    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={vi.fn()} />)
+    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />)
 
     const button = screen.getByRole('button', { name: /Workload Analysis/ })
     expect(button).toBeDisabled()
@@ -89,7 +89,7 @@ describe('PresetPromptBar', () => {
         bindings={{ JOB_ID: { kind: 'text', value: 'abc' } }}
         locked={false}
         lockedReason=""
-        onActivate={vi.fn()}
+        onActivate={jest.fn()}
       />,
     )
 
@@ -98,7 +98,7 @@ describe('PresetPromptBar', () => {
 
   it('keeps disabled reasons out of the layout and reveals them on hover', async () => {
     const user = userEvent.setup()
-    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={vi.fn()} />)
+    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />)
 
     const button = screen.getByRole('button', { name: 'Workload Analysis' })
     expect(screen.getByText('Missing or invalid: Job ID.')).toHaveClass('sr-only')
@@ -110,7 +110,7 @@ describe('PresetPromptBar', () => {
   })
 
   it('a preset with no required variables is always enabled', () => {
-    render(<PresetPromptBar catalog={catalog} bindings={{}} locked={false} lockedReason="" onActivate={vi.fn()} />)
+    render(<PresetPromptBar catalog={catalog} bindings={{}} locked={false} lockedReason="" onActivate={jest.fn()} />)
 
     expect(screen.getByRole('button', { name: /Health Check/ })).toBeEnabled()
   })
@@ -122,7 +122,7 @@ describe('PresetPromptBar', () => {
         bindings={{ JOB_ID: { kind: 'text', value: 'abc' } }}
         locked
         lockedReason="Offline"
-        onActivate={vi.fn()}
+        onActivate={jest.fn()}
       />,
     )
 
@@ -132,7 +132,7 @@ describe('PresetPromptBar', () => {
   })
 
   it('calls onActivate with the preset id when clicked', async () => {
-    const onActivate = vi.fn()
+    const onActivate = jest.fn()
     const user = userEvent.setup()
 
     render(
@@ -152,7 +152,7 @@ describe('PresetPromptBar', () => {
 
   it('has no axe violations', async () => {
     const { container } = render(
-      <PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={vi.fn()} />,
+      <PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />,
     )
 
     const results = await axe(container)

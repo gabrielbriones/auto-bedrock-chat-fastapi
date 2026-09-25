@@ -1,10 +1,10 @@
 import { RuleTester } from 'eslint'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 import tseslint from 'typescript-eslint'
 
 import rule from '../../eslint/rules/no-inline-copy.js'
 
-// RuleTester drives its own `describe`/`it`; point them at vitest's.
+// RuleTester drives its own `describe`/`it`; point them at Jest's.
 RuleTester.describe = describe
 RuleTester.it = it
 RuleTester.itOnly = it.only

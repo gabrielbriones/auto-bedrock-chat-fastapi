@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 
@@ -88,21 +88,21 @@ describe('admin capability guard', () => {
   })
 
   it('retries the capability check without redirecting after identity changes', async () => {
-    const probe = vi.fn()
+    const probe = jest.fn()
       .mockResolvedValueOnce({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false })
       .mockResolvedValueOnce({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true })
-    const invalidate = vi.fn()
+    const invalidate = jest.fn()
     renderAt('/bedrock-chat/dashboard/feedback', { capabilityProbe: { probe, invalidate } })
 
     fireEvent.click(await screen.findByRole('button', { name: IAM_COPY.accessDenied.retry }))
 
     expect(await screen.findByRole('heading', { name: SHELL.admin.feedbackQueue })).toBeInTheDocument()
-    expect(invalidate).toHaveBeenCalledOnce()
+    expect(invalidate).toHaveBeenCalledTimes(1)
     expect(probe).toHaveBeenCalledTimes(2)
   })
 
   it('uses one HTTP probe across repeated admin navigations', async () => {
-    const request = vi.fn().mockResolvedValue(ok({
+    const request = jest.fn().mockResolvedValue(ok({
       is_admin: true,
       anonymous: false,
       token_usage_enabled: true,
@@ -115,7 +115,7 @@ describe('admin capability guard', () => {
     await router.navigate({ to: '/dashboard/kb-browser' })
     await screen.findByRole('heading', { name: SHELL.admin.knowledge })
 
-    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledTimes(1)
   })
 
   it('hides and rejects Usage when token tracking is unavailable', async () => {

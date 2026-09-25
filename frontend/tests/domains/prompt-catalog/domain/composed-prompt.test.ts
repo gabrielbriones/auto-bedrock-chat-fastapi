@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { composePreset } from '@/domains/prompt-catalog/domain/composed-prompt'
 import type { PresetPrompt } from '@/domains/prompt-catalog/domain/preset-prompt'

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { parseValidationRule, validateValue } from '@/domains/prompt-catalog/domain/validation-rule'
 import type { VariableValue } from '@/domains/prompt-catalog/domain/variable-value'

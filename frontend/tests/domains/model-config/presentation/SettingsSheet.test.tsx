@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { buildModelCatalog } from '@/domains/model-config/domain/model-catalog'
 import { toConfigurationProfile, type ConfigurationProfile } from '@/domains/model-config/domain/configuration-profile'
@@ -17,7 +17,7 @@ const profile = (overrides: Partial<ConfigurationProfile> = {}): ConfigurationPr
 
 describe('SettingsSheet', () => {
   it('renders only visibleFields, in order', () => {
-    render(<SettingsSheet open profile={profile()} onOpenChange={vi.fn()} onCommit={vi.fn()} />)
+    render(<SettingsSheet open profile={profile()} onOpenChange={jest.fn()} onCommit={jest.fn()} />)
 
     expect(screen.getByText('Model')).toBeInTheDocument()
     expect(screen.getByText('Temperature')).toBeInTheDocument()
@@ -25,15 +25,15 @@ describe('SettingsSheet', () => {
   })
 
   it('renders nothing when closed (Base UI Dialog unmounts the popup)', () => {
-    render(<SettingsSheet open={false} profile={profile()} onOpenChange={vi.fn()} onCommit={vi.fn()} />)
+    render(<SettingsSheet open={false} profile={profile()} onOpenChange={jest.fn()} onCommit={jest.fn()} />)
     expect(screen.queryByText('Model settings')).not.toBeInTheDocument()
   })
 
   it('clamps a max_tokens commit to the effective model cap before forwarding it (FR-CFG-005a)', async () => {
-    const onCommit = vi.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
 
-    render(<SettingsSheet open profile={profile()} onOpenChange={vi.fn()} onCommit={onCommit} />)
+    render(<SettingsSheet open profile={profile()} onOpenChange={jest.fn()} onCommit={onCommit} />)
 
     const maxTokens = screen.getByRole('spinbutton')
     expect(maxTokens).toHaveAttribute('max', '4096')
@@ -50,8 +50,8 @@ describe('SettingsSheet', () => {
         open
         profile={profile()}
         pendingKeys={new Set(['temperature'])}
-        onOpenChange={vi.fn()}
-        onCommit={vi.fn()}
+        onOpenChange={jest.fn()}
+        onCommit={jest.fn()}
       />,
     )
 
@@ -62,7 +62,7 @@ describe('SettingsSheet', () => {
   })
 
   it('surfaces the server rejection reason and dismisses it explicitly', async () => {
-    const onDismissRejections = vi.fn()
+    const onDismissRejections = jest.fn()
     const user = userEvent.setup()
 
     render(
@@ -70,22 +70,22 @@ describe('SettingsSheet', () => {
         open
         profile={profile()}
         rejectionReasons={["'max_tokens' exceeds the selected model limit"]}
-        onOpenChange={vi.fn()}
-        onCommit={vi.fn()}
+        onOpenChange={jest.fn()}
+        onCommit={jest.fn()}
         onDismissRejections={onDismissRejections}
       />,
     )
 
     expect(screen.getByRole('alert')).toHaveTextContent("'max_tokens' exceeds the selected model limit")
     await user.click(screen.getByRole('button', { name: 'Dismiss rejection' }))
-    expect(onDismissRejections).toHaveBeenCalledOnce()
+    expect(onDismissRejections).toHaveBeenCalledTimes(1)
   })
 
   it('enables reset only for confirmed values that differ from defaults', async () => {
-    const onReset = vi.fn()
+    const onReset = jest.fn()
     const user = userEvent.setup()
     const { rerender } = render(
-      <SettingsSheet open profile={profile()} onOpenChange={vi.fn()} onCommit={vi.fn()} onReset={onReset} />,
+      <SettingsSheet open profile={profile()} onOpenChange={jest.fn()} onCommit={jest.fn()} onReset={onReset} />,
     )
 
     expect(screen.getByRole('button', { name: 'Reset to defaults' })).toBeDisabled()
@@ -94,12 +94,12 @@ describe('SettingsSheet', () => {
       <SettingsSheet
         open
         profile={profile({ overrides: { temperature: 0.2 } })}
-        onOpenChange={vi.fn()}
-        onCommit={vi.fn()}
+        onOpenChange={jest.fn()}
+        onCommit={jest.fn()}
         onReset={onReset}
       />,
     )
     await user.click(screen.getByRole('button', { name: 'Reset to defaults' }))
-    expect(onReset).toHaveBeenCalledOnce()
+    expect(onReset).toHaveBeenCalledTimes(1)
   })
 })

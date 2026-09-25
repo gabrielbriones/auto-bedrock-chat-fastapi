@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { invalidResponseProblem } from '@/shared/http/exception'
 import { kbDocumentId } from '@/shared/kernel/branded'
@@ -50,20 +50,20 @@ const rollbackResult: RollbackResult = { kbDocumentId: document.id, rolledBackAt
 
 const gatewayFor = (list: KnowledgeGateway['list']): KnowledgeGateway => ({
   list,
-  get: vi.fn(),
-  patch: vi.fn(),
-  remove: vi.fn(),
-  resetCredibility: vi.fn(),
-  rollback: vi.fn(),
+  get: jest.fn(),
+  patch: jest.fn(),
+  remove: jest.fn(),
+  resetCredibility: jest.fn(),
+  rollback: jest.fn(),
 })
 
 const gatewayWith = (overrides: Partial<KnowledgeGateway> = {}): KnowledgeGateway => ({
-  list: vi.fn().mockResolvedValue(ok(page)),
-  get: vi.fn().mockResolvedValue(ok(document)),
-  patch: vi.fn().mockResolvedValue(ok(document)),
-  remove: vi.fn().mockResolvedValue(ok(undefined)),
-  resetCredibility: vi.fn().mockResolvedValue(ok(document)),
-  rollback: vi.fn().mockResolvedValue(ok(rollbackResult)),
+  list: jest.fn().mockResolvedValue(ok(page)),
+  get: jest.fn().mockResolvedValue(ok(document)),
+  patch: jest.fn().mockResolvedValue(ok(document)),
+  remove: jest.fn().mockResolvedValue(ok(undefined)),
+  resetCredibility: jest.fn().mockResolvedValue(ok(document)),
+  rollback: jest.fn().mockResolvedValue(ok(rollbackResult)),
   ...overrides,
 })
 
@@ -84,9 +84,9 @@ const createStore = (
 
 describe('KnowledgeStore', () => {
   it('publishes a loaded page and supports subscriptions', async () => {
-    const list = vi.fn().mockResolvedValue(ok(page))
+    const list = jest.fn().mockResolvedValue(ok(page))
     const { store } = createStore(gatewayFor(list))
-    const listener = vi.fn()
+    const listener = jest.fn()
     const unsubscribe = store.subscribe(listener)
 
     await store.load(query)
@@ -100,7 +100,7 @@ describe('KnowledgeStore', () => {
 
   it('keeps the problem on a failed list request', async () => {
     const problem = invalidResponseProblem('bad list', [])
-    const { store } = createStore(gatewayFor(vi.fn().mockResolvedValue(err(problem))))
+    const { store } = createStore(gatewayFor(jest.fn().mockResolvedValue(err(problem))))
 
     await store.load({ ...query, offset: 50 })
 
@@ -114,7 +114,7 @@ describe('KnowledgeStore', () => {
       releaseFirst = resolve
     })
     const secondPage: Page<KbDocumentSummary> = { ...page, offset: 50 }
-    const list = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce(ok(secondPage))
+    const list = jest.fn().mockReturnValueOnce(first).mockResolvedValueOnce(ok(secondPage))
     const { store } = createStore(gatewayFor(list))
 
     const firstLoad = store.load(query)
@@ -137,7 +137,7 @@ describe('KnowledgeStore detail lifecycle', () => {
 
   it('records a detail load failure', async () => {
     const problem = invalidResponseProblem('bad get', [])
-    const { store } = createStore(gatewayWith({ get: vi.fn().mockResolvedValue(err(problem)) }))
+    const { store } = createStore(gatewayWith({ get: jest.fn().mockResolvedValue(err(problem)) }))
 
     await store.open(document.id)
 
@@ -156,7 +156,7 @@ describe('KnowledgeStore detail lifecycle', () => {
 
 describe('KnowledgeStore save', () => {
   it('is a no-op for an empty patch', async () => {
-    const patch = vi.fn()
+    const patch = jest.fn()
     const { store } = createStore(gatewayWith({ patch }))
 
     const saved = await store.save(document.id, {})
@@ -166,7 +166,7 @@ describe('KnowledgeStore save', () => {
   })
 
   it('warns before a content change and aborts when declined', async () => {
-    const patch = vi.fn()
+    const patch = jest.fn()
     const { store, confirmations } = createStore(gatewayWith({ patch }), new ScriptedConfirmationPort([false]))
 
     const saved = await store.save(document.id, { content: 'new body' })
@@ -177,7 +177,7 @@ describe('KnowledgeStore save', () => {
   })
 
   it('saves a content change once the re-embed warning is confirmed', async () => {
-    const patch = vi.fn().mockResolvedValue(ok(document))
+    const patch = jest.fn().mockResolvedValue(ok(document))
     const { store, notifications } = createStore(gatewayWith({ patch }), new ScriptedConfirmationPort([true]))
 
     const saved = await store.save(document.id, { content: 'new body' })
@@ -188,7 +188,7 @@ describe('KnowledgeStore save', () => {
   })
 
   it('does not warn for a non-content patch', async () => {
-    const patch = vi.fn().mockResolvedValue(ok(document))
+    const patch = jest.fn().mockResolvedValue(ok(document))
     const { store, confirmations } = createStore(gatewayWith({ patch }))
 
     const saved = await store.save(document.id, { title: 'New title' })
@@ -199,7 +199,7 @@ describe('KnowledgeStore save', () => {
 
   it('stores the problem without a toast on a conflict', async () => {
     const problem = { ...invalidResponseProblem('conflict', []), status: 409 }
-    const { store, notifications } = createStore(gatewayWith({ patch: vi.fn().mockResolvedValue(err(problem)) }))
+    const { store, notifications } = createStore(gatewayWith({ patch: jest.fn().mockResolvedValue(err(problem)) }))
 
     const saved = await store.save(document.id, { title: 'New title' })
 
@@ -210,7 +210,7 @@ describe('KnowledgeStore save', () => {
 
   it('refuses a concurrent save while one is pending', async () => {
     let release!: () => void
-    const patch = vi.fn().mockReturnValue(new Promise((resolve) => {
+    const patch = jest.fn().mockReturnValue(new Promise((resolve) => {
       release = () => resolve(ok(document))
     }))
     const { store } = createStore(gatewayWith({ patch }))
@@ -227,7 +227,7 @@ describe('KnowledgeStore save', () => {
 describe('KnowledgeStore mutations', () => {
   it('resets credibility in place', async () => {
     const restored: KbDocument = { ...document, credibility: createCredibility(1, false) }
-    const { store, notifications } = createStore(gatewayWith({ resetCredibility: vi.fn().mockResolvedValue(ok(restored)) }))
+    const { store, notifications } = createStore(gatewayWith({ resetCredibility: jest.fn().mockResolvedValue(ok(restored)) }))
     await store.open(document.id)
 
     const succeeded = await store.resetCredibility(document.id)
@@ -238,9 +238,9 @@ describe('KnowledgeStore mutations', () => {
   })
 
   it('rolls back after confirmation and reloads', async () => {
-    const load = vi.fn().mockResolvedValue(ok(page))
+    const load = jest.fn().mockResolvedValue(ok(page))
     const { store } = createStore(
-      gatewayWith({ list: load, rollback: vi.fn().mockResolvedValue(ok(rollbackResult)) }),
+      gatewayWith({ list: load, rollback: jest.fn().mockResolvedValue(ok(rollbackResult)) }),
       new ScriptedConfirmationPort([true]),
     )
     await store.load(query)
@@ -255,7 +255,7 @@ describe('KnowledgeStore mutations', () => {
   })
 
   it('does not roll back when declined', async () => {
-    const rollback = vi.fn()
+    const rollback = jest.fn()
     const { store } = createStore(gatewayWith({ rollback }), new ScriptedConfirmationPort([false]))
 
     const succeeded = await store.rollback(document.id)
@@ -266,9 +266,9 @@ describe('KnowledgeStore mutations', () => {
 
   it('deletes after confirmation and returns the previous offset when the last row is removed', async () => {
     const solo = { ...page, items: [summary], total: 6, offset: 5, limit: 1 }
-    const load = vi.fn().mockResolvedValue(ok(solo))
+    const load = jest.fn().mockResolvedValue(ok(solo))
     const { store } = createStore(
-      gatewayWith({ list: load, remove: vi.fn().mockResolvedValue(ok(undefined)) }),
+      gatewayWith({ list: load, remove: jest.fn().mockResolvedValue(ok(undefined)) }),
       new ScriptedConfirmationPort([true]),
     )
     await store.load({ ...query, limit: 1, offset: 5 })
@@ -279,7 +279,7 @@ describe('KnowledgeStore mutations', () => {
   })
 
   it('does not delete when declined', async () => {
-    const remove = vi.fn()
+    const remove = jest.fn()
     const { store } = createStore(gatewayWith({ remove }), new ScriptedConfirmationPort([false]))
 
     const previousOffset = await store.remove(document.id)

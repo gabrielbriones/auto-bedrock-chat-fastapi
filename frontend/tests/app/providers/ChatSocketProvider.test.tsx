@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { Container } from '@/app/bootstrap/container'
 import { ContainerContext } from '@/app/bootstrap/container-context'
@@ -8,8 +8,8 @@ import { ChatSocketProvider } from '@/app/providers/ChatSocketProvider'
 import type { SocketClient } from '@/shared/ws/socket-client'
 
 const renderProvider = () => {
-  const connect = vi.fn()
-  const dispose = vi.fn()
+  const connect = jest.fn()
+  const dispose = jest.fn()
   const socket = { connect, dispose } as unknown as SocketClient
   const container: Container = fakeContainer({ socket })
 

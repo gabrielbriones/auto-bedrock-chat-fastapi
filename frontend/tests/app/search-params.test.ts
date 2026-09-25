@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 import { defaultParseSearch, defaultStringifySearch } from '@tanstack/react-router'
 import { z } from 'zod'
 

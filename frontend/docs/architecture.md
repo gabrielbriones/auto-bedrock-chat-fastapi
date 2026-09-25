@@ -45,7 +45,7 @@ auto-bedrock-chat-fastapi/frontend/          # Co-located with the FastAPI packa
 │   │   ├── fixtures/                    # Representative backend HTTP and WebSocket payloads.
 │   │   │   └── ws/                      # Captured or representative WebSocket frame fixtures.
 │   │   └── handlers/                    # Reusable mocked backend request handlers.
-│   └── setup/                           # Global Vitest and jsdom initialization.
+│   └── setup/                           # Global Jest matcher and jsdom initialization.
 ├── src/                                 # Authored browser application source.
 │   ├── main.tsx                        # Browser entry point; mounts AppRoot in React StrictMode.
 │   ├── index.css                       # Tailwind imports, design tokens, themes, and global styles.
@@ -228,10 +228,11 @@ auto-bedrock-chat-fastapi/frontend/          # Co-located with the FastAPI packa
 ├── components.json                     # shadcn generation configuration.
 ├── eslint.config.js                    # Project lint configuration entry point.
 ├── index.html                          # Static HTML shell and pre-paint theme bootstrap.
+├── jest/                               # Jest ESM transformer, jsdom environment, and asset stubs.
+├── jest.config.js                      # Unit, component, contract, lint, bench, and e2e projects.
 ├── package.json                        # Dependencies and development/build/test commands.
 ├── tsconfig*.json                      # TypeScript projects for app, Node config, and references.
-├── vite.config.ts                      # Vite plugins, proxying, route splitting, and build output.
-└── vitest.config.ts                    # Unit, component, and contract-test projects.
+└── vite.config.ts                      # Vite plugins, proxying, route splitting, and build output.
 ```
 
 Only `iam` and `messaging` are implemented bounded contexts today. `conversation`,

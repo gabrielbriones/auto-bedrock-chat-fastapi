@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { SystemClock } from '@/shared/kernel/instant'
 import { ConsoleLogger } from '@/shared/logging/console-logger'
@@ -32,13 +32,13 @@ const setup = (
   source: Partial<AuthPolicySource> = {},
   initial: { ssoAuthenticated?: boolean; ssoUserDisplay?: string | null } = {},
 ) => {
-  const authenticate = vi.fn<(credential: Credential) => SendResult>(() => 'sent')
+  const authenticate = jest.fn<(credential: Credential) => SendResult>(() => 'sent')
   let emitAuthEvent: (event: AuthEvent) => void = () => {}
   let emitConnectionState: (state: ConnectionState) => void = () => {}
 
   const authGateway: AuthGateway = {
     authenticate,
-    logout: vi.fn<() => SendResult>(() => 'sent'),
+    logout: jest.fn<() => SendResult>(() => 'sent'),
     onAuthEvent: (listener): Unsubscribe => {
       emitAuthEvent = listener
       return () => {}
@@ -46,8 +46,8 @@ const setup = (
   }
 
   const ssoGateway: SsoGateway = {
-    beginLogin: vi.fn(),
-    logout: vi.fn(async () => ({ kind: 'ok', value: undefined }) as const),
+    beginLogin: jest.fn(),
+    logout: jest.fn(async () => ({ kind: 'ok', value: undefined }) as const),
   }
 
   const connection: ConnectionSource = {
@@ -268,7 +268,7 @@ describe('the identity store', () => {
 describe('retrying a rejected credential', () => {
   it('reuses the open socket instead of reconnecting', () => {
     const socket = new FakeChatSocket()
-    const socketFactory = vi.fn(() => socket)
+    const socketFactory = jest.fn(() => socket)
     const client = new SocketClient({
       clock: new SystemClock(),
       connectivity: { status: () => 'online', subscribe: () => () => {} },
@@ -285,7 +285,7 @@ describe('retrying a rejected credential', () => {
     const store = new IdentityStore({
       policy,
       authGateway,
-      ssoGateway: { beginLogin: vi.fn(), logout: vi.fn(async () => ({ kind: 'ok', value: undefined }) as const) },
+      ssoGateway: { beginLogin: jest.fn(), logout: jest.fn(async () => ({ kind: 'ok', value: undefined }) as const) },
       connection: client,
       initial: { policy, ssoAuthenticated: false, ssoUserDisplay: null },
     })
@@ -307,7 +307,7 @@ describe('retrying a rejected credential', () => {
 
     store.submit({ kind: 'bearer_token', token: 'right' })
 
-    expect(socketFactory).toHaveBeenCalledOnce()
+    expect(socketFactory).toHaveBeenCalledTimes(1)
     expect(
       socket.sent.map((frame) => (JSON.parse(frame) as { token: string }).token),
     ).toEqual(['wrong', 'right'])

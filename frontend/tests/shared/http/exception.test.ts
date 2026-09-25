@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from '@jest/globals';
 
 import { abortedProblem, httpErrorProblem, networkErrorProblem, titleForStatus } from '@/shared/http/exception';
 

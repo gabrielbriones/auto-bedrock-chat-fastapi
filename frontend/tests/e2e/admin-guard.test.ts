@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import path from 'node:path'
 
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, until, type WebDriver } from 'selenium-webdriver'
 
 import { buildChromeDriver } from './helpers/webdriver.js'
@@ -15,7 +15,6 @@ const contentType = (filePath: string): string => {
 }
 
 describe('Admin capability guard', function () {
-  this.timeout(60_000)
 
   let driver: WebDriver
   let server: Server
@@ -23,7 +22,7 @@ describe('Admin capability guard', function () {
   let capabilityRequests = 0
   let protectedAdminRequests = 0
 
-  before(async () => {
+  beforeAll(async () => {
     const dist = path.resolve(process.cwd(), 'dist')
     const bootstrap = await readFile(
       path.resolve(process.cwd(), 'tests/msw/fixtures/bootstrap-config.json'),
@@ -79,7 +78,7 @@ describe('Admin capability guard', function () {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error === undefined ? resolve() : reject(error))
@@ -90,13 +89,13 @@ describe('Admin capability guard', function () {
     await driver.get(`${origin}/bedrock-chat/dashboard/feedback`)
     const heading = await driver.wait(until.elementLocated(By.css('h1')), 10_000)
 
-    expect(await heading.getText()).to.equal('Access denied')
+    expect(await heading.getText()).toBe('Access denied')
 
     const resources = await driver.executeScript<string[]>(
       "return performance.getEntriesByType('resource').map((entry) => entry.name)",
     )
-    expect(resources.some((resource) => /\/ui\/assets\/admin\./.test(resource))).to.equal(false)
-    expect(capabilityRequests).to.equal(1)
-    expect(protectedAdminRequests).to.equal(0)
+    expect(resources.some((resource) => /\/ui\/assets\/admin\./.test(resource))).toBe(false)
+    expect(capabilityRequests).toBe(1)
+    expect(protectedAdminRequests).toBe(0)
   })
 })

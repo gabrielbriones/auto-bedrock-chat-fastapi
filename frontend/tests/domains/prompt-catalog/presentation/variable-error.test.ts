@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { PROMPT_CATALOG_COPY } from '@/shared/copy/prompt-catalog'
 import { variableFieldError } from '@/domains/prompt-catalog/presentation/variable-error'

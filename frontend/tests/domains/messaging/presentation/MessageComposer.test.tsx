@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals'
 
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
 
@@ -42,7 +42,7 @@ const Harness = ({
   availability = OPEN,
   awaitingResponse = false,
   initial = '',
-  onSend = vi.fn(),
+  onSend = jest.fn(),
 }: {
   readonly availability?: ComposerAvailability
   readonly awaitingResponse?: boolean
@@ -70,7 +70,7 @@ const field = () => screen.getByRole('textbox', { name: COPY.label })
 describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
   it('sends on a bare Enter', async () => {
     const user = userEvent.setup()
-    const onSend = vi.fn()
+    const onSend = jest.fn()
     render(<Harness onSend={onSend} />)
 
     await user.type(field(), 'analyse job 42{Enter}')
@@ -81,7 +81,7 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
 
   it('inserts a newline on Shift+Enter without sending', async () => {
     const user = userEvent.setup()
-    const onSend = vi.fn()
+    const onSend = jest.fn()
     render(<Harness onSend={onSend} />)
 
     await user.type(field(), 'first{Shift>}{Enter}{/Shift}second')
@@ -97,7 +97,7 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
     ['Alt', '{Alt>}{Enter}{/Alt}'],
   ])('inserts a newline on %s+Enter without sending', async (_name, chord) => {
     const user = userEvent.setup()
-    const onSend = vi.fn()
+    const onSend = jest.fn()
     render(<Harness initial="first" onSend={onSend} />)
 
     await user.click(field())
@@ -125,7 +125,7 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
 
   it('refuses to send a whitespace-only draft (FR-MSG-025)', async () => {
     const user = userEvent.setup()
-    const onSend = vi.fn()
+    const onSend = jest.fn()
     render(<Harness onSend={onSend} />)
 
     await user.type(field(), '   {Enter}')
@@ -136,7 +136,7 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
   })
 
   it('never sends the Enter that commits an IME candidate', async () => {
-    const onSend = vi.fn()
+    const onSend = jest.fn()
     render(<Harness initial="日本" onSend={onSend} />)
 
     const textarea = field()
@@ -148,7 +148,7 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
 
   it('leaves Escape to its ancestors so a surrounding dialog still closes', async () => {
     const user = userEvent.setup()
-    const onEscape = vi.fn()
+    const onEscape = jest.fn()
     render(
       <div
         onKeyDown={(event) => {
@@ -162,7 +162,7 @@ describe('MessageComposer keyboard matrix (FR-MSG-010)', () => {
     await user.click(field())
     await user.keyboard('{Escape}')
 
-    expect(onEscape).toHaveBeenCalledOnce()
+    expect(onEscape).toHaveBeenCalledTimes(1)
     expect(field()).toHaveValue('draft')
   })
 })
@@ -183,7 +183,7 @@ describe('MessageComposer autosize (FR-MSG-011)', () => {
 
   it('sends through the icon button and clears the draft', async () => {
     const user = userEvent.setup()
-    const onSend = vi.fn()
+    const onSend = jest.fn()
     render(<Harness initial="analyse job 42" onSend={onSend} />)
 
     await user.click(screen.getByRole('button', { name: COPY.send }))

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from '@jest/globals'
 
 import { isOk } from '@/shared/kernel/result'
 import { toFeedbackEntry, toFeedbackEntryPage } from '@/domains/review/infrastructure/dto/feedback-entry.dto'

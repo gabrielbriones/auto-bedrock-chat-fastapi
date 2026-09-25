@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 import { createMemoryHistory } from '@tanstack/react-router'
 import type { z } from 'zod'
 
@@ -26,25 +26,26 @@ describe('the application router', () => {
   it('resolves every route in the SPEC-021 §2 table', () => {
     expect(Object.keys(router().routesById).sort()).toEqual([
       '/',
-      '/admin',
-      '/admin/',
+      '/dashboard',
+      '/dashboard/',
       '/dashboard/feedback/',
-      '/dashboard/reviewed',
       '/dashboard/feedback/stats',
       '/dashboard/kb-browser',
+      '/dashboard/reviewed',
       '/dashboard/token-usages',
+      '/ui/',
       '/ui/c/$conversationId',
       '__root__',
     ])
   })
 
   it('serves the whole tree under the deployed /ui base path', () => {
-    expect(router().buildLocation(chatLink()).href).toBe('/bedrock-chat/ui/')
+    expect(router().buildLocation(chatLink()).href).toBe('/bedrock-chat/ui')
     expect(router().buildLocation(conversationLink('abc-123')).href).toBe('/bedrock-chat/ui/c/abc-123')
   })
 
   it('gives the admin subtree a guard that resolves through the typed route context', () => {
-    expect(router().routesById['/admin'].options.beforeLoad).toBeTypeOf('function')
+    expect(router().routesById['/dashboard'].options.beforeLoad).toBeTypeOf('function')
   })
 })
 

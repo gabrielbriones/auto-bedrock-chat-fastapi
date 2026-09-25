@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { synchronizeConversationRoute } from '@/app/chat/conversation-route-sync'
 import { conversationId } from '@/shared/kernel/branded'

@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import { createAppRouter } from '@/app/router'
@@ -28,18 +28,20 @@ const response: Page<FeedbackEntrySummary> = {
 }
 
 const renderAt = (path: string) => {
-  const list = vi.fn().mockResolvedValue(ok(response))
-  const gateway = {
+  const list = jest.fn<ReviewGateway['list']>().mockResolvedValue(ok(response))
+  const gateway: ReviewGateway = {
     list,
-    get: vi.fn().mockResolvedValue(ok(anEntry({ id: rejected.id, reviewStatus: 'rejected' }))),
-    saveDecision: vi.fn(),
-    remove: vi.fn().mockResolvedValue(ok(undefined)),
-    stats: vi.fn(),
-    pendingCount: vi.fn().mockResolvedValue(ok(0)),
-    synthesize: vi.fn(),
-    rollback: vi.fn(),
-    synthesisPhase: vi.fn().mockResolvedValue(ok('idle')),
-  } as ReviewGateway
+    get: jest
+      .fn<ReviewGateway['get']>()
+      .mockResolvedValue(ok(anEntry({ id: rejected.id, reviewStatus: 'rejected' }))),
+    saveDecision: jest.fn<ReviewGateway['saveDecision']>(),
+    remove: jest.fn<ReviewGateway['remove']>().mockResolvedValue(ok(undefined)),
+    stats: jest.fn<ReviewGateway['stats']>(),
+    pendingCount: jest.fn<ReviewGateway['pendingCount']>().mockResolvedValue(ok(0)),
+    synthesize: jest.fn<ReviewGateway['synthesize']>(),
+    rollback: jest.fn<ReviewGateway['rollback']>(),
+    synthesisPhase: jest.fn<ReviewGateway['synthesisPhase']>().mockResolvedValue(ok('idle')),
+  }
   const base = fakeContainer()
   const reviews = new ReviewStore({
     gateway,
@@ -61,7 +63,7 @@ const renderAt = (path: string) => {
   return { router, list, dom }
 }
 
-const lastQuery = (list: ReturnType<typeof vi.fn>): ReviewQuery | undefined =>
+const lastQuery = (list: ReturnType<typeof jest.fn>): ReviewQuery | undefined =>
   list.mock.calls.at(-1)?.[0] as ReviewQuery | undefined
 
 const routeSearch = (router: ReturnType<typeof createAppRouter>): Record<string, unknown> =>

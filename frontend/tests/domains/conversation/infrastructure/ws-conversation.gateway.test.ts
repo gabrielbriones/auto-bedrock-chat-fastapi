@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { conversationId } from '@/shared/kernel/branded'
 import { FRAME_OWNER, ServerFrameSchema, type ServerFrame, type ServerFrameSubscriber } from '@/shared/ws/message-bus'
@@ -6,11 +6,10 @@ import { FRAME_OWNER, ServerFrameSchema, type ServerFrame, type ServerFrameSubsc
 import type { ConversationEvent } from '@/domains/conversation/domain/events'
 import { WsConversationGateway } from '@/domains/conversation/infrastructure/ws-conversation.gateway'
 
+import { loadWsFixtures } from '../../../msw/fixtures/ws/load'
+
 // CT-1: the recorded wire fixtures, not hand-written objects, are what the mapping is proved against.
-const recorded: Record<string, unknown> = import.meta.glob(
-  '../../../msw/fixtures/ws/conversation_*.json',
-  { eager: true, import: 'default' },
-)
+const recorded: Record<string, unknown> = loadWsFixtures(/^conversation_/)
 
 const frameTypeOf = (path: string): string => path.replace(/^.*\/([^/]+)\.json$/, '$1')
 
@@ -25,9 +24,9 @@ const parse = (fixture: unknown): ServerFrame => {
 }
 
 const createHarness = () => {
-  const send = vi.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+  const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
   let subscriber: ServerFrameSubscriber | undefined
-  const subscribe = vi.fn((next: ServerFrameSubscriber) => {
+  const subscribe = jest.fn((next: ServerFrameSubscriber) => {
     subscriber = next
     return () => {
       subscriber = undefined

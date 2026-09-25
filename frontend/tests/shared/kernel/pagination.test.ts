@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { DEFAULT_PAGE_LIMIT, offsetWindow } from '@/shared/kernel/pagination'
 

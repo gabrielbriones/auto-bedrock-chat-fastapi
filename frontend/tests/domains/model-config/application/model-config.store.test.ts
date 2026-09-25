@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import type { ConnectionState, SendResult } from '@/shared/ws/socket-client'
 import { ModelConfigStore } from '@/domains/model-config/application/model-config.store'
@@ -16,8 +16,8 @@ const harness = () => {
   let updated: ((event: ConfigUpdatedEvent) => void) | undefined
   let connectionChanged: ((state: ConnectionState) => void) | undefined
   const gateway: ConfigurationGateway = {
-    update: vi.fn<ConfigurationGateway['update']>(() => 'sent' satisfies SendResult),
-    reset: vi.fn<ConfigurationGateway['reset']>(() => 'sent' satisfies SendResult),
+    update: jest.fn<ConfigurationGateway['update']>(() => 'sent' satisfies SendResult),
+    reset: jest.fn<ConfigurationGateway['reset']>(() => 'sent' satisfies SendResult),
     onUpdated(callback) {
       updated = callback
       return () => { updated = undefined }
@@ -27,10 +27,10 @@ const harness = () => {
     profile: profile(),
     gateway,
     notifications: {
-      success: vi.fn(),
-      error: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
+      success: jest.fn(),
+      error: jest.fn(),
+      info: jest.fn(),
+      warning: jest.fn(),
     },
     connection: {
       state: { status: 'open', attempt: 0, nextRetryAt: null },
@@ -94,7 +94,7 @@ describe('ModelConfigStore', () => {
 
     store.reset()
 
-    expect(gateway.reset).toHaveBeenCalledOnce()
+    expect(gateway.reset).toHaveBeenCalledTimes(1)
     expect(store.getSnapshot().profile.overrides).toEqual({ temperature: 0.2 })
     expect(store.getSnapshot().resetPending).toBe(true)
 
@@ -117,7 +117,7 @@ describe('ModelConfigStore', () => {
 
   it('does not mark a dropped proposal pending', () => {
     const { gateway, store } = harness()
-    vi.mocked(gateway.update).mockReturnValue('dropped-closed')
+    jest.mocked(gateway.update).mockReturnValue('dropped-closed')
     store.commit('temperature', 0.2)
     expect(store.getSnapshot().pendingKeys.size).toBe(0)
   })
@@ -135,7 +135,7 @@ describe('ModelConfigStore', () => {
     const cappedStore = new ModelConfigStore({
       profile: cappedProfile,
       gateway,
-      notifications: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+      notifications: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warning: jest.fn() },
       connection: {
         state: { status: 'open', attempt: 0, nextRetryAt: null },
         onStateChange: () => () => undefined,

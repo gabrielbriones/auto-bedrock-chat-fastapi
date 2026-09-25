@@ -1,20 +1,19 @@
-import { expect } from 'chai'
+import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { startChatServer, type ChatServer } from './helpers/chat-server.js'
 import { buildChromeDriver } from './helpers/webdriver.js'
 
-describe('Chat welcome dismissal and scroll bounds', function () {
-  this.timeout(60_000)
+describe('Chat welcome dismissal and scroll bounds', () => {
 
   let driver: WebDriver
   let server: ChatServer
 
-  before(async () => {
+  beforeAll(async () => {
     driver = await buildChromeDriver()
   })
 
-  after(async () => {
+  afterAll(async () => {
     await driver?.quit()
   })
 
@@ -42,11 +41,11 @@ describe('Chat welcome dismissal and scroll bounds', function () {
       await driver.get(`${server.origin}/bedrock-chat/ui/`)
       const field = await driver.wait(until.elementLocated(By.css('textarea[aria-label="Message"]')), 10_000)
       await driver.wait(until.elementIsEnabled(field), 10_000)
-      expect(await driver.findElements(By.css('[aria-label="Welcome"]'))).to.have.length(1)
+      expect(await driver.findElements(By.css('[aria-label="Welcome"]'))).toHaveLength(1)
 
       await field.sendKeys('Analyze my workload', Key.ENTER)
       await driver.wait(() => server.sentOf('chat').length === 1, 10_000)
-      expect(await driver.findElements(By.css('[aria-label="Welcome"], [aria-label="Preset prompts"], #prompt-var-JOB_ID'))).to.have.length(0)
+      expect(await driver.findElements(By.css('[aria-label="Welcome"], [aria-label="Preset prompts"], #prompt-var-JOB_ID'))).toHaveLength(0)
 
       server.send({
         type: 'ai_response',
@@ -82,10 +81,10 @@ describe('Chat welcome dismissal and scroll bounds', function () {
         };
       `)
 
-      expect(bounds.documentHeight, JSON.stringify(bounds)).to.be.at.most(bounds.viewportHeight)
-      expect(bounds.documentWidth).to.be.at.most(bounds.viewportWidth)
-      expect(bounds.mainScrollHeight).to.be.greaterThan(bounds.mainHeight)
-      expect(Math.abs(bounds.bottomGap)).to.be.at.most(1)
+      expect(bounds.documentHeight).toBeLessThanOrEqual(bounds.viewportHeight)
+      expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth)
+      expect(bounds.mainScrollHeight).toBeGreaterThan(bounds.mainHeight)
+      expect(Math.abs(bounds.bottomGap)).toBeLessThanOrEqual(1)
     })
   }
 })

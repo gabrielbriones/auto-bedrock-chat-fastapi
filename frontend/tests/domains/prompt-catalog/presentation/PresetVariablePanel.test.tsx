@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { allRequiredVariableNames, parsePromptCatalog } from '@/domains/prompt-catalog/domain/prompt-catalog'
 import type { VariableValue } from '@/domains/prompt-catalog/domain/variable-value'
@@ -59,7 +59,7 @@ describe('PresetVariablePanel', () => {
         variableNames={preset.requiredVariables}
         variables={catalog.variables}
         bindings={bindingsFor('workload-analysis')}
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 
@@ -76,7 +76,7 @@ describe('PresetVariablePanel', () => {
         variableNames={allRequiredVariableNames(comparisonCatalog)}
         variables={comparisonCatalog.variables}
         bindings={bindings}
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 
@@ -90,7 +90,7 @@ describe('PresetVariablePanel', () => {
         variableNames={[]}
         variables={catalog.variables}
         bindings={{}}
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 
@@ -107,7 +107,7 @@ describe('PresetVariablePanel', () => {
         variables={catalog.variables}
         bindings={bindingsFor('workload-analysis')}
         detected={new Set(['JOB_ID'])}
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 
@@ -124,7 +124,7 @@ describe('PresetVariablePanel', () => {
         variableNames={preset.requiredVariables}
         variables={catalog.variables}
         bindings={bindingsFor('workload-analysis')}
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 
@@ -150,7 +150,7 @@ describe('PresetVariablePanel', () => {
         variables={catalog.variables}
         bindings={bindingsFor('workload-analysis')}
         showValidationErrors
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 
@@ -162,7 +162,7 @@ describe('PresetVariablePanel', () => {
   it('routes a field change back through onBindingChange keyed by variable name', async () => {
     const preset = catalog.presets[0]
     if (preset === undefined) throw new Error('fixture preset missing')
-    const onBindingChange = vi.fn<(name: string, value: VariableValue) => void>()
+    const onBindingChange = jest.fn<(name: string, value: VariableValue) => void>()
     const user = userEvent.setup()
 
     render(
@@ -188,7 +188,7 @@ describe('PresetVariablePanel', () => {
         variableNames={preset.requiredVariables}
         variables={catalog.variables}
         bindings={bindingsFor('workload-analysis')}
-        onBindingChange={vi.fn()}
+        onBindingChange={jest.fn()}
       />,
     )
 

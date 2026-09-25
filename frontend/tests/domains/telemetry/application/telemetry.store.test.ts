@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { err, isErr, ok, type Result } from '@/shared/kernel/result'
 import type { Problem } from '@/shared/http/exception'
@@ -29,17 +29,17 @@ const range = createDateRange(date('2026-05-01'), date('2026-05-31'))
 if (isErr(range)) throw new Error('test range must be valid')
 
 const createGateway = (): TelemetryGateway => ({
-  summary: vi.fn(async () => ok([])),
-  topUsers: vi.fn(async () => ok([])),
-  byDay: vi.fn(async () => ok([])),
-  byUser: vi.fn(async () => ok([])),
+  summary: jest.fn(async () => ok([])),
+  topUsers: jest.fn(async () => ok([])),
+  byDay: jest.fn(async () => ok([])),
+  byUser: jest.fn(async () => ok([])),
 })
 
 describe('TelemetryStore', () => {
   it('keeps section failures independent', async () => {
     const gateway = createGateway()
-    gateway.summary = vi.fn(async () => err(problem()))
-    gateway.topUsers = vi.fn(async () => ok([{ userId: 'alice', tokens: createTokenCount(2, 3) }]))
+    gateway.summary = jest.fn(async () => err(problem()))
+    gateway.topUsers = jest.fn(async () => ok([{ userId: 'alice', tokens: createTokenCount(2, 3) }]))
     const store = new TelemetryStore({ gateway })
 
     await Promise.all([store.loadSummary(), store.loadTopUsers(10)])
@@ -56,7 +56,7 @@ describe('TelemetryStore', () => {
       readonly resolve: (value: SummaryResult) => void
       readonly promise: Promise<SummaryResult>
     }> = []
-    gateway.summary = vi.fn((): Promise<SummaryResult> => {
+    gateway.summary = jest.fn((): Promise<SummaryResult> => {
       let resolve!: (value: SummaryResult) => void
       const promise = new Promise<SummaryResult>((next) => { resolve = next })
       responses.push({ resolve, promise })
@@ -88,7 +88,7 @@ describe('TelemetryStore', () => {
 
   it('returns a rejected server date range to idle and does not reissue it', async () => {
     const gateway = createGateway()
-    gateway.byDay = vi.fn(async () => err(problem({ status: 400, serverCode: 'invalid_date_range' })))
+    gateway.byDay = jest.fn(async () => err(problem({ status: 400, serverCode: 'invalid_date_range' })))
     const store = new TelemetryStore({ gateway })
 
     await store.loadByDay(range.value)
@@ -101,7 +101,7 @@ describe('TelemetryStore', () => {
 
   it('derives cursorless navigation from the returned by-user row count', async () => {
     const gateway = createGateway()
-    gateway.byUser = vi.fn(async () =>
+    gateway.byUser = jest.fn(async () =>
       ok([
         {
           sessionId: 'session-1',

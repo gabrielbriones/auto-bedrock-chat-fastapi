@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from '@jest/globals'
 
 import { isErr, isOk } from '@/shared/kernel/result'
 import { HttpClient } from '@/shared/http/http-client'
@@ -68,17 +68,24 @@ describe('loadBootstrap', () => {
 })
 
 describe('chatBase', () => {
+  // `import.meta.env` is rewritten to `process.env` under Jest (see jest/swc-transformer.mjs).
+  const original = process.env.VITE_CHAT_BASE
+
   afterEach(() => {
-    vi.unstubAllEnvs()
+    if (original === undefined) {
+      delete process.env.VITE_CHAT_BASE
+    } else {
+      process.env.VITE_CHAT_BASE = original
+    }
   })
 
   it('defaults to /bedrock-chat when VITE_CHAT_BASE is unset', () => {
-    vi.stubEnv('VITE_CHAT_BASE', '')
+    process.env.VITE_CHAT_BASE = ''
     expect(chatBase()).toBe('/bedrock-chat')
   })
 
   it('uses VITE_CHAT_BASE when it is set', () => {
-    vi.stubEnv('VITE_CHAT_BASE', '/custom-chat')
+    process.env.VITE_CHAT_BASE = '/custom-chat'
     expect(chatBase()).toBe('/custom-chat')
   })
 })

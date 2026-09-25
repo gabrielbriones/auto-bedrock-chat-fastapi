@@ -19,7 +19,7 @@ export function AccessDeniedState({ onRetry }: AccessDeniedStateProps) {
           <Button type="button" variant="outline" onClick={onRetry}>
             {IAM_COPY.accessDenied.retry}
           </Button>
-          <Button render={<Link to="/" />}>{IAM_COPY.accessDenied.backToChat}</Button>
+          <Button render={<Link to="/ui" />}>{IAM_COPY.accessDenied.backToChat}</Button>
         </div>
       </div>
     </main>

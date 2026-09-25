@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { FakeChatSocket } from './fake-chat-socket'
 
@@ -11,9 +11,9 @@ describe('FakeChatSocket', () => {
       { type: 'unknown-type' },
       { type: 'abrupt-close' },
     ])
-    const onopen = vi.fn()
-    const onmessage = vi.fn()
-    const onclose = vi.fn()
+    const onopen = jest.fn()
+    const onmessage = jest.fn()
+    const onclose = jest.fn()
     socket.onopen = onopen
     socket.onmessage = onmessage
     socket.onclose = onclose
@@ -34,7 +34,7 @@ describe('FakeChatSocket', () => {
 
   it('closes and throws while sending when its close-during-send fault is played', () => {
     const socket = new FakeChatSocket([{ type: 'close-during-send' }])
-    const onclose = vi.fn()
+    const onclose = jest.fn()
     socket.onclose = onclose
     socket.play()
 
@@ -48,13 +48,13 @@ describe('FakeChatSocket', () => {
       { type: 'open' },
       { type: 'frame', data: '{"type":"pong"}' },
     ])
-    const onopen = vi.fn()
-    const onmessage = vi.fn()
+    const onopen = jest.fn()
+    const onmessage = jest.fn()
     socket.onopen = onopen
     socket.onmessage = onmessage
 
     expect(socket.playNext()).toBe(true)
-    expect(onopen).toHaveBeenCalledOnce()
+    expect(onopen).toHaveBeenCalledTimes(1)
     expect(onmessage).not.toHaveBeenCalled()
 
     expect(socket.playNext()).toBe(true)

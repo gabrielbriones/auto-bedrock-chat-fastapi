@@ -43,7 +43,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       title={SHELL.notFound.title}
       description={SHELL.notFound.description}
       action={
-        <Link to="/" className="text-sm underline underline-offset-4">
+        <Link to="/ui" className="text-sm underline underline-offset-4">
           {SHELL.notFound.action}
         </Link>
       }

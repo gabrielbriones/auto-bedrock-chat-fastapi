@@ -38,7 +38,7 @@ function AdminDashboardLink() {
   }, [capabilityProbe])
 
   return visible ? (
-    <Link to="/admin" className={buttonVariants({ variant: 'ghost' })}>
+    <Link to="/dashboard" className={buttonVariants({ variant: 'ghost' })}>
       <LayoutDashboardIcon aria-hidden />
       {SHELL.admin.openDashboard}
     </Link>

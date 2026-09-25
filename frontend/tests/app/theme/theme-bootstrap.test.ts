@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-// Vite's `?raw` import, so the assertion runs against the document the build actually ships.
+import { describe, expect, it } from '@jest/globals'
+// Vite's `?raw` import (served under Jest by jest/raw-transformer.mjs), so the assertion runs
+// against the document the build actually ships.
 import indexHtml from '../../../index.html?raw'
 
 import {

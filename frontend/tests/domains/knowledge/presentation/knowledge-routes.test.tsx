@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it, jest } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
 import { createAppRouter } from '@/app/router'
@@ -79,14 +79,14 @@ const renderAt = (
     readonly confirmAnswers?: readonly ScriptedAnswer[]
   } = {},
 ) => {
-  const list = vi.fn().mockResolvedValue(ok(options.page ?? response))
+  const list = jest.fn().mockResolvedValue(ok(options.page ?? response))
   const gateway = {
     list,
-    get: vi.fn().mockResolvedValue(ok(anOpenedDocument())),
-    patch: vi.fn().mockResolvedValue(ok(anOpenedDocument())),
-    remove: vi.fn().mockResolvedValue(ok(undefined)),
-    resetCredibility: vi.fn().mockResolvedValue(ok(anOpenedDocument())),
-    rollback: vi
+    get: jest.fn().mockResolvedValue(ok(anOpenedDocument())),
+    patch: jest.fn().mockResolvedValue(ok(anOpenedDocument())),
+    remove: jest.fn().mockResolvedValue(ok(undefined)),
+    resetCredibility: jest.fn().mockResolvedValue(ok(anOpenedDocument())),
+    rollback: jest
       .fn()
       .mockResolvedValue(ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult)),
     ...options.gateway,
@@ -109,7 +109,7 @@ const renderAt = (
   return { router, list, dom, gateway, confirmations, notifications }
 }
 
-const lastQuery = (list: ReturnType<typeof vi.fn>): KbQuery | undefined =>
+const lastQuery = (list: ReturnType<typeof jest.fn>): KbQuery | undefined =>
   list.mock.calls.at(-1)?.[0] as KbQuery | undefined
 
 const routeSearch = (router: ReturnType<typeof createAppRouter>): Record<string, unknown> =>
@@ -227,7 +227,7 @@ describe('knowledge editor drawer', () => {
 
   it('warns before saving a content change and lets the user cancel', async () => {
     const user = userEvent.setup()
-    const patch = vi.fn().mockResolvedValue(ok(anOpenedDocument()))
+    const patch = jest.fn().mockResolvedValue(ok(anOpenedDocument()))
     renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch }, confirmAnswers: [false] })
 
     const dialog = await openRow(user)
@@ -241,7 +241,7 @@ describe('knowledge editor drawer', () => {
 
   it('saves a content change once the re-embed warning is confirmed', async () => {
     const user = userEvent.setup()
-    const patch = vi.fn().mockResolvedValue(ok(anOpenedDocument({ content: 'Updated content body' })))
+    const patch = jest.fn().mockResolvedValue(ok(anOpenedDocument({ content: 'Updated content body' })))
     renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch }, confirmAnswers: [true] })
 
     const dialog = await openRow(user)
@@ -255,7 +255,7 @@ describe('knowledge editor drawer', () => {
 
   it('blocks saving invalid metadata JSON without calling the gateway', async () => {
     const user = userEvent.setup()
-    const patch = vi.fn()
+    const patch = jest.fn()
     renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch } })
 
     const dialog = await openRow(user)
@@ -304,7 +304,7 @@ describe('knowledge editor drawer', () => {
 
   it('restores the credibility score without a confirmation prompt', async () => {
     const user = userEvent.setup()
-    const resetCredibility = vi.fn().mockResolvedValue(ok(anOpenedDocument({ credibility: createCredibility(1, false) })))
+    const resetCredibility = jest.fn().mockResolvedValue(ok(anOpenedDocument({ credibility: createCredibility(1, false) })))
     const { confirmations, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { resetCredibility } })
 
     const dialog = await openRow(user)
@@ -317,7 +317,7 @@ describe('knowledge editor drawer', () => {
 
   it('rolls back the document after confirmation and closes the drawer', async () => {
     const user = userEvent.setup()
-    const rollback = vi
+    const rollback = jest
       .fn()
       .mockResolvedValue(ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult))
     const { router, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { rollback }, confirmAnswers: [true] })
@@ -333,7 +333,7 @@ describe('knowledge editor drawer', () => {
 
   it('deletes the document after confirmation, closes the drawer, and clears the doc param', async () => {
     const user = userEvent.setup()
-    const remove = vi.fn().mockResolvedValue(ok(undefined))
+    const remove = jest.fn().mockResolvedValue(ok(undefined))
     const { router, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { remove }, confirmAnswers: [true] })
 
     const dialog = await openRow(user)

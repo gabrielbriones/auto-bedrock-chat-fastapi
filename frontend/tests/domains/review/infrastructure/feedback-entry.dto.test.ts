@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@jest/globals'
 
 import { isErr, isOk } from '@/shared/kernel/result'
 import { toFeedbackEntry } from '@/domains/review/infrastructure/dto/feedback-entry.dto'
@@ -8,7 +8,7 @@ import {
 } from '@/domains/review/infrastructure/dto/review-decision.dto'
 import { noFilters } from '@/domains/review/domain/public'
 
-import entryFixture from '../../../msw/fixtures/review/feedback-entry.json'
+import entryFixture from '../../../msw/fixtures/review/feedback-entry.json' with { type: 'json' }
 
 const wireEntry = (overrides: Record<string, unknown> = {}) => ({ ...entryFixture, ...overrides })
 

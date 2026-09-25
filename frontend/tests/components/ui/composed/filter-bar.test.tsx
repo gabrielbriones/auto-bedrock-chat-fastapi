@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -31,7 +31,7 @@ describe('FilterBar', () => {
   })
 
   it('offers a reset only when one is wired', async () => {
-    const onReset = vi.fn()
+    const onReset = jest.fn()
     const user = userEvent.setup()
     render(
       <FilterBar onReset={onReset}>
@@ -56,7 +56,7 @@ describe('FilterBar', () => {
 
 describe('DebouncedFilterInput', () => {
   it('commits once after typing settles, not per keystroke', async () => {
-    const onCommit = vi.fn()
+    const onCommit = jest.fn()
     const user = userEvent.setup()
 
     render(<DebouncedFilterInput id="tags" value="" onCommit={onCommit} delayMs={20} />)
@@ -70,7 +70,7 @@ describe('DebouncedFilterInput', () => {
   })
 
   it('does not re-commit a value that already matches the applied one', async () => {
-    const onCommit = vi.fn()
+    const onCommit = jest.fn()
 
     render(<DebouncedFilterInput id="tags" value="emon" onCommit={onCommit} delayMs={5} />)
 

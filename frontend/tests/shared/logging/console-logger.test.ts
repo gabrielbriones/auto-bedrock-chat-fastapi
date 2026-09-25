@@ -1,17 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { ConsoleLogger } from '@/shared/logging/console-logger';
 
 describe('ConsoleLogger', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    jest.restoreAllMocks();
   });
 
   it('delegates each level to the matching console method', () => {
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const debug = jest.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const logger = new ConsoleLogger();
     logger.debug('debug message');
@@ -26,7 +26,7 @@ describe('ConsoleLogger', () => {
   });
 
   it('omits the context argument entirely when none is given', () => {
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
 
     new ConsoleLogger().info('no context');
 

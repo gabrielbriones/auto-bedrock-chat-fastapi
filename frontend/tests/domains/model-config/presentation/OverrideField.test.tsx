@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, jest } from '@jest/globals'
 
 import { buildModelCatalog } from '@/domains/model-config/domain/model-catalog'
 import { overrideFieldFor } from '@/domains/model-config/domain/override-field'
@@ -14,7 +14,7 @@ const catalog = buildModelCatalog(
 
 describe('OverrideField', () => {
   it('commits a switch field immediately on toggle (no intermediate state to buffer)', async () => {
-    const onCommit = vi.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
 
     render(
@@ -27,7 +27,7 @@ describe('OverrideField', () => {
   })
 
   it('commits a number field on blur, not on every keystroke (FR-CFG-012)', async () => {
-    const onCommit = vi.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
 
     render(
@@ -44,7 +44,7 @@ describe('OverrideField', () => {
   })
 
   it('ignores a blur with an unparseable number', async () => {
-    const onCommit = vi.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
 
     render(
@@ -59,7 +59,7 @@ describe('OverrideField', () => {
   })
 
   it('renders a model picker for the model_id field and commits on selection', async () => {
-    const onCommit = vi.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
 
     render(
@@ -75,7 +75,7 @@ describe('OverrideField', () => {
   })
 
   it('commits a slider field on keyboard interaction (FR-CFG-012)', async () => {
-    const onCommit = vi.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
 
     render(
@@ -91,7 +91,7 @@ describe('OverrideField', () => {
 
   it('marks an overridden field distinctly from the label text', () => {
     const { container } = render(
-      <OverrideField field={overrideFieldFor('enable_rag')} value={true} overridden catalog={catalog} onCommit={vi.fn()} />,
+      <OverrideField field={overrideFieldFor('enable_rag')} value={true} overridden catalog={catalog} onCommit={jest.fn()} />,
     )
 
     expect(container.querySelector('[data-slot="override-marker"]')).not.toBeNull()

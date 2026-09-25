@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
-import { axe } from 'vitest-axe'
+import { describe, expect, it } from '@jest/globals'
+import { axe } from 'jest-axe'
 
 import { ConnectionBadge } from '@/domains/messaging/presentation/ConnectionBadge'
 
