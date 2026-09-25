@@ -585,6 +585,71 @@ def test_patch_web_source_delete_failure_marks_run_failed_not_stuck_running():
         assert second.status_code == 202
 
 
+def test_patch_web_source_partial_delete_failure_preserves_removed_counts(caplog):
+    """If the delete phase fails partway through a multi-document source,
+    the audit record must reflect however many documents were actually
+    removed before the failure, not 0 -- the tuple-unpack in the caller
+    never completes when the helper raises mid-loop."""
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/page-1", source="docs", content="stale 1")
+    kb_store.add_document(doc_id="docs/page-2", source="docs", content="stale 2")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    real_delete = kb_store.delete_document
+    calls = {"n": 0}
+
+    def _delete_then_fail(doc_id):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("simulated store failure mid-batch")
+        return real_delete(doc_id)
+
+    kb_store.delete_document = _delete_then_fail
+
+    with caplog.at_level(logging.INFO, logger="bedrock.audit"):
+        with TestClient(app) as client:
+            resp = client.patch(
+                "/bedrock-chat/admin/kb/sources/web/docs",
+                json={"urls": ["https://example.com/"]},
+            )
+            assert resp.status_code == 202
+            final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "failed"
+
+    complete_records = [
+        r
+        for r in caplog.records
+        if getattr(r, "action", None) == "kb.source.override" and getattr(r, "phase", None) == "complete"
+    ]
+    assert len(complete_records) == 1
+    assert complete_records[0].documents_removed == 1
+
+
+def test_patch_web_source_name_with_slash_routes_correctly():
+    """Source names may legitimately contain `/` (POST accepts any string
+    and persists it verbatim); the PATCH path param must use the `:path`
+    converter -- like the existing `{doc_id:path}` document routes -- or
+    such a name 404s instead of being overridable."""
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="team/docs/old-page", source="team/docs", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.patch(
+            "/bedrock-chat/admin/kb/sources/web/team/docs",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert "team/docs/old-page" not in kb_store.documents
+    assert kb_store.documents
+
+
 def test_patch_file_source_clears_old_documents_before_reingesting():
     kb_store = _FakeKBStore()
     kb_store.add_document(doc_id="uploads/old.txt", source="uploads", content="stale content")

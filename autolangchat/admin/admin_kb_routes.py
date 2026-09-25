@@ -448,9 +448,10 @@ async def _run_file_source_ingestion(
         )
 
 
-#: Async ``(name: str) -> (documents_deleted, chunks_deleted, found_any)``,
-#: bound to a live ``kb_store``/lock registry by ``register_admin_kb_routes``.
-DeleteBySourceFn = Callable[[str], Any]
+#: Async ``(name: str, running_counts: Optional[List[int]] = None) ->
+#: (documents_deleted, chunks_deleted, found_any)``, bound to a live
+#: ``kb_store``/lock registry by ``register_admin_kb_routes``.
+DeleteBySourceFn = Callable[..., Any]
 
 
 async def _run_web_source_override(
@@ -476,8 +477,9 @@ async def _run_web_source_override(
 
     documents_removed = 0
     chunks_removed = 0
+    removed_counts = [0, 0]
     try:
-        documents_removed, chunks_removed, _ = await delete_fn(name)
+        documents_removed, chunks_removed, _ = await delete_fn(name, removed_counts)
         result = await ingest_web_source(
             vector_db=kb_store,
             bedrock_client=embedding_client,
@@ -507,6 +509,7 @@ async def _run_web_source_override(
             chunks_removed,
         )
     except Exception as exc:  # pragma: no cover — defensive outer catch
+        documents_removed, chunks_removed = removed_counts[0], removed_counts[1]
         logger.exception("KB web source override failed for run %s: %s", run_id, exc)
         state._mark_failed(str(exc))
     finally:
@@ -551,8 +554,9 @@ async def _run_file_source_override(
 
     documents_removed = 0
     chunks_removed = 0
+    removed_counts = [0, 0]
     try:
-        documents_removed, chunks_removed, _ = await delete_fn(source_name)
+        documents_removed, chunks_removed, _ = await delete_fn(source_name, removed_counts)
         result = await ingest_uploaded_files(
             vector_db=kb_store,
             bedrock_client=embedding_client,
@@ -575,6 +579,7 @@ async def _run_file_source_override(
             chunks_removed,
         )
     except Exception as exc:  # pragma: no cover — defensive outer catch
+        documents_removed, chunks_removed = removed_counts[0], removed_counts[1]
         logger.exception("KB file source override failed for run %s: %s", run_id, exc)
         state._mark_failed(str(exc))
     finally:
@@ -1206,7 +1211,7 @@ def register_admin_kb_routes(
         return _source_state.status
 
     @sources_router.patch(
-        "/web/{name}",
+        "/web/{name:path}",
         response_model=KBSourceStatus,
         status_code=202,
         responses={
@@ -1277,7 +1282,7 @@ def register_admin_kb_routes(
         return _source_state.status
 
     @sources_router.patch(
-        "/file/{name}",
+        "/file/{name:path}",
         response_model=KBSourceStatus,
         status_code=202,
         responses={
@@ -1418,7 +1423,10 @@ def register_admin_kb_routes(
             if row.get("source") and row["source"].strip()
         ]
 
-    async def _delete_documents_for_source(name: str) -> Tuple[int, int, bool]:
+    async def _delete_documents_for_source(
+        name: str,
+        running_counts: Optional[List[int]] = None,
+    ) -> Tuple[int, int, bool]:
         """Hard-delete every document (and its chunks) whose ``source``
         equals ``name`` exactly. Type-agnostic — shared by the bulk
         ``DELETE`` route and the ``PATCH`` override flow, regardless of
@@ -1427,6 +1435,13 @@ def register_admin_kb_routes(
         Returns ``(documents_deleted, chunks_deleted, found_any)``. A
         caller that wants a no-op when nothing matches (e.g. ``PATCH`` on
         a not-yet-ingested source) just ignores ``found_any``.
+
+        ``running_counts``, if given, is a mutable ``[documents_deleted,
+        chunks_deleted]`` pair updated after every successful per-document
+        delete — lets a caller recover partial progress if this raises
+        partway through (e.g. a transient store error mid-batch) instead
+        of losing the count entirely, since the tuple return is never
+        reached in that case.
         """
         filters = KBDocumentListFilters(source=name)
 
@@ -1460,6 +1475,9 @@ def register_admin_kb_routes(
                         continue
                     chunks_deleted += await asyncio.to_thread(kb_store.delete_document, doc_id)
                     documents_deleted += 1
+                    if running_counts is not None:
+                        running_counts[0] = documents_deleted
+                        running_counts[1] = chunks_deleted
 
         return documents_deleted, chunks_deleted, found_any
 
