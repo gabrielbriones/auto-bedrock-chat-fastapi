@@ -1078,6 +1078,15 @@
         var excludeInp = el('input', 'form-input'); excludeInp.type = 'text'; excludeInp.id = 'kbsrc-web-exclude-patterns';
         excludeRow.appendChild(excludeInp); sec.appendChild(excludeRow);
 
+        var ingestLinkedRow = el('div', 'form-row');
+        var ingestLinkedLabel = el('label', 'filter-checkbox-label'); ingestLinkedLabel.htmlFor = 'kbsrc-web-ingest-linked-files';
+        var ingestLinkedCb = el('input'); ingestLinkedCb.type = 'checkbox'; ingestLinkedCb.id = 'kbsrc-web-ingest-linked-files';
+        ingestLinkedLabel.appendChild(ingestLinkedCb);
+        ingestLinkedLabel.appendChild(document.createTextNode(' Ingest linked PDF files'));
+        ingestLinkedRow.appendChild(ingestLinkedLabel);
+        ingestLinkedRow.appendChild(el('div', 'form-hint', 'Download and index PDFs discovered via links on crawled pages, in addition to HTML pages.'));
+        sec.appendChild(ingestLinkedRow);
+
         // Advanced/optional auth fields — collapsed by default since they
         // carry sensitive values (bearer tokens, session cookies).
         var details = document.createElement('details');
@@ -1135,6 +1144,7 @@
             if (pagesInp.value !== '') body.max_pages = parseInt(pagesInp.value, 10);
             var allowedDomains = splitListInput(domainsInp.value); if (allowedDomains) body.allowed_domains = allowedDomains;
             var excludePatterns = splitListInput(excludeInp.value); if (excludePatterns) body.exclude_patterns = excludePatterns;
+            if (ingestLinkedCb.checked) body.ingest_linked_files = true;
 
             if (headersTa.value.trim()) {
                 try { body.headers = JSON.parse(headersTa.value); }

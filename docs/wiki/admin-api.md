@@ -335,22 +335,24 @@ kb_source_run_already_in_progress`. This is intentional: admins can
   "max_pages": 100,
   "allowed_domains": ["example.com"],
   "exclude_patterns": ["/de/", "/es/"],
+  "ingest_linked_files": false,
   "headers": { "Authorization": "Bearer ..." },
   "cookies": { "session_id": "..." }
 }
 ```
 
-| Field              | Required | Notes                                                                                                        |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `name`             | yes      | Used as the KB document `source`.                                                                            |
-| `urls`             | yes      | One or more start URLs; must be non-empty.                                                                   |
-| `topic`            | no       | Attached to every indexed document.                                                                          |
-| `max_depth`        | no       | Default `2`.                                                                                                 |
-| `max_pages`        | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                       |
-| `allowed_domains`  | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites. |
-| `exclude_patterns` | no       | URL substrings/paths to skip (e.g. translated pages).                                                        |
-| `headers`          | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.     |
-| `cookies`          | no       | Cookies sent with every crawl request (e.g. a session cookie).                                               |
+| Field                 | Required | Notes                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                | yes      | Used as the KB document `source`.                                                                                                                                                                                                                                                                                           |
+| `urls`                | yes      | One or more start URLs; must be non-empty.                                                                                                                                                                                                                                                                                  |
+| `topic`               | no       | Attached to every indexed document.                                                                                                                                                                                                                                                                                         |
+| `max_depth`           | no       | Default `2`.                                                                                                                                                                                                                                                                                                                |
+| `max_pages`           | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                                                                                                                                                                                                                                      |
+| `allowed_domains`     | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites.                                                                                                                                                                                                                |
+| `exclude_patterns`    | no       | URL substrings/paths to skip (e.g. translated pages).                                                                                                                                                                                                                                                                       |
+| `ingest_linked_files` | no       | Default `false`. When `true`, linked PDFs discovered during the crawl are downloaded, text-extracted, and indexed as their own documents instead of being silently skipped; still subject to `max_pages`/`allowed_domains`/`exclude_patterns` and a per-file size cap. Other non-HTML formats are still skipped regardless. |
+| `headers`             | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.                                                                                                                                                                                                                    |
+| `cookies`             | no       | Cookies sent with every crawl request (e.g. a session cookie).                                                                                                                                                                                                                                                              |
 
 `headers`/`cookies` are never echoed back in the status response or audit log.
 

@@ -132,6 +132,7 @@ async def ingest_web_source(
     allowed_domains: Optional[List[str]] = None,
     exclude_patterns: Optional[List[str]] = None,
     max_pages: int = 100,
+    ingest_linked_files: bool = False,
     extra_headers: Optional[Dict[str, str]] = None,
     cookies: Optional[Dict[str, str]] = None,
     shared_visited_urls: Optional[Set[str]] = None,
@@ -148,6 +149,9 @@ async def ingest_web_source(
     receives ``("pages_crawled", 1)`` as pages are fetched (the crawl phase
     can take a while before any indexing/``"pages_processed"`` progress is
     reported) in addition to the indexing-phase metrics below.
+    ``ingest_linked_files`` opts into downloading/indexing linked non-HTML
+    files (currently PDF only) discovered during the crawl; disabled by
+    default, matching today's silent-skip behavior.
 
     Returns ``{"documents": int, "chunks": int, "errors": List[str]}`` for
     this source. A page failing to fetch (bad status, timeout, connection
@@ -172,6 +176,7 @@ async def ingest_web_source(
             allowed_domains=allowed_domains,
             exclude_patterns=exclude_patterns,
             max_pages=max_pages,
+            ingest_linked_files=ingest_linked_files,
         )
         documents.extend(crawled_docs)
         logger.info(f"      Crawled {len(crawled_docs)} page(s)")

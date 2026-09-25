@@ -1290,3 +1290,324 @@ def test_file_source_closes_each_upload_after_reading(monkeypatch):
         _wait_until_not_running(client)
 
     assert "a.txt" in close_calls
+
+
+# ---------------------------------------------------------------------------
+# ingest_linked_files: optional linked-PDF ingestion during a web crawl
+# (XMGPLAT-11400)
+# ---------------------------------------------------------------------------
+
+
+class _FakeFileContent:
+    """Minimal aiohttp StreamReader stand-in supporting iter_chunked()."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    async def iter_chunked(self, chunk_size):
+        for i in range(0, len(self._data), chunk_size):
+            yield self._data[i : i + chunk_size]
+
+
+class _FakeFileResponse:
+    """Minimal aiohttp response stand-in for a non-HTML linked file (e.g. a PDF)."""
+
+    def __init__(self, data: bytes, content_type: str = "application/pdf", content_length=None, status: int = 200):
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+        if content_length is not None:
+            self.headers["Content-Length"] = str(content_length)
+        self.content = _FakeFileContent(data)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _PageWithLinkedFileSession:
+    """Serves an HTML root page (linking to one file) plus a configurable
+    response for that file's own URL."""
+
+    def __init__(self, root_html: str, file_url_substr: str, file_response):
+        self._root_html = root_html
+        self._file_url_substr = file_url_substr
+        self._file_response = file_response
+
+    def get(self, url, **kwargs):
+        if self._file_url_substr in url:
+            return self._file_response
+        return _FakeHTMLResponse(self._root_html)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def test_is_supported_linked_file_matches_content_type_or_extension():
+    crawler = ContentCrawler()
+    assert crawler._is_supported_linked_file("https://example.com/guide.pdf", "application/octet-stream")
+    assert crawler._is_supported_linked_file("https://example.com/guide", "application/pdf")
+    assert not crawler._is_supported_linked_file("https://example.com/guide.zip", "application/zip")
+
+
+def test_trigger_web_source_skips_linked_pdf_by_default():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", _FakeFileResponse(pdf_bytes))
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=session):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["pages_processed"] == 1
+    assert not any(doc_id.endswith("guide.pdf") for doc_id in kb_store.documents)
+
+
+def test_trigger_web_source_ingests_linked_pdf_when_flag_enabled():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", _FakeFileResponse(pdf_bytes))
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=session):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"], "ingest_linked_files": True},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["pages_processed"] == 2
+    assert any(doc_id.endswith("guide.pdf") for doc_id in kb_store.documents)
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_detected_via_url_extension_when_content_type_is_generic():
+    """A server that mislabels a .pdf link with a generic Content-Type must
+    still be detected, via the URL's own .pdf extension."""
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    response = _FakeFileResponse(pdf_bytes, content_type="application/octet-stream")
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 2
+    pdf_doc = next(d for d in docs if d["url"].endswith("guide.pdf"))
+    assert pdf_doc["title"] == "guide.pdf"
+
+
+@pytest.mark.asyncio
+async def test_linked_unsupported_format_still_skipped_when_enabled():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/archive.zip">zip</a></body></html>'
+    zip_response = _FakeFileResponse(b"PK\x03\x04fake", content_type="application/zip")
+    session = _PageWithLinkedFileSession(root_html, "archive.zip", zip_response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 1
+    assert docs[0]["url"] == "https://example.com/"
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_exceeding_content_length_cap_is_skipped(monkeypatch):
+    monkeypatch.setattr(ContentCrawler, "_MAX_LINKED_FILE_BYTES", 10)
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    oversized_response = _FakeFileResponse(b"x" * 1000, content_length=1000)
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", oversized_response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 1  # only the HTML root -- the oversized file is skipped
+    assert any("too large" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_exceeding_byte_cap_without_content_length_header_is_skipped(monkeypatch):
+    """The chunked-read bound must apply even when the server sends no
+    Content-Length header at all."""
+    monkeypatch.setattr(ContentCrawler, "_MAX_LINKED_FILE_BYTES", 10)
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    response = _FakeFileResponse(b"x" * 1000)
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 1
+    assert any("exceeds" in e and "byte limit" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_extraction_failure_is_skipped_not_fatal():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/bad.pdf">bad</a></body></html>'
+    bad_response = _FakeFileResponse(b"not a real pdf")
+    session = _PageWithLinkedFileSession(root_html, "bad.pdf", bad_response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    # The good HTML root is still indexed; the bad PDF is skipped, not a
+    # fatal crawl failure.
+    assert len(docs) == 1
+    assert docs[0]["url"] == "https://example.com/"
+    assert any("failed to extract linked PDF" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_max_pages_caps_linked_pdf_fetches():
+    root_html = (
+        f"<html><body>{_LONG_TEXT}" + "".join(f'<a href="/doc{i}.pdf">d{i}</a>' for i in range(5)) + "</body></html>"
+    )
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    fetched = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            if url.endswith(".pdf"):
+                return _FakeFileResponse(pdf_bytes)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        docs = await crawler.crawl_url(
+            "https://example.com/", recursive=True, max_depth=1, max_pages=2, ingest_linked_files=True
+        )
+
+    # Root + exactly 1 linked PDF fetched before the cap trips -- not all 5.
+    assert len(fetched) == 2
+    assert len(docs) == 2
+
+
+@pytest.mark.asyncio
+async def test_allowed_domains_excludes_linked_pdf_on_external_domain():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="https://external.example/other.pdf">external pdf</a></body></html>'
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    fetched = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            if "external.example" in url:
+                return _FakeFileResponse(pdf_bytes)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    # The external-domain PDF link is filtered out before ever being
+    # enqueued, same as any other external link -- never even fetched.
+    assert not any("external.example" in u for u in fetched)
+    assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_exclude_patterns_excludes_linked_pdf():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/de/guide.pdf">german pdf</a></body></html>'
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    fetched = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            if url.endswith(".pdf"):
+                return _FakeFileResponse(pdf_bytes)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        docs = await crawler.crawl_url(
+            "https://example.com/",
+            recursive=True,
+            max_depth=1,
+            exclude_patterns=["/de/"],
+            ingest_linked_files=True,
+        )
+
+    assert not any(u.endswith(".pdf") for u in fetched)
+    assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_detected_via_original_url_extension_after_redirect():
+    """A linked .pdf URL that redirects to an extensionless URL served with a
+    generic Content-Type must still be detected as a PDF, using the original
+    (pre-redirect) URL as an extension hint."""
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+
+    class _RedirectResponse:
+        def __init__(self):
+            self.status = 302
+            self.headers = {"Location": "https://example.com/downloads/final-blob"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _RedirectThenFileSession:
+        def __init__(self):
+            self._calls = 0
+
+        def get(self, url, **kwargs):
+            self._calls += 1
+            if self._calls == 1:
+                return _RedirectResponse()
+            return _FakeFileResponse(pdf_bytes, content_type="application/octet-stream")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=_RedirectThenFileSession()):
+        doc = await crawler._fetch_and_parse("https://example.com/guide.pdf", "src", None, ingest_linked_files=True)
+
+    assert doc is not None
+    assert doc["url"] == "https://example.com/downloads/final-blob"
