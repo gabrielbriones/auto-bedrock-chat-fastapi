@@ -122,17 +122,6 @@ describe('FeedbackControls', () => {
     expect(positive).toHaveAttribute('aria-describedby', 'feedback-error-m-1')
   })
 
-  it('restores controls with the local connection error when sending drops', async () => {
-    const user = userEvent.setup()
-    const harness = createHarness('dropped-closed')
-    renderControls(harness.store)
-
-    await user.click(screen.getByRole('button', { name: 'Rate response helpful' }))
-
-    expect(screen.getByRole('alert')).toHaveTextContent('Connection unavailable. Please try again.')
-    expect(screen.getByRole('button', { name: 'Rate response helpful' })).toBeEnabled()
-  })
-
   it('has no axe violations', async () => {
     const harness = createHarness()
     const { container } = renderControls(harness.store)

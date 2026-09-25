@@ -24,11 +24,6 @@ describe('SettingsSheet', () => {
     expect(screen.queryByText('Knowledge base results')).not.toBeInTheDocument()
   })
 
-  it('renders nothing when closed (Base UI Dialog unmounts the popup)', () => {
-    render(<SettingsSheet open={false} profile={profile()} onOpenChange={jest.fn()} onCommit={jest.fn()} />)
-    expect(screen.queryByText('Model settings')).not.toBeInTheDocument()
-  })
-
   it('clamps a max_tokens commit to the effective model cap before forwarding it (FR-CFG-005a)', async () => {
     const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()

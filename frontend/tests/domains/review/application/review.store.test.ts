@@ -197,22 +197,38 @@ describe('ReviewStore save', () => {
     expect(list).toHaveBeenCalledTimes(2)
     expect(notifications.messages()).toContain('Review saved.')
   })
+})
 
-  it('refuses a decision change while a synthesis mutation is pending', async () => {
-    const synthesize = jest.fn(() => new Promise<Result<SynthesisOutcome, Problem>>(() => {}))
-    const saveDecision = jest.fn()
-    const gateway = gatewayWith({ synthesize, saveDecision, get: jest.fn().mockResolvedValue(ok(anEntry())) })
+describe('ReviewStore pending synthesis guard', () => {
+  it.each<[string, 'saveDecision' | 'synthesize' | 'rollback', (store: ReviewStore) => Promise<boolean>]>([
+    [
+      'a decision change',
+      'saveDecision',
+      (store) => store.saveDecision(feedbackEntryId('id-1'), { decision: 'approved', tags: [], comment: null }),
+    ],
+    ['a second synthesis', 'synthesize', (store) => store.synthesize(feedbackEntryId('id-1'))],
+    ['a rollback', 'rollback', (store) => store.rollback(kbDocumentId('kb-1'))],
+  ])('refuses %s while a synthesis mutation is pending', async (_label, method, attempt) => {
+    let resolveSynthesize!: (value: Result<SynthesisOutcome, Problem>) => void
+    const synthesize = jest.fn(
+      () => new Promise<Result<SynthesisOutcome, Problem>>((res) => { resolveSynthesize = res }),
+    )
+    const blocked = jest.fn()
+    const gateway = gatewayWith({
+      synthesize,
+      get: jest.fn().mockResolvedValue(ok(anEntry())),
+      ...(method === 'synthesize' ? {} : { [method]: blocked }),
+    })
     const { store } = createStore(gateway)
 
-    void store.synthesize(feedbackEntryId('id-1'))
-    const saved = await store.saveDecision(feedbackEntryId('id-1'), {
-      decision: 'approved',
-      tags: [],
-      comment: null,
-    })
+    const pendingSynthesize = store.synthesize(feedbackEntryId('id-1'))
 
-    expect(saved).toBe(false)
-    expect(saveDecision).not.toHaveBeenCalled()
+    expect(await attempt(store)).toBe(false)
+    expect(synthesize).toHaveBeenCalledTimes(1)
+    expect(blocked).not.toHaveBeenCalled()
+
+    resolveSynthesize(ok({ tag: 'emon', action: 'created', kbDocumentId: null, markedEntryIds: [] }))
+    await pendingSynthesize
   })
 })
 
@@ -267,24 +283,6 @@ describe('ReviewStore synthesize', () => {
     expect(result).toBe(false)
     expect(store.getSnapshot().synthesisPending).toBe(false)
     expect(store.getSnapshot().synthesisProblem).toEqual({ kind: 'synthesize', problem })
-  })
-
-  it('ignores a concurrent call while one is already pending', async () => {
-    let resolve!: (value: Result<SynthesisOutcome, Problem>) => void
-    const synthesize = jest.fn(
-      () => new Promise<Result<SynthesisOutcome, Problem>>((res) => { resolve = res }),
-    )
-    const gateway = gatewayWith({ synthesize, get: jest.fn().mockResolvedValue(ok(anEntry())) })
-    const { store } = createStore(gateway)
-
-    const first = store.synthesize(feedbackEntryId('id-1'))
-    const second = await store.synthesize(feedbackEntryId('id-1'))
-
-    expect(second).toBe(false)
-    expect(synthesize).toHaveBeenCalledTimes(1)
-
-    resolve(ok({ tag: 'emon', action: 'created', kbDocumentId: null, markedEntryIds: [] }))
-    await first
   })
 
   it('skips revalidation when the drawer moved on while the trigger was in flight', async () => {
@@ -342,20 +340,13 @@ describe('ReviewStore rollback', () => {
     expect(rollback).toHaveBeenCalledWith(kbDocumentId('kb-1'), 'Superseded.')
   })
 
-  it('does nothing when the reason prompt is cancelled', async () => {
+  it.each([
+    ['the reason prompt is cancelled', [null]],
+    ['the blank-reason confirm is declined', ['', false]],
+  ] as const)('does nothing when %s', async (_label, answers) => {
     const rollback = jest.fn()
     const gateway = gatewayWith({ rollback })
-    const confirmations = new ScriptedConfirmationPort([null])
-    const { store } = createStore(gateway, confirmations)
-
-    expect(await store.rollback(kbDocumentId('kb-1'))).toBe(false)
-    expect(rollback).not.toHaveBeenCalled()
-  })
-
-  it('does nothing when the blank-reason confirm is declined', async () => {
-    const rollback = jest.fn()
-    const gateway = gatewayWith({ rollback })
-    const confirmations = new ScriptedConfirmationPort(['', false])
+    const confirmations = new ScriptedConfirmationPort([...answers])
     const { store } = createStore(gateway, confirmations)
 
     expect(await store.rollback(kbDocumentId('kb-1'))).toBe(false)
@@ -372,24 +363,6 @@ describe('ReviewStore rollback', () => {
 
     expect(result).toBe(false)
     expect(store.getSnapshot().synthesisProblem).toEqual({ kind: 'rollback', problem })
-  })
-
-  it('ignores a call while a synthesis mutation is already pending', async () => {
-    let resolveSynthesize!: (value: Result<SynthesisOutcome, Problem>) => void
-    const synthesize = jest.fn(
-      () => new Promise<Result<SynthesisOutcome, Problem>>((res) => { resolveSynthesize = res }),
-    )
-    const rollback = jest.fn()
-    const gateway = gatewayWith({ synthesize, rollback, get: jest.fn().mockResolvedValue(ok(anEntry())) })
-    const { store } = createStore(gateway)
-
-    const pendingSynthesize = store.synthesize(feedbackEntryId('id-1'))
-
-    expect(await store.rollback(kbDocumentId('kb-1'))).toBe(false)
-    expect(rollback).not.toHaveBeenCalled()
-
-    resolveSynthesize(ok({ tag: 'emon', action: 'created', kbDocumentId: null, markedEntryIds: [] }))
-    await pendingSynthesize
   })
 })
 
@@ -428,34 +401,25 @@ describe('ReviewStore stats', () => {
     expect(store.getSnapshot().statsProblem).toEqual(problem)
   })
 
-  it('discards a resolved response once its signal is aborted', async () => {
-    let resolve!: (value: Result<FeedbackStats, Problem>) => void
-    const gateway = gatewayWith({
-      stats: jest.fn(() => new Promise<Result<FeedbackStats, Problem>>((res) => { resolve = res })),
-    })
-    const { store } = createStore(gateway)
-    const controller = new AbortController()
-
-    const load = store.loadStats(controller.signal)
-    controller.abort()
-    resolve(ok(stats))
-    await load
-
-    expect(store.getSnapshot().statsStatus).toBe('loading')
-  })
-
-  it('discards a superseded response that resolves after the newer one', async () => {
+  it('discards a superseded or aborted response that resolves after the newer one', async () => {
     const resolvers: ((value: Result<FeedbackStats, Problem>) => void)[] = []
     const gateway = gatewayWith({
       stats: jest.fn(() => new Promise<Result<FeedbackStats, Problem>>((res) => { resolvers.push(res) })),
     })
     const { store } = createStore(gateway)
 
+    const aborted = new AbortController()
+    const stale = store.loadStats(aborted.signal)
+    aborted.abort()
+    resolvers[0]?.(ok(stats))
+    await stale
+    expect(store.getSnapshot().statsStatus).toBe('loading')
+
     const first = store.loadStats(new AbortController().signal)
     const second = store.loadStats(new AbortController().signal)
-    resolvers[1]?.(ok(stats))
+    resolvers[2]?.(ok(stats))
     await second
-    resolvers[0]?.(ok({ ...stats, total: 999 }))
+    resolvers[1]?.(ok({ ...stats, total: 999 }))
     await first
 
     expect(store.getSnapshot().stats?.total).toBe(stats.total)

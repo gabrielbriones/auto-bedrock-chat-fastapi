@@ -71,25 +71,11 @@ describe('pending-turn recovery', () => {
     const watch = harness.store.getSnapshot().pendingTurn
     expect(watch).toMatchObject({ attempts: PENDING_TURN_MAX_ATTEMPTS, exhausted: true })
     expect(harness.scheduler.running()).toBe(false)
-  })
-
-  it('issues one load per attempt, up to and including the last', () => {
-    const harness = createHarness()
-    startWatching(harness)
-
-    harness.scheduler.advance(PENDING_TURN_MAX_ATTEMPTS)
 
     const loads = harness.gateway.calls.filter(([method]) => method === 'load')
     expect(loads).toHaveLength(PENDING_TURN_MAX_ATTEMPTS)
-  })
-
-  it('does not restart after the reply to its final poll', () => {
-    const harness = createHarness()
-    startWatching(harness)
-    harness.scheduler.advance(PENDING_TURN_MAX_ATTEMPTS)
 
     harness.gateway.emit(stillPending('a'))
-
     expect(harness.scheduler.running()).toBe(false)
     expect(harness.store.getSnapshot().pendingTurn?.attempts).toBe(PENDING_TURN_MAX_ATTEMPTS)
   })

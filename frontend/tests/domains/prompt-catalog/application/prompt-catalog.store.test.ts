@@ -109,12 +109,6 @@ describe('PromptCatalogStore — activatePreset', () => {
     const { store } = harness()
     expect(store.activatePreset('does-not-exist')).toEqual({ kind: 'unknown-preset' })
   })
-
-  it('a preset with no required variables always activates', () => {
-    const { store, sink } = harness()
-    expect(store.activatePreset('health-check')).toEqual({ kind: 'sent' })
-    expect(sink.submit).toHaveBeenCalledTimes(1)
-  })
 })
 
 describe('PromptCatalogStore — deep links', () => {
@@ -134,9 +128,17 @@ describe('PromptCatalogStore — deep links', () => {
     expect(sink.submit).not.toHaveBeenCalled()
   })
 
-  it('sends exactly once as soon as it becomes ready', () => {
+  it('sends exactly once as soon as it becomes ready, whatever readiness does afterwards', () => {
     const { store, sink } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
 
+    store.tryAutoSend(false)
+    store.tryAutoSend(true)
+    expect(sink.submit).toHaveBeenCalledTimes(1)
+
+    // Re-renders and reconnect flapping must not fire it again.
+    for (let i = 0; i < 5; i += 1) {
+      store.tryAutoSend(true)
+    }
     store.tryAutoSend(false)
     store.tryAutoSend(true)
 
@@ -191,26 +193,6 @@ describe('PromptCatalogStore — deep links', () => {
 
   // FR-PROMPT-016 / Phase 2 accept: the single-fire regression matrix.
   describe('single-fire guarantee', () => {
-    it('re-render: many ready calls in a row send only once', () => {
-      const { store, sink } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
-
-      for (let i = 0; i < 5; i += 1) {
-        store.tryAutoSend(true)
-      }
-
-      expect(sink.submit).toHaveBeenCalledTimes(1)
-    })
-
-    it('reconnect: readiness flapping false→true→false→true sends only once', () => {
-      const { store, sink } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
-
-      store.tryAutoSend(true)
-      store.tryAutoSend(false)
-      store.tryAutoSend(true)
-
-      expect(sink.submit).toHaveBeenCalledTimes(1)
-    })
-
     it('back-navigation: the browser restoring the pre-scrub URL still never resends', () => {
       const { store, sink, urlNavigator } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
 

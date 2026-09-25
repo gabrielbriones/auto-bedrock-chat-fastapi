@@ -254,16 +254,6 @@ describe('KnowledgeStore mutations', () => {
     expect(load).toHaveBeenCalledTimes(1)
   })
 
-  it('does not roll back when declined', async () => {
-    const rollback = jest.fn()
-    const { store } = createStore(gatewayWith({ rollback }), new ScriptedConfirmationPort([false]))
-
-    const succeeded = await store.rollback(document.id)
-
-    expect(succeeded).toBe(false)
-    expect(rollback).not.toHaveBeenCalled()
-  })
-
   it('deletes after confirmation and returns the previous offset when the last row is removed', async () => {
     const solo = { ...page, items: [summary], total: 6, offset: 5, limit: 1 }
     const load = jest.fn().mockResolvedValue(ok(solo))
@@ -278,13 +268,16 @@ describe('KnowledgeStore mutations', () => {
     expect(previousOffset).toBe(4)
   })
 
-  it('does not delete when declined', async () => {
-    const remove = jest.fn()
-    const { store } = createStore(gatewayWith({ remove }), new ScriptedConfirmationPort([false]))
+  it.each([
+    ['rollback', false],
+    ['remove', null],
+  ] as const)('does not %s when declined', async (method, declinedResult) => {
+    const mutation = jest.fn()
+    const { store } = createStore(gatewayWith({ [method]: mutation }), new ScriptedConfirmationPort([false]))
 
-    const previousOffset = await store.remove(document.id)
+    const result = await store[method](document.id)
 
-    expect(previousOffset).toBe(null)
-    expect(remove).not.toHaveBeenCalled()
+    expect(result).toBe(declinedResult)
+    expect(mutation).not.toHaveBeenCalled()
   })
 })

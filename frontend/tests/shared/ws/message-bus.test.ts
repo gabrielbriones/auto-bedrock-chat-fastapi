@@ -35,89 +35,70 @@ describe('ServerFrameSchema', () => {
     ).toBe(true)
   })
 
-  it('accepts an ai response without optional knowledge-base metadata', () => {
+  // The variants below are all shapes the backend really emits. Live-backend regression
+  // (2026-08-31): it copies its own per-message metadata (message_id/usage/timestamp) into the
+  // wire metadata verbatim, and any of the nullable fields (`stop_reason`, usage tokens, the KB
+  // `source_url` column) can arrive as null — `.strict()` rejected every real frame until then,
+  // freezing the UI on "AI is typing" forever.
+  it.each([
+    [
+      'without optional knowledge-base metadata',
+      {
+        message_id: 'message-1',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        timestamp: '2026-08-25T12:00:00Z',
+        model_id: 'model-1',
+        model_name: 'Test model',
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+      },
+    ],
+    [
+      'in the real shape observed from a live backend',
+      {
+        message_id: 'ad001382-5c05-40ae-92dd-7d3d321f2154',
+        model_id: 'us.anthropic.claude-sonnet-5',
+        usage: { input_tokens: 6143, output_tokens: 102 },
+        stop_reason: 'end_turn',
+        timestamp: '2026-08-31T14:07:53.902641',
+        model_name: 'Claude Sonnet 5 (US)',
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+        input_tokens: 6143,
+        output_tokens: 102,
+      },
+    ],
+    [
+      'with the nullable fields the backend can emit',
+      {
+        message_id: 'message-1',
+        model_id: 'model-1',
+        model_name: 'Test model',
+        usage: { input_tokens: null, output_tokens: null },
+        stop_reason: null,
+        timestamp: '2026-08-31T14:07:53.902641',
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+        kb_used: true,
+        kb_chunks: 1,
+        kb_sources: [
+          { document_id: 'doc-1', title: 'Doc', source: 'kb', url: null, score: 0.42 },
+        ],
+      },
+    ],
+  ])('accepts an ai response with metadata %s', (_label, metadata) => {
     expect(
       ServerFrameSchema.safeParse({
         type: 'ai_response',
-        timestamp: '2026-08-25T12:00:00Z',
         message_id: 'message-1',
         message: 'response',
         tool_calls: [],
         tool_results: [],
-        metadata: {
-          message_id: 'message-1',
-          usage: { input_tokens: 10, output_tokens: 5 },
-          timestamp: '2026-08-25T12:00:00Z',
-          model_id: 'model-1',
-          model_name: 'Test model',
-          tool_call_rounds: 0,
-          total_tool_calls: 0,
-          preprocessing_applied: false,
-        },
-        conversation_id: 'conversation-1',
-      }).success,
-    ).toBe(true)
-  })
-
-  // Live-backend regression (2026-08-31): the backend copies its own internal per-message
-  // metadata (message_id/usage/timestamp) into the wire metadata verbatim before adding the
-  // contract fields below it — `.strict()` rejected every real ai_response frame until this
-  // was added, freezing the UI on "AI is typing" forever.
-  it('accepts the real ai_response metadata shape observed from a live backend', () => {
-    expect(
-      ServerFrameSchema.safeParse({
-        type: 'ai_response',
-        message_id: 'ad001382-5c05-40ae-92dd-7d3d321f2154',
-        message: 'Hi! I am here and ready to help.',
-        tool_calls: [],
-        tool_results: [],
         timestamp: '2026-08-31T14:07:53.914062',
-        metadata: {
-          message_id: 'ad001382-5c05-40ae-92dd-7d3d321f2154',
-          model_id: 'us.anthropic.claude-sonnet-5',
-          usage: { input_tokens: 6143, output_tokens: 102 },
-          stop_reason: 'end_turn',
-          timestamp: '2026-08-31T14:07:53.902641',
-          model_name: 'Claude Sonnet 5 (US)',
-          tool_call_rounds: 0,
-          total_tool_calls: 0,
-          preprocessing_applied: false,
-          input_tokens: 6143,
-          output_tokens: 102,
-        },
-        conversation_id: '2ac88c82-7433-4e31-9e86-9327678f437e',
-      }).success,
-    ).toBe(true)
-  })
-
-  // Same failure mode as above: every one of these nulls is reachable from the backend
-  // (`response_metadata.get("stopReason")`, `usage_metadata.get(...)`, and the nullable
-  // `source_url` KB column), and any of them would drop the whole answer.
-  it('accepts the nullable metadata fields the backend can emit', () => {
-    expect(
-      ServerFrameSchema.safeParse({
-        type: 'ai_response',
-        message_id: 'message-1',
-        message: 'answer from the knowledge base',
-        tool_calls: [],
-        tool_results: [],
-        timestamp: '2026-08-31T14:07:53.914062',
-        metadata: {
-          message_id: 'message-1',
-          model_id: 'model-1',
-          model_name: 'Test model',
-          usage: { input_tokens: null, output_tokens: null },
-          stop_reason: null,
-          timestamp: '2026-08-31T14:07:53.902641',
-          tool_call_rounds: 0,
-          total_tool_calls: 0,
-          preprocessing_applied: false,
-          kb_used: true,
-          kb_chunks: 1,
-          kb_sources: [
-            { document_id: 'doc-1', title: 'Doc', source: 'kb', url: null, score: 0.42 },
-          ],
-        },
+        metadata,
         conversation_id: 'conversation-1',
       }).success,
     ).toBe(true)
@@ -196,9 +177,10 @@ describe('ServerFrameSchema', () => {
 })
 
 describe('MessageBus', () => {
-  it('logs and drops malformed, unknown, and schema-invalid frames while later valid frames arrive', () => {
-    const testLogger = logger()
-    const bus = new MessageBus(testLogger)
+  // The per-reason logging is asserted in the dedicated tests below; this one only proves that
+  // a bad frame never poisons delivery of the valid frames that follow it.
+  it('keeps delivering valid frames after malformed, unknown, and schema-invalid ones', () => {
+    const bus = new MessageBus(logger())
     const subscriber = jest.fn()
     bus.subscribe(subscriber)
 
@@ -215,24 +197,6 @@ describe('MessageBus', () => {
       }),
     )
 
-    expect(testLogger.warn).toHaveBeenNthCalledWith(1, 'ws_frame_malformed', {
-      reason: 'invalid-json',
-      sample: '{invalid json',
-    })
-    expect(testLogger.warn).toHaveBeenNthCalledWith(2, 'ws_frame_malformed', {
-      reason: 'non-string',
-      frame: 'Blob',
-    })
-    expect(testLogger.warn).toHaveBeenNthCalledWith(
-      3,
-      'ws_frame_unknown',
-      { type: 'not_in_the_contract' },
-    )
-    expect(testLogger.warn).toHaveBeenNthCalledWith(
-      4,
-      'ws_frame_invalid',
-      expect.objectContaining({ type: 'connection_established' }),
-    )
     expect(subscriber).toHaveBeenCalledExactlyOnceWith({
       type: 'connection_established',
       timestamp: '2026-08-25T12:00:00Z',

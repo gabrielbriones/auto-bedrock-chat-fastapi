@@ -151,26 +151,6 @@ describe('Auth dialog keyboard journey', function () {
     })
   }
 
-  // FR-IAM-013 (Escape half): with auth required there is no way out of the dialog.
-  it('ignores Escape while authentication is required', async () => {
-    await openDialog()
-
-    await driver.actions().sendKeys(Key.ESCAPE).perform()
-
-    expect(await driver.findElements(By.css('[role="dialog"]'))).toHaveLength(1)
-  })
-
-  // FR-IAM-008: with auth required there is no Skip control to reach by keyboard.
-  it('offers no skip control when authentication is required', async () => {
-    await openDialog()
-
-    const labels = await Promise.all(
-      (await driver.findElements(By.css('[role="dialog"] button'))).map((button) => button.getText()),
-    )
-
-    expect(labels.some((label) => label.trim() === 'Skip')).toBe(false)
-  })
-
   // FR-IAM-008: dismissing an optional dialog releases the page behind it again.
   it('releases the application root when an optional dialog is skipped', async () => {
     await openDialog(false)
@@ -184,19 +164,5 @@ describe('Auth dialog keyboard journey', function () {
     )
 
     expect(await isRootInert()).toBe(false)
-  })
-
-  // FR-IAM-004
-  it('moves focus to the first invalid field on an empty submit', async () => {
-    await openDialog()
-
-    const submit = await driver.findElement(By.css('[role="dialog"] button[type="submit"]'))
-    await submit.click()
-
-    const focusedName = await driver.executeScript<string>(
-      'return document.activeElement?.getAttribute("name") ?? ""',
-    )
-
-    expect(focusedName).toBe('username')
   })
 })

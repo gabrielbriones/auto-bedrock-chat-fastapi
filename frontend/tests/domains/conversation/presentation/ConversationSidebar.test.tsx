@@ -99,8 +99,9 @@ describe('ConversationSidebar', () => {
     expect(harness.gateway.calls).toContainEqual(['load', id('a')])
   })
 
-  // FR-CONV-015: activating the row must not fire from the checkbox.
-  it('does not open the conversation when its checkbox is toggled', async () => {
+  // FR-CONV-015: activating the row must not fire from the checkbox or the options control,
+  // whether by pointer or keyboard.
+  it('does not open the conversation from its row controls', async () => {
     const harness = renderSidebar()
     const user = userEvent.setup()
 
@@ -109,37 +110,23 @@ describe('ConversationSidebar', () => {
         name: CONVERSATION_COPY.item.select('Job 42'),
       }),
     )
-
-    expect(harness.gateway.methods()).not.toContain('load')
     expect(harness.store.getSnapshot().selection.has(id('a'))).toBe(true)
-  })
-
-  // FR-CONV-015: nor from the options control.
-  it('does not open the conversation when its options menu is opened', async () => {
-    const harness = renderSidebar()
-    const user = userEvent.setup()
 
     await user.click(
       screen.getByRole('button', { name: CONVERSATION_COPY.item.options('Job 42') }),
     )
-
     expect(await screen.findByRole('menuitem', { name: CONVERSATION_COPY.item.rename })).toBeVisible()
     for (const name of [CONVERSATION_COPY.item.rename, CONVERSATION_COPY.item.delete]) {
       expect(screen.getByRole('menuitem', { name }).querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
     }
-    expect(harness.gateway.methods()).not.toContain('load')
-  })
-
-  it('opens the options menu with the keyboard without opening the conversation', async () => {
-    const harness = renderSidebar()
-    const user = userEvent.setup()
+    await user.keyboard('{Escape}')
 
     act(() => { screen.getByRole('button', { name: 'Job 42' }).focus() })
     await user.tab()
     expect(screen.getByRole('button', { name: CONVERSATION_COPY.item.options('Job 42') })).toHaveFocus()
     await user.keyboard('{Enter}')
-
     expect(await screen.findByRole('menuitem', { name: CONVERSATION_COPY.item.rename })).toBeVisible()
+
     expect(harness.gateway.methods()).not.toContain('load')
   })
 
