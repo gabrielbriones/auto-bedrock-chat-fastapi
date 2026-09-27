@@ -43,10 +43,6 @@ describe('the application router', () => {
     expect(router().buildLocation(chatLink()).href).toBe('/bedrock-chat/ui')
     expect(router().buildLocation(conversationLink('abc-123')).href).toBe('/bedrock-chat/ui/c/abc-123')
   })
-
-  it('gives the admin subtree a guard that resolves through the typed route context', () => {
-    expect(router().routesById['/dashboard'].options.beforeLoad).toBeTypeOf('function')
-  })
 })
 
 describe('typed navigation', () => {

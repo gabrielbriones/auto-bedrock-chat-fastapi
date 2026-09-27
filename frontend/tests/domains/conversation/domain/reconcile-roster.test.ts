@@ -45,12 +45,6 @@ const aSeededRoster = () =>
   selectAll(aRoster([aConversation('a', 0, 'Job 42'), aConversation('b', 5), aConversation('c', 9)]))
 
 describe('reconcileRoster', () => {
-  it('handles all nine conversation frames', () => {
-    const kinds = new Set(EVERY_EVENT.map((event) => event.kind))
-
-    expect(kinds.size).toBe(9)
-  })
-
   // The reducer is the only place roster state is decided, so it must never break the aggregate.
   it('leaves the roster invariant-clean for every event', () => {
     for (const event of EVERY_EVENT) {

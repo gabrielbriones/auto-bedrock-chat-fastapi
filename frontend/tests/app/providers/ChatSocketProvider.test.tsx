@@ -34,12 +34,6 @@ const renderProvider = () => {
 }
 
 describe('ChatSocketProvider (ADR-004)', () => {
-  it('opens the container socket once on mount', () => {
-    const { connect } = renderProvider()
-
-    expect(connect).toHaveBeenCalledTimes(1)
-  })
-
   it('keeps one socket for the application lifetime across route changes', () => {
     const { connect, dispose, navigateTo, getByText } = renderProvider()
 

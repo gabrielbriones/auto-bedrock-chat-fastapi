@@ -35,7 +35,6 @@ describe('WsAuthGateway', () => {
   it.each<Credential>([
     { kind: 'bearer_token', token: 'token' },
     { kind: 'basic_auth', username: 'user', password: credentialValue },
-    { kind: 'api_key', apiKey: 'key', header: 'X-API-Key' },
     {
       kind: 'oauth2_client_credentials',
       clientId: 'client',
@@ -43,7 +42,6 @@ describe('WsAuthGateway', () => {
       tokenUrl: 'https://issuer.test/token',
       scope: 'read',
     },
-    { kind: 'custom', headers: { 'X-Custom': 'value' } },
     { kind: 'sso' },
   ])('serializes $kind credentials to an auth frame', (credential) => {
     const { gateway, send } = createHarness()

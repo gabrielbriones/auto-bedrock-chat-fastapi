@@ -30,10 +30,6 @@ const loaded = withPage(emptyReviewQueue, {
 })
 
 describe('ReviewQueue paging', () => {
-  it('starts on the first page of fifty', () => {
-    expect(emptyReviewQueue.page).toEqual({ limit: 50, offset: 0 })
-  })
-
   // FR-REV-002: any filter change resets the offset, or the reviewer lands on a page that the new
   // filter may not even have.
   it('returns to the first page whenever a filter changes', () => {

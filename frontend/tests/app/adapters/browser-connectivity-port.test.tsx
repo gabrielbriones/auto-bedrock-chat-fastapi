@@ -16,7 +16,18 @@ describe('BrowserConnectivityPort', () => {
     expect(seen).toEqual(['offline', 'online'])
   })
 
-  it('reads the current state from the navigator', () => {
-    expect(new BrowserConnectivityPort().status()).toBe(navigator.onLine ? 'online' : 'offline')
+  it.each([
+    [false, 'offline'],
+    [true, 'online'],
+  ] as const)('maps navigator.onLine=%s to %s', (onLine, expected) => {
+    const original = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine')
+    Object.defineProperty(navigator, 'onLine', { value: onLine, configurable: true })
+
+    try {
+      expect(new BrowserConnectivityPort().status()).toBe(expected)
+    } finally {
+      delete (navigator as { onLine?: boolean }).onLine
+      if (original !== undefined) Object.defineProperty(Navigator.prototype, 'onLine', original)
+    }
   })
 })

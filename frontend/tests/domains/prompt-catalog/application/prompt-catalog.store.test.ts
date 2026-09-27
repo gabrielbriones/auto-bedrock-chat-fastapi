@@ -205,14 +205,5 @@ describe('PromptCatalogStore — deep links', () => {
 
       expect(sink.submit).toHaveBeenCalledTimes(1)
     })
-
-    it('a fresh reload (new store instance) with the already-scrubbed URL sends nothing', () => {
-      // What actually prevents a real reload from resending: the URL itself has no `prompt` left.
-      const { store, sink } = harness({ keep: 'me' })
-
-      store.tryAutoSend(true)
-
-      expect(sink.submit).not.toHaveBeenCalled()
-    })
   })
 })

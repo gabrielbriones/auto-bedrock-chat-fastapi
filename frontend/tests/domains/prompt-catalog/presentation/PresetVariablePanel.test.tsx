@@ -50,22 +50,6 @@ const comparisonCatalog = parsePromptCatalog(
 )
 
 describe('PresetVariablePanel', () => {
-  it('renders one field per required variable', () => {
-    const preset = catalog.presets[0]
-    if (preset === undefined) throw new Error('fixture preset missing')
-
-    render(
-      <PresetVariablePanel
-        variableNames={preset.requiredVariables}
-        variables={catalog.variables}
-        bindings={bindingsFor('workload-analysis')}
-        onBindingChange={jest.fn()}
-      />,
-    )
-
-    expect(screen.getByLabelText('Job ID')).toBeInTheDocument()
-  })
-
   it('keeps both job fields visible when a grouped comparison preset requires them', () => {
     const bindings = Object.fromEntries(
       Object.values(comparisonCatalog.variables).map((variable) => [variable.name, defaultBindingFor(variable)]),

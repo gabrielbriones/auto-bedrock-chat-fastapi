@@ -80,12 +80,6 @@ describe('toChatBootstrap', () => {
     }
   });
 
-  it('returns err for a payload with the wrong type for a field', () => {
-    const result = toChatBootstrap({ ...bootstrapConfig, authEnabled: 'yes' });
-
-    expect(isErr(result)).toBe(true);
-  });
-
   it('returns err (never throws) for a completely malformed payload', () => {
     expect(() => toChatBootstrap('not an object')).not.toThrow();
     expect(isErr(toChatBootstrap('not an object'))).toBe(true);

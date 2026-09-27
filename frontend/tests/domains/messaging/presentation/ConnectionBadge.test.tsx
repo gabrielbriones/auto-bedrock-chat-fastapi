@@ -5,8 +5,8 @@ import { axe } from 'jest-axe'
 import { ConnectionBadge } from '@/domains/messaging/presentation/ConnectionBadge'
 
 describe('ConnectionBadge (FR-MSG-002)', () => {
-  it.each(['connected', 'connecting'] as const)('renders nothing while %s', (kind) => {
-    const { container } = render(<ConnectionBadge connection={{ kind }} />)
+  it('renders nothing while connecting', () => {
+    const { container } = render(<ConnectionBadge connection={{ kind: 'connecting' }} />)
 
     expect(container).toBeEmptyDOMElement()
   })

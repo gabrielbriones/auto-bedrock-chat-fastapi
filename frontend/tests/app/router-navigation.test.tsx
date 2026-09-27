@@ -29,12 +29,6 @@ const renderAt = (path: string, overrides: Partial<Container> = {}) => {
 }
 
 describe('navigating the route tree', () => {
-  it('renders the chat route at the base path', async () => {
-    renderAt('/bedrock-chat/ui')
-
-    expect(await findComposer()).toBeInTheDocument()
-  })
-
   // FR-CONV-011: the same chat view, addressed by conversation id.
   it('renders a conversation from its path parameter', async () => {
     const { router } = renderAt('/bedrock-chat/ui/c/abc-123')

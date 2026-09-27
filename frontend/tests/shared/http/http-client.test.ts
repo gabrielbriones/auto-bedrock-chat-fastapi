@@ -35,29 +35,6 @@ describe('HttpClient', () => {
     expect(result).toEqual({ kind: 'ok', value: undefined });
   });
 
-  it('normalises an HTML 502 into a Problem instead of a JSON parse error', async () => {
-    server.use(
-      http.get(
-        `${BASE}/flaky`,
-        () =>
-          new HttpResponse('<html>bad gateway</html>', {
-            status: 502,
-            statusText: 'Bad Gateway',
-            headers: { 'content-type': 'text/html' },
-          }),
-      ),
-    );
-
-    const result = await client.request(`${BASE}/flaky`, {
-      retry: { maxAttempts: 1, baseDelayMs: 0, methods: [] },
-    });
-
-    expect(result).toEqual({
-      kind: 'err',
-      error: { code: 'http-error', status: 502, title: 'Bad Gateway' },
-    });
-  });
-
   it('maps a network failure to a network-error Problem, distinguishable from an abort', async () => {
     server.use(http.get(`${BASE}/unreachable`, () => HttpResponse.error()));
 

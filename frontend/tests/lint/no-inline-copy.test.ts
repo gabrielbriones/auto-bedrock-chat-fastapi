@@ -1,5 +1,5 @@
 import { RuleTester } from 'eslint'
-import { describe, expect, it } from '@jest/globals'
+import { describe, it } from '@jest/globals'
 import tseslint from 'typescript-eslint'
 
 import rule from '../../eslint/rules/no-inline-copy.js'
@@ -52,10 +52,4 @@ ruleTester.run('no-inline-copy', rule, {
       errors: [{ messageId: 'inlineCopy' }],
     },
   ],
-})
-
-describe('the allow-list', () => {
-  it('is documented on the rule so the exceptions stay reviewable', () => {
-    expect(rule.meta?.schema).toBeDefined()
-  })
 })

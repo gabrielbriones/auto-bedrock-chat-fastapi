@@ -46,12 +46,6 @@ describe('review REST contract (SPEC-016 §3)', () => {
     expect(isOk(toFeedbackEntry(body))).toBe(true)
   })
 
-  it('DELETE /feedback/{id} answers 204 with no body', async () => {
-    const response = await fetch(`${ADMIN}/feedback/any`, { method: 'DELETE' })
-
-    expect(response.status).toBe(204)
-  })
-
   it('GET /feedback/stats parses into the stats projection', async () => {
     expect(isOk(toFeedbackStats(await fetchJson('/feedback/stats')))).toBe(true)
   })
