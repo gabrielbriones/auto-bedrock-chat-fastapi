@@ -133,15 +133,12 @@ describe('Auth dialog keyboard journey', function () {
     const suffix = `requireAuth=${authRequired}`
 
     // FR-IAM-013 / NFR-A11Y-002: the page behind the dialog holds no tab stops and is not
-    // announced — asserted on the root itself rather than inferred from a role query.
-    it(`inerts the application root while the dialog is open (${suffix})`, async () => {
+    // announced — asserted on the root itself rather than inferred from a role query — and neither
+    // Tab direction escapes the dialog. One page load covers both, since they describe one state.
+    it(`inerts the application root and traps Tab and Shift+Tab inside the dialog (${suffix})`, async () => {
       await openDialog(authRequired)
 
       expect(await isRootInert()).toBe(true)
-    })
-
-    it(`traps Tab and Shift+Tab inside the dialog (${suffix})`, async () => {
-      await openDialog(authRequired)
 
       const forwards = await tabTrail(12)
       const backwards = await tabTrail(12, true)

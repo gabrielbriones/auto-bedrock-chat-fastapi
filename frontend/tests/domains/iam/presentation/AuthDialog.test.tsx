@@ -148,21 +148,15 @@ describe('the auth dialog', () => {
     expect(onSubmit).toHaveBeenCalledWith({ kind: 'bearer_token', token: 'jwt-value' })
   })
 
-  // SPEC-010 §6: the two custom-header errors stay distinguishable.
-  it('distinguishes malformed JSON from a non-string header map', async () => {
+  // SPEC-010 §6: the credential policy's header error reaches the alert verbatim. Telling malformed
+  // JSON from a non-string header map is credential-policy.test's job, so one case proves the wiring.
+  it('surfaces the custom-header validation error in the alert', async () => {
     const { user } = renderDialog({}, { defaultAuthType: 'custom' })
 
-    const headers = screen.getByLabelText(IAM_COPY.fields.headers.label)
-    const submit = screen.getByRole('button', { name: IAM_COPY.dialog.submit })
+    await user.type(screen.getByLabelText(IAM_COPY.fields.headers.label), '{{not json')
+    await user.click(screen.getByRole('button', { name: IAM_COPY.dialog.submit }))
 
-    await user.type(headers, '{{not json')
-    await user.click(submit)
     expect(screen.getByRole('alert')).toHaveTextContent(IAM_COPY.validation.invalidJson)
-
-    await user.clear(headers)
-    await user.type(headers, '{{"X-A": 5}')
-    await user.click(submit)
-    expect(screen.getByRole('alert')).toHaveTextContent(IAM_COPY.validation.invalidHeaderMap)
   })
 
   // FR-IAM-010b

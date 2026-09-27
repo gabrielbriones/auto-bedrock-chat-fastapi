@@ -73,7 +73,7 @@ describe('admin capability guard', () => {
   })
 
   it('retries the capability check without redirecting after identity changes', async () => {
-    const probe = jest.fn()
+    const probe = jest.fn<Container['capabilityProbe']['probe']>()
       .mockResolvedValueOnce({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false })
       .mockResolvedValueOnce({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true })
     const invalidate = jest.fn()

@@ -100,25 +100,36 @@ describe('Phase 10 accessibility route matrix', function () {
     await server?.close()
   })
 
-  for (const theme of ['light', 'dark'] as const satisfies readonly Theme[]) {
-    for (const route of ROUTES) {
-      it(`${route.name} has no axe violations and completes by keyboard in ${theme} theme`, async () => {
-        await driver.get(`${server.origin}/bedrock-chat/ui/`)
-        await driver.executeScript("localStorage.setItem('ui.theme', arguments[0])", theme)
-        await driver.get(`${server.origin}${route.path}`)
+  const openRoute = async (route: RouteCase, theme: Theme): Promise<void> => {
+    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.executeScript("localStorage.setItem('ui.theme', arguments[0])", theme)
+    await driver.get(`${server.origin}${route.path}`)
 
-        const heading = await driver.wait(until.elementLocated(By.css('h1')), 15_000)
-        await driver.wait(until.elementLocated(By.css(route.ready)), 15_000)
-        await driver.wait(
-          async () => ((await driver.findElement(By.css('html')).getAttribute('class')) ?? '').split(/\s+/).includes(theme),
-          10_000,
-        )
+    const heading = await driver.wait(until.elementLocated(By.css('h1')), 15_000)
+    await driver.wait(until.elementLocated(By.css(route.ready)), 15_000)
+    await driver.wait(
+      async () => ((await driver.findElement(By.css('html')).getAttribute('class')) ?? '').split(/\s+/).includes(theme),
+      10_000,
+    )
 
-        expect(new URL(await driver.getCurrentUrl()).pathname).toBe(route.expectedPath)
-        expect(await heading.getText()).toBe(route.heading)
+    expect(new URL(await driver.getCurrentUrl()).pathname).toBe(route.expectedPath)
+    expect(await heading.getText()).toBe(route.heading)
+  }
+
+  // The theme swaps every colour token, so the axe scan (colour contrast included) runs per
+  // theme; it changes nothing about focus order or key handling, so each keyboard journey runs
+  // once.
+  for (const route of ROUTES) {
+    for (const theme of ['light', 'dark'] as const satisfies readonly Theme[]) {
+      it(`${route.name} has no axe violations in ${theme} theme`, async () => {
+        await openRoute(route, theme)
         await assertNoAxeViolations(driver)
-        await route.journey(driver, server)
       })
     }
+
+    it(`${route.name} completes by keyboard`, async () => {
+      await openRoute(route, 'light')
+      await route.journey(driver, server)
+    })
   }
 })

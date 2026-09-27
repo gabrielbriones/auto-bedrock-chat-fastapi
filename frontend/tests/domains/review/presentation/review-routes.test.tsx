@@ -104,7 +104,8 @@ describe('review queue URL binding', () => {
     await waitFor(() => expect(routeSearch(router)).toMatchObject({ tags: 'emon', offset: 0 }))
   })
 
-  it('opens a row as a URL-addressable, focus-trapped drawer', async () => {
+  // The focus trap itself is admin-drawer.test's; this proves the row and the `entry` param agree.
+  it('opens a row as a URL-addressable drawer', async () => {
     const user = userEvent.setup()
     const { router } = renderAt('/bedrock-chat/dashboard/feedback')
 

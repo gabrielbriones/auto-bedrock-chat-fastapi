@@ -17,6 +17,11 @@ export const TEXT_CONTRAST_PAIRS: readonly ContrastPair[] = [
   { name: 'secondary-foreground on secondary', foreground: '--secondary-foreground', background: '--secondary', minRatio: 4.5 },
   { name: 'accent-foreground on accent', foreground: '--accent-foreground', background: '--accent', minRatio: 4.5 },
   { name: 'destructive-foreground on destructive', foreground: '--destructive-foreground', background: '--destructive', minRatio: 4.5 },
+  // --destructive is also body text: error copy under a message, destructive menu items, alerts.
+  { name: 'destructive on background', foreground: '--destructive', background: '--background', minRatio: 4.5 },
+  { name: 'destructive on card', foreground: '--destructive', background: '--card', minRatio: 4.5 },
+  { name: 'destructive on popover', foreground: '--destructive', background: '--popover', minRatio: 4.5 },
+  { name: 'destructive on message-assistant-bg', foreground: '--destructive', background: '--message-assistant-bg', minRatio: 4.5 },
   { name: 'muted-foreground on muted', foreground: '--muted-foreground', background: '--muted', minRatio: 4.5 },
   { name: 'muted-foreground on background', foreground: '--muted-foreground', background: '--background', minRatio: 4.5 },
   { name: 'message-user-fg on message-user-bg', foreground: '--message-user-fg', background: '--message-user-bg', minRatio: 4.5 },

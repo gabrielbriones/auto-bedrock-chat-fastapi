@@ -173,7 +173,9 @@ describe('usage analytics route', () => {
     expect(routeSearch(router)).not.toMatchObject({ from: '2026-05-31', to: '2026-05-01' })
   })
 
-  it('keeps section errors independent while other sections render data', async () => {
+  // telemetry.store.test owns the independence of the section states; this owns that each section
+  // renders its own load-error copy rather than one page-level error.
+  it('renders each section\'s own load error while the others still show data', async () => {
     const gateway = createGateway({
       summary: jest.fn(async () => err(problem())),
       byDay: jest.fn(async () => err(problem())),
@@ -188,7 +190,8 @@ describe('usage analytics route', () => {
     expect(screen.getByText('alice@example.com')).toBeInTheDocument()
   })
 
-  it('refetches only Top Users when its URL-owned limit changes', async () => {
+  // That only Top Users refetches is telemetry.store.test's; this owns the URL binding of the limit.
+  it('binds the Top Users limit to the URL and refetches with it', async () => {
     const user = userEvent.setup()
     const { gateway, router } = renderAt('/bedrock-chat/dashboard/token-usages')
     const topUsersCard = await cardFor(TELEMETRY_COPY.topUsers.title)
@@ -198,9 +201,6 @@ describe('usage analytics route', () => {
     await user.click(await screen.findByRole('option', { name: '20' }))
 
     await waitFor(() => expect(jest.mocked(gateway.topUsers).mock.calls.at(-1)?.[0]).toBe(20))
-    expect(jest.mocked(gateway.summary)).toHaveBeenCalledTimes(1)
-    expect(gateway.byDay).not.toHaveBeenCalled()
-    expect(gateway.byUser).not.toHaveBeenCalled()
     expect(routeSearch(router)).toMatchObject({ topLimit: 20 })
   })
 

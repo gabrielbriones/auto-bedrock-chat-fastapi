@@ -6,6 +6,9 @@ import { afterEach, expect } from '@jest/globals'
 // jest-dom's own `jest-globals` typing augments `@jest/expect`, but Jest 30 defines `Matchers` in
 // the `expect` package, so the DOM matchers are declared against that module here instead.
 declare module 'expect' {
+  // Declaration merging: the type parameters must match `expect`'s own `Matchers<R, T>` exactly,
+  // and the body is empty by design — everything comes from the extended jest-dom matchers.
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unused-vars
   interface Matchers<R extends void | Promise<void>, T = unknown>
     extends TestingLibraryMatchers<ReturnType<typeof expect.stringContaining>, R> {}
 }

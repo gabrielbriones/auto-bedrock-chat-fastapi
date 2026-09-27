@@ -64,15 +64,15 @@ const page = (
 
 const gatewayWith = (overrides: Partial<ReviewGateway> = {}): ReviewGateway =>
   ({
-    list: jest.fn().mockResolvedValue(ok(page([]))),
+    list: jest.fn(async () => ok(page([]))),
     get: jest.fn(),
     saveDecision: jest.fn(),
     remove: jest.fn(),
     stats: jest.fn(),
-    pendingCount: jest.fn().mockResolvedValue(ok(0)),
+    pendingCount: jest.fn(async () => ok(0)),
     synthesize: jest.fn(),
     rollback: jest.fn(),
-    synthesisPhase: jest.fn().mockResolvedValue(ok('idle')),
+    synthesisPhase: jest.fn(async () => ok('idle')),
     ...overrides,
   }) as ReviewGateway
 
@@ -100,7 +100,7 @@ describe('ReviewStore bulk delete', () => {
   it('keeps approved entries out of selection', async () => {
     const rejected = aSummary('rejected', 'rejected')
     const approved = aSummary('approved', 'approved')
-    const gateway = gatewayWith({ list: jest.fn().mockResolvedValue(ok(page([rejected, approved]))) })
+    const gateway = gatewayWith({ list: jest.fn(async () => ok(page([rejected, approved]))) })
     const { store } = createStore(gateway)
 
     await store.load(query(0))
@@ -114,7 +114,7 @@ describe('ReviewStore bulk delete', () => {
     const first = aSummary('failed-id', 'rejected')
     const second = aSummary('deleted-id', 'rejected')
     const list = jest
-      .fn()
+      .fn<ReviewGateway['list']>()
       .mockResolvedValueOnce(ok(page([first, second])))
       .mockResolvedValueOnce(ok(page([first], 0, 1)))
     const remove = jest.fn(async (id: FeedbackEntrySummary['id']) =>
@@ -145,10 +145,10 @@ describe('ReviewStore bulk delete', () => {
   it('returns the preceding offset when refetch finds the current page empty', async () => {
     const rejected = aSummary('last-row', 'rejected')
     const list = jest
-      .fn()
+      .fn<ReviewGateway['list']>()
       .mockResolvedValueOnce(ok(page([rejected], 50, 51)))
       .mockResolvedValueOnce(ok(page([], 50, 50)))
-    const gateway = gatewayWith({ list, remove: jest.fn().mockResolvedValue(ok(undefined)) })
+    const gateway = gatewayWith({ list, remove: jest.fn(async () => ok(undefined)) })
     const { store } = createStore(gateway, new ScriptedConfirmationPort([true]))
 
     await store.load(query(50))
@@ -160,8 +160,8 @@ describe('ReviewStore bulk delete', () => {
 
   it('does nothing when confirmation is cancelled', async () => {
     const rejected = aSummary('rejected', 'rejected')
-    const remove = jest.fn()
-    const gateway = gatewayWith({ list: jest.fn().mockResolvedValue(ok(page([rejected]))), remove })
+    const remove = jest.fn<ReviewGateway['remove']>()
+    const gateway = gatewayWith({ list: jest.fn(async () => ok(page([rejected]))), remove })
     const { store } = createStore(gateway, new ScriptedConfirmationPort([false]))
 
     await store.load(query(0))
@@ -176,11 +176,11 @@ describe('ReviewStore save', () => {
   it('closes the entry and refetches after a successful decision', async () => {
     const summary = aSummary('entry', 'pending_review')
     const entry = { ...summary, sessionId: 'session', modelId: 'model', aiResponse: 'answer' } as FeedbackEntry
-    const list = jest.fn().mockResolvedValue(ok(page([summary])))
+    const list = jest.fn(async () => ok(page([summary])))
     const gateway = gatewayWith({
       list,
-      get: jest.fn().mockResolvedValue(ok(entry)),
-      saveDecision: jest.fn().mockResolvedValue(ok(entry)),
+      get: jest.fn(async () => ok(entry)),
+      saveDecision: jest.fn(async () => ok(entry)),
     })
     const { store, notifications } = createStore(gateway)
 
@@ -216,7 +216,7 @@ describe('ReviewStore pending synthesis guard', () => {
     const blocked = jest.fn()
     const gateway = gatewayWith({
       synthesize,
-      get: jest.fn().mockResolvedValue(ok(anEntry())),
+      get: jest.fn(async () => ok(anEntry())),
       ...(method === 'synthesize' ? {} : { [method]: blocked }),
     })
     const { store } = createStore(gateway)
@@ -236,8 +236,8 @@ describe('ReviewStore open synthesis phase', () => {
   it('tolerates a synthesisPhase failure and leaves the phase null', async () => {
     const entry = anEntry()
     const gateway = gatewayWith({
-      get: jest.fn().mockResolvedValue(ok(entry)),
-      synthesisPhase: jest.fn().mockResolvedValue(err<Problem>({ code: 'http-error', title: 'Down', status: 503 })),
+      get: jest.fn(async () => ok(entry)),
+      synthesisPhase: jest.fn(async () => err<Problem>({ code: 'http-error', title: 'Down', status: 503 })),
     })
     const { store } = createStore(gateway)
 
@@ -258,9 +258,9 @@ describe('ReviewStore synthesize', () => {
       markedEntryIds: [],
     }
     const gateway = gatewayWith({
-      get: jest.fn().mockResolvedValue(ok(entry)),
-      synthesize: jest.fn().mockResolvedValue(ok(outcome)),
-      pendingCount: jest.fn().mockResolvedValue(ok(2)),
+      get: jest.fn(async () => ok(entry)),
+      synthesize: jest.fn(async () => ok(outcome)),
+      pendingCount: jest.fn(async () => ok(2)),
     })
     const { store, notifications } = createStore(gateway)
 
@@ -275,7 +275,7 @@ describe('ReviewStore synthesize', () => {
 
   it('records a synthesis problem on failure without reopening', async () => {
     const problem: Problem = { code: 'http-error', title: 'Conflict', status: 409 }
-    const gateway = gatewayWith({ synthesize: jest.fn().mockResolvedValue(err(problem)) })
+    const gateway = gatewayWith({ synthesize: jest.fn(async () => err(problem)) })
     const { store } = createStore(gateway)
 
     const result = await store.synthesize(feedbackEntryId('id-1'))
@@ -288,7 +288,7 @@ describe('ReviewStore synthesize', () => {
   it('skips revalidation when the drawer moved on while the trigger was in flight', async () => {
     let resolve!: (value: Result<SynthesisOutcome, Problem>) => void
     const entry = anEntry()
-    const get = jest.fn().mockResolvedValue(ok(entry))
+    const get = jest.fn(async () => ok(entry))
     const gateway = gatewayWith({
       get,
       synthesize: jest.fn(() => new Promise<Result<SynthesisOutcome, Problem>>((res) => { resolve = res })),
@@ -316,7 +316,7 @@ describe('ReviewStore rollback', () => {
   }
 
   it('sends no reason when the prompt is left blank and the follow-up confirm accepts', async () => {
-    const rollback = jest.fn().mockResolvedValue(ok(outcome))
+    const rollback = jest.fn<ReviewGateway['rollback']>(async () => ok(outcome))
     const gateway = gatewayWith({ rollback })
     const confirmations = new ScriptedConfirmationPort(['', true])
     const { store, notifications } = createStore(gateway, confirmations)
@@ -330,7 +330,7 @@ describe('ReviewStore rollback', () => {
   })
 
   it('sends the trimmed reason without a follow-up confirm when one is given', async () => {
-    const rollback = jest.fn().mockResolvedValue(ok({ ...outcome, reason: 'Superseded.' }))
+    const rollback = jest.fn<ReviewGateway['rollback']>(async () => ok({ ...outcome, reason: 'Superseded.' }))
     const gateway = gatewayWith({ rollback })
     const confirmations = new ScriptedConfirmationPort([' Superseded. '])
     const { store } = createStore(gateway, confirmations)
@@ -344,7 +344,7 @@ describe('ReviewStore rollback', () => {
     ['the reason prompt is cancelled', [null]],
     ['the blank-reason confirm is declined', ['', false]],
   ] as const)('does nothing when %s', async (_label, answers) => {
-    const rollback = jest.fn()
+    const rollback = jest.fn<ReviewGateway['rollback']>()
     const gateway = gatewayWith({ rollback })
     const confirmations = new ScriptedConfirmationPort([...answers])
     const { store } = createStore(gateway, confirmations)
@@ -355,7 +355,7 @@ describe('ReviewStore rollback', () => {
 
   it('records a synthesis problem on failure', async () => {
     const problem: Problem = { code: 'http-error', title: 'Conflict', status: 409 }
-    const gateway = gatewayWith({ rollback: jest.fn().mockResolvedValue(err(problem)) })
+    const gateway = gatewayWith({ rollback: jest.fn(async () => err(problem)) })
     const confirmations = new ScriptedConfirmationPort(['reason'])
     const { store } = createStore(gateway, confirmations)
 
@@ -381,7 +381,7 @@ describe('ReviewStore stats', () => {
   }
 
   it('loads stats on success', async () => {
-    const gateway = gatewayWith({ stats: jest.fn().mockResolvedValue(ok(stats)) })
+    const gateway = gatewayWith({ stats: jest.fn(async () => ok(stats)) })
     const { store } = createStore(gateway)
 
     await store.loadStats(new AbortController().signal)
@@ -392,7 +392,7 @@ describe('ReviewStore stats', () => {
 
   it('records a problem on failure', async () => {
     const problem: Problem = { code: 'http-error', title: 'Down', status: 503 }
-    const gateway = gatewayWith({ stats: jest.fn().mockResolvedValue(err(problem)) })
+    const gateway = gatewayWith({ stats: jest.fn(async () => err(problem)) })
     const { store } = createStore(gateway)
 
     await store.loadStats(new AbortController().signal)
@@ -428,7 +428,7 @@ describe('ReviewStore stats', () => {
 
 describe('ReviewStore pending count', () => {
   it('updates the pending count on success', async () => {
-    const gateway = gatewayWith({ pendingCount: jest.fn().mockResolvedValue(ok(7)) })
+    const gateway = gatewayWith({ pendingCount: jest.fn(async () => ok(7)) })
     const { store } = createStore(gateway)
 
     await store.refreshPendingCount()
@@ -438,7 +438,7 @@ describe('ReviewStore pending count', () => {
 
   it('silently ignores a failure', async () => {
     const problem: Problem = { code: 'http-error', title: 'Down', status: 503 }
-    const gateway = gatewayWith({ pendingCount: jest.fn().mockResolvedValue(err(problem)) })
+    const gateway = gatewayWith({ pendingCount: jest.fn(async () => err(problem)) })
     const { store } = createStore(gateway)
 
     await store.refreshPendingCount()

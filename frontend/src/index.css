@@ -153,8 +153,11 @@
   --accent: color-mix(in oklch, var(--palette-brand-500) 20%, transparent);
   /* palette-brand-300, not -400: 3.87:1 on the composited --accent was short of the 4.5:1 text target */
   --accent-foreground: var(--palette-brand-300);
-  --destructive: var(--palette-danger-600);
-  --destructive-foreground: white;
+  /* palette-danger-300, not -600: --destructive is text (errors, destructive menu items) on dark
+     surfaces, and -600 measured 2.1:1 on --message-assistant-bg; -300 clears 4.5:1 on every dark
+     surface, with a dark foreground for anything filled with it */
+  --destructive: var(--palette-danger-300);
+  --destructive-foreground: var(--palette-neutral-950);
   --border: var(--palette-neutral-800);
   /* palette-neutral-500, not -800 (1.38:1): clears the 3:1 UI-boundary target */
   --input: var(--palette-neutral-500);
@@ -186,8 +189,8 @@
     --muted-foreground: var(--palette-neutral-400);
     --accent: color-mix(in oklch, var(--palette-brand-500) 20%, transparent);
     --accent-foreground: var(--palette-brand-300);
-    --destructive: var(--palette-danger-600);
-    --destructive-foreground: white;
+    --destructive: var(--palette-danger-300);
+    --destructive-foreground: var(--palette-neutral-950);
     --border: var(--palette-neutral-800);
     --input: var(--palette-neutral-500);
     --ring: var(--palette-brand-500);

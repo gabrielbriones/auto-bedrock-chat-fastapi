@@ -89,11 +89,11 @@ describe('PromptCatalogStore — activatePreset', () => {
     const outcome = store.activatePreset('workload-analysis')
 
     expect(outcome).toEqual({ kind: 'sent' })
-    expect(sink.submit).toHaveBeenCalledWith<[ComposedPrompt]>({
+    expect(sink.submit).toHaveBeenCalledWith({
       text: 'JOB_ID = 1a2b3c4d',
       presetId: 'workload-analysis',
       bindings: { JOB_ID: { kind: 'text', value: '1a2b3c4d' } },
-    })
+    } satisfies ComposedPrompt)
   })
 
   it('reports "blocked" with the failing variables named, and never submits', () => {

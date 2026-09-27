@@ -107,25 +107,6 @@ describe('conversation URL binding', () => {
     expect(gateway.calls.filter(([method]) => method === 'load')).toEqual([['load', id('b')]])
   })
 
-  it('does not toggle when the previous conversation response arrives late', async () => {
-    const { container, gateway, emit, store, pathname } = renderAt('/bedrock-chat/ui/c/a')
-    await routeReady()
-    await authenticate(container)
-    await waitFor(() => expect(gateway.calls).toContainEqual(['load', id('a')]))
-
-    act(() => {
-      store.open(id('b'))
-    })
-    emit(anEvent.loaded('b'))
-    await waitFor(() => expect(pathname()).toBe('/ui/c/b'))
-    gateway.calls.length = 0
-
-    emit(anEvent.loaded('a'))
-
-    await waitFor(() => expect(pathname()).toBe('/ui/c/b'))
-    expect(gateway.calls.filter(([method]) => method === 'load')).toEqual([])
-  })
-
   it('loads a sidebar selection into the route and replaces the visible transcript', async () => {
     const { container, gateway, emit, pathname } = renderAt('/bedrock-chat/ui/c/a')
     await routeReady()

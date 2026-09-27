@@ -79,16 +79,16 @@ const renderAt = (
     readonly confirmAnswers?: readonly ScriptedAnswer[]
   } = {},
 ) => {
-  const list = jest.fn().mockResolvedValue(ok(options.page ?? response))
+  const list = jest.fn(async () => ok(options.page ?? response))
   const gateway = {
     list,
-    get: jest.fn().mockResolvedValue(ok(anOpenedDocument())),
-    patch: jest.fn().mockResolvedValue(ok(anOpenedDocument())),
-    remove: jest.fn().mockResolvedValue(ok(undefined)),
-    resetCredibility: jest.fn().mockResolvedValue(ok(anOpenedDocument())),
-    rollback: jest
-      .fn()
-      .mockResolvedValue(ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult)),
+    get: jest.fn(async () => ok(anOpenedDocument())),
+    patch: jest.fn(async () => ok(anOpenedDocument())),
+    remove: jest.fn(async () => ok(undefined)),
+    resetCredibility: jest.fn(async () => ok(anOpenedDocument())),
+    rollback: jest.fn(async () =>
+      ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult),
+    ),
     ...options.gateway,
   } as KnowledgeGateway
   const base = fakeContainer()
@@ -227,7 +227,7 @@ describe('knowledge editor drawer', () => {
 
   it('blocks saving invalid metadata JSON without calling the gateway', async () => {
     const user = userEvent.setup()
-    const patch = jest.fn()
+    const patch = jest.fn<KnowledgeGateway['patch']>()
     renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch } })
 
     const dialog = await openRow(user)
@@ -276,7 +276,9 @@ describe('knowledge editor drawer', () => {
 
   it('restores the credibility score without a confirmation prompt', async () => {
     const user = userEvent.setup()
-    const resetCredibility = jest.fn().mockResolvedValue(ok(anOpenedDocument({ credibility: createCredibility(1, false) })))
+    const resetCredibility = jest.fn<KnowledgeGateway['resetCredibility']>(async () =>
+      ok(anOpenedDocument({ credibility: createCredibility(1, false) })),
+    )
     const { confirmations, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { resetCredibility } })
 
     const dialog = await openRow(user)
@@ -289,9 +291,9 @@ describe('knowledge editor drawer', () => {
 
   it('rolls back the document after confirmation and closes the drawer', async () => {
     const user = userEvent.setup()
-    const rollback = jest
-      .fn()
-      .mockResolvedValue(ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult))
+    const rollback = jest.fn<KnowledgeGateway['rollback']>(async () =>
+      ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult),
+    )
     const { router, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { rollback }, confirmAnswers: [true] })
 
     const dialog = await openRow(user)
@@ -305,7 +307,7 @@ describe('knowledge editor drawer', () => {
 
   it('deletes the document after confirmation, closes the drawer, and clears the doc param', async () => {
     const user = userEvent.setup()
-    const remove = jest.fn().mockResolvedValue(ok(undefined))
+    const remove = jest.fn<KnowledgeGateway['remove']>(async () => ok(undefined))
     const { router, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { remove }, confirmAnswers: [true] })
 
     const dialog = await openRow(user)
