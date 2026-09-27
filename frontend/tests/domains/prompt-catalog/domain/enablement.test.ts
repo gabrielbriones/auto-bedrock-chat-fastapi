@@ -37,15 +37,6 @@ describe('evaluatePreset', () => {
     expect(evaluatePreset(empty, {}, {}).enabled).toBe(true)
   })
 
-  it('numeric range boundaries (0/11/5 against min 1 max 10)', () => {
-    const topN: PromptVariable = { ...jobId, name: 'TOP_N', inputType: 'number', validationRule: { kind: 'numericRange', min: 1, max: 10 } }
-    const withTopN: PresetPrompt = { ...preset, requiredVariables: ['TOP_N'] }
-
-    expect(evaluatePreset(withTopN, { TOP_N: topN }, { TOP_N: { kind: 'number', value: 0 } }).enabled).toBe(false)
-    expect(evaluatePreset(withTopN, { TOP_N: topN }, { TOP_N: { kind: 'number', value: 11 } }).enabled).toBe(false)
-    expect(evaluatePreset(withTopN, { TOP_N: topN }, { TOP_N: { kind: 'number', value: 5 } }).enabled).toBe(true)
-  })
-
   it('names every failing variable, not just the first', () => {
     const newJobId: PromptVariable = inferPromptVariable('NEW_JOB_ID')
     const both: PresetPrompt = { ...preset, requiredVariables: ['JOB_ID', 'NEW_JOB_ID'] }

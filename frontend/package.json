@@ -17,6 +17,7 @@
     "test:watch": "npm run jest -- --watch --selectProjects unit component contract lint",
     "test:coverage": "npm run jest -- --coverage --selectProjects unit component contract lint",
     "test:e2e": "npm run jest -- --selectProjects e2e",
+    "test:e2e:headed": "HEADED=1 npm run jest -- --selectProjects e2e --runInBand --verbose",
     "test:e2e:watch": "npm run jest -- --watchAll --selectProjects e2e",
     "test:e2e:soak": "RUN_SOAK=1 npm run jest -- --selectProjects e2e -t \"streaming memory soak\"",
     "test:contract": "npm run jest -- --selectProjects contract",

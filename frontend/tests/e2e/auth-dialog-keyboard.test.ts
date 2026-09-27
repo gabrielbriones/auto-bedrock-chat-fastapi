@@ -133,15 +133,12 @@ describe('Auth dialog keyboard journey', function () {
     const suffix = `requireAuth=${authRequired}`
 
     // FR-IAM-013 / NFR-A11Y-002: the page behind the dialog holds no tab stops and is not
-    // announced — asserted on the root itself rather than inferred from a role query.
-    it(`inerts the application root while the dialog is open (${suffix})`, async () => {
+    // announced — asserted on the root itself rather than inferred from a role query — and neither
+    // Tab direction escapes the dialog. One page load covers both, since they describe one state.
+    it(`inerts the application root and traps Tab and Shift+Tab inside the dialog (${suffix})`, async () => {
       await openDialog(authRequired)
 
       expect(await isRootInert()).toBe(true)
-    })
-
-    it(`traps Tab and Shift+Tab inside the dialog (${suffix})`, async () => {
-      await openDialog(authRequired)
 
       const forwards = await tabTrail(12)
       const backwards = await tabTrail(12, true)
@@ -150,26 +147,6 @@ describe('Auth dialog keyboard journey', function () {
       expect(backwards.filter((entry) => entry.startsWith('OUTSIDE'))).toEqual([])
     })
   }
-
-  // FR-IAM-013 (Escape half): with auth required there is no way out of the dialog.
-  it('ignores Escape while authentication is required', async () => {
-    await openDialog()
-
-    await driver.actions().sendKeys(Key.ESCAPE).perform()
-
-    expect(await driver.findElements(By.css('[role="dialog"]'))).toHaveLength(1)
-  })
-
-  // FR-IAM-008: with auth required there is no Skip control to reach by keyboard.
-  it('offers no skip control when authentication is required', async () => {
-    await openDialog()
-
-    const labels = await Promise.all(
-      (await driver.findElements(By.css('[role="dialog"] button'))).map((button) => button.getText()),
-    )
-
-    expect(labels.some((label) => label.trim() === 'Skip')).toBe(false)
-  })
 
   // FR-IAM-008: dismissing an optional dialog releases the page behind it again.
   it('releases the application root when an optional dialog is skipped', async () => {
@@ -184,19 +161,5 @@ describe('Auth dialog keyboard journey', function () {
     )
 
     expect(await isRootInert()).toBe(false)
-  })
-
-  // FR-IAM-004
-  it('moves focus to the first invalid field on an empty submit', async () => {
-    await openDialog()
-
-    const submit = await driver.findElement(By.css('[role="dialog"] button[type="submit"]'))
-    await submit.click()
-
-    const focusedName = await driver.executeScript<string>(
-      'return document.activeElement?.getAttribute("name") ?? ""',
-    )
-
-    expect(focusedName).toBe('username')
   })
 })

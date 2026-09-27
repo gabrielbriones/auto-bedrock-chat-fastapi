@@ -38,13 +38,17 @@ describe('E5 — conversation lifecycle', function () {
     await target?.click()
   }
 
-  const dialogText = async () => {
-    const dialog = await driver.wait(
-      until.elementLocated(By.css('[role=dialog], [role=alertdialog]')),
-      10_000,
-    )
-    return dialog.getText()
-  }
+  // A dialog is in the DOM before its enter transition has made the text visible, and getText()
+  // reports only visible text — so the wait is for text, not for the element, or the assertion
+  // races the animation and reads "".
+  const dialogText = () =>
+    driver.wait(async () => {
+      for (const dialog of await driver.findElements(By.css('[role=dialog], [role=alertdialog]'))) {
+        const text = await dialog.getText()
+        if (text !== '') return text
+      }
+      return null
+    }, 10_000)
 
   const clickDialogButton = async (label: string) => {
     const button = await driver.wait(
@@ -145,7 +149,13 @@ describe('E5 — conversation lifecycle', function () {
     await driver.wait(async () => (await pathname()) === '/bedrock-chat/ui/c/conv-3', 10_000)
 
     // FR-CONV-004 / FIX-15: a styled dialog, never window.prompt.
-    await (await driver.findElement(By.css('[aria-label="Options for GEMM tuning"]'))).click()
+    // The options button is only revealed while its row is hovered (or focused) on a device with
+    // a fine pointer, so the pointer moves onto the row first, as a mouse user's would; otherwise
+    // the click lands on the row and WebDriver reports it intercepted.
+    const options = await driver.findElement(By.css('[aria-label="Options for GEMM tuning"]'))
+    const row = await options.findElement(By.xpath('ancestor::li[contains(@class, "conversation-row")]'))
+    await driver.actions().move({ origin: row }).perform()
+    await options.click()
     await clickMenuItem('Rename')
     const titleField = await driver.wait(until.elementLocated(By.css('[role=dialog] input')), 5_000)
     await titleField.clear()

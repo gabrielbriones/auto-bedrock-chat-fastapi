@@ -5,6 +5,8 @@ import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 import { createHarness, openState, closedState } from './conversation.store.fixture'
 import { aConversation, anEvent, id } from '../domain/conversation.fixture'
 
+type Store = ReturnType<typeof createHarness>['store']
+
 describe('ConversationStore visibility', () => {
   // FR-CONV-001.
   it('stays hidden while persistence is disabled by the server config', () => {
@@ -55,7 +57,7 @@ describe('ConversationStore visibility', () => {
 })
 
 describe('ConversationStore mutations', () => {
-  it('ignores a late load response after another conversation was requested', () => {
+  it('ignores a late load response after another conversation was requested or a new one is started', () => {
     const { store, gateway } = createHarness()
     gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
     store.open(id('a'))
@@ -65,16 +67,9 @@ describe('ConversationStore mutations', () => {
     gateway.emit(anEvent.loaded('a'))
 
     expect(store.getSnapshot().activeId).toBe(id('b'))
-  })
-
-  it('ignores a late load response after starting a new conversation', () => {
-    const { store, gateway } = createHarness()
-    gateway.emit(anEvent.listed([aConversation('a')]))
-    store.open(id('a'))
-    gateway.emit(anEvent.loaded('a'))
 
     store.startNew()
-    gateway.emit(anEvent.loaded('a'))
+    gateway.emit(anEvent.loaded('b'))
 
     expect(store.getSnapshot().activeId).toBeNull()
   })
@@ -100,14 +95,21 @@ describe('ConversationStore mutations', () => {
     expect(gateway.calls.at(-1)).toEqual(['rename', id('a'), 'Job 42'])
   })
 
-  it('makes no request when a rename is cancelled', async () => {
-    const { store, gateway, confirmations } = createHarness({ answers: [null] })
+  it.each<[string, boolean | null, (store: Store) => Promise<void>]>([
+    ['rename', null, (store) => store.rename(id('a'))],
+    ['remove', false, (store) => store.remove(id('a'))],
+    ['removeMany', false, (store) => {
+      store.toggleSelectAll()
+      return store.removeSelected()
+    }],
+  ])('makes no %s request when the confirmation is declined', async (method, answer, act) => {
+    const { store, gateway, confirmations } = createHarness({ answers: [answer] })
     gateway.emit(anEvent.listed([aConversation('a')]))
 
-    await store.rename(id('a'))
+    await act(store)
 
     expect(confirmations.asked).toHaveLength(1)
-    expect(gateway.methods()).not.toContain('rename')
+    expect(gateway.methods()).not.toContain(method)
   })
 
   it('rejects a blank rename with a field error and makes no request', async () => {
@@ -132,15 +134,6 @@ describe('ConversationStore mutations', () => {
       tone: 'destructive',
     })
     expect(gateway.calls.at(-1)).toEqual(['remove', id('a')])
-  })
-
-  it('deletes nothing when the confirmation is declined', async () => {
-    const { store, gateway } = createHarness({ answers: [false] })
-    gateway.emit(anEvent.listed([aConversation('a')]))
-
-    await store.remove(id('a'))
-
-    expect(gateway.methods()).not.toContain('remove')
   })
 
   // FR-CONV-016 / FIX-16: the list and its total come from the server, not an in-place mutation.
@@ -175,15 +168,6 @@ describe('ConversationStore bulk delete', () => {
       title: CONVERSATION_COPY.bulk.title(3),
     })
     expect(harness.gateway.calls).toEqual([['removeMany', [id('c'), id('b'), id('a')]]])
-  })
-
-  it('sends nothing when the bulk confirmation is declined', async () => {
-    const harness = createHarness({ answers: [false] })
-    seed(harness)
-
-    await harness.store.removeSelected()
-
-    expect(harness.gateway.calls).toEqual([])
   })
 
   // FR-CONV-006 / I3.

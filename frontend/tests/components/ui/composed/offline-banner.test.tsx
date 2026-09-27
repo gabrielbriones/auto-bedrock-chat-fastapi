@@ -7,12 +7,6 @@ import { FakeConnectivityPort } from '../../../shared/ports/fake-connectivity-po
 import { SHELL } from '@/shared/copy/shell'
 
 describe('OfflineBanner', () => {
-  it('stays out of the way while the browser is online', () => {
-    render(<OfflineBanner connectivity={new FakeConnectivityPort('online')} />)
-
-    expect(screen.queryByText(SHELL.offline)).not.toBeInTheDocument()
-  })
-
   it('announces the outage and says reconnection is paused', () => {
     render(<OfflineBanner connectivity={new FakeConnectivityPort('offline')} />)
 
@@ -22,6 +16,7 @@ describe('OfflineBanner', () => {
   it('appears and disappears as connectivity changes', () => {
     const connectivity = new FakeConnectivityPort('online')
     render(<OfflineBanner connectivity={connectivity} />)
+    expect(screen.queryByText(SHELL.offline)).not.toBeInTheDocument()
 
     act(() => {
       connectivity.set('offline')

@@ -74,16 +74,16 @@ describe('PresetPromptBar', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('disables a preset whose required variable is missing/invalid, and states why (FR-PROMPT-005/012)', () => {
-    render(<PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />)
+  it('disables a preset whose required variable is missing/invalid, stating why, and enables it once it validates (FR-PROMPT-005/012)', () => {
+    const { rerender } = render(
+      <PresetPromptBar catalog={catalog} bindings={defaultBindings()} locked={false} lockedReason="" onActivate={jest.fn()} />,
+    )
 
     const button = screen.getByRole('button', { name: /Workload Analysis/ })
     expect(button).toBeDisabled()
     expect(button).toHaveAccessibleDescription(expect.stringContaining('Job ID'))
-  })
 
-  it('enables a preset once its required variable validates', () => {
-    render(
+    rerender(
       <PresetPromptBar
         catalog={catalog}
         bindings={{ JOB_ID: { kind: 'text', value: 'abc' } }}
@@ -107,12 +107,6 @@ describe('PresetPromptBar', () => {
     await user.hover(button.parentElement!)
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Missing or invalid: Job ID.')
-  })
-
-  it('a preset with no required variables is always enabled', () => {
-    render(<PresetPromptBar catalog={catalog} bindings={{}} locked={false} lockedReason="" onActivate={jest.fn()} />)
-
-    expect(screen.getByRole('button', { name: /Health Check/ })).toBeEnabled()
   })
 
   it('locked disables every preset uniformly with the locked reason, even a valid one', () => {

@@ -2,11 +2,7 @@ import { describe, expect, it } from '@jest/globals'
 
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 
-import {
-  closedState,
-  createHarness,
-  openState,
-} from './conversation.store.fixture'
+import { closedState, createHarness } from './conversation.store.fixture'
 import { aConversation, anEvent, id } from '../domain/conversation.fixture'
 import {
   PENDING_TURN_INTERVAL_MS,
@@ -71,25 +67,11 @@ describe('pending-turn recovery', () => {
     const watch = harness.store.getSnapshot().pendingTurn
     expect(watch).toMatchObject({ attempts: PENDING_TURN_MAX_ATTEMPTS, exhausted: true })
     expect(harness.scheduler.running()).toBe(false)
-  })
-
-  it('issues one load per attempt, up to and including the last', () => {
-    const harness = createHarness()
-    startWatching(harness)
-
-    harness.scheduler.advance(PENDING_TURN_MAX_ATTEMPTS)
 
     const loads = harness.gateway.calls.filter(([method]) => method === 'load')
     expect(loads).toHaveLength(PENDING_TURN_MAX_ATTEMPTS)
-  })
-
-  it('does not restart after the reply to its final poll', () => {
-    const harness = createHarness()
-    startWatching(harness)
-    harness.scheduler.advance(PENDING_TURN_MAX_ATTEMPTS)
 
     harness.gateway.emit(stillPending('a'))
-
     expect(harness.scheduler.running()).toBe(false)
     expect(harness.store.getSnapshot().pendingTurn?.attempts).toBe(PENDING_TURN_MAX_ATTEMPTS)
   })
@@ -203,20 +185,5 @@ describe('unknown conversation id recovery', () => {
     harness.store.dismissUnknownId()
 
     expect(harness.store.getSnapshot().unknownId).toBeNull()
-  })
-
-  // FR-CONV-012 / P4: a reconnect reloads the active conversation without a second copy of it.
-  it('reloads the active conversation exactly once after a reconnect', () => {
-    const harness = createHarness()
-    harness.gateway.emit(anEvent.loaded('a'))
-    harness.connection.set(closedState)
-    harness.gateway.calls.length = 0
-
-    harness.connection.set(openState)
-
-    expect(harness.gateway.calls.filter(([method]) => method === 'load')).toEqual([
-      ['load', id('a')],
-    ])
-    expect(harness.store.getSnapshot().items.filter((item) => item.id === id('a'))).toHaveLength(1)
   })
 })

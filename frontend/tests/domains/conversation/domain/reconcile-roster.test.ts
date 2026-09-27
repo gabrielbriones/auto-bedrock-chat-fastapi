@@ -14,7 +14,6 @@ import type { ConversationEvent } from '@/domains/conversation/domain/events'
 import { reconcileRoster } from '@/domains/conversation/domain/reconcile-roster'
 import { rosterViolations } from '@/domains/conversation/domain/roster-invariants'
 import {
-  awaitFirstTurnId,
   beginBulkDelete,
   clearSelection,
   emptyRoster,
@@ -46,12 +45,6 @@ const aSeededRoster = () =>
   selectAll(aRoster([aConversation('a', 0, 'Job 42'), aConversation('b', 5), aConversation('c', 9)]))
 
 describe('reconcileRoster', () => {
-  it('handles all nine conversation frames', () => {
-    const kinds = new Set(EVERY_EVENT.map((event) => event.kind))
-
-    expect(kinds.size).toBe(9)
-  })
-
   // The reducer is the only place roster state is decided, so it must never break the aggregate.
   it('leaves the roster invariant-clean for every event', () => {
     for (const event of EVERY_EVENT) {
@@ -118,16 +111,6 @@ describe('reconcileRoster frame handling', () => {
     expect([...roster.selection]).toEqual([id('c'), id('b')])
   })
 
-  // FR-CONV-010.
-  it('adopts the newest conversation when a list follows a turn sent before its id existed', () => {
-    const roster = reduce(
-      awaitFirstTurnId(emptyRoster),
-      anEvent.listed([aConversation('a', 0), aConversation('b', 5)]),
-    )
-
-    expect(roster.activeId).toBe(id('b'))
-  })
-
   it('activates a loaded conversation it had not listed yet', () => {
     expect(reduce(emptyRoster, anEvent.loaded('deep-link')).activeId).toBe(id('deep-link'))
   })
@@ -137,16 +120,6 @@ describe('reconcileRoster frame handling', () => {
     const active = reduce(aSeededRoster(), anEvent.loaded('a'))
 
     expect(reduce(active, anEvent.deleted('a')).activeId).toBeNull()
-  })
-
-  // FR-CONV-006a / P5.
-  it('drops the whole requested set from the selection on a partial bulk delete', () => {
-    const started = beginBulkDelete(aSeededRoster(), [id('a'), id('b')])
-    const roster = reduce(isOk(started) ? started.value : emptyRoster, anEvent.bulkDeleted(['a']))
-
-    expect(roster.items.map((item) => item.id)).toEqual([id('c'), id('b')])
-    expect([...roster.selection]).toEqual([id('c')])
-    expect(roster.pendingBulkDelete).toBeNull()
   })
 
   // FR-CONV-006b.

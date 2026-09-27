@@ -5,20 +5,11 @@ import { axe } from 'jest-axe'
 import { ConnectionBadge } from '@/domains/messaging/presentation/ConnectionBadge'
 
 describe('ConnectionBadge (FR-MSG-002)', () => {
-  it.each(['connected', 'connecting'] as const)('renders nothing while %s', (kind) => {
-    const { container } = render(<ConnectionBadge connection={{ kind }} />)
+  it('renders nothing while connecting', () => {
+    const { container } = render(<ConnectionBadge connection={{ kind: 'connecting' }} />)
 
     expect(container).toBeEmptyDOMElement()
   })
-
-  it.each([[{ kind: 'disconnected' } as const, 'Disconnected']])(
-    'renders %o as its label',
-    (connection, label) => {
-      render(<ConnectionBadge connection={connection} />)
-
-      expect(screen.getByRole('alert', { name: 'Connection status' })).toHaveTextContent(label)
-    },
-  )
 
   it('shows the disconnected banner immediately on connection loss, with no intermediate reconnecting state', () => {
     const { rerender } = render(<ConnectionBadge connection={{ kind: 'connected' }} />)
@@ -26,7 +17,7 @@ describe('ConnectionBadge (FR-MSG-002)', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 
     rerender(<ConnectionBadge connection={{ kind: 'disconnected' }} />)
-    expect(screen.getByRole('alert')).toHaveTextContent('Disconnected')
+    expect(screen.getByRole('alert', { name: 'Connection status' })).toHaveTextContent('Disconnected')
 
     rerender(<ConnectionBadge connection={{ kind: 'connected' }} />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()

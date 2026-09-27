@@ -66,6 +66,16 @@ const assertVisible = async (driver: WebDriver, selector: string): Promise<void>
   }
 }
 
+// Under forced colors the browser paints every element with the user's system palette, and nothing
+// in the app opts out (`forced-color-adjust: none` is unused), so author colour contrast is not
+// what this journey checks — `contrast-audit` and `accessibility-routes` cover it with forced colors
+// off. axe's `color-contrast` rule is also not forced-colors aware: it reads
+// `-webkit-text-fill-color`, which Chromium reports with the *unforced* author colour, against the
+// forced Canvas background. That only passed headless by luck (the emulated palette is light there,
+// and the light-theme foreground happens to contrast with white); a headed window follows the
+// desktop's palette and fails on a dark one.
+const AXE_OPTIONS = { disableRules: ['color-contrast'] } as const
+
 describe('Phase 10 forced-colors smoke test', function () {
 
   let driver: WebDriver
@@ -89,7 +99,7 @@ describe('Phase 10 forced-colors smoke test', function () {
     await assertVisible(driver, 'textarea[aria-label="Message"]')
     await assertVisible(driver, 'button[type="submit"]')
     await tabTo(driver, 'textarea[aria-label="Message"]')
-    await assertNoAxeViolations(driver)
+    await assertNoAxeViolations(driver, AXE_OPTIONS)
   })
 
   it('keeps the knowledge-base credibility badges legible under forced colors', async () => {
@@ -103,6 +113,6 @@ describe('Phase 10 forced-colors smoke test', function () {
     expect(badgeText.trim()).not.toBe('')
 
     await tabTo(driver, 'main tbody button[aria-label^="Open "]')
-    await assertNoAxeViolations(driver)
+    await assertNoAxeViolations(driver, AXE_OPTIONS)
   })
 })

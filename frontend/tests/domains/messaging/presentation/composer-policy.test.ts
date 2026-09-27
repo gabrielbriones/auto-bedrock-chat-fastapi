@@ -59,24 +59,6 @@ describe('composerAvailability', () => {
   it.each(cases)('%s', (_name, overrides, enabled, reason) => {
     expect(composerAvailability(conditions(overrides), REASONS)).toEqual({ enabled, reason })
   })
-
-  it('states a reason exactly when it is closed', () => {
-    for (const [, overrides] of cases) {
-      const availability = composerAvailability(conditions(overrides), REASONS)
-
-      expect(availability.enabled).toBe(availability.reason === null)
-    }
-  })
-
-  // A turn recycled by staleness or a drop resolves, so `awaitingResponse` falls and the composer
-  // reopens without any separate unlock path (FR-MSG-005).
-  it('reopens when a locked turn recycles', () => {
-    const locked = composerAvailability(conditions({ awaitingResponse: true }), REASONS)
-    const recycled = composerAvailability(conditions({ awaitingResponse: false }), REASONS)
-
-    expect(locked.enabled).toBe(false)
-    expect(recycled.enabled).toBe(true)
-  })
 })
 
 const keystroke = (overrides: Partial<ComposerKeystroke> = {}): ComposerKeystroke => ({

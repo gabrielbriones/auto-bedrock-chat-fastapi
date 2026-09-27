@@ -5,6 +5,14 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
 
+// Dev server only: dashboard URLs are answered by the SPA's own index.html and chat URLs by Vite
+// itself; everything else under /bedrock-chat is proxied to the backend.
+const serveSpaRoutesLocally = (req: { url?: string }): string | undefined => {
+  if (/^\/bedrock-chat\/dashboard(?:\/|\?|$)/.test(req.url ?? '')) return '/bedrock-chat/ui/'
+  if (/^\/bedrock-chat\/ui(?:\/|\?|$)/.test(req.url ?? '')) return req.url
+  return undefined
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
 const env = loadEnv(mode, process.cwd(), '');
@@ -39,11 +47,7 @@ return {
       '/bedrock-chat': {
         target: proxyTarget,
         changeOrigin: false,
-        bypass: (req) => {
-          if (/^\/bedrock-chat\/dashboard(?:\/|\?|$)/.test(req.url ?? '')) return '/bedrock-chat/ui/'
-          if (/^\/bedrock-chat\/ui(?:\/|\?|$)/.test(req.url ?? '')) return req.url
-          return undefined
-        },
+        bypass: serveSpaRoutesLocally,
       },
       '/chat': { target: proxyTarget, changeOrigin: false, ws: true },
       '/api': { target: proxyTarget, changeOrigin: false },

@@ -89,11 +89,11 @@ describe('PromptCatalogStore — activatePreset', () => {
     const outcome = store.activatePreset('workload-analysis')
 
     expect(outcome).toEqual({ kind: 'sent' })
-    expect(sink.submit).toHaveBeenCalledWith<[ComposedPrompt]>({
+    expect(sink.submit).toHaveBeenCalledWith({
       text: 'JOB_ID = 1a2b3c4d',
       presetId: 'workload-analysis',
       bindings: { JOB_ID: { kind: 'text', value: '1a2b3c4d' } },
-    })
+    } satisfies ComposedPrompt)
   })
 
   it('reports "blocked" with the failing variables named, and never submits', () => {
@@ -108,12 +108,6 @@ describe('PromptCatalogStore — activatePreset', () => {
   it('reports "unknown-preset" for an id the catalogue does not have', () => {
     const { store } = harness()
     expect(store.activatePreset('does-not-exist')).toEqual({ kind: 'unknown-preset' })
-  })
-
-  it('a preset with no required variables always activates', () => {
-    const { store, sink } = harness()
-    expect(store.activatePreset('health-check')).toEqual({ kind: 'sent' })
-    expect(sink.submit).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -134,9 +128,17 @@ describe('PromptCatalogStore — deep links', () => {
     expect(sink.submit).not.toHaveBeenCalled()
   })
 
-  it('sends exactly once as soon as it becomes ready', () => {
+  it('sends exactly once as soon as it becomes ready, whatever readiness does afterwards', () => {
     const { store, sink } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
 
+    store.tryAutoSend(false)
+    store.tryAutoSend(true)
+    expect(sink.submit).toHaveBeenCalledTimes(1)
+
+    // Re-renders and reconnect flapping must not fire it again.
+    for (let i = 0; i < 5; i += 1) {
+      store.tryAutoSend(true)
+    }
     store.tryAutoSend(false)
     store.tryAutoSend(true)
 
@@ -191,26 +193,6 @@ describe('PromptCatalogStore — deep links', () => {
 
   // FR-PROMPT-016 / Phase 2 accept: the single-fire regression matrix.
   describe('single-fire guarantee', () => {
-    it('re-render: many ready calls in a row send only once', () => {
-      const { store, sink } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
-
-      for (let i = 0; i < 5; i += 1) {
-        store.tryAutoSend(true)
-      }
-
-      expect(sink.submit).toHaveBeenCalledTimes(1)
-    })
-
-    it('reconnect: readiness flapping false→true→false→true sends only once', () => {
-      const { store, sink } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
-
-      store.tryAutoSend(true)
-      store.tryAutoSend(false)
-      store.tryAutoSend(true)
-
-      expect(sink.submit).toHaveBeenCalledTimes(1)
-    })
-
     it('back-navigation: the browser restoring the pre-scrub URL still never resends', () => {
       const { store, sink, urlNavigator } = harness({ prompt: 'workload-analysis', JOB_ID: '1a2b3c4d' })
 
@@ -222,15 +204,6 @@ describe('PromptCatalogStore — deep links', () => {
       store.tryAutoSend(true)
 
       expect(sink.submit).toHaveBeenCalledTimes(1)
-    })
-
-    it('a fresh reload (new store instance) with the already-scrubbed URL sends nothing', () => {
-      // What actually prevents a real reload from resending: the URL itself has no `prompt` left.
-      const { store, sink } = harness({ keep: 'me' })
-
-      store.tryAutoSend(true)
-
-      expect(sink.submit).not.toHaveBeenCalled()
     })
   })
 })

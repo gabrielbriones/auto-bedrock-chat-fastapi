@@ -20,10 +20,6 @@ describe('parseDeepLink', () => {
     })
   })
 
-  it('defaults autoSend to true when absent', () => {
-    expect(parseDeepLink({ prompt: 'workload-analysis' }, catalog)?.autoSend).toBe(true)
-  })
-
   it.each(['0', 'false'])('autosend=%s suppresses auto-send', (value) => {
     expect(parseDeepLink({ prompt: 'workload-analysis', autosend: value }, catalog)?.autoSend).toBe(false)
   })

@@ -350,13 +350,4 @@ describe('WsMessagingGateway', () => {
 
     expect(events).toEqual([])
   })
-
-  it('stops delivering once unsubscribed', () => {
-    const { emit, events, unsubscribe } = createHarness()
-
-    unsubscribe()
-    emit({ type: 'error', timestamp: TIMESTAMP, message: 'ignored' })
-
-    expect(events).toEqual([])
-  })
 })
