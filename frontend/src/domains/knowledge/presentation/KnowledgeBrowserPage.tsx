@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useId, useRef, type RefObject } from 'react'
 import { useBlocker } from '@tanstack/react-router'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
@@ -7,6 +7,7 @@ import { DebouncedFilterInput, FilterBar, FilterField } from '@/components/ui/co
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { OffsetPagination } from '@/components/ui/composed/offset-pagination'
 import { Page, PageHeader } from '@/components/ui/composed/page-header'
+import { Label } from '@/components/ui/label'
 import { KNOWLEDGE_COPY } from '@/shared/copy/knowledge'
 import { kbDocumentId, type KbDocumentId } from '@/shared/kernel/branded'
 import { offsetWindow } from '@/shared/kernel/pagination'
@@ -39,6 +40,7 @@ export type KnowledgeBrowserPageProps = {
 }
 
 function KnowledgeFilters({ search, onSearchChange }: Pick<KnowledgeBrowserPageProps, 'search' | 'onSearchChange'>) {
+  const flaggedId = useId()
   const reset = () => onSearchChange({
     source: undefined,
     topic: undefined,
@@ -66,9 +68,10 @@ function KnowledgeFilters({ search, onSearchChange }: Pick<KnowledgeBrowserPageP
       <FilterField label={KNOWLEDGE_COPY.filters.to}>
         {(id) => <DebouncedFilterInput key={search.to ?? ''} id={id} value={search.to ?? ''} type="date" onCommit={(to) => onSearchChange({ to: to || undefined, offset: 0 })} />}
       </FilterField>
-      <FilterField label={KNOWLEDGE_COPY.filters.flagged}>
-        {(id) => <Checkbox id={id} checked={search.flagged} onCheckedChange={(checked) => onSearchChange({ flagged: checked === true, offset: 0 })} />}
-      </FilterField>
+      <div className="flex h-8 items-center gap-2 whitespace-nowrap">
+        <Checkbox id={flaggedId} checked={search.flagged} onCheckedChange={(checked) => onSearchChange({ flagged: checked === true, offset: 0 })} />
+        <Label htmlFor={flaggedId} className="cursor-pointer text-sm text-foreground">{KNOWLEDGE_COPY.filters.flagged}</Label>
+      </div>
     </FilterBar>
   )
 }

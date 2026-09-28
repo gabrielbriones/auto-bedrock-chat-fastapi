@@ -39,6 +39,7 @@ export type DataTableProps<Row> = {
   readonly emptyTitle: string
   readonly emptyDescription?: string
   readonly className?: string
+  readonly tableClassName?: string
 }
 
 const stateRow = <Row,>(columns: readonly DataTableColumn<Row>[], content: ReactNode) => (
@@ -167,17 +168,18 @@ export function DataTable<Row>({
   emptyTitle,
   emptyDescription,
   className,
+  tableClassName,
 }: DataTableProps<Row>) {
   const showRows = !isLoading && error === undefined && rows.length > 0
 
   return (
     <div className={cn('overflow-hidden rounded-xl border border-border bg-card', className)}>
-    <Table>
+    <Table className={tableClassName}>
       <TableCaption className="sr-only">{caption}</TableCaption>
       <TableHeader>
         <TableRow>
           {columns.map((column) => (
-            <TableHead key={column.id} className={column.className}>
+            <TableHead key={column.id} className={cn(column.className, 'align-middle')}>
               {column.header}
             </TableHead>
           ))}

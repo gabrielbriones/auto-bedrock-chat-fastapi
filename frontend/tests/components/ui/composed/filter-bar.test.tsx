@@ -39,7 +39,11 @@ describe('FilterBar', () => {
       </FilterBar>,
     )
 
-    await user.click(screen.getByRole('button', { name: ADMIN_COPY.filters.reset }))
+    const reset = screen.getByRole('button', { name: ADMIN_COPY.filters.reset })
+    expect(reset).toHaveClass('self-end')
+    expect(reset).not.toHaveClass('ms-auto')
+
+    await user.click(reset)
     expect(onReset).toHaveBeenCalledTimes(1)
   })
 

@@ -1,3 +1,5 @@
+import { Trash2Icon } from 'lucide-react'
+
 import { Button } from '@/components/ui/button'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 
@@ -16,16 +18,17 @@ export function BulkDeleteBar({ count, inFlight, onClear, onDelete }: BulkDelete
   }
 
   return (
-    <div className="flex items-center gap-2 border-t border-border p-2">
-      <p aria-live="polite" className="flex-1 truncate text-sm text-muted-foreground">
-        {CONVERSATION_COPY.bulk.selected(count)}
-      </p>
-
-      <Button variant="ghost" size="sm" onClick={onClear}>
-        {CONVERSATION_COPY.bulk.clear}
-      </Button>
-
-      <Button variant="destructive" size="sm" disabled={inFlight} onClick={onDelete}>
+    <div className="grid gap-1.5 border-t border-border px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <p aria-live="polite" className="whitespace-nowrap text-sm font-medium tabular-nums">
+          {CONVERSATION_COPY.bulk.selected(count)}
+        </p>
+        <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={onClear}>
+          {CONVERSATION_COPY.bulk.clear}
+        </Button>
+      </div>
+      <Button variant="destructive" size="sm" className="w-full" disabled={inFlight} onClick={onDelete}>
+        <Trash2Icon aria-hidden />
         {CONVERSATION_COPY.bulk.action}
       </Button>
     </div>

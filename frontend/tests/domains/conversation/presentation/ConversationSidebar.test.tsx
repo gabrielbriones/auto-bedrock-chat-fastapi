@@ -12,6 +12,7 @@ import {
   type HarnessOptions,
 } from '../application/conversation.store.fixture'
 import { aConversation, anEvent, id } from '../domain/conversation.fixture'
+import { BulkDeleteBar } from '@/domains/conversation/presentation/BulkDeleteBar'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
 
 const renderSidebar = (options: HarnessOptions = {}) => {
@@ -181,6 +182,16 @@ describe('ConversationSidebar', () => {
     await user.click(screen.getByRole('checkbox', { name: CONVERSATION_COPY.bulk.selectAll }))
 
     expect(screen.getByText(CONVERSATION_COPY.bulk.selected(2))).toBeInTheDocument()
+  })
+
+  it('keeps a double-digit selection count visible above the full-width delete action', () => {
+    render(<BulkDeleteBar count={12} inFlight={false} onClear={() => {}} onDelete={() => {}} />)
+
+    const count = screen.getByText(CONVERSATION_COPY.bulk.selected(12))
+    expect(count).toHaveClass('whitespace-nowrap', 'tabular-nums')
+    expect(count.parentElement).toHaveClass('justify-between')
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.bulk.clear })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.bulk.action })).toHaveClass('w-full')
   })
 
   // FR-CONV-019: the transient error stays put instead of expiring with a toast.

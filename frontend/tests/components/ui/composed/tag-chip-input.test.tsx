@@ -15,6 +15,13 @@ function Harness({ initial = [] }: { readonly initial?: readonly string[] }) {
 const input = () => screen.getByRole('textbox', { name: 'Reviewer tags' })
 
 describe('TagChipInput', () => {
+  it('uses one outer field boundary in dark mode', () => {
+    render(<Harness />)
+
+    expect(input()).not.toHaveClass('dark:bg-input/30', 'border-input')
+    expect(input().parentElement).toHaveClass('border-input', 'dark:bg-input/30')
+  })
+
   it('commits on Enter', async () => {
     const user = userEvent.setup()
     render(<Harness />)

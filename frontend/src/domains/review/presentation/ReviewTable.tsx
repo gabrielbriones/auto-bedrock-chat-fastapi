@@ -19,9 +19,9 @@ const visibleTags = (tags: readonly string[]): ReactNode => (
 )
 
 const baseColumns: readonly DataTableColumn<FeedbackEntrySummary>[] = [
-  { id: 'user', header: REVIEW_COPY.table.user, cell: (entry) => entry.userId, className: 'align-top' },
-  { id: 'rating', header: REVIEW_COPY.table.rating, cell: (entry) => entry.rating, className: 'align-top' },
-  { id: 'status', header: REVIEW_COPY.table.status, cell: (entry) => <ReviewStatusChip status={entry.reviewStatus} />, className: 'align-top' },
+  { id: 'user', header: REVIEW_COPY.table.user, cell: (entry) => <span className="block truncate" title={entry.userId}>{entry.userId}</span>, className: 'w-40 align-top' },
+  { id: 'rating', header: REVIEW_COPY.table.rating, cell: (entry) => entry.rating, className: 'w-20 align-top' },
+  { id: 'status', header: REVIEW_COPY.table.status, cell: (entry) => <ReviewStatusChip status={entry.reviewStatus} />, className: 'w-32 align-top' },
   {
     id: 'query',
     header: REVIEW_COPY.table.query,
@@ -30,10 +30,10 @@ const baseColumns: readonly DataTableColumn<FeedbackEntrySummary>[] = [
         {entry.query}
       </span>
     ),
-    className: 'w-[32rem] max-w-[50vw] whitespace-normal align-top',
+    className: 'whitespace-normal align-top',
   },
-  { id: 'created', header: REVIEW_COPY.table.created, cell: (entry) => new Date(entry.createdAt.epochMilliseconds).toLocaleString(), className: 'align-top' },
-  { id: 'tags', header: REVIEW_COPY.table.tags, cell: (entry) => visibleTags(entry.reviewerTags), className: 'whitespace-normal align-top' },
+  { id: 'created', header: REVIEW_COPY.table.created, cell: (entry) => new Date(entry.createdAt.epochMilliseconds).toLocaleString(), className: 'w-44 align-top' },
+  { id: 'tags', header: REVIEW_COPY.table.tags, cell: (entry) => visibleTags(entry.reviewerTags), className: 'w-48 whitespace-normal align-top' },
 ]
 
 export type ReviewTableProps = {
@@ -55,6 +55,7 @@ const selectionColumn = (
   onToggleAll: () => void,
 ): DataTableColumn<FeedbackEntrySummary> => ({
   id: 'selection',
+  className: 'w-12',
   header: (
     <Checkbox
       aria-label={REVIEW_COPY.table.selectAll}
@@ -82,6 +83,7 @@ export function ReviewTable(props: ReviewTableProps) {
   return (
     <DataTable
       caption="Feedback review entries"
+      tableClassName="min-w-[68rem] table-fixed"
       columns={columns}
       rows={props.rows}
       rowKey={(entry) => entry.id}

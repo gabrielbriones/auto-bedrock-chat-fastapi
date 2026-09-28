@@ -38,6 +38,18 @@ describe('DataTable', () => {
     expect(screen.getByRole('columnheader', { name: 'Query' })).toBeInTheDocument()
   })
 
+  it('keeps column widths while centering headers above top-aligned cells', () => {
+    const { container } = renderTable({
+      columns: [{ id: 'user', header: 'User', cell: (row) => row.user, className: 'w-40 align-top' }],
+      tableClassName: 'min-w-[68rem] table-fixed',
+    })
+
+    expect(container.querySelector('table')).toHaveClass('table-fixed', 'min-w-[68rem]')
+    expect(screen.getByRole('columnheader', { name: 'User' })).toHaveClass('w-40', 'align-middle')
+    expect(screen.getByRole('columnheader', { name: 'User' })).not.toHaveClass('align-top')
+    expect(screen.getByRole('cell', { name: 'rzhang' })).toHaveClass('w-40', 'align-top')
+  })
+
   // FIX-13: the legacy table hung a click handler on a bare `<tr>`, unreachable by keyboard.
   it('exposes each row action as a button carrying the row name', () => {
     renderTable({ rowAction: { label: (row) => row.query, onActivate: () => {} } })

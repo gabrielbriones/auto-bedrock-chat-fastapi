@@ -162,6 +162,19 @@ describe('knowledge browser URL binding', () => {
     await waitFor(() => expect(routeSearch(router)).toMatchObject({ flagged: false, offset: 0 }))
     expect(routeSearch(router)).not.toHaveProperty('source')
   })
+
+  it('toggles the removal filter from its inline label', async () => {
+    const user = userEvent.setup()
+    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser')
+    const label = await screen.findByText(KNOWLEDGE_COPY.filters.flagged)
+
+    expect(label.parentElement).toHaveClass('flex', 'items-center', 'h-8')
+    expect(screen.getByRole('checkbox', { name: KNOWLEDGE_COPY.filters.flagged })).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(label)
+
+    await waitFor(() => expect(routeSearch(router)).toMatchObject({ flagged: true, offset: 0 }))
+  })
 })
 
 describe('knowledge browser status cues', () => {

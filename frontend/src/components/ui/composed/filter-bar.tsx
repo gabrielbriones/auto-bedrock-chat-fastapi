@@ -29,7 +29,7 @@ export function FilterBar({ label, children, onReset, resetLabel }: FilterBarPro
       <div className="flex flex-wrap items-end gap-3">
         {children}
         {onReset !== undefined ? (
-          <Button type="button" variant="ghost" size="sm" className="ms-auto self-end" onClick={onReset}>
+          <Button type="button" variant="outline" size="sm" className="self-end" onClick={onReset}>
             {resetLabel ?? ADMIN_COPY.filters.reset}
           </Button>
         ) : null}

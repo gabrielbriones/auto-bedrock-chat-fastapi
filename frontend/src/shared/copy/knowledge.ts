@@ -156,7 +156,7 @@ export const KNOWLEDGE_COPY = {
       name: 'Name',
       topic: 'Topic (optional)',
       files: 'Files',
-      filesHint: 'Plain-text and PDF files are uploaded directly — there is no server-side path. Up to 10 MB per file and 50 MB in total.',
+      filesHint: 'Up to 10 MB per file and 50 MB in total.',
       submit: 'Upload & ingest',
       uploading: 'Uploading…',
       started: (runId: string) => `File ingestion started (run ${runId}).`,

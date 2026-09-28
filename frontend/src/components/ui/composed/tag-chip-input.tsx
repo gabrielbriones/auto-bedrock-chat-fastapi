@@ -3,7 +3,6 @@ import { PlusIcon, XIcon } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { REVIEW_COPY } from '@/shared/copy/review'
 import { addTag, MAX_TAG_LENGTH, type TagAddError } from '@/shared/kernel/curation'
@@ -56,14 +55,15 @@ type TagDraftProps = {
 
 function TagDraft({ id, draft, tags, message, disabled, inputRef, onDraftChange, onChange, onCommit }: TagDraftProps) {
   return <>
-    <Input
+    <input
       ref={inputRef}
       id={id}
+      type="text"
       value={draft}
       disabled={disabled}
       aria-invalid={message === null ? undefined : true}
       aria-describedby={message === null ? undefined : `${id}-error`}
-      className="h-7 min-w-32 flex-1 border-0 p-0 shadow-none focus-visible:ring-0"
+      className="h-7 min-w-32 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
       placeholder={REVIEW_COPY.tags.input}
       onChange={(event) => onDraftChange(event.target.value)}
       onKeyDown={(event) => {
@@ -127,7 +127,7 @@ export function TagChipInput({
     <div className="grid gap-2">
       <Label htmlFor={id}>{label}</Label>
       <div
-        className="flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-input p-2 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+        className="flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-input bg-background px-2 py-1 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30"
         onClick={() => inputRef.current?.focus()}
       >
         <ChipList tags={tags} onChange={onChange} disabled={disabled} onRemove={() => setPolicyError(null)} />
