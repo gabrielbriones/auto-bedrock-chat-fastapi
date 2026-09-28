@@ -40,6 +40,7 @@ function AdminNav({ capabilities }: { readonly capabilities: Capabilities }) {
         <Link
           key={item.to}
           to={item.to}
+          preload="render"
           activeOptions={{ exact: true }}
           className="flex items-center justify-between rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium"
         >
