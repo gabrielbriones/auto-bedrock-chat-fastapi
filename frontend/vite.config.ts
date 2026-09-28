@@ -8,10 +8,16 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite';
 // Dev server only: dashboard URLs are answered by the SPA's own index.html and chat URLs by Vite
 // itself; everything else under /bedrock-chat is proxied to the backend.
 const serveSpaRoutesLocally = (req: { url?: string }): string | undefined => {
-  if (/^\/bedrock-chat\/dashboard(?:\/|\?|$)/.test(req.url ?? '')) return '/bedrock-chat/ui/'
-  if (/^\/bedrock-chat\/ui(?:\/|\?|$)/.test(req.url ?? '')) return req.url
+  const url = req.url ?? ''
+  if (/^\/bedrock-chat\/dashboard(?:\/|\?|$)/.test(url)) return '/bedrock-chat/ui/'
+  // Vite 404s the bare base path; the backend serves it, so match that here.
+  if (/^\/bedrock-chat\/ui(?:\?|$)/.test(url)) return url.replace('/bedrock-chat/ui', '/bedrock-chat/ui/')
+  if (url.startsWith('/bedrock-chat/ui/')) return url
   return undefined
 }
+
+// Dev only: pre-transform the split dashboard routes so a first visit is not a compile waterfall.
+const WARMUP_FILES = ['./src/routes/dashboard/*.tsx', './src/domains/*/presentation/*.tsx']
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -43,6 +49,7 @@ return {
   server: {
     port,
     strictPort: true,
+    warmup: { clientFiles: WARMUP_FILES },
     proxy: {
       '/bedrock-chat': {
         target: proxyTarget,
