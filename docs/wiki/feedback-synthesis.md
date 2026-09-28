@@ -10,6 +10,14 @@ groups them by `reviewer_tags`, calls the LLM once per group, and
 creates or updates a KB article with the synthesized knowledge. Each
 contributing entry is then marked as integrated.
 
+> `FeedbackSynthesizer` is also used outside the feedback-review flow: its
+> `synthesize_raw_content(content, title, topic)` method powers the opt-in
+> `synthesize` flag on `/admin/kb/sources/{web,file}` (see
+> [Admin API](admin-api#kb-source-ingestion)), condensing a single crawled
+> or uploaded document into a concise summary before chunking. That path
+> uses its own prompt and returns plain text — it does not go through the
+> feedback-entry grouping or JSON-article parsing described below.
+
 ---
 
 ## Prerequisites

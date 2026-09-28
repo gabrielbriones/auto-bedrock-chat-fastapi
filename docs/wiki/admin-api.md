@@ -344,23 +344,25 @@ kb_source_run_already_in_progress`. This is intentional: admins can
   "allowed_domains": ["example.com"],
   "exclude_patterns": ["/de/", "/es/"],
   "ingest_linked_files": false,
+  "synthesize": false,
   "headers": { "Authorization": "Bearer ..." },
   "cookies": { "session_id": "..." }
 }
 ```
 
-| Field                 | Required | Notes                                                                                                                                                                                                                                                                                                                       |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                | yes      | Used as the KB document `source`.                                                                                                                                                                                                                                                                                           |
-| `urls`                | yes      | One or more start URLs; must be non-empty.                                                                                                                                                                                                                                                                                  |
-| `topic`               | no       | Attached to every indexed document.                                                                                                                                                                                                                                                                                         |
-| `max_depth`           | no       | Default `2`.                                                                                                                                                                                                                                                                                                                |
-| `max_pages`           | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                                                                                                                                                                                                                                      |
-| `allowed_domains`     | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites.                                                                                                                                                                                                                |
-| `exclude_patterns`    | no       | URL substrings/paths to skip (e.g. translated pages).                                                                                                                                                                                                                                                                       |
-| `ingest_linked_files` | no       | Default `false`. When `true`, linked PDFs discovered during the crawl are downloaded, text-extracted, and indexed as their own documents instead of being silently skipped; still subject to `max_pages`/`allowed_domains`/`exclude_patterns` and a per-file size cap. Other non-HTML formats are still skipped regardless. |
-| `headers`             | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.                                                                                                                                                                                                                    |
-| `cookies`             | no       | Cookies sent with every crawl request (e.g. a session cookie).                                                                                                                                                                                                                                                              |
+| Field                 | Required | Notes                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                | yes      | Used as the KB document `source`.                                                                                                                                                                                                                                                                                                                              |
+| `urls`                | yes      | One or more start URLs; must be non-empty.                                                                                                                                                                                                                                                                                                                     |
+| `topic`               | no       | Attached to every indexed document.                                                                                                                                                                                                                                                                                                                            |
+| `max_depth`           | no       | Default `2`.                                                                                                                                                                                                                                                                                                                                                   |
+| `max_pages`           | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                                                                                                                                                                                                                                                                         |
+| `allowed_domains`     | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites.                                                                                                                                                                                                                                                   |
+| `exclude_patterns`    | no       | URL substrings/paths to skip (e.g. translated pages).                                                                                                                                                                                                                                                                                                          |
+| `ingest_linked_files` | no       | Default `false`. When `true`, linked PDFs discovered during the crawl are downloaded, text-extracted, and indexed as their own documents instead of being silently skipped; still subject to `max_pages`/`allowed_domains`/`exclude_patterns` and a per-file size cap. Other non-HTML formats are still skipped regardless.                                    |
+| `synthesize`          | no       | Default `false`. When `true`, each page's content is run through the KB synthesizer (see [Feedback Synthesis](feedback-synthesis)) before chunking, indexing a concise, RAG-appropriate summary instead of the raw extracted text. Adds one LLM call per page; a per-page synthesis failure falls back to that page's raw content rather than failing the run. |
+| `headers`             | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.                                                                                                                                                                                                                                                       |
+| `cookies`             | no       | Cookies sent with every crawl request (e.g. a session cookie).                                                                                                                                                                                                                                                                                                 |
 
 `headers`/`cookies` are never echoed back in the status response or audit log.
 
@@ -376,11 +378,12 @@ curl -sS -b cookies.txt -X POST \
   -F 'files=@notes.md;type=text/markdown'
 ```
 
-| Field   | Required | Notes                                                       |
-| ------- | -------- | ----------------------------------------------------------- |
-| `name`  | yes      | Used as the KB document `source`.                           |
-| `topic` | no       | Attached to every indexed document.                         |
-| `files` | yes      | One or more uploaded files. Each must decode as UTF-8 text. |
+| Field        | Required | Notes                                                                                                                                                                         |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`       | yes      | Used as the KB document `source`.                                                                                                                                             |
+| `topic`      | no       | Attached to every indexed document.                                                                                                                                           |
+| `synthesize` | no       | Default `false`. Same opt-in synthesis behavior as the web route's `synthesize` field above, applied per uploaded file.                                                       |
+| `files`      | yes      | One or more uploaded files. Each must decode as UTF-8 text, or be a `.pdf`/`application/pdf` upload (text is extracted from the PDF instead of UTF-8-decoding the raw bytes). |
 
 Response shape (`POST` and `GET status` share it):
 
@@ -626,9 +629,6 @@ ergonomic, but it is a foot-gun:
 - `POST /admin/kb/documents` (raw document creation) — content only enters
   the KB via the populate pipeline, the synthesizer (see
   [Feedback Synthesis](feedback-synthesis)), or `/admin/kb/sources/*` above.
-- Dashboard UI button to trigger `/admin/kb/sources/*` — tracked as a
-  separate follow-up ticket; the HTTP endpoints exist today but aren't
-  yet surfaced in the Dashboard.
 - Scheduling/cron-based recurring re-crawls of a KB source.
 - Rate limiting — operationally enforced upstream (Nginx / ALB).
 - Persisting audit logs to a DB table — handled by the host app's log

@@ -14,10 +14,15 @@ Endpoints
 * ``POST   /admin/kb/sources/web``     — trigger a web-crawl ingestion run.
 * ``POST   /admin/kb/sources/file``    — trigger an ingestion run from
   uploaded file content (multipart form; admins don't have filesystem
-  access to the running service).
+  access to the running service). Both ``/web`` and ``/file`` accept an
+  opt-in ``synthesize`` flag that runs each document through
+  ``FeedbackSynthesizer.synthesize_raw_content(...)`` before chunking,
+  indexing a concise summary instead of the raw text; a per-document
+  synthesis failure falls back to that document's raw content.
 * ``PUT    /admin/kb/sources/web/{name}``/``PUT /admin/kb/sources/file/{name}``
   — delete an existing source's documents/chunks, then re-run the same
-  ingestion as the corresponding ``POST`` to replace them.
+  ingestion as the corresponding ``POST`` (including the ``synthesize``
+  flag) to replace them.
 * ``GET    /admin/kb/sources/status``  — poll the in-flight ingestion run.
 
 Concurrency
@@ -214,6 +219,11 @@ class KBSourceWebBody(BaseModel):
     # a session cookie). Not echoed back in the status response or audit log.
     headers: Optional[Dict[str, str]] = None
     cookies: Optional[Dict[str, str]] = None
+    # Opt-in: run each page's raw content through FeedbackSynthesizer before
+    # chunking, indexing a concise summary instead of the raw extracted text.
+    # A per-document synthesis failure falls back to the raw content for
+    # that document rather than aborting the run.
+    synthesize: bool = False
 
     @field_validator("urls")
     @classmethod
@@ -345,6 +355,7 @@ async def _run_web_source_ingestion(
     embedding_model: str,
     chunker: Any,
     body: KBSourceWebRequest,
+    synthesizer: Any = None,
 ) -> None:
     """Run a web-source ingestion as an ``asyncio.create_task`` background task."""
     from ..rag.kb_ingestion import ingest_web_source
@@ -366,6 +377,8 @@ async def _run_web_source_ingestion(
             extra_headers=body.headers,
             cookies=body.cookies,
             progress_cb=state.record_progress,
+            synthesize=body.synthesize,
+            synthesizer=synthesizer,
         )
         state._mark_completed(errors=result["errors"])
         logger.info(
@@ -406,6 +419,8 @@ async def _run_file_source_ingestion(
     source_name: str,
     topic: Optional[str],
     files: List[Tuple[str, str]],
+    synthesize: bool = False,
+    synthesizer: Any = None,
 ) -> None:
     """Run an uploaded-file ingestion as an ``asyncio.create_task`` background task."""
     from ..rag.kb_ingestion import ingest_uploaded_files
@@ -420,6 +435,8 @@ async def _run_file_source_ingestion(
             files=files,
             topic=topic,
             progress_cb=state.record_progress,
+            synthesize=synthesize,
+            synthesizer=synthesizer,
         )
         state._mark_completed(errors=result["errors"])
         logger.info(
@@ -466,6 +483,7 @@ async def _run_web_source_override(
     name: str,
     body: KBSourceWebBody,
     delete_fn: DeleteBySourceFn,
+    synthesizer: Any = None,
 ) -> None:
     """Delete ``name``'s existing documents/chunks, then re-run a web-crawl
     ingestion, as an ``asyncio.create_task`` background task.
@@ -496,6 +514,8 @@ async def _run_web_source_override(
             extra_headers=body.headers,
             cookies=body.cookies,
             progress_cb=state.record_progress,
+            synthesize=body.synthesize,
+            synthesizer=synthesizer,
         )
         state._mark_completed(errors=result["errors"])
         logger.info(
@@ -543,6 +563,8 @@ async def _run_file_source_override(
     topic: Optional[str],
     files: List[Tuple[str, str]],
     delete_fn: DeleteBySourceFn,
+    synthesize: bool = False,
+    synthesizer: Any = None,
 ) -> None:
     """Delete ``source_name``'s existing documents/chunks, then re-ingest
     newly uploaded file content, as an ``asyncio.create_task`` background task.
@@ -566,6 +588,8 @@ async def _run_file_source_override(
             files=files,
             topic=topic,
             progress_cb=state.record_progress,
+            synthesize=synthesize,
+            synthesizer=synthesizer,
         )
         state._mark_completed(errors=result["errors"])
         logger.info(
@@ -610,6 +634,7 @@ def register_admin_kb_routes(
     embedding_client: Any = None,
     embedding_model: Optional[str] = None,
     chunker: Any = None,
+    synthesizer: Any = None,
 ) -> APIRouter:
     """Register the ``/admin/kb/documents*`` and ``/admin/kb/sources*`` routes on ``app``.
 
@@ -648,6 +673,12 @@ def register_admin_kb_routes(
         Optional pre-built ``TextChunker`` shared by the source-ingestion
         routes. Defaults to a plain ``TextChunker()`` (same defaults as
         the populate pipeline) when ``None``.
+    synthesizer:
+        Optional ``FeedbackSynthesizer`` used by the ``/kb/sources/*``
+        routes when a request opts in via ``synthesize=true``. When
+        ``None``, a ``synthesize=true`` request falls back to indexing raw
+        content for every document (same as ``synthesize=false``), with a
+        warning logged.
     """
     router = APIRouter(prefix=f"{prefix}/kb/documents", tags=["admin-kb"])
 
@@ -1073,6 +1104,7 @@ def register_admin_kb_routes(
                 embedding_model=embedding_model,
                 chunker=_source_chunker,
                 body=body,
+                synthesizer=synthesizer,
             )
         )
 
@@ -1108,6 +1140,8 @@ def register_admin_kb_routes(
     async def trigger_file_source(
         name: str = Form(...),
         topic: Optional[str] = Form(None),
+        # Same opt-in synthesis flag as KBSourceWebBody.synthesize (see there).
+        synthesize: bool = Form(False),
         # FastAPI/Pydantic v2 emit OpenAPI 3.1's `contentMediaType` for
         # `UploadFile` items, which older Swagger UI builds don't render as
         # file pickers — force the OpenAPI 3.0-style `format: binary` hint
@@ -1205,6 +1239,8 @@ def register_admin_kb_routes(
                 source_name=name,
                 topic=topic,
                 files=decoded_files,
+                synthesize=synthesize,
+                synthesizer=synthesizer,
             )
         )
 
@@ -1276,6 +1312,7 @@ def register_admin_kb_routes(
                 name=name,
                 body=body,
                 delete_fn=_delete_documents_for_source,
+                synthesizer=synthesizer,
             )
         )
 
@@ -1305,6 +1342,8 @@ def register_admin_kb_routes(
     async def override_file_source(
         name: str,
         topic: Optional[str] = Form(None),
+        # Same opt-in synthesis flag as KBSourceWebBody.synthesize (see there).
+        synthesize: bool = Form(False),
         files: Optional[List[UploadFile]] = File(
             default=None, json_schema_extra={"items": {"type": "string", "format": "binary"}}
         ),
@@ -1374,6 +1413,8 @@ def register_admin_kb_routes(
                 topic=topic,
                 files=decoded_files,
                 delete_fn=_delete_documents_for_source,
+                synthesize=synthesize,
+                synthesizer=synthesizer,
             )
         )
 

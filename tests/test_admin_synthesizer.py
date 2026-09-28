@@ -177,3 +177,102 @@ async def test_synthesize_all_creates_new_document():
 
     assert isinstance(result, SynthesisRunResult)
     assert result.total_integrated == 1
+
+
+# ---------------------------------------------------------------------------
+# synthesize_raw_content() input-size pre-check -- XMGPLAT-11402 PR review
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_synthesize_raw_content_calls_llm_when_model_has_no_known_profile():
+    """model_id in these tests ("anthropic.claude-test") has no real
+    max_input_tokens entry -- the pre-check must no-op (call proceeds) rather
+    than block synthesis just because the model's profile is unknown."""
+    synth = FeedbackSynthesizer(model_id="anthropic.claude-test")
+    ainvoke = AsyncMock(return_value=MagicMock(content="a concise summary"))
+
+    with patch.dict(
+        sys.modules,
+        {
+            "langchain_aws": types.SimpleNamespace(ChatBedrockConverse=lambda **kwargs: MagicMock(ainvoke=ainvoke)),
+            "langchain_core.messages": types.SimpleNamespace(SystemMessage=MagicMock, HumanMessage=MagicMock),
+        },
+    ):
+        result = await synth.synthesize_raw_content(content="hello world", title="Doc")
+
+    assert result == "a concise summary"
+    ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_raw_content_skips_llm_call_when_content_exceeds_model_budget():
+    """A document too large for the model's context window must fail fast
+    (no Bedrock round trip) rather than paying the latency of a doomed call
+    that would just come back as a context-window ValidationException."""
+    synth = FeedbackSynthesizer(model_id="fake.tiny-model")
+    ainvoke = AsyncMock(return_value=MagicMock(content="should never be reached"))
+    oversized_content = "x" * 10_000
+
+    with (
+        patch.object(synth_mod, "get_model_profile", return_value={"max_input_tokens": 100}),
+        patch.dict(
+            sys.modules,
+            {
+                "langchain_aws": types.SimpleNamespace(ChatBedrockConverse=lambda **kwargs: MagicMock(ainvoke=ainvoke)),
+                "langchain_core.messages": types.SimpleNamespace(SystemMessage=MagicMock, HumanMessage=MagicMock),
+            },
+        ),
+    ):
+        with pytest.raises(ValueError, match="exceeds the estimated safe budget"):
+            await synth.synthesize_raw_content(content=oversized_content, title="Huge Doc")
+
+    ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_raw_content_calls_llm_when_content_fits_model_budget():
+    synth = FeedbackSynthesizer(model_id="fake.tiny-model")
+    ainvoke = AsyncMock(return_value=MagicMock(content="a concise summary"))
+
+    with (
+        patch.object(synth_mod, "get_model_profile", return_value={"max_input_tokens": 100_000}),
+        patch.dict(
+            sys.modules,
+            {
+                "langchain_aws": types.SimpleNamespace(ChatBedrockConverse=lambda **kwargs: MagicMock(ainvoke=ainvoke)),
+                "langchain_core.messages": types.SimpleNamespace(SystemMessage=MagicMock, HumanMessage=MagicMock),
+            },
+        ),
+    ):
+        result = await synth.synthesize_raw_content(content="short document", title="Doc")
+
+    assert result == "a concise summary"
+    ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_raw_content_fits_ordinary_page_on_small_context_model():
+    """Regression for PR #160 review: comparing character counts directly
+    against max_input_tokens (a *token* count) with no conversion factor
+    rejected ordinary ~20k-character pages on a 16,384-token model. An
+    everyday-sized page must still reach the LLM on the smallest known
+    model profile."""
+    synth = FeedbackSynthesizer(model_id="fake.small-model")
+    ainvoke = AsyncMock(return_value=MagicMock(content="a concise summary"))
+    ordinary_page_content = "x" * 20_000
+
+    with (
+        patch.object(synth_mod, "get_model_profile", return_value={"max_input_tokens": 16_384}),
+        patch.dict(
+            sys.modules,
+            {
+                "langchain_aws": types.SimpleNamespace(ChatBedrockConverse=lambda **kwargs: MagicMock(ainvoke=ainvoke)),
+                "langchain_core.messages": types.SimpleNamespace(SystemMessage=MagicMock, HumanMessage=MagicMock),
+            },
+        ),
+    ):
+        result = await synth.synthesize_raw_content(content=ordinary_page_content, title="Doc")
+
+    assert result == "a concise summary"
+    ainvoke.assert_awaited_once()
