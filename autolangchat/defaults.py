@@ -41,11 +41,14 @@ HISTORY_MSG_TRUNCATION_TARGET_FRACTION = 0.085
 # immediately, which the existing per-document/per-tag-group except blocks
 # already treat as a synthesis failure) instead of paying the latency of a
 # round trip that Bedrock would reject anyway with "Input is too long".
-# Deliberately a separate constant from SINGLE_MSG_LENGTH_THRESHOLD_FRACTION
-# even though it starts at the same value -- this budgets one combined
-# synthesis prompt, not a single conversation turn, and the two shouldn't be
-# coupled if either is retuned later.
-RAW_CONTENT_SYNTHESIS_INPUT_FRACTION = 0.5
+# Matched to HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION rather than
+# SINGLE_MSG_LENGTH_THRESHOLD_FRACTION: a synthesis call only ever sends the
+# fixed system prompt + one user message (the whole document) -- nothing
+# else shares the budget the way other conversation messages do for a single
+# chat turn -- so it's a "whole combined input for this call" budget, not a
+# "one message among several" budget. Still its own constant (not literally
+# reused) so retuning either later doesn't silently affect the other.
+RAW_CONTENT_SYNTHESIS_INPUT_FRACTION = 0.65
 
 # ── Plain-Text Truncation Ratios ────────────────────────────────────────
 TRUNCATION_HEAD_RATIO = 0.8
