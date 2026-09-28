@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { CheckIcon, XIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -7,6 +8,7 @@ import { TagChipInput } from '@/components/ui/composed/tag-chip-input'
 import { REVIEW_COPY } from '@/shared/copy/review'
 import type { Problem } from '@/shared/http/exception'
 import { isErr } from '@/shared/kernel/result'
+import { cn } from '@/lib/utils'
 
 import {
   createReviewDecisionDraft,
@@ -31,13 +33,19 @@ function DecisionField({ decision, message, pending, onChange }: {
 }) {
   const errorId = 'review-decision-error'
   return <fieldset className="grid gap-2" aria-invalid={message === null ? undefined : true} aria-describedby={message === null ? undefined : errorId}>
-    <legend className="text-sm font-medium">{REVIEW_COPY.form.decision}</legend>
-    <div className="flex gap-4">
+    <legend className="text-sm font-semibold">{REVIEW_COPY.form.decision}</legend>
+    <div className="grid grid-cols-2 gap-2 pt-2">
       {(['approved', 'rejected'] as const).map((value) => (
-        <Label key={value} className="flex items-center gap-2">
-          <input type="radio" name="review-decision" value={value} checked={decision === value} disabled={pending} onChange={() => onChange(value)} />
+        <label key={value} className={cn(
+          'flex min-h-11 min-w-0 cursor-pointer items-center justify-center gap-2 rounded border px-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50',
+          decision === value
+            ? value === 'approved' ? 'border-primary bg-primary/10 text-primary' : 'border-destructive bg-destructive/10 text-destructive'
+            : 'border-border bg-background hover:bg-muted/50',
+        )}>
+          <input className="sr-only" type="radio" name="review-decision" value={value} checked={decision === value} disabled={pending} onChange={() => onChange(value)} />
+          {value === 'approved' ? <CheckIcon aria-hidden className="size-4 shrink-0" /> : <XIcon aria-hidden className="size-4 shrink-0" />}
           {value === 'approved' ? REVIEW_COPY.filters.approved : REVIEW_COPY.filters.rejected}
-        </Label>
+        </label>
       ))}
     </div>
     {message === null ? null : <p id={errorId} role="alert" className="text-sm text-destructive">{message}</p>}
@@ -113,7 +121,7 @@ export function ReviewForm({ entry, pending, problem, onSave }: ReviewFormProps)
   }
 
   return (
-    <form className="grid gap-5 border-t border-border pt-4" onSubmit={submit}>
+    <form className="grid gap-4 border-t border-border py-4" onSubmit={submit}>
       <DecisionField decision={decision} message={decisionMessage} pending={pending} onChange={(value) => { setDecision(value); setDecisionError(null) }} />
 
       <TagChipInput
@@ -133,7 +141,7 @@ export function ReviewForm({ entry, pending, problem, onSave }: ReviewFormProps)
         </p>
       )}
 
-      <Button type="submit" disabled={pending} aria-label={pending ? REVIEW_COPY.form.saving : undefined}>
+      <Button type="submit" className="w-full sm:w-auto" disabled={pending} aria-label={pending ? REVIEW_COPY.form.saving : undefined}>
         {REVIEW_COPY.form.save}
       </Button>
     </form>

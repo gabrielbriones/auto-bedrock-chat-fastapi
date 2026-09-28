@@ -48,7 +48,8 @@ export const REVIEW_COPY = {
     details: 'Details',
     metadata: 'Feedback metadata',
     history: 'Message history',
-    content: 'Content',
+    response: 'Response under review',
+    content: 'User feedback',
     previousDecision: 'Previous decision',
     synthesis: 'KB synthesis',
     rolledBack: (by: string | null, reason: string | null) =>

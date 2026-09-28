@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals'
+import { expect, jest } from '@jest/globals'
 import { By, until, type WebDriver } from 'selenium-webdriver'
 
 import { startAccessibilityServer, type AccessibilityServer } from './helpers/accessibility-server.js'
@@ -45,6 +45,16 @@ const VIEWS: readonly ViewCase[] = [
     open: async (driver, origin) => {
       await driver.get(`${origin}/bedrock-chat/dashboard/feedback`)
       await driver.wait(until.elementLocated(By.css('main tbody button[aria-label^="Open "]')), 15_000)
+    },
+  },
+  {
+    name: 'review-drawer',
+    open: async (driver, origin) => {
+      await driver.get(`${origin}/bedrock-chat/dashboard/feedback`)
+      const rowAction = await driver.wait(until.elementLocated(By.css('main tbody button[aria-label^="Open "]')), 15_000)
+      await rowAction.click()
+      await waitForSheetOpen(driver)
+      await driver.wait(until.elementLocated(By.css('[data-slot="sheet-content"] dl')), 15_000)
     },
   },
   {
@@ -114,6 +124,13 @@ describe('Phase 10 visual regression baselines', () => {
           'Promise.all(document.getAnimations().map((animation) => animation.finished))' +
             '.then(() => requestAnimationFrame(() => requestAnimationFrame(() => arguments[0]())))',
         )
+
+        if (view.name === 'review-drawer') {
+          const overflow = await driver.executeScript<number>(
+            'const sheet = document.querySelector("[data-slot=sheet-content]"); return sheet.scrollWidth - sheet.clientWidth',
+          )
+          expect(overflow).toBeLessThanOrEqual(0)
+        }
 
         await matchScreenshot(driver, `vr-${view.name}-${theme}-${viewport.name}`)
       })

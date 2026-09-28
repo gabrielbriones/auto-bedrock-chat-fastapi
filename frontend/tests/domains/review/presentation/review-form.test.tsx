@@ -39,6 +39,20 @@ describe('ReviewForm', () => {
     expect(onSave).toHaveBeenCalledWith({ decision: 'approved', tags: [], comment: null })
   })
 
+  it('shows the selected decision and saves a changed choice', async () => {
+    const onSave = jest.fn()
+    const user = userEvent.setup()
+    render(<ReviewForm entry={anEntry()} pending={false} problem={null} onSave={onSave} />)
+
+    const rejected = screen.getByRole('radio', { name: REVIEW_COPY.filters.rejected })
+    await user.click(rejected)
+    expect(rejected).toBeChecked()
+    expect(screen.getByRole('radio', { name: REVIEW_COPY.filters.approved })).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: REVIEW_COPY.form.save }))
+
+    expect(onSave).toHaveBeenCalledWith({ decision: 'rejected', tags: [], comment: null })
+  })
+
   it('maps a 409 to the stated conflict message', () => {
     render(
       <ReviewForm

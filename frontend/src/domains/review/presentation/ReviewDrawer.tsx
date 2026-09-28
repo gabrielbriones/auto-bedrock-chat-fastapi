@@ -1,11 +1,13 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
+import { Badge } from '@/components/ui/badge'
 import { AdminDrawer } from '@/components/ui/composed/admin-drawer'
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { LoadingState } from '@/components/ui/composed/loading-state'
 import { SanitizedMarkdown } from '@/shared/markdown/sanitized-markdown'
 import { REVIEW_COPY } from '@/shared/copy/review'
 import type { KbDocumentId } from '@/shared/kernel/branded'
+import { cn } from '@/lib/utils'
 
 import type { FeedbackEntry, ReviewDecisionDraft } from '@/domains/review/domain/public'
 import type { ReviewSnapshot } from '@/domains/review/application/review.store'
@@ -57,13 +59,17 @@ function EntryDetails({ entry }: { readonly entry: FeedbackEntry }) {
   const sources = entry.kbSourcesUsed.map((source) => source.title ?? source.source).filter(Boolean)
   return (
     <Section title={REVIEW_COPY.drawer.details}>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-        <dt>{REVIEW_COPY.drawer.user}</dt><dd className="truncate">{entry.userId}</dd>
-        <dt>{REVIEW_COPY.table.rating}</dt><dd>{entry.rating}</dd>
-        <dt>{REVIEW_COPY.table.status}</dt><dd><ReviewStatusChip status={entry.reviewStatus} /></dd>
-        <dt>{REVIEW_COPY.drawer.created}</dt><dd>{new Date(entry.createdAt.epochMilliseconds).toLocaleString()}</dd>
-        <dt>{REVIEW_COPY.drawer.model}</dt><dd className="truncate">{entry.modelId}</dd>
-        {sources.length === 0 ? null : <><dt>{REVIEW_COPY.drawer.sources}</dt><dd>{sources.join(', ')}</dd></>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={entry.rating === 'negative' ? 'destructive' : 'secondary'}>
+          {entry.rating === 'negative' ? REVIEW_COPY.filters.negative : REVIEW_COPY.filters.positive}
+        </Badge>
+        <ReviewStatusChip status={entry.reviewStatus} />
+      </div>
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+        <dt className="text-muted-foreground">{REVIEW_COPY.drawer.user}</dt><dd className="min-w-0 break-words">{entry.userId}</dd>
+        <dt className="text-muted-foreground">{REVIEW_COPY.drawer.created}</dt><dd>{new Date(entry.createdAt.epochMilliseconds).toLocaleString()}</dd>
+        <dt className="text-muted-foreground">{REVIEW_COPY.drawer.model}</dt><dd className="min-w-0 break-words">{entry.modelId}</dd>
+        {sources.length === 0 ? null : <><dt className="text-muted-foreground">{REVIEW_COPY.drawer.sources}</dt><dd className="min-w-0 break-words">{sources.join(', ')}</dd></>}
       </dl>
     </Section>
   )
@@ -72,13 +78,13 @@ function EntryDetails({ entry }: { readonly entry: FeedbackEntry }) {
 function Metadata({ entry }: { readonly entry: FeedbackEntry }) {
   const entries = metadataEntries(entry)
   return entries.length === 0 ? null : (
-    <details>
+    <details className="border-t border-border">
       <summary className="cursor-pointer py-3 text-sm font-semibold">{REVIEW_COPY.drawer.metadata}</summary>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 pb-4 text-sm">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 pb-4 text-sm">
         {entries.map(([key, value]) => (
           <div key={key} className="contents">
             <dt className="capitalize">{humanize(key, value)}</dt>
-            <dd><pre className="whitespace-pre-wrap font-sans">{displayValue(value)}</pre></dd>
+            <dd className="min-w-0"><pre className="whitespace-pre-wrap break-words font-sans">{displayValue(value)}</pre></dd>
           </div>
         ))}
       </dl>
@@ -87,29 +93,33 @@ function Metadata({ entry }: { readonly entry: FeedbackEntry }) {
 }
 
 function History({ entry }: { readonly entry: FeedbackEntry }) {
-  const endRef = useRef<HTMLDivElement>(null)
   const messages = entry.conversationHistory.length > 0
     ? entry.conversationHistory
     : entry.query.length > 0 ? [{ role: 'user', content: entry.query }] : []
-  const complete = [...messages, ...(entry.aiResponse.length > 0 ? [{ role: 'assistant', content: entry.aiResponse }] : [])]
-  useEffect(() => {
-    const container = endRef.current?.parentElement
-    if (container) {
-      container.scrollTop = container.scrollHeight
-    }
-  }, [entry.id, entry.conversationHistory.length, entry.aiResponse])
+  const hasResponse = entry.aiResponse.length > 0 && messages.at(-1)?.content !== entry.aiResponse
+  const complete = [...messages, ...(hasResponse ? [{ role: 'response', content: entry.aiResponse }] : [])]
   return (
-    <Section title={REVIEW_COPY.drawer.history}>
-      <div className="grid h-[clamp(18rem,45vh,36rem)] content-start gap-3 overflow-y-auto rounded-md bg-muted/30 p-3">
+    <details open className="border-t border-border py-4">
+      <summary className="cursor-pointer text-sm font-semibold">{REVIEW_COPY.drawer.history}</summary>
+      <div className="mt-3 grid max-h-[min(60vh,36rem)] content-start gap-3 overflow-y-auto pr-1">
         {complete.map((message, index) => (
-          <article key={`${message.role}-${index}`} className="rounded-md border border-border bg-background p-3">
-            <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">{message.role}</p>
+          <article
+            key={`${message.role}-${index}`}
+            className={cn(
+              'min-w-0 max-w-prose rounded-lg px-4 py-2 break-words',
+              message.role === 'user'
+                ? 'ms-auto bg-message-user-bg text-message-user-fg'
+                : 'bg-message-assistant-bg text-message-assistant-fg',
+            )}
+          >
+            <p className="mb-1 text-xs font-semibold uppercase opacity-75">
+              {message.role === 'response' ? REVIEW_COPY.drawer.response : message.role}
+            </p>
             <SanitizedMarkdown content={message.content} />
           </article>
         ))}
-        <div ref={endRef} />
       </div>
-    </Section>
+    </details>
   )
 }
 
@@ -117,8 +127,10 @@ function PreviousDecision({ entry }: { readonly entry: FeedbackEntry }) {
   if (entry.review === null) return null
   return (
     <Section title={REVIEW_COPY.drawer.previousDecision}>
-      <p className="text-sm">{entry.review.tags.join(', ')}</p>
-      {entry.review.comment === null ? null : <p className="text-sm">{entry.review.comment}</p>}
+      {entry.review.tags.length === 0 ? null : (
+        <div className="flex flex-wrap gap-1">{entry.review.tags.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}</div>
+      )}
+      {entry.review.comment === null ? null : <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{entry.review.comment}</p>}
     </Section>
   )
 }
@@ -129,8 +141,8 @@ function EntryContent({ entry }: { readonly entry: FeedbackEntry }) {
   }
   return (
     <Section title={REVIEW_COPY.drawer.content}>
-      {entry.correctionText === null ? null : <pre className="whitespace-pre-wrap text-sm">{entry.correctionText}</pre>}
-      {entry.userComment === null ? null : <p className="text-sm">{entry.userComment}</p>}
+      {entry.correctionText === null ? null : <div className="grid gap-1"><h4 className="text-xs font-medium text-muted-foreground">{REVIEW_COPY.drawer.correction}</h4><p className="whitespace-pre-wrap break-words text-sm">{entry.correctionText}</p></div>}
+      {entry.userComment === null ? null : <div className="grid gap-1"><h4 className="text-xs font-medium text-muted-foreground">{REVIEW_COPY.drawer.comment}</h4><p className="whitespace-pre-wrap break-words text-sm">{entry.userComment}</p></div>}
     </Section>
   )
 }
@@ -154,10 +166,17 @@ function DrawerEntry({
   return (
     <>
       <EntryDetails entry={entry} />
-      <Metadata entry={entry} />
-      <History entry={entry} />
       <EntryContent entry={entry} />
       <PreviousDecision entry={entry} />
+      <ReviewForm
+        key={entry.id}
+        entry={entry}
+        pending={busy}
+        problem={saveProblem}
+        onSave={(draft) => onSave(entry, draft)}
+      />
+      <Metadata entry={entry} />
+      <History entry={entry} />
       <SynthesisSection
         entry={entry}
         phase={synthesisPhase}
@@ -165,13 +184,6 @@ function DrawerEntry({
         problem={synthesisProblem}
         onSynthesize={onSynthesize}
         onRollback={onRollback}
-      />
-      <ReviewForm
-        key={entry.id}
-        entry={entry}
-        pending={busy}
-        problem={saveProblem}
-        onSave={(draft) => onSave(entry, draft)}
       />
     </>
   )
