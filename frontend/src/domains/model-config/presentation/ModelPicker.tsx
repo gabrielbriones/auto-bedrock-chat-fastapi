@@ -37,7 +37,10 @@ export function ModelPicker({ catalog, selectedModelId, disabled = false, onSele
           // FR-CFG-003a: the current model's family starts open when the picker is opened.
           <DropdownMenuSub key={family.provider} defaultOpen={family.provider === currentFamily?.provider}>
             <DropdownMenuSubTrigger>{family.provider}</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
+            <DropdownMenuSubContent
+              sideOffset={10}
+              className="max-h-[min(70vh,36rem)] max-w-[calc(100vw-1rem)] overflow-y-auto"
+            >
               <DropdownMenuRadioGroup
                 value={selectedModelId}
                 onValueChange={(value: unknown) => {

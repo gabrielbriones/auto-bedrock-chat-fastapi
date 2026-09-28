@@ -31,7 +31,7 @@ export const SHELL = {
 
   admin: {
     landmark: 'Admin',
-    navigation: 'Admin sections',
+    navigation: 'Menu',
     feedbackQueue: 'Feedback queue',
     reviewed: 'Reviewed',
     stats: 'Stats',

@@ -50,6 +50,10 @@ export const IAM_COPY = {
   status: {
     logIn: 'Log in',
     logOut: 'Log out',
+    theme: 'Theme',
+    light: 'Light',
+    dark: 'Dark',
+    system: 'System',
     signedInAs: (displayName: string) => `Signed in as ${displayName}`,
     account: 'Account',
   },
