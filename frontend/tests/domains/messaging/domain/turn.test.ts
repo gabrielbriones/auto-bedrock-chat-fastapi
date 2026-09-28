@@ -112,6 +112,7 @@ describe('Turn', () => {
     it.each([
       ['Calling extract_job_metrics... (1/3)', 'tool-progress'],
       ['Calling a_tool_with_underscores... (2/2)', 'tool-progress'],
+      ['AI is thinking...', 'tool-progress'],
       ['Hello world', 'text'],
       ['Calling something without the trailer', 'text'],
       ['', 'text'],

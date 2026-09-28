@@ -101,8 +101,9 @@ export const createTurn = (
 export const isUnresolved = (turn: Turn): boolean => UNRESOLVED.includes(turn.status)
 
 // ADR-008: a `typing` frame matching "Calling {fn}... (n/total)" reports tool progress, not
-// assistant content (FR-MSG-006). Everything else is streamed text.
-const TOOL_PROGRESS_PATTERN = /^Calling .+\.\.\. \(\d+\/\d+\)$/
+// assistant content (FR-MSG-006). The server's "AI is thinking..." placeholder is a status notice
+// too. Everything else is streamed text.
+const TOOL_PROGRESS_PATTERN = /^(?:Calling .+\.\.\. \(\d+\/\d+\)|AI is thinking\.\.\.)$/
 
 export const classifyTypingFrame = (text: string): StreamingSnapshotKind =>
   TOOL_PROGRESS_PATTERN.test(text) ? 'tool-progress' : 'text'

@@ -17,6 +17,7 @@ export const MESSAGING_COPY = {
     system: 'System',
     sending: 'Sending…',
     waiting: 'AI is typing...',
+    thinking: 'Thinking…',
     truncated: 'Earlier context was truncated before this response.',
     sources: 'Sources',
     source: (position: number) => `Source ${position}`,

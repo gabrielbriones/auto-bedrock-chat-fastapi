@@ -34,6 +34,12 @@ const announcementFor = (entries: readonly TranscriptEntry[]): string => {
   return latest.streaming || latest.pending ? COPY.responding : latest.message.raw
 }
 
+// Between send and the first `typing` frame the transcript has nothing of the assistant's to show.
+const awaitingFirstFrame = (entries: readonly TranscriptEntry[]): boolean => {
+  const latest = entries.at(-1)
+  return latest !== undefined && latest.message.role === 'user' && latest.pending && !latest.streaming
+}
+
 export type TranscriptProps = {
   readonly entries: readonly TranscriptEntry[]
   readonly welcome: string
@@ -72,6 +78,12 @@ export function Transcript({ entries, welcome, presetArea, renderFeedback }: Tra
           />
         ))
       )}
+
+      {awaitingFirstFrame(entries) ? (
+        <div aria-hidden className="max-w-prose rounded-lg bg-message-assistant-bg px-4 py-2 text-sm">
+          <span className="text-shimmer">{COPY.thinking}</span>
+        </div>
+      ) : null}
 
       {stuck ? null : <JumpToLatestButton unread={unread} onJump={jumpToLatest} />}
     </section>

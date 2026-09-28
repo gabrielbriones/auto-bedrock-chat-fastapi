@@ -56,9 +56,9 @@ export const MessageBubble = memo(function MessageBubble({ entry, renderFeedback
   if (entry.progress) {
     return (
       <div
-        className={cn('max-w-prose rounded-lg px-4 py-2 text-sm italic', BUBBLE_CLASS.assistant, 'opacity-80')}
+        className={cn('max-w-prose rounded-lg px-4 py-2 text-sm italic', BUBBLE_CLASS.assistant)}
       >
-        {message.raw}
+        <span className="text-shimmer">{message.raw}</span>
       </div>
     )
   }
