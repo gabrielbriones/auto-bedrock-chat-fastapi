@@ -378,12 +378,12 @@ curl -sS -b cookies.txt -X POST \
   -F 'files=@notes.md;type=text/markdown'
 ```
 
-| Field        | Required | Notes                                                                                                                   |
-| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `name`       | yes      | Used as the KB document `source`.                                                                                       |
-| `topic`      | no       | Attached to every indexed document.                                                                                     |
-| `synthesize` | no       | Default `false`. Same opt-in synthesis behavior as the web route's `synthesize` field above, applied per uploaded file. |
-| `files`      | yes      | One or more uploaded files. Each must decode as UTF-8 text.                                                             |
+| Field        | Required | Notes                                                                                                                                                                         |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`       | yes      | Used as the KB document `source`.                                                                                                                                             |
+| `topic`      | no       | Attached to every indexed document.                                                                                                                                           |
+| `synthesize` | no       | Default `false`. Same opt-in synthesis behavior as the web route's `synthesize` field above, applied per uploaded file.                                                       |
+| `files`      | yes      | One or more uploaded files. Each must decode as UTF-8 text, or be a `.pdf`/`application/pdf` upload (text is extracted from the PDF instead of UTF-8-decoding the raw bytes). |
 
 Response shape (`POST` and `GET status` share it):
 

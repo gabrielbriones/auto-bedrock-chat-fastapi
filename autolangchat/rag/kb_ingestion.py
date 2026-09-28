@@ -143,6 +143,8 @@ async def _maybe_synthesize(
         return content, False
     try:
         synthesized = await synthesizer.synthesize_raw_content(content=content, title=title, topic=topic)
+        if not synthesized.strip():
+            raise ValueError("synthesizer returned an empty response")
         return synthesized, True
     except Exception as exc:
         logger.warning("synthesis failed for %s; falling back to raw content: %s", doc_label, exc)

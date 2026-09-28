@@ -143,16 +143,20 @@ class _FakeKBStore:
 
 
 class _FakeSynthesizer:
-    """Records ``synthesize_raw_content`` calls; optionally fails for given titles."""
+    """Records ``synthesize_raw_content`` calls; optionally fails or returns
+    an empty response for given titles."""
 
-    def __init__(self, fail_for=()):
+    def __init__(self, fail_for=(), empty_for=()):
         self.calls = []
         self._fail_for = set(fail_for)
+        self._empty_for = set(empty_for)
 
     async def synthesize_raw_content(self, *, content, title, topic=None):
         self.calls.append({"content": content, "title": title, "topic": topic})
         if title in self._fail_for:
             raise RuntimeError("simulated synthesis failure")
+        if title in self._empty_for:
+            return "   "
         return f"SYNTHESIZED: {content}"
 
 
@@ -1344,6 +1348,35 @@ async def test_ingest_uploaded_files_synthesis_failure_falls_back_to_raw_content
 
     # A failed synthesis call must not raise / abort the run -- it falls
     # back to raw content for this document only.
+    assert result["documents"] == 1
+    assert result["errors"] == []
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesis_empty_response_falls_back_to_raw_content():
+    """An empty/whitespace-only LLM response must be treated as a synthesis
+    failure (PR #160 review), not indexed as a successful empty document."""
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer(empty_for={"doc.txt"})
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=synthesizer,
+    )
+
     assert result["documents"] == 1
     assert result["errors"] == []
     doc = kb_store.documents["src/doc.txt"]
