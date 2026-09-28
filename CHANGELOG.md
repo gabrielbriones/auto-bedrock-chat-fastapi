@@ -2,6 +2,113 @@
 
 <!-- version list -->
 
+## v3.2.0 (2026-09-28)
+
+### Bug Fixes
+
+- Address Copilot PR review comments on PATCH source override (slash-safe path param, partial-delete
+  audit counts)
+  ([`8790d70`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8790d701d4d7025dce732465bdaa4713e02d3f1d))
+
+- Address Copilot PR review comments on token expiration handling (PR #150 review)
+  ([`8cc6781`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8cc6781673781836c98b9d75c45107d7f4a6a8b4))
+
+- Address PR review comments on linked-PDF crawling
+  ([`391508a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/391508a56794780729200c032d65debb03b37a1e))
+
+- Close XSS token-leak and false-positive tool-error classification (PR #150 round 2 review)
+  ([`adcf8b3`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/adcf8b30491825875826f73dfd3a0ccb30a57471))
+
+- Correct token/char units mismatch, delimit untrusted synthesis content, add PUT override
+  synthesize tests (PR 160 round 2 review)
+  ([`9c57ea7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/9c57ea79f33452a432fd0aaa570af11f5fc7f3e4))
+
+- Drop status_code from nested legacy tool-error dict, guard non-numeric exp claim (PR 150 round 6
+  review)
+  ([`0c6af30`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0c6af303f04c48a785c0abc771bb99705b26c0fa))
+
+- Enforce auth_expiration_behaviour server-side for refresh_session_token message (PR 150 round 9
+  review)
+  ([`e11ce0d`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e11ce0d42f3544bd27aab583a4381b176d15c3fa))
+
+- Normalize content_type when detecting PDF uploads, add real-pypdf test coverage (PR 155 review)
+  ([`f9f62e0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f9f62e02e58e965217d9f949acf001395721d409))
+
+- Raise RAW_CONTENT_SYNTHESIS_INPUT_FRACTION to 0.65
+  ([`a620f92`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a620f924452c5f67bb3a63c6103aa7b8aa966f0d))
+
+- Raise RAW_CONTENT_SYNTHESIS_INPUT_FRACTION to 0.85
+  ([`19931b9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/19931b913d8cd8eb90af0d14e38d6af066c82f40))
+
+- Reissue sso_session_token cookie on refresh so long-lived tabs survive reconnects (PR #150 review)
+  ([`5ab6c11`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5ab6c11807e7f185674f36dd797ff8790d191e39))
+
+- Renew SSO cookie immediately on load, fix malformed markdown in sso.md (PR #150 round 3 review)
+  ([`c9b0127`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c9b012790efecc9fa10b2cb45a5d2a2b6242d2c8))
+
+- Replace fragile tool-error shape sniffing with ToolHTTPError, stop leaked SSO renewal timer (PR
+  #150 round 4 review)
+  ([`0bffcf5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0bffcf5d4b477e0d7d0e90bb38619f78751a3916))
+
+- Restore backward-compatible tool-error shape, populate silent-cookie token expiry, destroy renewal
+  timer on auth_expired (PR 150 round 5 review)
+  ([`77eacd4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/77eacd495dcd340c8b7fd27b7d53b12a0fc1451b))
+
+- Treat empty synthesis response as failure, document PDF upload support (PR 160 review)
+  ([`19339b6`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/19339b6fac3e2b462c08a8e90ba3bb98b16eeccb))
+
+- Use activity-neutral session lookup for refresh_session_token message (PR 150 round 8 review)
+  ([`d4f6626`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d4f6626d8c9c631cdac14f3d0757a95e13afd352))
+
+- Use refresh-generation counter instead of access_token equality for refresh dedup (PR 150 round 7
+  review)
+  ([`60b7f93`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/60b7f93a0d14f823bc2da9907b666634fd0b044d))
+
+### Chores
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`0e2cb19`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0e2cb1904ca13cf218346b3bb48c8a28f63b8ec2))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`47fdecb`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/47fdecb82e99f8c5a71e8a5707f1e8dea642dd87))
+
+- **deps**: Update dependency poetry to v1.8.5
+  ([`5f8a5a5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5f8a5a55dd2bf367253f30e2043d550ff93122f1))
+
+- **deps**: Update python-minor-patch
+  ([`8549a96`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8549a9639c2276bf4a6719b468a33c4b5427bfad))
+
+### Features
+
+- Pre-flight input-size check before synthesis LLM calls
+  ([`d9721aa`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d9721aa7dbc4da06f6b5a1efbd434a5525456ac4))
+
+- **auth**: Add configurable SSO token expiration handling (XMGPLAT-11046)
+  ([`ac064cb`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/ac064cb713393ec7bcaa8e8cca02ba457ba5e40d))
+
+- **kb**: Add PATCH /admin/kb/sources/{name} to override existing KB sources
+  ([`0baf2e7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0baf2e7ef5f6840e6c0985909a97ad3d4f72c7ab))
+
+- **kb**: Opt-in AI-synthesized documents for KB source ingestion
+  ([`41c54c7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/41c54c78a66fa94063aa4e6054c8bbbf9cb7bc40))
+
+- **kb**: Optional ingestion of linked PDF files during web crawl
+  ([`2cd7aba`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2cd7aba6ec50e48d2c229e4da5ba4f6e675ad3b0))
+
+- **kb**: Support PDF file extraction in POST /admin/kb/sources/file
+  ([`411b7b8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/411b7b8fbe9bfd5b6cd95c34c88b2a040cfcd4aa))
+
+### Refactoring
+
+- Rename KB source override endpoints from PATCH to PUT
+  ([`9cb7c01`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/9cb7c0188659ddd73fade963e2ed677eb9cce5a8))
+
+### Testing
+
+- Decouple model-profile assertions from live langchain-aws catalog values
+  ([`c93a517`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c93a517b1392b9ba33fe693929101819cf83ccad))
+
+
 ## v3.1.0 (2026-09-07)
 
 ### Bug Fixes
