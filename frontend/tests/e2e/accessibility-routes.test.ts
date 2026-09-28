@@ -67,6 +67,17 @@ const navigateToKnowledge = async (driver: WebDriver): Promise<void> => {
   await driver.wait(async () => new URL(await driver.getCurrentUrl()).pathname === '/bedrock-chat/dashboard/kb-browser', 10_000)
 }
 
+const startWebCrawl = async (driver: WebDriver, server: AccessibilityServer): Promise<void> => {
+  const name = await tabTo(driver, 'form[aria-label="Web crawl"] input')
+  await name.sendKeys('intel-docs')
+  const urls = await tabTo(driver, 'form[aria-label="Web crawl"] textarea')
+  await urls.sendKeys('https://example.com/docs')
+  const submit = await tabTo(driver, 'form[aria-label="Web crawl"] button[type="submit"]')
+  await submit.sendKeys(Key.ENTER)
+  await driver.wait(() => server.adminRequests.includes('POST /kb/sources/web'), 10_000)
+  await driver.wait(until.elementLocated(By.css('[data-phase="running"]')), 10_000)
+}
+
 const filterUsageByUser = async (driver: WebDriver): Promise<void> => {
   const userInput = await tabTo(driver, 'input[type="search"]')
   await userInput.sendKeys('alice@example.com', Key.ENTER)
@@ -81,6 +92,7 @@ const ROUTES: readonly RouteCase[] = [
   { name: 'reviewed feedback', path: '/bedrock-chat/dashboard/reviewed', expectedPath: '/bedrock-chat/dashboard/reviewed', heading: 'Reviewed', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
   { name: 'feedback stats', path: '/bedrock-chat/dashboard/feedback/stats', expectedPath: '/bedrock-chat/dashboard/feedback/stats', heading: 'Feedback stats', ready: 'main table', journey: navigateToKnowledge },
   { name: 'knowledge base', path: '/bedrock-chat/dashboard/kb-browser', expectedPath: '/bedrock-chat/dashboard/kb-browser', heading: 'Knowledge base', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
+  { name: 'kb sources', path: '/bedrock-chat/dashboard/kb-sources', expectedPath: '/bedrock-chat/dashboard/kb-sources', heading: 'KB sources', ready: 'main tbody button[aria-label^="Delete source "]', journey: startWebCrawl },
   { name: 'usage analytics', path: '/bedrock-chat/dashboard/token-usages', expectedPath: '/bedrock-chat/dashboard/token-usages', heading: 'Usage', ready: 'input[type="search"]', journey: filterUsageByUser },
 ]
 

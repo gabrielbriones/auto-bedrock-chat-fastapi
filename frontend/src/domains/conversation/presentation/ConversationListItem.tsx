@@ -62,7 +62,9 @@ function ConversationOptions({ title, onRename, onDelete }: {
 
 // FR-CONV-014 / FR-CONV-015. Three real controls side by side rather than one clickable row with
 // nested handlers: `Enter` and `Space` activate the title because it is a button, and a click on
-// the checkbox or the options trigger cannot reach it because it never contains them.
+// the checkbox or the options trigger cannot reach it because it never contains them. On pointer
+// devices the stylesheet floats the trigger over the title's right end, so the title keeps the
+// full row width until the row is hovered.
 // Memoised with id-taking callbacks: every store emission and route change re-renders the sidebar,
 // and a dropdown menu per row made that cost tens of milliseconds a commit.
 export const ConversationListItem = memo(function ConversationListItem({
@@ -78,7 +80,7 @@ export const ConversationListItem = memo(function ConversationListItem({
   const { id } = conversation
 
   return (
-    <li className="conversation-row flex items-center gap-1 px-2">
+    <li className="conversation-row group relative flex items-center gap-1 px-2">
       <Checkbox
         checked={selected}
         onCheckedChange={() => onToggleSelect(id)}
@@ -91,7 +93,13 @@ export const ConversationListItem = memo(function ConversationListItem({
         onClick={() => onOpen(id)}
         aria-current={active ? 'true' : undefined}
         title={title}
-        className={cn('min-w-0 flex-1 justify-start', active && 'bg-muted text-foreground')}
+        className={cn(
+          // The row stays lit while the pointer is on the floating options trigger or its menu is
+          // open; the trigger sits beside this button rather than inside it.
+          'min-w-0 flex-1 justify-start text-left group-hover:bg-muted group-hover:text-foreground dark:group-hover:bg-muted/50',
+          'group-has-aria-expanded:bg-muted group-has-aria-expanded:text-foreground',
+          active && 'bg-muted text-foreground',
+        )}
       >
         <span className="conversation-title-viewport">
           <span className="conversation-title-text">{title}</span>

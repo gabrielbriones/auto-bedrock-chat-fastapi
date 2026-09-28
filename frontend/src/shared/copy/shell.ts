@@ -36,6 +36,7 @@ export const SHELL = {
     reviewed: 'Reviewed',
     stats: 'Stats',
     knowledge: 'Knowledge base',
+    kbSources: 'KB sources',
     usage: 'Usage',
     openDashboard: 'Admin dashboard',
     backToChat: 'Back to chat',

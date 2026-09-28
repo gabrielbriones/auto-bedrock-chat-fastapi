@@ -44,6 +44,7 @@ describe('Admin capability guard', function () {
           is_admin: false,
           anonymous: false,
           token_usage_enabled: false,
+          kb_source_ingestion_enabled: false,
         }))
         return
       }

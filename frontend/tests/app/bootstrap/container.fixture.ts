@@ -13,7 +13,7 @@ const silentLogger: Logger = {
 }
 
 const adminCapabilityProbe: CapabilityProbe = {
-  probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true }),
+  probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: true }),
   invalidate: () => {},
 }
 

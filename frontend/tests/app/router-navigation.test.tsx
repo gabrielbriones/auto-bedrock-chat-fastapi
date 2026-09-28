@@ -56,7 +56,7 @@ describe('admin capability guard', () => {
   it('renders access denied without rendering the admin subtree for a non-admin', async () => {
     renderAt('/bedrock-chat/dashboard/feedback', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false }),
+        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
       },
     })
@@ -68,8 +68,8 @@ describe('admin capability guard', () => {
 
   it('retries the capability check without redirecting after identity changes', async () => {
     const probe = jest.fn<Container['capabilityProbe']['probe']>()
-      .mockResolvedValueOnce({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false })
-      .mockResolvedValueOnce({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true })
+      .mockResolvedValueOnce({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false })
+      .mockResolvedValueOnce({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: true })
     const invalidate = jest.fn()
     renderAt('/bedrock-chat/dashboard/feedback', { capabilityProbe: { probe, invalidate } })
 
@@ -83,13 +83,26 @@ describe('admin capability guard', () => {
   it('hides and rejects Usage when token tracking is unavailable', async () => {
     renderAt('/bedrock-chat/dashboard/token-usages', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: false }),
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
       },
     })
 
     expect(await screen.findByText(IAM_COPY.usageUnavailable.title)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: SHELL.admin.usage })).not.toBeInTheDocument()
+  })
+
+  it('hides and rejects KB sources when source ingestion is not configured', async () => {
+    renderAt('/bedrock-chat/dashboard/kb-sources', {
+      capabilityProbe: {
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: false }),
+        invalidate: () => {},
+      },
+    })
+
+    expect(await screen.findByText(IAM_COPY.kbSourcesUnavailable.title)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: SHELL.admin.kbSources })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: SHELL.admin.usage })).toBeInTheDocument()
   })
 })
 
@@ -106,7 +119,7 @@ describe('the shell around the routes', () => {
   it('hides the admin dashboard button in the chat header for a non-admin', async () => {
     renderAt('/bedrock-chat/ui', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false }),
+        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
       },
     })
@@ -123,7 +136,7 @@ describe('the shell around the routes', () => {
 
     expect(within(screen.getByRole('banner')).getByText('Workload Analyzer')).toBeInTheDocument()
     const nav = screen.getByRole('navigation', { name: SHELL.admin.navigation })
-    expect(within(nav).getAllByRole('link')).toHaveLength(5)
+    expect(within(nav).getAllByRole('link')).toHaveLength(6)
     expect(screen.getByRole('link', { name: SHELL.admin.backToChat })).toBeInTheDocument()
   })
 
@@ -146,7 +159,7 @@ describe('the shell around the routes', () => {
   it('shows a dismissible dev-mode warning across admin navigation', async () => {
     const { router } = renderAt('/bedrock-chat/dashboard/feedback', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: true, isAnonymousAdmin: true, tokenUsageEnabled: true }),
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: true, tokenUsageEnabled: true, kbSourceIngestionEnabled: true }),
         invalidate: () => {},
       },
     })

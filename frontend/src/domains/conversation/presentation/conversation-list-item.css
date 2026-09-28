@@ -14,8 +14,15 @@
   mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
 }
 
+/* On a pointer device the options trigger holds no slot of its own: the title spans the whole row
+   and the trigger floats over its right end only while the row is hovered, focused, or its menu is
+   open. Touch devices keep the trigger in flow so it is always reachable. */
 @media (hover: hover) and (pointer: fine) {
   .conversation-options {
+    position: absolute;
+    top: 50%;
+    right: 0.5rem;
+    transform: translateY(-50%);
     opacity: 0;
     pointer-events: none;
   }
@@ -25,6 +32,15 @@
   .conversation-options[data-popup-open] {
     opacity: 1;
     pointer-events: auto;
+  }
+
+  /* Clear the title out from under the floating trigger and fade it into that gap, so the row
+     reads like a full-width title with the actions laid on top rather than a title cut short. */
+  .conversation-row:hover .conversation-title-viewport,
+  .conversation-row:focus-within .conversation-title-viewport,
+  .conversation-row:has(.conversation-options[data-popup-open]) .conversation-title-viewport {
+    padding-right: 1.5rem;
+    mask-image: linear-gradient(to right, black calc(100% - 2.5rem), transparent calc(100% - 1.5rem));
   }
 }
 

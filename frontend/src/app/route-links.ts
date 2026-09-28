@@ -26,4 +26,6 @@ export const reviewStatsLink = (search: ReviewStatsSearch) =>
 export const knowledgeLink = (search: KnowledgeSearch) =>
   linkOptions({ to: '/dashboard/kb-browser', search })
 
+export const kbSourcesLink = () => linkOptions({ to: '/dashboard/kb-sources' })
+
 export const usageLink = (search: UsageSearch) => linkOptions({ to: '/dashboard/token-usages', search })

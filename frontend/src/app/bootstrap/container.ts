@@ -44,14 +44,13 @@ import type { FeedbackGateway, SubmittedFeedbackLog } from '@/domains/feedback/a
 import { SessionStorageSubmittedFeedbackLog } from '@/domains/feedback/infrastructure/session-storage-submitted-feedback-log'
 import { WsFeedbackGateway } from '@/domains/feedback/infrastructure/ws-feedback.gateway'
 import type { ReviewGateway } from '@/domains/review/application/ports'
-import { HttpReviewGateway } from '@/domains/review/infrastructure/http-review.gateway'
-import { ReviewStore } from '@/domains/review/application/review.store'
-import type { KnowledgeGateway } from '@/domains/knowledge/application/ports'
-import { KnowledgeStore } from '@/domains/knowledge/application/knowledge.store'
-import { HttpKnowledgeGateway } from '@/domains/knowledge/infrastructure/http-knowledge.gateway'
+import type { ReviewStore } from '@/domains/review/application/review.store'
+import type { KbSourcesGateway, KnowledgeGateway } from '@/domains/knowledge/application/ports'
+import type { KbSourcesStore } from '@/domains/knowledge/application/kb-sources.store'
+import type { KnowledgeStore } from '@/domains/knowledge/application/knowledge.store'
 import type { TelemetryGateway } from '@/domains/telemetry/application/ports'
-import { TelemetryStore } from '@/domains/telemetry/application/telemetry.store'
-import { HttpTelemetryGateway } from '@/domains/telemetry/infrastructure/http-telemetry.gateway'
+import type { TelemetryStore } from '@/domains/telemetry/application/telemetry.store'
+import { createAdminStores } from '@/app/bootstrap/admin-stores'
 
 // ADR-003 / DESIGN-002 §3: the single typed record of every adapter/port the app owns, built
 // once after bootstrap resolves and reached only through `useContainer` — never a service
@@ -89,6 +88,8 @@ export type Container = {
   readonly reviews: ReviewStore
   readonly knowledgeGateway: KnowledgeGateway
   readonly knowledge: KnowledgeStore
+  readonly kbSourcesGateway: KbSourcesGateway
+  readonly kbSources: KbSourcesStore
   readonly telemetryGateway: TelemetryGateway
   readonly telemetry: TelemetryStore
   readonly bootstrap: ChatBootstrap
@@ -286,19 +287,6 @@ const createFeedback = (socket: SocketClient, messageBus: MessageBus) => {
   return { feedbackGateway, feedbackLog, feedback }
 }
 
-const createReviews = (
-  bootstrap: ChatBootstrap,
-  httpClient: HttpClient,
-  logger: Logger,
-  confirmations: ConfirmationController,
-  notifications: NotificationPort,
-) => {
-  const reviewGateway = new HttpReviewGateway(bootstrap.adminPrefix, httpClient, logger)
-  const reviews = new ReviewStore({ gateway: reviewGateway, confirmations, notifications, logger })
-
-  return { reviewGateway, reviews }
-}
-
 // Constructible from fakes with no DOM (STD-002 §4): tests pass `deps` to substitute any
 // port without `vi.mock`.
 export const createContainer = (
@@ -321,10 +309,7 @@ export const createContainer = (
   })
   const modelConfig = createModelConfig(bootstrap, socket, messageBus, notifications)
   const feedback = createFeedback(socket, messageBus)
-  const reviews = createReviews(bootstrap, httpClient, logger, confirmations, notifications)
-  const knowledgeGateway = new HttpKnowledgeGateway(bootstrap.adminPrefix, httpClient, logger)
-  const knowledge = new KnowledgeStore({ gateway: knowledgeGateway, confirmations, notifications, logger })
-  const telemetryGateway = new HttpTelemetryGateway(bootstrap.adminPrefix, httpClient, logger); const telemetry = new TelemetryStore({ gateway: telemetryGateway })
+  const adminStores = createAdminStores(bootstrap, { httpClient, logger, confirmations, notifications })
 
   return {
     httpClient,
@@ -344,12 +329,7 @@ export const createContainer = (
     promptCatalog: createPromptCatalog(bootstrap, chatStores.chatSession, deps.urlNavigator ?? browserUrlNavigator, logger),
     ...modelConfig,
     ...feedback,
-    ...reviews,
-    knowledgeGateway,
-    knowledge,
-    // eslint-disable-next-line max-lines
-    telemetryGateway,
-    telemetry,
+    ...adminStores,
     bootstrap,
   }
 }

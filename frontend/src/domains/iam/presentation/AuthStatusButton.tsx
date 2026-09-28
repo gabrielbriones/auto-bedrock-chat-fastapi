@@ -16,7 +16,7 @@ export function AuthStatusButton() {
   }
 
   return (
-    <Button type="button" variant="ghost" size="sm" onClick={() => identity.openDialog()}>
+    <Button type="button" variant="ghost" onClick={() => identity.openDialog()}>
       <LogInIcon aria-hidden />
       {IAM_COPY.status.logIn}
     </Button>

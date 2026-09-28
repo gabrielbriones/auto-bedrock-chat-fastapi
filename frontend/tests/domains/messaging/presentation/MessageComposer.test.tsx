@@ -201,6 +201,8 @@ describe('MessageComposer locking and enablement (FR-MSG-012/012a)', () => {
 
     expect(field()).toBeDisabled()
     expect(field()).toHaveAccessibleDescription(COPY.disabled.responding)
+    // The waiting placeholder already says so; the footer would repeat it visibly.
+    expect(screen.getByText(COPY.disabled.responding)).toHaveClass('sr-only')
     expect(field()).toHaveAttribute('placeholder', COPY.waitingPlaceholder)
     expect(screen.getByRole('button', { name: COPY.send })).toBeDisabled()
   })

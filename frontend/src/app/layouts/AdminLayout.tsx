@@ -12,13 +12,21 @@ import type { Capabilities } from '@/domains/iam/domain/public'
 import { DevModeBanner } from '@/domains/iam/presentation/dev-mode-banner'
 import { PendingBadge } from '@/domains/review/presentation/PendingBadge'
 
-const NAV_ITEMS = [
+type NavItem = {
+  readonly to: '/dashboard/feedback' | '/dashboard/reviewed' | '/dashboard/feedback/stats' | '/dashboard/kb-browser' | '/dashboard/kb-sources' | '/dashboard/token-usages'
+  readonly label: string
+  /** Sections that exist only when the deployment enables them are hidden, as the route itself rejects them. */
+  readonly enabled?: (capabilities: Capabilities) => boolean
+}
+
+const NAV_ITEMS: readonly NavItem[] = [
   { to: '/dashboard/feedback', label: SHELL.admin.feedbackQueue },
   { to: '/dashboard/reviewed', label: SHELL.admin.reviewed },
   { to: '/dashboard/feedback/stats', label: SHELL.admin.stats },
   { to: '/dashboard/kb-browser', label: SHELL.admin.knowledge },
-  { to: '/dashboard/token-usages', label: SHELL.admin.usage },
-] as const
+  { to: '/dashboard/kb-sources', label: SHELL.admin.kbSources, enabled: (capabilities) => capabilities.kbSourceIngestionEnabled },
+  { to: '/dashboard/token-usages', label: SHELL.admin.usage, enabled: (capabilities) => capabilities.tokenUsageEnabled },
+]
 
 export type AdminLayoutProps = {
   readonly children: ReactNode
@@ -28,7 +36,7 @@ export type AdminLayoutProps = {
 function AdminNav({ capabilities }: { readonly capabilities: Capabilities }) {
   return (
     <nav aria-label={SHELL.admin.navigation} className="flex flex-col gap-1 p-4">
-      {NAV_ITEMS.filter((item) => item.to !== '/dashboard/token-usages' || capabilities.tokenUsageEnabled).map((item) => (
+      {NAV_ITEMS.filter((item) => item.enabled === undefined || item.enabled(capabilities)).map((item) => (
         <Link
           key={item.to}
           to={item.to}

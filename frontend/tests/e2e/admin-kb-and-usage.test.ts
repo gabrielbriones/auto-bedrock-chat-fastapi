@@ -106,6 +106,7 @@ const startAdminTestServer = async (): Promise<AdminTestServer> => {
         is_admin: true,
         anonymous: false,
         token_usage_enabled: true,
+        kb_source_ingestion_enabled: true,
       })
       return
     }

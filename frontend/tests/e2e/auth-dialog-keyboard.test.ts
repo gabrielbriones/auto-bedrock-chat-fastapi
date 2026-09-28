@@ -51,7 +51,7 @@ describe('Auth dialog keyboard journey', function () {
 
       if (requestPath === '/bedrock-chat/admin/_capabilities') {
         response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ is_admin: false, anonymous: false, token_usage_enabled: false }))
+        response.end(JSON.stringify({ is_admin: false, anonymous: false, token_usage_enabled: false, kb_source_ingestion_enabled: false }))
         return
       }
 

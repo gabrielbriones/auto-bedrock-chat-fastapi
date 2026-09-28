@@ -6,6 +6,7 @@ import { fakeContainer } from './bootstrap/container.fixture'
 import {
   chatLink,
   conversationLink,
+  kbSourcesLink,
   knowledgeLink,
   reviewQueueLink,
   reviewStatsLink,
@@ -31,6 +32,7 @@ describe('the application router', () => {
       '/dashboard/feedback/',
       '/dashboard/feedback/stats',
       '/dashboard/kb-browser',
+      '/dashboard/kb-sources',
       '/dashboard/reviewed',
       '/dashboard/token-usages',
       '/ui/',
@@ -42,6 +44,7 @@ describe('the application router', () => {
   it('serves the whole tree under the deployed /ui base path', () => {
     expect(router().buildLocation(chatLink()).href).toBe('/bedrock-chat/ui')
     expect(router().buildLocation(conversationLink('abc-123')).href).toBe('/bedrock-chat/ui/c/abc-123')
+    expect(router().buildLocation(kbSourcesLink()).href).toBe('/bedrock-chat/dashboard/kb-sources')
   })
 })
 

@@ -81,4 +81,9 @@ export const IAM_COPY = {
     title: 'Usage unavailable',
     description: 'Token usage tracking is not enabled for this deployment.',
   },
+
+  kbSourcesUnavailable: {
+    title: 'KB sources unavailable',
+    description: 'Knowledge-base source ingestion is not configured for this deployment.',
+  },
 } as const

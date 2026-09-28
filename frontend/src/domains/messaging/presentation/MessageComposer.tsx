@@ -148,6 +148,9 @@ export function MessageComposer({
   const hasText = value.trim() !== ''
   const field = useComposerField(value, locked)
   const hintId = useId()
+  // Mid-turn the waiting placeholder already says why the composer is closed, so the footer would
+  // only repeat it; it stays for assistive technology alone.
+  const hintVisible = availability.reason !== null && availability.reason !== COPY.disabled.responding
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -179,7 +182,7 @@ export function MessageComposer({
         />
         <SendButton disabled={locked || !hasText} />
       </div>
-      <p id={hintId} className={availability.reason === null ? 'sr-only' : 'px-2 pt-2 text-xs text-muted-foreground'}>
+      <p id={hintId} className={hintVisible ? 'px-2 pt-2 text-xs text-muted-foreground' : 'sr-only'}>
         {availability.reason ?? COPY.hint}
       </p>
     </form>

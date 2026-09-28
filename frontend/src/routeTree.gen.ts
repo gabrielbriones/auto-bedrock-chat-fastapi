@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardRouteRouteImport } from './routes/dashboard/route'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as DashboardKbBrowserRouteImport } from './routes/dashboard/kb-browser'
+import { Route as DashboardKbSourcesRouteImport } from './routes/dashboard/kb-sources'
 import { Route as DashboardReviewedRouteImport } from './routes/dashboard/reviewed'
 import { Route as DashboardTokenUsagesRouteImport } from './routes/dashboard/token-usages'
 import { Route as UiIndexRouteImport } from './routes/ui/index'
@@ -38,6 +39,11 @@ const DashboardIndexRoute = DashboardIndexRouteImport.update({
 const DashboardKbBrowserRoute = DashboardKbBrowserRouteImport.update({
   id: '/kb-browser',
   path: '/kb-browser',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
+const DashboardKbSourcesRoute = DashboardKbSourcesRouteImport.update({
+  id: '/kb-sources',
+  path: '/kb-sources',
   getParentRoute: () => DashboardRouteRoute,
 } as any)
 const DashboardReviewedRoute = DashboardReviewedRouteImport.update({
@@ -75,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteRouteWithChildren
   '/dashboard/kb-browser': typeof DashboardKbBrowserRoute
+  '/dashboard/kb-sources': typeof DashboardKbSourcesRoute
   '/dashboard/reviewed': typeof DashboardReviewedRoute
   '/dashboard/token-usages': typeof DashboardTokenUsagesRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard/kb-browser': typeof DashboardKbBrowserRoute
+  '/dashboard/kb-sources': typeof DashboardKbSourcesRoute
   '/dashboard/reviewed': typeof DashboardReviewedRoute
   '/dashboard/token-usages': typeof DashboardTokenUsagesRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -99,6 +107,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteRouteWithChildren
   '/dashboard/kb-browser': typeof DashboardKbBrowserRoute
+  '/dashboard/kb-sources': typeof DashboardKbSourcesRoute
   '/dashboard/reviewed': typeof DashboardReviewedRoute
   '/dashboard/token-usages': typeof DashboardTokenUsagesRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -113,6 +122,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/dashboard/kb-browser'
+    | '/dashboard/kb-sources'
     | '/dashboard/reviewed'
     | '/dashboard/token-usages'
     | '/dashboard/'
@@ -124,6 +134,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/dashboard/kb-browser'
+    | '/dashboard/kb-sources'
     | '/dashboard/reviewed'
     | '/dashboard/token-usages'
     | '/dashboard'
@@ -136,6 +147,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/dashboard/kb-browser'
+    | '/dashboard/kb-sources'
     | '/dashboard/reviewed'
     | '/dashboard/token-usages'
     | '/dashboard/'
@@ -180,6 +192,13 @@ declare module '@tanstack/react-router' {
       path: '/kb-browser'
       fullPath: '/dashboard/kb-browser'
       preLoaderRoute: typeof DashboardKbBrowserRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
+    '/dashboard/kb-sources': {
+      id: '/dashboard/kb-sources'
+      path: '/kb-sources'
+      fullPath: '/dashboard/kb-sources'
+      preLoaderRoute: typeof DashboardKbSourcesRouteImport
       parentRoute: typeof DashboardRouteRoute
     }
     '/dashboard/reviewed': {
@@ -229,6 +248,7 @@ declare module '@tanstack/react-router' {
 
 interface DashboardRouteRouteChildren {
   DashboardKbBrowserRoute: typeof DashboardKbBrowserRoute
+  DashboardKbSourcesRoute: typeof DashboardKbSourcesRoute
   DashboardReviewedRoute: typeof DashboardReviewedRoute
   DashboardTokenUsagesRoute: typeof DashboardTokenUsagesRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
@@ -238,6 +258,7 @@ interface DashboardRouteRouteChildren {
 
 const DashboardRouteRouteChildren: DashboardRouteRouteChildren = {
   DashboardKbBrowserRoute: DashboardKbBrowserRoute,
+  DashboardKbSourcesRoute: DashboardKbSourcesRoute,
   DashboardReviewedRoute: DashboardReviewedRoute,
   DashboardTokenUsagesRoute: DashboardTokenUsagesRoute,
   DashboardIndexRoute: DashboardIndexRoute,

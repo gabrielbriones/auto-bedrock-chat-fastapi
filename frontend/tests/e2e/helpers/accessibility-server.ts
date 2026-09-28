@@ -9,6 +9,8 @@ type ClientFrame = Record<string, unknown> & { readonly type: string }
 export type AccessibilityServer = {
   readonly origin: string
   sentOf(type: string): readonly ClientFrame[]
+  /** Every admin HTTP request the SPA made, as `METHOD /path`, in order. */
+  readonly adminRequests: readonly string[]
   close(): Promise<void>
 }
 
@@ -41,6 +43,9 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
     tokenTopUsers,
     tokenByDay,
     tokenByUser,
+    kbSources,
+    kbSourceRun,
+    kbSourceStatusIdle,
     conversationList,
     conversationLoaded,
   ] = await Promise.all([
@@ -55,14 +60,19 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
     fixture('telemetry/token-top-users.json'),
     fixture('telemetry/token-by-day.json'),
     fixture('telemetry/token-by-user.json'),
+    fixture('knowledge/kb-sources.json'),
+    fixture('knowledge/kb-source-run.json'),
+    fixture('knowledge/kb-source-status-idle.json'),
     fixture('ws/conversation_list.json'),
     fixture('ws/conversation_loaded.json'),
   ])
   const sent: ClientFrame[] = []
+  const adminRequests: string[] = []
   const connections = new Set<WebSocket>()
+  let sourceRunStarted = false
 
-  const sendJson = (response: ServerResponse, value: unknown) => {
-    response.writeHead(200, { 'content-type': 'application/json' })
+  const sendJson = (response: ServerResponse, value: unknown, status = 200) => {
+    response.writeHead(status, { 'content-type': 'application/json' })
     response.end(JSON.stringify(value))
   }
 
@@ -85,13 +95,14 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
     }
 
     if (requestPath === '/bedrock-chat/admin/_capabilities') {
-      sendJson(response, { is_admin: true, anonymous: false, token_usage_enabled: true })
+      sendJson(response, { is_admin: true, anonymous: false, token_usage_enabled: true, kb_source_ingestion_enabled: true })
       return
     }
 
     const adminPath = requestPath.startsWith('/bedrock-chat/admin')
       ? requestPath.slice('/bedrock-chat/admin'.length)
       : null
+    if (adminPath !== null) adminRequests.push(`${request.method ?? 'GET'} ${adminPath}`)
 
     if (adminPath === '/feedback/stats') return sendJson(response, feedbackStats)
     if (adminPath === '/feedback') return sendJson(response, feedbackList)
@@ -103,6 +114,13 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
     if (adminPath === '/tokens/top-users') return sendJson(response, tokenTopUsers)
     if (adminPath === '/tokens/by-day') return sendJson(response, tokenByDay)
     if (adminPath === '/tokens/by-user') return sendJson(response, tokenByUser)
+    if (adminPath === '/kb/sources' && request.method === 'GET') return sendJson(response, kbSources)
+    // The run the journey starts is reported as in progress from then on.
+    if (adminPath === '/kb/sources/status') return sendJson(response, sourceRunStarted ? kbSourceRun : kbSourceStatusIdle)
+    if (adminPath === '/kb/sources/web' && request.method === 'POST') {
+      sourceRunStarted = true
+      return sendJson(response, kbSourceRun, 202)
+    }
 
     const relativePath = requestPath.startsWith('/bedrock-chat/ui/assets/')
       ? requestPath.slice('/bedrock-chat/ui/'.length)
@@ -168,6 +186,7 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     sentOf: (type) => sent.filter((frame) => frame.type === type),
+    adminRequests,
     async close() {
       for (const connection of connections) connection.terminate()
       connections.clear()

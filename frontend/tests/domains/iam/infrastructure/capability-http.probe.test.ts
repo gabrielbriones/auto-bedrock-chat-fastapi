@@ -27,6 +27,7 @@ describe('CapabilityHttpProbe', () => {
       is_admin: true,
       anonymous: true,
       token_usage_enabled: false,
+      kb_source_ingestion_enabled: true,
     }))
     const probe = new CapabilityHttpProbe('/bedrock-chat/admin', { request }, logger)
 
@@ -34,6 +35,7 @@ describe('CapabilityHttpProbe', () => {
       isAdmin: true,
       isAnonymousAdmin: true,
       tokenUsageEnabled: false,
+      kbSourceIngestionEnabled: true,
     })
     await probe.probe()
 
@@ -68,6 +70,15 @@ describe('CapabilityHttpProbe', () => {
       isAdmin: false,
       isAnonymousAdmin: false,
       tokenUsageEnabled: false,
+      kbSourceIngestionEnabled: false,
     })
+  })
+
+  // The flag joined the probe with the KB source routes; an older backend still answers without it.
+  it('reads a probe without the KB source flag as ingestion disabled', async () => {
+    const request = requestMock().mockResolvedValue(ok({ is_admin: true, anonymous: false, token_usage_enabled: true }))
+    const probe = new CapabilityHttpProbe('/admin', { request }, logger)
+
+    await expect(probe.probe()).resolves.toMatchObject({ isAdmin: true, kbSourceIngestionEnabled: false })
   })
 })
