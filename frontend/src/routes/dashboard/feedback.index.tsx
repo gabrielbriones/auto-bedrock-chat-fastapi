@@ -26,6 +26,7 @@ function FeedbackQueueRoute() {
   return (
     <ReviewListPage
       title={SHELL.admin.feedbackQueue}
+      description={SHELL.admin.descriptions.feedbackQueue}
       mode="queue"
       search={search}
       onSearchChange={(patch: ReviewListPatch) => {

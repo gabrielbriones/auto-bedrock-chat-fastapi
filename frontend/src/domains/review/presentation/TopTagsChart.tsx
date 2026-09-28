@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
+import { CHART_AXIS_TICK, CHART_CURSOR, CHART_GRID_STROKE, CHART_TOOLTIP_STYLE } from '@/components/ui/composed/chart-theme'
 import { DataTable, type DataTableColumn } from '@/components/ui/composed/data-table'
 import { REVIEW_COPY } from '@/shared/copy/review'
 
@@ -27,17 +28,17 @@ export function TopTagsChart({ tags }: TopTagsChartProps) {
 
   return (
     <section className="grid gap-4">
-      <h2 className="text-sm font-semibold">{REVIEW_COPY.stats.topTagsChart}</h2>
+      <h2 className="text-base font-semibold">{REVIEW_COPY.stats.topTagsChart}</h2>
       {top.length === 0 ? (
         <p className="text-sm text-muted-foreground">{REVIEW_COPY.stats.topTagsEmpty}</p>
       ) : (
         <div aria-hidden="true" inert className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={[...top]} layout="vertical" margin={{ left: 24, right: 24 }}>
-              <CartesianGrid horizontal={false} strokeOpacity={0.2} />
-              <XAxis type="number" domain={[0, max]} allowDecimals={false} />
-              <YAxis type="category" dataKey="tag" width={120} />
-              <Tooltip />
+              <CartesianGrid horizontal={false} stroke={CHART_GRID_STROKE} />
+              <XAxis type="number" domain={[0, max]} allowDecimals={false} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="tag" width={120} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR} />
               <Bar dataKey="count" radius={4} className="fill-primary" />
             </BarChart>
           </ResponsiveContainer>

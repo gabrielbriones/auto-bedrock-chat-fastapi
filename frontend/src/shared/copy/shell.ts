@@ -40,6 +40,15 @@ export const SHELL = {
     usage: 'Usage',
     openDashboard: 'Admin dashboard',
     backToChat: 'Back to chat',
+    // One line under each section title, so a reviewer landing on a view knows what it is for.
+    descriptions: {
+      feedbackQueue: 'Feedback waiting for a reviewer decision.',
+      reviewed: 'Decisions already made, with rollback and cleanup.',
+      stats: 'How feedback and reviews are trending.',
+      knowledge: 'Browse, edit and curate the documents the assistant retrieves from.',
+      kbSources: 'Crawl the web or upload files into the knowledge base.',
+      usage: 'Token consumption by model, user and day.',
+    },
   },
 
   chat: {

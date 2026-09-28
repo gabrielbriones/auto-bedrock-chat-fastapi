@@ -10,10 +10,10 @@ export type StatCardProps = {
 // of cards changes.
 export function StatCard({ label, value, hint }: StatCardProps) {
   return (
-    <Card size="sm">
+    <Card size="sm" className="relative border-t-2 border-t-primary/70 shadow-sm">
       <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-2xl">{value.toLocaleString()}</CardTitle>
+        <CardDescription className="text-xs font-medium tracking-wide uppercase">{label}</CardDescription>
+        <CardTitle className="text-3xl font-semibold tracking-tight tabular-nums">{value.toLocaleString()}</CardTitle>
       </CardHeader>
       {hint === undefined ? null : (
         <CardContent className="text-xs text-muted-foreground">{hint}</CardContent>

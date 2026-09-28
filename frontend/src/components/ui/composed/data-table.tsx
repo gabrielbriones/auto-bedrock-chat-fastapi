@@ -38,6 +38,7 @@ export type DataTableProps<Row> = {
   readonly error?: ReactNode
   readonly emptyTitle: string
   readonly emptyDescription?: string
+  readonly className?: string
 }
 
 const stateRow = <Row,>(columns: readonly DataTableColumn<Row>[], content: ReactNode) => (
@@ -165,10 +166,12 @@ export function DataTable<Row>({
   error,
   emptyTitle,
   emptyDescription,
+  className,
 }: DataTableProps<Row>) {
   const showRows = !isLoading && error === undefined && rows.length > 0
 
   return (
+    <div className={cn('overflow-hidden rounded-xl border border-border bg-card', className)}>
     <Table>
       <TableCaption className="sr-only">{caption}</TableCaption>
       <TableHeader>
@@ -182,26 +185,12 @@ export function DataTable<Row>({
       </TableHeader>
       <TableBody>
         {showRows ? (
-          rows.map((row) => (
-            <BodyRow
-              key={rowKey(row)}
-              row={row}
-              columns={columns}
-              rowKey={rowKey}
-              rowAction={rowAction}
-              selectedKeys={selectedKeys}
-            />
-          ))
+          rows.map((row) => <BodyRow key={rowKey(row)} row={row} columns={columns} rowKey={rowKey} rowAction={rowAction} selectedKeys={selectedKeys} />)
         ) : (
-          <BodyState
-            columns={columns}
-            isLoading={isLoading}
-            error={error}
-            emptyTitle={emptyTitle}
-            emptyDescription={emptyDescription}
-          />
+          <BodyState columns={columns} isLoading={isLoading} error={error} emptyTitle={emptyTitle} emptyDescription={emptyDescription} />
         )}
       </TableBody>
     </Table>
+    </div>
   )
 }

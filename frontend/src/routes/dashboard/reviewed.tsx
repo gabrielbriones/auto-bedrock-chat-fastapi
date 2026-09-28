@@ -25,6 +25,7 @@ function ReviewedRoute() {
   return (
     <ReviewListPage
       title={SHELL.admin.reviewed}
+      description={SHELL.admin.descriptions.reviewed}
       mode="reviewed"
       search={search}
       onSearchChange={(patch: ReviewListPatch) => {

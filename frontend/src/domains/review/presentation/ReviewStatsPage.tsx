@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { LoadingState } from '@/components/ui/composed/loading-state'
+import { Page, PageHeader } from '@/components/ui/composed/page-header'
 import { REVIEW_COPY } from '@/shared/copy/review'
 
 import { StatCard } from '@/domains/review/presentation/StatCard'
@@ -39,7 +40,11 @@ function useStatsLifecycle() {
   return { reviews, snapshot }
 }
 
-export function ReviewStatsPage() {
+export type ReviewStatsPageProps = {
+  readonly description?: string
+}
+
+export function ReviewStatsPage({ description }: ReviewStatsPageProps = {}) {
   const { reviews, snapshot } = useStatsLifecycle()
 
   if (snapshot.statsStatus === 'error') {
@@ -60,8 +65,8 @@ export function ReviewStatsPage() {
   const stats = snapshot.stats
 
   return (
-    <section className="grid gap-6 p-4">
-      <h1 className="text-xl font-semibold">{REVIEW_COPY.stats.title}</h1>
+    <Page>
+      <PageHeader title={REVIEW_COPY.stats.title} {...(description === undefined ? {} : { description })} />
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard label={REVIEW_COPY.stats.total} value={stats.total} />
         <StatCard
@@ -79,6 +84,6 @@ export function ReviewStatsPage() {
         <StatCard label={REVIEW_COPY.stats.integrated} value={stats.integrated} />
       </div>
       <TopTagsChart tags={stats.topTags} />
-    </section>
+    </Page>
   )
 }

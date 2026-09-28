@@ -33,6 +33,7 @@ function KnowledgeRoute() {
   return (
     <KnowledgeBrowserPage
       title={SHELL.admin.knowledge}
+      description={SHELL.admin.descriptions.knowledge}
       search={search}
       onSearchChange={(patch: KnowledgeBrowserPatch) => {
         void navigate({ search: (current) => ({ ...current, ...patch }) })

@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DebouncedFilterInput, FilterBar, FilterField } from '@/components/ui/composed/filter-bar'
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { OffsetPagination } from '@/components/ui/composed/offset-pagination'
+import { Page, PageHeader } from '@/components/ui/composed/page-header'
 import { KNOWLEDGE_COPY } from '@/shared/copy/knowledge'
 import { kbDocumentId, type KbDocumentId } from '@/shared/kernel/branded'
 import { offsetWindow } from '@/shared/kernel/pagination'
@@ -32,6 +33,7 @@ export type KnowledgeBrowserPatch = {
 
 export type KnowledgeBrowserPageProps = {
   readonly title: string
+  readonly description?: string
   readonly search: KnowledgeBrowserSearch
   readonly onSearchChange: (patch: KnowledgeBrowserPatch) => void
 }
@@ -140,7 +142,7 @@ function useKnowledgeActions(
   }
 }
 
-function KnowledgeBrowserPageContent({ title, search, onSearchChange }: KnowledgeBrowserPageProps) {
+function KnowledgeBrowserPageContent({ title, description, search, onSearchChange }: KnowledgeBrowserPageProps) {
   const { knowledge, snapshot } = useKnowledgeList(search)
   const drawerRef = useRef<KbEditorHandle>(null)
   const activeId = snapshot.activeDocument?.id ?? null
@@ -152,8 +154,8 @@ function KnowledgeBrowserPageContent({ title, search, onSearchChange }: Knowledg
   ) : undefined
 
   return (
-    <section className="grid gap-4 p-4">
-      <h1 className="text-xl font-semibold">{title}</h1>
+    <Page>
+      <PageHeader title={title} {...(description === undefined ? {} : { description })} />
       <KnowledgeFilters search={search} onSearchChange={onSearchChange} />
       <KnowledgeTable
         rows={snapshot.page.items}
@@ -176,7 +178,7 @@ function KnowledgeBrowserPageContent({ title, search, onSearchChange }: Knowledg
         onRollback={actions.rollback}
         onDelete={() => { void actions.remove() }}
       />
-    </section>
+    </Page>
   )
 }
 

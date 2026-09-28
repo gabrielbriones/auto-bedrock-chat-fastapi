@@ -16,5 +16,5 @@ export type ReviewStatsSearch = z.output<typeof reviewStatsSearchSchema>;
 export const Route = createFileRoute('/dashboard/feedback/stats')({
   validateSearch: reviewStatsSearchSchema,
   staticData: { title: SHELL.admin.stats },
-  component: () => <ReviewStatsPage />,
+  component: () => <ReviewStatsPage description={SHELL.admin.descriptions.stats} />,
 });

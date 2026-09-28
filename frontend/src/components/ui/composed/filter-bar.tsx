@@ -21,11 +21,15 @@ export type FilterBarProps = {
 // implicit role, so the landmark would be invisible to assistive tech.
 export function FilterBar({ label, children, onReset, resetLabel }: FilterBarProps) {
   return (
-    <div role="search" aria-label={label ?? ADMIN_COPY.filters.label}>
-      <div className="flex flex-wrap items-end gap-3 py-2">
+    <div
+      role="search"
+      aria-label={label ?? ADMIN_COPY.filters.label}
+      className="rounded-xl border border-border bg-muted/40 px-4 py-3"
+    >
+      <div className="flex flex-wrap items-end gap-3">
         {children}
         {onReset !== undefined ? (
-          <Button type="button" variant="ghost" size="sm" onClick={onReset}>
+          <Button type="button" variant="ghost" size="sm" className="ms-auto self-end" onClick={onReset}>
             {resetLabel ?? ADMIN_COPY.filters.reset}
           </Button>
         ) : null}
@@ -44,7 +48,7 @@ export function FilterField({ label, children }: FilterFieldProps) {
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor={id} className="text-xs text-muted-foreground">
+      <Label htmlFor={id} className="text-xs font-medium text-muted-foreground">
         {label}
       </Label>
       {children(id)}

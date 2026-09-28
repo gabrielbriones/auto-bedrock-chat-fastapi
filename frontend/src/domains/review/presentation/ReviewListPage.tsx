@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { DebouncedFilterInput, FilterBar, FilterField } from '@/components/ui/composed/filter-bar'
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { OffsetPagination } from '@/components/ui/composed/offset-pagination'
+import { Page, PageHeader } from '@/components/ui/composed/page-header'
 import { REVIEW_COPY } from '@/shared/copy/review'
 import type { KbDocumentId } from '@/shared/kernel/branded'
 
@@ -25,6 +26,7 @@ export type ReviewListSearch = {
 
 export type ReviewListPageProps = {
   readonly title: string
+  readonly description?: string
   readonly mode: 'queue' | 'reviewed'
   readonly search: ReviewListSearch
   readonly onSearchChange: (patch: ReviewListPatch) => void
@@ -42,7 +44,7 @@ const SelectFilter = ({ label, value, options, onChange }: {
 }) => (
   <FilterField label={label}>
     {(fieldId) => (
-      <select id={fieldId} value={value} onChange={(event) => onChange(event.target.value)} className="h-8 rounded-lg border border-input bg-background px-2 text-sm">
+      <select id={fieldId} value={value} onChange={(event) => onChange(event.target.value)} className="h-8 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30">
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     )}
@@ -117,8 +119,8 @@ function BulkDeleteBar({ count, pending, onDelete }: {
   readonly onDelete: () => void
 }) {
   return count === 0 ? null : (
-    <div className="flex items-center justify-between border-y border-border py-2">
-      <span className="text-sm">{count}</span>
+    <div className="flex items-center justify-between rounded-xl border border-border bg-accent/60 px-4 py-2">
+      <span className="text-sm font-medium text-accent-foreground">{count}</span>
       <Button type="button" variant="destructive" disabled={pending} onClick={onDelete}>
         {REVIEW_COPY.bulk.delete(count)}
       </Button>
@@ -159,7 +161,7 @@ function useReviewListActions(
   }
 }
 
-export function ReviewListPage({ title, mode, search, onSearchChange }: ReviewListPageProps) {
+export function ReviewListPage({ title, description, mode, search, onSearchChange }: ReviewListPageProps) {
   const { reviews, snapshot } = useReviewListLifecycle(mode, search)
   const { open, save, rollback, remove } = useReviewListActions(reviews, search, onSearchChange)
 
@@ -168,8 +170,8 @@ export function ReviewListPage({ title, mode, search, onSearchChange }: ReviewLi
   ) : undefined
 
   return (
-    <section className="grid gap-4 p-4">
-      <h1 className="text-xl font-semibold">{title}</h1>
+    <Page>
+      <PageHeader title={title} {...(description === undefined ? {} : { description })} />
       <ReviewFilters mode={mode} search={search} onSearchChange={onSearchChange} />
       {mode === 'reviewed' ? <BulkDeleteBar count={snapshot.queue.selection.size} pending={snapshot.mutationPending} onDelete={() => { void remove() }} /> : null}
       <ReviewTable
@@ -199,6 +201,6 @@ export function ReviewListPage({ title, mode, search, onSearchChange }: ReviewLi
         onSynthesize={(id) => { void reviews.synthesize(id) }}
         onRollback={(kbDocumentId) => { void rollback(kbDocumentId) }}
       />
-    </section>
+    </Page>
   )
 }

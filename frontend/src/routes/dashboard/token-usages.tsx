@@ -52,6 +52,7 @@ function UsageRoute() {
   return (
     <UsageAnalyticsPage
       title={SHELL.admin.usage}
+      description={SHELL.admin.descriptions.usage}
       search={search}
       onSearchChange={(patch: UsageSearchPatch) => {
         void navigate({ search: (current) => ({ ...current, ...patch }) })

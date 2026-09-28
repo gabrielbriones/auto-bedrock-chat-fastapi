@@ -33,5 +33,5 @@ export const Route = createFileRoute('/dashboard/kb-sources')({
 });
 
 function KbSourcesRoute() {
-  return <KbSourcesPage title={SHELL.admin.kbSources} />
+  return <KbSourcesPage title={SHELL.admin.kbSources} description={SHELL.admin.descriptions.kbSources} />
 }

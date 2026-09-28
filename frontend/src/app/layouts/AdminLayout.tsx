@@ -1,6 +1,15 @@
 import { useCallback, useEffect, type ReactNode } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
-import { ArrowLeftIcon } from 'lucide-react'
+import {
+  ArrowLeftIcon,
+  BarChart3Icon,
+  BookOpenIcon,
+  CheckCircle2Icon,
+  CoinsIcon,
+  DatabaseIcon,
+  InboxIcon,
+  type LucideIcon,
+} from 'lucide-react'
 
 import { useContainer } from '@/app/bootstrap/container-context'
 import { AppShell } from '@/app/layouts/AppShell'
@@ -15,17 +24,18 @@ import { PendingBadge } from '@/domains/review/presentation/PendingBadge'
 type NavItem = {
   readonly to: '/dashboard/feedback' | '/dashboard/reviewed' | '/dashboard/feedback/stats' | '/dashboard/kb-browser' | '/dashboard/kb-sources' | '/dashboard/token-usages'
   readonly label: string
+  readonly icon: LucideIcon
   /** Sections that exist only when the deployment enables them are hidden, as the route itself rejects them. */
   readonly enabled?: (capabilities: Capabilities) => boolean
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { to: '/dashboard/feedback', label: SHELL.admin.feedbackQueue },
-  { to: '/dashboard/reviewed', label: SHELL.admin.reviewed },
-  { to: '/dashboard/feedback/stats', label: SHELL.admin.stats },
-  { to: '/dashboard/kb-browser', label: SHELL.admin.knowledge },
-  { to: '/dashboard/kb-sources', label: SHELL.admin.kbSources, enabled: (capabilities) => capabilities.kbSourceIngestionEnabled },
-  { to: '/dashboard/token-usages', label: SHELL.admin.usage, enabled: (capabilities) => capabilities.tokenUsageEnabled },
+  { to: '/dashboard/feedback', label: SHELL.admin.feedbackQueue, icon: InboxIcon },
+  { to: '/dashboard/reviewed', label: SHELL.admin.reviewed, icon: CheckCircle2Icon },
+  { to: '/dashboard/feedback/stats', label: SHELL.admin.stats, icon: BarChart3Icon },
+  { to: '/dashboard/kb-browser', label: SHELL.admin.knowledge, icon: BookOpenIcon },
+  { to: '/dashboard/kb-sources', label: SHELL.admin.kbSources, icon: DatabaseIcon, enabled: (capabilities) => capabilities.kbSourceIngestionEnabled },
+  { to: '/dashboard/token-usages', label: SHELL.admin.usage, icon: CoinsIcon, enabled: (capabilities) => capabilities.tokenUsageEnabled },
 ]
 
 export type AdminLayoutProps = {
@@ -33,18 +43,24 @@ export type AdminLayoutProps = {
   readonly capabilities: Capabilities
 }
 
+// The active link carries a short bright-blue bar on its leading edge over the accent fill.
 function AdminNav({ capabilities }: { readonly capabilities: Capabilities }) {
   return (
-    <nav aria-label={SHELL.admin.navigation} className="flex flex-col gap-1 p-4">
+    <nav aria-label={SHELL.admin.navigation} className="flex h-full flex-col gap-1 p-3">
+      <p className="px-3 pt-2 pb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+        {SHELL.admin.navigation}
+      </p>
       {NAV_ITEMS.filter((item) => item.enabled === undefined || item.enabled(capabilities)).map((item) => (
         <Link
           key={item.to}
           to={item.to}
           preload="render"
-          activeOptions={{ exact: true }}
-          className="flex items-center justify-between rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium"
+          // Path only: a filtered or paged list is still the same section (its filters live in the URL).
+          activeOptions={{ exact: true, includeSearch: false }}
+          className="group/nav relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring aria-[current=page]:bg-accent aria-[current=page]:font-medium aria-[current=page]:text-accent-foreground before:absolute before:top-2 before:bottom-2 before:left-0 before:w-0.5 before:rounded-full before:bg-energy before:opacity-0 before:transition-opacity aria-[current=page]:before:opacity-100"
         >
-          <span>{item.label}</span>
+          <item.icon aria-hidden className="size-4 shrink-0 opacity-80 group-aria-[current=page]/nav:opacity-100" />
+          <span className="flex-1 truncate">{item.label}</span>
           {item.to === '/dashboard/feedback' ? <PendingBadge /> : null}
         </Link>
       ))}
@@ -83,9 +99,14 @@ export function AdminLayout({ children, capabilities }: AdminLayoutProps) {
     <AppShell
       mainLabel={SHELL.admin.landmark}
       header={
-        <header className="flex h-14 items-center justify-between border-b border-border px-4">
-          <p className="truncate font-medium text-foreground">{bootstrap.uiTitle}</p>
-          <Link to="/ui" className={buttonVariants({ variant: 'ghost' })}>
+        <header className="surface-glow flex h-14 items-center justify-between gap-4 border-b border-border px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <p className="truncate font-semibold text-foreground">{bootstrap.uiTitle}</p>
+            <span className="hidden rounded-full border border-border bg-background/60 px-2 py-0.5 text-xs font-medium tracking-wide text-muted-foreground uppercase sm:inline">
+              {SHELL.admin.landmark}
+            </span>
+          </div>
+          <Link to="/ui" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             <ArrowLeftIcon aria-hidden />
             {SHELL.admin.backToChat}
           </Link>

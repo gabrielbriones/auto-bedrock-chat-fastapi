@@ -14,6 +14,7 @@ import { DataTable, type DataTableColumn } from '@/components/ui/composed/data-t
 import { EmptyState } from '@/components/ui/composed/empty-state'
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { LoadingState } from '@/components/ui/composed/loading-state'
+import { Page, PageHeader } from '@/components/ui/composed/page-header'
 import { TELEMETRY_COPY } from '@/shared/copy/telemetry'
 
 import type { TelemetrySnapshot } from '@/domains/telemetry/application/telemetry.store'
@@ -30,6 +31,7 @@ import type { UsageSearch, UsageSearchPatch } from '@/domains/telemetry/presenta
 
 export type UsageAnalyticsPageProps = {
   readonly title: string
+  readonly description?: string
   readonly search: UsageSearch
   readonly onSearchChange: (patch: UsageSearchPatch) => void
 }
@@ -102,7 +104,7 @@ function TopUsersSection({ snapshot, load, onLimitChange }: {
   )
 }
 
-export function UsageAnalyticsPage({ title, search, onSearchChange }: UsageAnalyticsPageProps) {
+export function UsageAnalyticsPage({ title, description, search, onSearchChange }: UsageAnalyticsPageProps) {
   const { telemetry } = useContainer()
   const snapshot = useContainerStore('telemetry')
   const loadSummary = useCallback(() => { void telemetry.loadSummary() }, [telemetry])
@@ -122,12 +124,12 @@ export function UsageAnalyticsPage({ title, search, onSearchChange }: UsageAnaly
   useEffect(() => { loadTopUsers(search.topLimit ?? 10) }, [loadTopUsers, search.topLimit])
 
   return (
-    <section className="grid gap-6 p-4">
-      <h1 className="text-xl font-semibold">{title}</h1>
+    <Page>
+      <PageHeader title={title} {...(description === undefined ? {} : { description })} />
       <SummarySection snapshot={snapshot.summary} load={loadSummary} />
       <TopUsersSection snapshot={snapshot.topUsers} load={loadTopUsers} onLimitChange={(limit) => onSearchChange({ topLimit: limit })} />
       <ByDaySection key={`${search.from ?? ''}/${search.to ?? ''}`} search={search} snapshot={snapshot.byDay} load={loadByDay} reset={resetByDay} onSearchChange={onSearchChange} />
       <ByUserSection key={search.user ?? ''} search={search} snapshot={snapshot.byUser} load={loadByUser} reset={resetByUser} onSearchChange={onSearchChange} />
-    </section>
+    </Page>
   )
 }

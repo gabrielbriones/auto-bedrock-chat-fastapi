@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 
 import type { DailyUsageRow, ModelUsageRow } from '@/domains/telemetry/domain/public'
+import { CHART_AXIS_TICK, CHART_CURSOR, CHART_GRID_STROKE, CHART_TOOLTIP_STYLE } from '@/components/ui/composed/chart-theme'
 import { TELEMETRY_COPY } from '@/shared/copy/telemetry'
 
 export function ModelUsageChart({ rows }: { readonly rows: readonly ModelUsageRow[] }) {
@@ -25,10 +26,10 @@ export function ModelUsageChart({ rows }: { readonly rows: readonly ModelUsageRo
       <div aria-hidden="true" inert className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-            <CartesianGrid vertical={false} strokeOpacity={0.2} />
-            <XAxis dataKey="model" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
+            <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
+            <XAxis dataKey="model" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+            <YAxis allowDecimals={false} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR} />
             <Bar dataKey="total" name="Total tokens" className="fill-primary" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -52,10 +53,10 @@ export function DailyUsageChart({ rows }: { readonly rows: readonly DailyUsageRo
       <div aria-hidden="true" inert className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-            <CartesianGrid vertical={false} strokeOpacity={0.2} />
-            <XAxis dataKey="date" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
+            <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
+            <XAxis dataKey="date" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+            <YAxis allowDecimals={false} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR} />
             <Line type="monotone" dataKey="total" name="Total tokens" stroke="var(--primary)" strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
