@@ -51,16 +51,16 @@
     min-width: 100%;
     overflow: visible;
     mask-image: none;
-    animation: conversation-title-slide 6s linear 0.15s infinite alternate;
+    animation: conversation-title-slide var(--title-slide-duration, 0.1s) linear 0.15s infinite alternate;
   }
 }
 
 @keyframes conversation-title-slide {
-  0%, 5% {
+  0% {
     transform: translateX(0);
   }
 
-  85%, 100% {
+  100% {
     transform: translateX(min(0px, calc(100cqi - 100%)));
   }
 }

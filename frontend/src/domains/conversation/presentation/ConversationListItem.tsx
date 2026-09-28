@@ -26,6 +26,16 @@ export type ConversationListItemProps = {
   readonly onDelete: (id: ConversationId) => void
 }
 
+function setTitleSlideDuration(row: HTMLElement): void {
+  const viewport = row.querySelector<HTMLElement>('.conversation-title-viewport')
+  const text = row.querySelector<HTMLElement>('.conversation-title-text')
+  if (!viewport || !text) return
+
+  const availableWidth = viewport.clientWidth - parseFloat(getComputedStyle(viewport).paddingRight)
+  const distance = Math.max(0, text.scrollWidth - availableWidth)
+  text.style.setProperty('--title-slide-duration', `${Math.max(distance / 40, 0.1)}s`)
+}
+
 function ConversationOptions({ title, onRename, onDelete }: {
   readonly title: string
   readonly onRename: () => void
@@ -80,7 +90,11 @@ export const ConversationListItem = memo(function ConversationListItem({
   const { id } = conversation
 
   return (
-    <li className="conversation-row group relative flex items-center gap-1 px-2">
+    <li
+      className="conversation-row group relative flex items-center gap-1 px-2"
+      onMouseEnter={(event) => setTitleSlideDuration(event.currentTarget)}
+      onFocus={(event) => setTitleSlideDuration(event.currentTarget)}
+    >
       <Checkbox
         checked={selected}
         onCheckedChange={() => onToggleSelect(id)}

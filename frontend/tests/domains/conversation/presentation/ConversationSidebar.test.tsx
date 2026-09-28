@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from '@jest/globals'
 import { axe } from 'jest-axe'
@@ -136,6 +136,26 @@ describe('ConversationSidebar', () => {
     harness.emit(anEvent.listed([aConversation('a', 9, title)]))
 
     expect(screen.getByRole('button', { name: title })).toHaveAttribute('title', title)
+  })
+
+  it('moves overflowing titles at the same speed regardless of their length', () => {
+    renderSidebar()
+
+    const durations = [
+      { row: itemFor('Job 42'), width: 180 },
+      { row: itemFor(CONVERSATION_COPY.untitled), width: 340 },
+    ].map(({ row, width }) => {
+      const viewport = row.querySelector<HTMLElement>('.conversation-title-viewport')!
+      const text = row.querySelector<HTMLElement>('.conversation-title-text')!
+      viewport.style.paddingRight = '0px'
+      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
+      Object.defineProperty(text, 'scrollWidth', { configurable: true, value: width })
+
+      fireEvent.mouseEnter(row)
+      return parseFloat(text.style.getPropertyValue('--title-slide-duration'))
+    })
+
+    expect(durations).toEqual([2, 6])
   })
 
   // FR-CONV-006: the indeterminate state is real, not a checked/unchecked approximation.
