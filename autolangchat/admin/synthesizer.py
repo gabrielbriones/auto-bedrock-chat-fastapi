@@ -26,7 +26,8 @@ from uuid import UUID, uuid4
 
 from ..db.feedback_base import BaseFeedbackStore
 from ..db.kb_base import BaseKBStore
-from ..model_capabilities import build_bedrock_kwargs
+from ..defaults import RAW_CONTENT_SYNTHESIS_INPUT_FRACTION
+from ..model_capabilities import build_bedrock_kwargs, get_model_profile
 from ..models import FeedbackEntry, FeedbackListFilters, KBDocument, KBDocumentListFilters, ReviewStatus
 from ..rag.embedding_pipeline import TextChunker
 
@@ -439,7 +440,7 @@ class FeedbackSynthesizer:
         Shared by :meth:`_synthesize_tag_group` and :meth:`synthesize_raw_content`
         so both LLM-call paths stay in sync (model_id/chat_config resolution,
         temperature/max_tokens handling for reasoning models via
-        :func:`build_bedrock_kwargs`).
+        :func:`build_bedrock_kwargs`, and the input-size pre-check below).
         """
         try:
             from langchain_aws import ChatBedrockConverse
@@ -455,6 +456,27 @@ class FeedbackSynthesizer:
             raise RuntimeError(
                 "FeedbackSynthesizer: model_id is required. " "Pass model_id= or chat_config= at init time."
             )
+
+        # Pre-flight size check: skip a doomed Bedrock round-trip (extra
+        # latency, and an "Input is too long" ValidationException) for content
+        # we can already tell won't fit. Uses the model's own max_input_tokens
+        # (from _PROFILES via get_model_profile) rather than a hardcoded
+        # chars-per-token guess, so the budget is correct per-model and never
+        # needs updating when the selected model changes. Silently skipped
+        # (call proceeds normally) when the model has no known profile --
+        # consistent with this codebase's "no static fallback" convention for
+        # these thresholds (see RAW_CONTENT_SYNTHESIS_INPUT_FRACTION).
+        max_input_tokens = get_model_profile(model_id).get("max_input_tokens")
+        if max_input_tokens:
+            input_chars = sum(len(m["content"]) for m in messages)
+            threshold_chars = round(RAW_CONTENT_SYNTHESIS_INPUT_FRACTION * max_input_tokens)
+            if input_chars > threshold_chars:
+                raise ValueError(
+                    f"input ({input_chars} chars) exceeds the estimated safe budget for "
+                    f"{model_id} ({threshold_chars} chars, from max_input_tokens={max_input_tokens}); "
+                    "skipping LLM call"
+                )
+
         aws_region = cfg.aws_region if cfg else "us-east-1"
         max_tokens = cfg.max_tokens if cfg else 4096
 

@@ -34,6 +34,19 @@ HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION = 0.65
 HISTORY_MSG_LENGTH_THRESHOLD_FRACTION = 0.1
 HISTORY_MSG_TRUNCATION_TARGET_FRACTION = 0.085
 
+# ── Feedback/Raw-Content Synthesis Input Budget ─────────────────────────
+# Same FRACTION * max_input_tokens pattern as the truncation thresholds
+# above, applied to FeedbackSynthesizer._invoke_llm's combined system+user
+# message size. Lets a doomed-to-overflow LLM call be skipped (raising
+# immediately, which the existing per-document/per-tag-group except blocks
+# already treat as a synthesis failure) instead of paying the latency of a
+# round trip that Bedrock would reject anyway with "Input is too long".
+# Deliberately a separate constant from SINGLE_MSG_LENGTH_THRESHOLD_FRACTION
+# even though it starts at the same value -- this budgets one combined
+# synthesis prompt, not a single conversation turn, and the two shouldn't be
+# coupled if either is retuned later.
+RAW_CONTENT_SYNTHESIS_INPUT_FRACTION = 0.5
+
 # ── Plain-Text Truncation Ratios ────────────────────────────────────────
 TRUNCATION_HEAD_RATIO = 0.8
 TRUNCATION_TAIL_RATIO = 0.2
