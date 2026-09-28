@@ -12,12 +12,22 @@ const toBottom = (element: HTMLElement): void => {
   element.scrollTop = element.scrollHeight
 }
 
+type Revision = readonly { readonly key: string }[]
+
+// Same-index key drift is a swapped transcript; so is content appearing where there was none.
+const isReplaced = (previous: Revision, next: Revision): boolean =>
+  previous.length === 0
+    ? next.length > 0
+    : previous.some((entry, index) => next[index]?.key !== entry.key)
+
 export type StickToBottom = {
   /** The viewport is pinned to the newest message and will follow it. */
   readonly stuck: boolean
   /** Messages that arrived while the reader was scrolled away. */
   readonly unread: number
   readonly jumpToLatest: () => void
+  /** Attach to the transcript's root so late layout (row measurement, Markdown) keeps it pinned. */
+  readonly contentRef: (node: HTMLElement | null) => void
 }
 
 const useScrollWatch = (onMove: (atBottom: boolean) => void): void => {
@@ -39,6 +49,30 @@ const useScrollWatch = (onMove: (atBottom: boolean) => void): void => {
   }, [onMove])
 }
 
+// Virtualised rows are estimated until measured and Markdown/code blocks render after the first
+// paint, so the height at layout time is not the final one. Following that growth while stuck is
+// what keeps a freshly opened conversation on its latest message rather than in the middle.
+const useFollowContentGrowth = (sticking: { readonly current: boolean }) => {
+  const observer = useRef<ResizeObserver | null>(null)
+
+  return useCallback((node: HTMLElement | null) => {
+    observer.current?.disconnect()
+    observer.current = null
+
+    if (node === null || typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    observer.current = new ResizeObserver(() => {
+      const scroller = shellScrollContainer()
+      if (sticking.current && scroller !== null) {
+        toBottom(scroller)
+      }
+    })
+    observer.current.observe(node)
+  }, [sticking])
+}
+
 /**
  * FIX-12. The legacy client scrolled on every message, so reading scrollback while a response
  * streamed was impossible. Here sticking is a mode the reader controls: scrolling up leaves it and
@@ -46,7 +80,7 @@ const useScrollWatch = (onMove: (atBottom: boolean) => void): void => {
  * transcript: only replacement forces the reader back to the latest message.
  */
 export const useStickToBottom = (
-  revision: readonly { readonly key: string }[],
+  revision: Revision,
   count: number,
 ): StickToBottom => {
   const [stuck, setStuck] = useState(true)
@@ -76,13 +110,12 @@ export const useStickToBottom = (
   }, [stick])
 
   useScrollWatch(stick)
+  const contentRef = useFollowContentGrowth(sticking)
 
   // Layout, not passive: the follow has to happen before the browser paints the taller content,
   // otherwise every snapshot shows a one-frame jump.
   useLayoutEffect(() => {
-    const replaced = previousRevision.current.some(
-      (entry, index) => revision[index]?.key !== entry.key,
-    )
+    const replaced = isReplaced(previousRevision.current, revision)
     previousRevision.current = revision
     const arrived = count - seen.current
     seen.current = count
@@ -112,5 +145,5 @@ export const useStickToBottom = (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision, stick])
 
-  return { stuck, unread, jumpToLatest }
+  return { stuck, unread, jumpToLatest, contentRef }
 }

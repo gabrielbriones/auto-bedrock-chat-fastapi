@@ -117,6 +117,51 @@ describe('Transcript scroll behaviour (FIX-12)', () => {
     expect(scroller.scrollTop).toBe(1000)
     expect(screen.queryByRole('button', { name: /Jump to latest/ })).not.toBeInTheDocument()
   })
+
+  // Opening a conversation from an empty transcript (a fresh "New chat") must land on its latest
+  // message even if the reader had scrolled away before the transcript was emptied.
+  it('jumps to the latest message when content replaces an empty transcript', () => {
+    const { scroller, show } = renderTranscript([])
+
+    act(() => {
+      scroller.scrollTop = 100
+      fireEvent.scroll(scroller)
+    })
+    expect(scroller.scrollTop).toBe(100)
+
+    show(manyEntries(2))
+
+    expect(scroller.scrollTop).toBe(1000)
+  })
+
+  // Rows are estimated until measured and Markdown renders after first paint, so the height read
+  // at layout time is not the final one.
+  it('keeps following the bottom while pinned as late layout grows the content', () => {
+    let observe: (() => void) | undefined
+    const original = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(callback: () => void) {
+        observe = callback
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+
+    try {
+      const { scroller } = renderTranscript(manyEntries(3))
+      expect(scroller.scrollTop).toBe(1000)
+
+      Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 5000 })
+      act(() => {
+        observe?.()
+      })
+
+      expect(scroller.scrollTop).toBe(5000)
+    } finally {
+      globalThis.ResizeObserver = original
+    }
+  })
 })
 
 describe('Transcript virtualisation (NFR-PERF-005)', () => {

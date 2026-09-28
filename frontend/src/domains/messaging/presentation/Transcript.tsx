@@ -45,11 +45,11 @@ export type TranscriptProps = {
 // mount and every snapshot after it — and, once virtualised, announce scrolling as if it were new
 // content. The single throttled region below is the only thing that speaks.
 export function Transcript({ entries, welcome, presetArea, renderFeedback }: TranscriptProps) {
-  const { stuck, unread, jumpToLatest } = useStickToBottom(entries, entries.length)
+  const { stuck, unread, jumpToLatest, contentRef } = useStickToBottom(entries, entries.length)
   const announcement = useThrottledValue(announcementFor(entries), ANNOUNCE_INTERVAL_MS)
 
   return (
-    <section aria-label={COPY.label} className="flex flex-1 flex-col gap-4 p-4">
+    <section ref={contentRef} aria-label={COPY.label} className="flex flex-1 flex-col gap-4 p-4">
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
