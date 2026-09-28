@@ -1960,13 +1960,26 @@ class AutoLangChatPlugin:
         # is wired; otherwise every call would 500. Builds a default
         # re-embed callback wired to the same embedding client +
         # model already used by the populate pipeline.
+        #
+        # Also builds the FeedbackSynthesizer used by the opt-in
+        # ``synthesize=true`` source-ingestion flag here (rather than only
+        # in the synthesis-routes block below) since it only needs
+        # chat_config/model_id, not a feedback_store — reused below if
+        # synthesis routes are also registered, to avoid building it twice.
+        kb_synthesizer = None
         if getattr(self, "_kb_store", None) is not None:
             from .admin.admin_kb_routes import build_default_re_embed_callback, register_admin_kb_routes
+            from .admin.synthesizer import FeedbackSynthesizer
 
             re_embed = build_default_re_embed_callback(
                 kb_store=self._kb_store,
                 bedrock_client=self.embedding_client,
                 embedding_model=self.config.kb_embedding_model,
+            )
+            kb_synthesizer = FeedbackSynthesizer(
+                synthesis_system_prompt=self.config.feedback_synthesis_system_prompt or None,
+                embedding_model_id=self.config.kb_embedding_model,
+                chat_config=self.config,
             )
             register_admin_kb_routes(
                 self.app,
@@ -1976,6 +1989,7 @@ class AutoLangChatPlugin:
                 re_embed_document=re_embed,
                 embedding_client=self.embedding_client,
                 embedding_model=self.config.kb_embedding_model,
+                synthesizer=kb_synthesizer,
             )
         else:
             logger.info(
@@ -1989,7 +2003,7 @@ class AutoLangChatPlugin:
             from .admin.admin_synthesis_routes import register_admin_synthesis_routes
             from .admin.synthesizer import FeedbackSynthesizer
 
-            synth = FeedbackSynthesizer(
+            synth = kb_synthesizer or FeedbackSynthesizer(
                 synthesis_system_prompt=self.config.feedback_synthesis_system_prompt or None,
                 embedding_model_id=self.config.kb_embedding_model,
                 chat_config=self.config,

@@ -142,6 +142,20 @@ class _FakeKBStore:
         self.chunks.append({"chunk_id": chunk_id, **kwargs})
 
 
+class _FakeSynthesizer:
+    """Records ``synthesize_raw_content`` calls; optionally fails for given titles."""
+
+    def __init__(self, fail_for=()):
+        self.calls = []
+        self._fail_for = set(fail_for)
+
+    async def synthesize_raw_content(self, *, content, title, topic=None):
+        self.calls.append({"content": content, "title": title, "topic": topic})
+        if title in self._fail_for:
+            raise RuntimeError("simulated synthesis failure")
+        return f"SYNTHESIZED: {content}"
+
+
 class _FailingKBStore(_FakeKBStore):
     """Like _FakeKBStore, but add_document raises for one doc_id substring."""
 
@@ -213,7 +227,9 @@ def _slow_embedding_client(delay: float = 0.3):
     return client
 
 
-def _build_app(*, kb_store=None, embedding_client=None, embedding_model="fake-model", authenticated=True):
+def _build_app(
+    *, kb_store=None, embedding_client=None, embedding_model="fake-model", authenticated=True, synthesizer=None
+):
     app = FastAPI()
     register_admin_error_handlers(app)
 
@@ -234,6 +250,7 @@ def _build_app(*, kb_store=None, embedding_client=None, embedding_model="fake-mo
         require_admin=require_admin,
         embedding_client=embedding_client,
         embedding_model=embedding_model,
+        synthesizer=synthesizer,
     )
     return app
 
@@ -402,6 +419,64 @@ def test_trigger_file_source_ingests_upload_into_kb_store():
     assert final.json()["chunks_written"] >= 1
     assert kb_store.documents
     assert kb_store.chunks
+
+
+# ---------------------------------------------------------------------------
+# End-to-end route wiring for the opt-in `synthesize` flag -- XMGPLAT-11402
+#
+# The unit tests above (test_ingest_*_synthesize_*) exercise
+# ingest_web_source()/ingest_uploaded_files() directly with synthesize=
+# passed in by hand. These instead go through the actual HTTP routes (JSON
+# body field for /web, multipart form field for /file) and the
+# register_admin_kb_routes(synthesizer=...) wiring, so a regression that
+# drops the flag/synthesizer somewhere in that plumbing (route handler ->
+# background task -> ingest_*) would be caught here even if the ingestion
+# functions themselves still behave correctly in isolation.
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_web_source_with_synthesize_true_indexes_synthesized_content():
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"], "synthesize": True},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["https://example.com/"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
+def test_trigger_file_source_with_synthesize_true_indexes_synthesized_content():
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads", "synthesize": "true"},
+            files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["uploads/notes.md"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
 
 
 def test_trigger_file_source_ingests_pdf_upload_into_kb_store():
@@ -1185,6 +1260,123 @@ async def test_ingest_uploaded_files_reingest_clears_stale_chunks():
 
 
 # ---------------------------------------------------------------------------
+# Opt-in AI synthesis (synthesize=true) -- XMGPLAT-11402
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesize_false_does_not_call_synthesizer():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer()
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=False,
+        synthesizer=synthesizer,
+    )
+
+    assert result["documents"] == 1
+    assert synthesizer.calls == []
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesize_true_indexes_synthesized_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer()
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=synthesizer,
+    )
+
+    assert result["documents"] == 1
+    assert len(synthesizer.calls) == 1
+    assert synthesizer.calls[0]["title"] == "doc.txt"
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == f"SYNTHESIZED: {_LONG_TEXT}"
+    assert doc["metadata"]["synthesized"] is True
+    # Chunked output must reflect the synthesized text, not the raw upload.
+    chunk_contents = " ".join(c["content"] for c in kb_store.chunks if c["document_id"] == "src/doc.txt")
+    assert "SYNTHESIZED:" in chunk_contents
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesis_failure_falls_back_to_raw_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer(fail_for={"doc.txt"})
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=synthesizer,
+    )
+
+    # A failed synthesis call must not raise / abort the run -- it falls
+    # back to raw content for this document only.
+    assert result["documents"] == 1
+    assert result["errors"] == []
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesize_true_without_synthesizer_falls_back():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=None,
+    )
+
+    assert result["documents"] == 1
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+# ---------------------------------------------------------------------------
 # processed_urls marked only after a fully successful write
 # ---------------------------------------------------------------------------
 
@@ -1239,6 +1431,72 @@ async def test_ingest_web_source_failed_page_can_be_retried_by_a_later_source():
         )
         assert second["documents"] == 1
         assert "https://example.com/" in processed_urls
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_source_synthesize_true_indexes_synthesized_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+    from autolangchat.rag.kb_ingestion import ingest_web_source
+
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+    chunker = TextChunker()
+    kb_store = _FakeKBStore()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer()
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        result = await ingest_web_source(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model="fake-model",
+            source_name="src",
+            urls=["https://example.com/"],
+            synthesize=True,
+            synthesizer=synthesizer,
+        )
+
+    assert result["documents"] == 1
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["https://example.com/"]
+    # HTML text extraction normalizes whitespace, so compare on the prefix
+    # (proof chunking/storage used the synthesized text) rather than exact
+    # equality with the raw source string.
+    assert doc["content"].startswith("SYNTHESIZED: hello world")
+    assert doc["metadata"]["synthesized"] is True
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_source_synthesis_failure_falls_back_to_raw_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+    from autolangchat.rag.kb_ingestion import ingest_web_source
+
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+    chunker = TextChunker()
+    kb_store = _FakeKBStore()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer(fail_for={"Untitled"})
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        result = await ingest_web_source(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model="fake-model",
+            source_name="src",
+            urls=["https://example.com/"],
+            synthesize=True,
+            synthesizer=synthesizer,
+        )
+
+    # A failed synthesis call must not raise / abort the run -- it falls
+    # back to raw content for this document only.
+    assert len(synthesizer.calls) == 1
+    assert result["documents"] == 1
+    assert result["errors"] == []
+    doc = kb_store.documents["https://example.com/"]
+    assert doc["content"] == _LONG_TEXT.strip()
+    assert doc["metadata"]["synthesized"] is False
 
 
 # ---------------------------------------------------------------------------

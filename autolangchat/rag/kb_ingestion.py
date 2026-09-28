@@ -119,6 +119,36 @@ def _write_chunks_sync(
         )
 
 
+async def _maybe_synthesize(
+    content: str,
+    *,
+    title: str,
+    topic: Optional[str],
+    synthesize: bool,
+    synthesizer: Any,
+    doc_label: str,
+) -> Tuple[str, bool]:
+    """Return ``(content, was_synthesized)``, optionally replacing ``content``
+    with a concise summary via ``synthesizer.synthesize_raw_content(...)``.
+
+    Opt-in via ``synthesize``. Any failure to synthesize (flag on but no
+    ``synthesizer`` wired, LLM error, timeout) falls back to the original
+    ``content`` for this document only -- it never raises, so one bad LLM
+    call can't abort the caller's ingestion run.
+    """
+    if not synthesize:
+        return content, False
+    if synthesizer is None:
+        logger.warning("synthesize=true but no synthesizer configured; indexing raw content for %s", doc_label)
+        return content, False
+    try:
+        synthesized = await synthesizer.synthesize_raw_content(content=content, title=title, topic=topic)
+        return synthesized, True
+    except Exception as exc:
+        logger.warning("synthesis failed for %s; falling back to raw content: %s", doc_label, exc)
+        return content, False
+
+
 async def ingest_web_source(
     *,
     vector_db: Any,
@@ -138,6 +168,8 @@ async def ingest_web_source(
     shared_visited_urls: Optional[Set[str]] = None,
     processed_urls: Optional[Set[str]] = None,
     progress_cb: Optional[ProgressCallback] = None,
+    synthesize: bool = False,
+    synthesizer: Any = None,
 ) -> Dict[str, Any]:
     """Crawl ``urls`` and index the resulting pages into ``vector_db``.
 
@@ -152,6 +184,11 @@ async def ingest_web_source(
     ``ingest_linked_files`` opts into downloading/indexing linked non-HTML
     files (currently PDF only) discovered during the crawl; disabled by
     default, matching today's silent-skip behavior.
+    ``synthesize`` opts into running each page's content through
+    ``synthesizer.synthesize_raw_content(...)`` before chunking, indexing the
+    synthesized summary instead of the raw extracted text; a per-page
+    synthesis failure falls back to that page's raw content (see
+    :func:`_maybe_synthesize`).
 
     Returns ``{"documents": int, "chunks": int, "errors": List[str]}`` for
     this source. A page failing to fetch (bad status, timeout, connection
@@ -196,10 +233,19 @@ async def ingest_web_source(
             continue
 
         try:
+            doc_title = doc.get("title", "")
+            doc_content, was_synthesized = await _maybe_synthesize(
+                doc["content"],
+                title=doc_title,
+                topic=topic,
+                synthesize=synthesize,
+                synthesizer=synthesizer,
+                doc_label=doc_url,
+            )
             doc_dict = {
                 "id": doc_url,
-                "content": doc["content"],
-                "title": doc.get("title", ""),
+                "content": doc_content,
+                "title": doc_title,
                 "source": source_name,
                 "url": doc_url,
                 "topic": topic,
@@ -220,8 +266,8 @@ async def ingest_web_source(
             await _upsert_document(
                 vector_db,
                 doc_id=doc_url,
-                content=doc["content"],
-                title=doc.get("title", ""),
+                content=doc_content,
+                title=doc_title,
                 source=source_name,
                 source_url=doc_url,
                 topic=topic,
@@ -229,6 +275,7 @@ async def ingest_web_source(
                 metadata={
                     "source_type": "web",
                     "crawled_at": doc.get("crawled_at"),
+                    "synthesized": was_synthesized,
                 },
             )
 
@@ -238,7 +285,7 @@ async def ingest_web_source(
                 doc_id=doc_url,
                 chunks_data=chunks_data,
                 embeddings=embeddings,
-                title=doc.get("title", ""),
+                title=doc_title,
                 source_name=source_name,
                 url=doc_url,
                 topic=topic,
@@ -391,6 +438,8 @@ async def ingest_uploaded_files(
     files: List[Tuple[str, str]],
     topic: Optional[str] = None,
     progress_cb: Optional[ProgressCallback] = None,
+    synthesize: bool = False,
+    synthesizer: Any = None,
 ) -> Dict[str, Any]:
     """Index already-read file content into ``vector_db``.
 
@@ -399,6 +448,9 @@ async def ingest_uploaded_files(
     directly (they don't have shell access to the running service), so the
     caller is expected to have already read/decoded each upload into
     ``files`` as ``(filename, text_content)`` pairs before this is called.
+    ``synthesize`` opts into running each file's content through
+    ``synthesizer.synthesize_raw_content(...)`` before chunking (see
+    :func:`_maybe_synthesize` for the per-file fallback-on-failure behavior).
 
     Returns ``{"documents": int, "chunks": int, "errors": List[str]}``. A
     file failing to chunk/embed does not raise — it's skipped and recorded
@@ -413,10 +465,18 @@ async def ingest_uploaded_files(
     for filename, content in files:
         try:
             doc_id = f"{source_name}/{filename}"
+            doc_content, was_synthesized = await _maybe_synthesize(
+                content,
+                title=filename,
+                topic=topic,
+                synthesize=synthesize,
+                synthesizer=synthesizer,
+                doc_label=doc_id,
+            )
 
             doc_dict = {
                 "id": doc_id,
-                "content": content,
+                "content": doc_content,
                 "title": filename,
                 "source": source_name,
                 "topic": topic,
@@ -437,7 +497,7 @@ async def ingest_uploaded_files(
             await _upsert_document(
                 vector_db,
                 doc_id=doc_id,
-                content=content,
+                content=doc_content,
                 title=filename,
                 source=source_name,
                 source_url=None,
@@ -446,6 +506,7 @@ async def ingest_uploaded_files(
                 metadata={
                     "source_type": "file",
                     "filename": filename,
+                    "synthesized": was_synthesized,
                 },
             )
 

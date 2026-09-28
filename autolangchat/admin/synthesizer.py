@@ -125,6 +125,28 @@ Rules for "action":
 Do NOT include any text outside the JSON object.\
 """
 
+# Distinct from _SYNTHESIS_SYSTEM_PROMPT: no feedback entries/JSON article shape
+# here, just a raw document to condense into a plain-text, RAG-appropriate summary.
+_RAW_CONTENT_SYNTHESIS_SYSTEM_PROMPT = """\
+You are an expert technical editor preparing a document for a retrieval-
+augmented-generation (RAG) knowledge base.
+
+You will be given the raw content of a single crawled or uploaded document,
+along with its title and (optionally) a topic. Rewrite it as a concise,
+well-organized, self-contained document optimized for chunking and semantic
+retrieval:
+
+  * Remove boilerplate, navigation text, ads, and other non-substantive content.
+  * Preserve all technical facts, figures, code fragments, and terminology
+    verbatim -- do not summarize away specifics a reader would search for.
+  * Keep the original meaning and scope; do not add information that is not
+    present in the source content.
+  * Use clear headings/sections where the source content warrants it.
+
+Respond with ONLY the rewritten document text. Do NOT include any JSON,
+markdown code fences, or commentary about what you changed.\
+"""
+
 
 def _format_entry(entry: FeedbackEntry, index: int) -> str:
     lines = [
@@ -380,9 +402,86 @@ class FeedbackSynthesizer:
             feedback_store=feedback_store,
         )
 
+    async def synthesize_raw_content(
+        self,
+        content: str,
+        title: str,
+        topic: Optional[str] = None,
+    ) -> str:
+        """Synthesize a single raw document into a concise, RAG-appropriate summary.
+
+        Used by the opt-in KB source-ingestion synthesis step (``synthesize=true``
+        on ``/admin/kb/sources/{web,file}``) -- distinct from :meth:`synthesize_all`/
+        :meth:`synthesize_entry`, which turn *feedback entries* into structured KB
+        articles. This method has no feedback/JSON-article shape: it sends ``content``
+        through a purpose-built prompt and returns the plain rewritten text.
+
+        Raises on LLM failure (import error, missing model_id, invocation error) so
+        callers can fall back to indexing the raw ``content`` for that document.
+        """
+        parts = [f"Title: {title}"]
+        if topic:
+            parts.append(f"Topic: {topic}")
+        parts.append(f"\n--- Raw document content ---\n{content}")
+        messages = [
+            {"role": "system", "content": _RAW_CONTENT_SYNTHESIS_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(parts)},
+        ]
+        return (await self._invoke_llm(messages)).strip()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _invoke_llm(self, messages: List[Dict[str, Any]]) -> str:
+        """Invoke the configured Bedrock chat model and return the raw text response.
+
+        Shared by :meth:`_synthesize_tag_group` and :meth:`synthesize_raw_content`
+        so both LLM-call paths stay in sync (model_id/chat_config resolution,
+        temperature/max_tokens handling for reasoning models via
+        :func:`build_bedrock_kwargs`).
+        """
+        try:
+            from langchain_aws import ChatBedrockConverse
+            from langchain_core.messages import HumanMessage, SystemMessage
+        except ImportError as _ie:  # pragma: no cover
+            raise ImportError(
+                "langchain-aws is required for synthesis. " "Install with: pip install langchain-aws"
+            ) from _ie
+
+        cfg = self._chat_config
+        model_id = self.model_id or (cfg.model_id if cfg else None)
+        if model_id is None:
+            raise RuntimeError(
+                "FeedbackSynthesizer: model_id is required. " "Pass model_id= or chat_config= at init time."
+            )
+        aws_region = cfg.aws_region if cfg else "us-east-1"
+        max_tokens = cfg.max_tokens if cfg else 4096
+
+        lc_messages = [
+            SystemMessage(content=m["content"]) if m["role"] == "system" else HumanMessage(content=m["content"])
+            for m in messages
+        ]
+        # Synthesis wants deterministic output, but models that reject
+        # temperature (e.g. reasoning models) must not receive it -- the
+        # shared builder drops it for those and clamps max_tokens to the
+        # model's own output cap.
+        llm_kwargs = build_bedrock_kwargs(
+            model_id,
+            cfg,
+            max_tokens=max_tokens,
+            temperature=0.0,
+            top_p=None,
+            region_name=aws_region,
+        )
+        llm = ChatBedrockConverse(**llm_kwargs)
+        ai_msg = await llm.ainvoke(lc_messages)
+        raw_content_val = ai_msg.content
+        return (
+            raw_content_val
+            if isinstance(raw_content_val, str)
+            else "".join(b.get("text", "") for b in raw_content_val if isinstance(b, dict))
+        )
 
     async def _synthesize_tag_group(
         self,
@@ -447,47 +546,7 @@ class FeedbackSynthesizer:
                 system_prompt=self._system_prompt,
             )
 
-            try:
-                from langchain_aws import ChatBedrockConverse
-                from langchain_core.messages import HumanMessage, SystemMessage
-            except ImportError as _ie:  # pragma: no cover
-                raise ImportError(
-                    "langchain-aws is required for synthesis. " "Install with: pip install langchain-aws"
-                ) from _ie
-
-            cfg = self._chat_config
-            model_id = self.model_id or (cfg.model_id if cfg else None)
-            if model_id is None:
-                raise RuntimeError(
-                    "FeedbackSynthesizer: model_id is required. " "Pass model_id= or chat_config= at init time."
-                )
-            aws_region = cfg.aws_region if cfg else "us-east-1"
-            max_tokens = cfg.max_tokens if cfg else 4096
-
-            lc_messages = [
-                SystemMessage(content=m["content"]) if m["role"] == "system" else HumanMessage(content=m["content"])
-                for m in messages
-            ]
-            # Synthesis wants deterministic output, but models that reject
-            # temperature (e.g. reasoning models) must not receive it -- the
-            # shared builder drops it for those and clamps max_tokens to the
-            # model's own output cap.
-            llm_kwargs = build_bedrock_kwargs(
-                model_id,
-                cfg,
-                max_tokens=max_tokens,
-                temperature=0.0,
-                top_p=None,
-                region_name=aws_region,
-            )
-            llm = ChatBedrockConverse(**llm_kwargs)
-            ai_msg = await llm.ainvoke(lc_messages)
-            raw_content_val = ai_msg.content
-            raw_content = (
-                raw_content_val
-                if isinstance(raw_content_val, str)
-                else "".join(b.get("text", "") for b in raw_content_val if isinstance(b, dict))
-            )
+            raw_content = await self._invoke_llm(messages)
             article_data = _parse_article(raw_content)
 
             action_str = article_data.get("action", "create").lower()

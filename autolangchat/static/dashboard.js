@@ -1104,6 +1104,15 @@
         ingestLinkedRow.appendChild(el('div', 'form-hint', 'Download and index PDFs discovered via links on crawled pages, in addition to HTML pages.'));
         sec.appendChild(ingestLinkedRow);
 
+        var synthesizeRow = el('div', 'form-row');
+        var synthesizeLabel = el('label', 'filter-checkbox-label'); synthesizeLabel.htmlFor = 'kbsrc-web-synthesize';
+        var synthesizeCb = el('input'); synthesizeCb.type = 'checkbox'; synthesizeCb.id = 'kbsrc-web-synthesize';
+        synthesizeLabel.appendChild(synthesizeCb);
+        synthesizeLabel.appendChild(document.createTextNode(' Synthesize with AI before indexing'));
+        synthesizeRow.appendChild(synthesizeLabel);
+        synthesizeRow.appendChild(el('div', 'form-hint', 'Runs each page through the KB synthesizer to produce a more concise, RAG-friendly document instead of indexing the raw extracted text. Adds one LLM call per page; falls back to the raw page content if synthesis fails.'));
+        sec.appendChild(synthesizeRow);
+
         // Advanced/optional auth fields — collapsed by default since they
         // carry sensitive values (bearer tokens, session cookies).
         var details = document.createElement('details');
@@ -1201,6 +1210,7 @@
             var allowedDomains = splitListInput(domainsInp.value); if (allowedDomains) body.allowed_domains = allowedDomains;
             var excludePatterns = splitListInput(excludeInp.value); if (excludePatterns) body.exclude_patterns = excludePatterns;
             if (ingestLinkedCb.checked) body.ingest_linked_files = true;
+            if (synthesizeCb.checked) body.synthesize = true;
 
             if (headersTa.value.trim()) {
                 try { body.headers = JSON.parse(headersTa.value); }
@@ -1240,6 +1250,15 @@
         filesRow.appendChild(filesInp);
         filesRow.appendChild(el('div', 'form-hint', 'Admins upload file content directly \u2014 there is no server-side path.'));
         sec.appendChild(filesRow);
+
+        var synthesizeRow = el('div', 'form-row');
+        var synthesizeLabel = el('label', 'filter-checkbox-label'); synthesizeLabel.htmlFor = 'kbsrc-file-synthesize';
+        var synthesizeCb = el('input'); synthesizeCb.type = 'checkbox'; synthesizeCb.id = 'kbsrc-file-synthesize';
+        synthesizeLabel.appendChild(synthesizeCb);
+        synthesizeLabel.appendChild(document.createTextNode(' Synthesize with AI before indexing'));
+        synthesizeRow.appendChild(synthesizeLabel);
+        synthesizeRow.appendChild(el('div', 'form-hint', 'Runs each file through the KB synthesizer to produce a more concise, RAG-friendly document instead of indexing the raw file text. Adds one LLM call per file; falls back to the raw file content if synthesis fails.'));
+        sec.appendChild(synthesizeRow);
 
         var formErr = el('div', 'inline-error'); formErr.id = 'kbsrc-file-err';
         sec.appendChild(formErr);
@@ -1307,6 +1326,7 @@
             var formData = new FormData();
             formData.append('name', name);
             var topic = topicInp.value.trim(); if (topic) formData.append('topic', topic);
+            if (synthesizeCb.checked) formData.append('synthesize', 'true');
             for (var i = 0; i < files.length; i++) formData.append('files', files[i]);
 
             startFileSourceRun(name, formData, false);
