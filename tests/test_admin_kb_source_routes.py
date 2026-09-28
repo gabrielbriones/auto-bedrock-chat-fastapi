@@ -483,6 +483,54 @@ def test_trigger_file_source_with_synthesize_true_indexes_synthesized_content():
     assert doc["metadata"]["synthesized"] is True
 
 
+def test_put_web_source_with_synthesize_true_indexes_synthesized_content():
+    """PR #160 review: synthesize forwarding on PUT overrides had no test
+    coverage even though the wiring already passed it through -- close the
+    gap so a future regression here doesn't slip past POST-only tests."""
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/web/docs",
+            json={"urls": ["https://example.com/"], "synthesize": True},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["https://example.com/"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
+def test_put_file_source_with_synthesize_true_indexes_synthesized_content():
+    """PR #160 review: same gap as above but for the PUT /file override."""
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+
+    with TestClient(app) as client:
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/file/uploads",
+            data={"synthesize": "true"},
+            files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["uploads/notes.md"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
 def test_trigger_file_source_ingests_pdf_upload_into_kb_store():
     kb_store = _FakeKBStore()
     app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())

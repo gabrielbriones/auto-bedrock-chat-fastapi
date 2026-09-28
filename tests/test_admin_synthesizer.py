@@ -249,3 +249,30 @@ async def test_synthesize_raw_content_calls_llm_when_content_fits_model_budget()
 
     assert result == "a concise summary"
     ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_raw_content_fits_ordinary_page_on_small_context_model():
+    """Regression for PR #160 review: comparing character counts directly
+    against max_input_tokens (a *token* count) with no conversion factor
+    rejected ordinary ~20k-character pages on a 16,384-token model. An
+    everyday-sized page must still reach the LLM on the smallest known
+    model profile."""
+    synth = FeedbackSynthesizer(model_id="fake.small-model")
+    ainvoke = AsyncMock(return_value=MagicMock(content="a concise summary"))
+    ordinary_page_content = "x" * 20_000
+
+    with (
+        patch.object(synth_mod, "get_model_profile", return_value={"max_input_tokens": 16_384}),
+        patch.dict(
+            sys.modules,
+            {
+                "langchain_aws": types.SimpleNamespace(ChatBedrockConverse=lambda **kwargs: MagicMock(ainvoke=ainvoke)),
+                "langchain_core.messages": types.SimpleNamespace(SystemMessage=MagicMock, HumanMessage=MagicMock),
+            },
+        ),
+    ):
+        result = await synth.synthesize_raw_content(content=ordinary_page_content, title="Doc")
+
+    assert result == "a concise summary"
+    ainvoke.assert_awaited_once()
