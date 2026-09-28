@@ -223,17 +223,24 @@ const createChatStores = (
     (id) => conversations.acceptsLoadedConversation(conversationId(id)),
   )
 
-  return {
-    messagingGateway,
-    conversationGateway,
-    chatSession: new ChatSessionStore({
-      gateway: messagingGateway,
-      connection: socket,
-      clock: parts.clock,
-      logger: parts.logger,
-    }),
-    conversations,
-  }
+  const chatSession = new ChatSessionStore({
+    gateway: messagingGateway,
+    connection: socket,
+    clock: parts.clock,
+    logger: parts.logger,
+  })
+
+  // Neither context imports the other, so "New chat" reaches the transcript through this seam.
+  let awaitingId = conversations.getSnapshot().awaitingId
+  conversations.subscribe(() => {
+    const next = conversations.getSnapshot().awaitingId
+    if (next && !awaitingId) {
+      chatSession.startNew()
+    }
+    awaitingId = next
+  })
+
+  return { messagingGateway, conversationGateway, chatSession, conversations }
 }
 
 // The auth pieces built together because they share the socket, the origin and `bootstrap`.

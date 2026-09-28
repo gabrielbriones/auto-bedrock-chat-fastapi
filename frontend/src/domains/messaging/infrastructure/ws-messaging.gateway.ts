@@ -188,6 +188,11 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
         conversationId: frame.conversation_id,
         messages: historyMessages(frame.messages, frame.timestamp),
       }
+    // The thread exists but its checkpoint is gone: for the transcript that is a load with nothing in it.
+    case 'conversation_error':
+      return frame.code === 'conversation_history_unavailable' && frame.conversation_id !== undefined
+        ? { kind: 'history-loaded', conversationId: frame.conversation_id, messages: [] }
+        : null
     default:
       // Frames this context owns but does not use yet (`pong`, `history`, `history_cleared`) and
       // every frame owned by another context are simply not this gateway's business.
@@ -212,15 +217,17 @@ export class WsMessagingGateway implements MessagingGateway {
 
   onEvent(callback: (event: MessagingEvent) => void): Unsubscribe {
     return this.#frames.subscribe((frame) => {
-      if (frame.type === 'conversation_loaded' && !this.#acceptHistory(frame.conversation_id)) {
+      const event = toMessagingEvent(frame)
+
+      if (event === null) {
         return
       }
 
-      const event = toMessagingEvent(frame)
-
-      if (event !== null) {
-        callback(event)
+      if (event.kind === 'history-loaded' && !this.#acceptHistory(event.conversationId)) {
+        return
       }
+
+      callback(event)
     })
   }
 }

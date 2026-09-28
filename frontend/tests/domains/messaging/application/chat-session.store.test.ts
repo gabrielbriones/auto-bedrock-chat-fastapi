@@ -319,6 +319,25 @@ describe('ChatSessionStore', () => {
     expect(store.getSnapshot().canSend).toBe(false)
   })
 
+  // FR-CONV-002: no frame announces a new thread, so the transcript is reset on request.
+  it('empties the transcript when a new conversation is started', () => {
+    const { store, emit } = createHarness()
+    emit({
+      kind: 'history-loaded',
+      conversationId: 'c-1',
+      messages: [{ id: 'm-1', role: 'user', text: 'old', at: fixedInstant(), activity: null }],
+    })
+    store.send('follow-up')
+    emit(answered('reply'))
+    expect(store.getSnapshot().transcript).not.toHaveLength(0)
+
+    store.startNew()
+
+    expect(store.getSnapshot().transcript).toEqual([])
+    expect(store.getSnapshot().configuredModel).toBeNull()
+    expect(store.getSnapshot().awaitingResponse).toBe(false)
+  })
+
   // FR-MSG-005: staleness reaches the store as the recycled connection the heartbeat forced.
   it('recycles a stale turn into a visible interruption that keeps its partial text', () => {
     const { store, emit, changeConnection } = createHarness()

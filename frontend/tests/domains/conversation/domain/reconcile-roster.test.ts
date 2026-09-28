@@ -14,6 +14,7 @@ import type { ConversationEvent } from '@/domains/conversation/domain/events'
 import { reconcileRoster } from '@/domains/conversation/domain/reconcile-roster'
 import { rosterViolations } from '@/domains/conversation/domain/roster-invariants'
 import {
+  awaitFirstTurnId,
   beginBulkDelete,
   clearSelection,
   emptyRoster,
@@ -148,6 +149,26 @@ describe('reconcileRoster frame handling', () => {
 
     expect(roster.pendingBulkDelete).toBeNull()
     expect(roster.items).toHaveLength(3)
+  })
+
+  // The thread still exists and accepts turns, so the reader is taken there rather than left on
+  // whatever was active before the failed load.
+  it('activates a conversation whose history is unavailable', () => {
+    const active = reduce(aSeededRoster(), anEvent.loaded('a'))
+
+    const roster = reduce(active, anEvent.error('conversation_history_unavailable', 'gone', 'b'))
+
+    expect(roster.activeId).toBe(id('b'))
+  })
+
+  it('does not leave a new chat for an already listed conversation on refresh', () => {
+    const listed = reduce(emptyRoster, anEvent.listed([aConversation('a', 0), aConversation('b', 5)]))
+    const fresh = awaitFirstTurnId(listed)
+
+    const roster = reduce(fresh, anEvent.listed([aConversation('a', 0), aConversation('b', 5)]))
+
+    expect(roster.activeId).toBeNull()
+    expect(roster.awaitingIdForFirstTurn).toBe(true)
   })
 
   it('leaves an unrelated selection untouched when a conversation is renamed', () => {

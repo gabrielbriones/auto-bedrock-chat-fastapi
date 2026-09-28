@@ -125,10 +125,18 @@ export const awaitFirstTurnId = (roster: ConversationRoster): ConversationRoster
 
 // FR-CONV-010: a refresh that arrives with nothing active, after a turn was sent into an unnamed
 // thread, adopts the most recently updated conversation — that is the thread the turn created.
-export const recoverActiveAfterRefresh = (roster: ConversationRoster): ConversationRoster => {
+// Only a thread `previous` had not listed qualifies: an unchanged list means no turn was sent yet,
+// and adopting an old conversation there would pull the reader out of the new chat they asked for.
+export const recoverActiveAfterRefresh = (
+  roster: ConversationRoster,
+  previous: ConversationRoster,
+): ConversationRoster => {
   const candidate = mostRecent(roster)
 
-  return roster.awaitingIdForFirstTurn && roster.activeId === null && candidate !== undefined
+  return roster.awaitingIdForFirstTurn &&
+    roster.activeId === null &&
+    candidate !== undefined &&
+    !hasConversation(previous, candidate.id)
     ? activate(roster, candidate.id)
     : roster
 }

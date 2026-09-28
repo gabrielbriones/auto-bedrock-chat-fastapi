@@ -342,6 +342,22 @@ describe('WsMessagingGateway', () => {
     expect(events).toEqual([])
   })
 
+  // The thread exists but its checkpoint is gone: the transcript treats that as an empty load.
+  it('maps unavailable history to an empty history load for that conversation', () => {
+    const { events, emit } = createHarness()
+
+    emit({
+      type: 'conversation_error',
+      timestamp: TIMESTAMP,
+      code: 'conversation_history_unavailable',
+      message: 'gone',
+      conversation_id: 'c-1',
+    })
+    emit({ type: 'conversation_error', timestamp: TIMESTAMP, code: 'conversation_not_found', message: 'nope' })
+
+    expect(events).toEqual([{ kind: 'history-loaded', conversationId: 'c-1', messages: [] }])
+  })
+
   it('ignores frames owned by other contexts and ones this slice does not use', () => {
     const { emit, events } = createHarness()
 

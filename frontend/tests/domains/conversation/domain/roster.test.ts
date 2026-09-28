@@ -66,7 +66,7 @@ const anOperation: fc.Arbitrary<Operation> = fc.oneof(
   fc.constant<Operation>(selectAll),
   fc.constant<Operation>(releaseBulkDelete),
   fc.constant<Operation>(awaitFirstTurnId),
-  fc.constant<Operation>(recoverActiveAfterRefresh),
+  fc.constant<Operation>((roster) => recoverActiveAfterRefresh(roster, emptyRoster)),
 )
 
 const aSequence = fc.array(anOperation, { maxLength: 20 })
@@ -160,14 +160,26 @@ describe('ConversationRoster operations', () => {
 
     const refreshed = recoverActiveAfterRefresh(
       replaceItems(roster, [aConversation('a', 0), aConversation('b', 10)]),
+      roster,
     )
 
     expect(refreshed.activeId).toBe(id('b'))
     expect(refreshed.awaitingIdForFirstTurn).toBe(false)
   })
 
+  // A refresh that lists nothing new means no turn was sent: the reader stays in the new chat.
+  it('does not adopt an already listed conversation while a new chat awaits its first turn', () => {
+    const listed = aRoster([aConversation('a', 0), aConversation('b', 10)])
+    const roster = awaitFirstTurnId(listed)
+
+    const refreshed = recoverActiveAfterRefresh(replaceItems(roster, listed.items), roster)
+
+    expect(refreshed.activeId).toBeNull()
+    expect(refreshed.awaitingIdForFirstTurn).toBe(true)
+  })
+
   it('does not adopt a conversation when nothing was awaiting an id', () => {
-    const refreshed = recoverActiveAfterRefresh(aRoster([aConversation('a')]))
+    const refreshed = recoverActiveAfterRefresh(aRoster([aConversation('a')]), emptyRoster)
 
     expect(refreshed.activeId).toBeNull()
   })

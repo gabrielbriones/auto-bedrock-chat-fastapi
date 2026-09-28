@@ -4,6 +4,7 @@ import type { Logger } from '@/shared/logging/logger'
 import { HttpClient } from '@/shared/http/http-client'
 
 import { bootstrapConfigFixture } from './bootstrap-config.fixture'
+import { FakeChatSocket } from '../../shared/ws/fake-chat-socket'
 import { toChatBootstrap } from '@/app/bootstrap/bootstrap-config.dto'
 import { createContainer } from '@/app/bootstrap/container'
 import { isOk } from '@/shared/kernel/result'
@@ -33,5 +34,56 @@ describe('createContainer', () => {
 
     expect(container.httpClient).toBeInstanceOf(HttpClient)
     expect(container.logger).toBeDefined()
+  })
+
+  // FR-CONV-002: the contexts never import each other, so this seam is the only place "New chat"
+  // can reach the transcript.
+  it('clears the transcript when a new conversation is started', () => {
+    const socket = new FakeChatSocket([
+      { type: 'open' },
+      {
+        type: 'frame',
+        data: JSON.stringify({
+          type: 'auth_configured',
+          timestamp: '2026-08-28T08:59:00Z',
+          message: 'Authenticated',
+          auth_type: 'api_key',
+          display_name: 'Test user',
+        }),
+      },
+      {
+        type: 'frame',
+        data: JSON.stringify({
+          type: 'conversation_loaded',
+          timestamp: '2026-08-28T10:00:00Z',
+          conversation_id: 'a',
+          conversation: {},
+          messages: [
+            {
+              message_id: 'm-1',
+              role: 'assistant',
+              content: 'From the old thread.',
+              timestamp: '2026-08-27T09:00:01Z',
+              tool_calls: [],
+              tool_results: [],
+              metadata: {},
+            },
+          ],
+        }),
+      },
+    ])
+    const container = createContainer(chatBootstrap(), {
+      logger: fakeLogger,
+      connectivity: { status: () => 'online', subscribe: () => () => {} },
+      socketFactory: () => socket,
+    })
+    container.socket.connect()
+    socket.play()
+    expect(container.chatSession.getSnapshot().transcript).toHaveLength(1)
+
+    container.conversations.startNew()
+
+    expect(container.chatSession.getSnapshot().transcript).toEqual([])
+    container.socket.dispose()
   })
 })

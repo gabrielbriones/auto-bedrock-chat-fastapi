@@ -58,7 +58,7 @@ export const reconcileRoster = (
     // FR-CONV-016: a single page, so the list replaces rather than merges. FR-CONV-010 then adopts
     // the newest thread if a turn was sent before its id existed.
     case 'listed':
-      return recoverActiveAfterRefresh(replaceItems(roster, event.items.map(toConversation)))
+      return recoverActiveAfterRefresh(replaceItems(roster, event.items.map(toConversation)), roster)
 
     // Opening a thread is not activity on it, so `updatedAt` is left alone and the list holds still.
     case 'loaded':
@@ -80,7 +80,13 @@ export const reconcileRoster = (
 
     // FR-CONV-019: whatever else the code means, the guard must come off or every later bulk delete
     // is blocked by a request that already failed. Code-to-copy mapping is the caller's job.
-    case 'error':
-      return releaseBulkDelete(roster)
+    // A thread whose history is gone still exists and can be written to, so it is opened like a
+    // loaded one rather than leaving the reader on whatever was active before.
+    case 'error': {
+      const released = releaseBulkDelete(roster)
+      return event.code === 'conversation_history_unavailable' && event.id !== null
+        ? adopt(released, event.id, {}, at)
+        : released
+    }
   }
 }

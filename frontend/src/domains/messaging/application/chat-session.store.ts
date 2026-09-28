@@ -129,6 +129,16 @@ export class ChatSessionStore {
     return 'sent'
   }
 
+  // FR-CONV-002: the server sends no frame for a new thread, so the transcript is reset here.
+  startNew(): void {
+    this.#history = []
+    this.#turns = []
+    this.#transient = []
+    this.#seq = 0
+    this.#configuredModel = null
+    this.#emit()
+  }
+
   dispose(): void {
     for (const unsubscribe of this.#subscriptions) {
       unsubscribe()
@@ -163,6 +173,7 @@ export class ChatSessionStore {
             message.id === null ? null : messageId(message.id),
           ),
           activity: message.activity,
+          conversationId: event.conversationId,
         }))
         this.#seq = this.#history.length
         this.#turns = []

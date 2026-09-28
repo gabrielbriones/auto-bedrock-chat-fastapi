@@ -12,6 +12,8 @@ export type TransientMessage = {
 export type HistoryMessage = {
   readonly message: ChatMessage
   readonly activity: TurnActivity | null
+  /** Keeps keys distinct between conversations whose messages carry no server id. */
+  readonly conversationId?: string
 }
 
 export type TranscriptEntry = {
@@ -110,8 +112,8 @@ const turnEntries = (turn: Turn): TranscriptEntry[] => {
   return entries
 }
 
-const historyEntry = ({ message, activity }: HistoryMessage): TranscriptEntry => ({
-  key: `history:${message.id ?? message.seq}`,
+const historyEntry = ({ message, activity, conversationId }: HistoryMessage): TranscriptEntry => ({
+  key: `history:${conversationId ?? ''}:${message.id ?? message.seq}`,
   message,
   pending: false,
   streaming: false,
