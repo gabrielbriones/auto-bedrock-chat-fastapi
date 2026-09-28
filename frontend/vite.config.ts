@@ -47,6 +47,7 @@ return {
       '/bedrock-chat': {
         target: proxyTarget,
         changeOrigin: false,
+        ws: true,
         bypass: serveSpaRoutesLocally,
       },
       '/chat': { target: proxyTarget, changeOrigin: false, ws: true },
