@@ -48,8 +48,13 @@ class BaseKBStore(ABC):
         """Retrieve a document by ID, or ``None`` if not found."""
 
     @abstractmethod
-    def delete_document(self, doc_id: str) -> None:
-        """Delete a document **and** all its chunks/embeddings."""
+    def delete_document(self, doc_id: str) -> int:
+        """Delete a document **and** all its chunks/embeddings.
+
+        Returns the number of chunks deleted, so callers (e.g. bulk
+        source-delete/override flows) can report an accurate count
+        without a separate query.
+        """
 
     @abstractmethod
     def list_sources(self) -> List[Dict[str, Any]]:

@@ -302,13 +302,15 @@ on the same document.
 
 ### KB Source Ingestion
 
-| Method | Path                       | Description                                                            |
-| ------ | -------------------------- | ---------------------------------------------------------------------- |
-| POST   | `/admin/kb/sources/web`    | Trigger a background web crawl; indexes the crawled pages into the KB. |
-| POST   | `/admin/kb/sources/file`   | Trigger a background ingestion of uploaded file content into the KB.   |
-| GET    | `/admin/kb/sources/status` | Poll the single global ingestion run's state.                          |
-| GET    | `/admin/kb/sources`        | List distinct KB document `source` names with their document counts.   |
-| DELETE | `/admin/kb/sources`        | Delete every document (and chunks) whose `source` matches `?name=`.    |
+| Method | Path                            | Description                                                               |
+| ------ | ------------------------------- | ------------------------------------------------------------------------- |
+| POST   | `/admin/kb/sources/web`         | Trigger a background web crawl; indexes the crawled pages into the KB.    |
+| POST   | `/admin/kb/sources/file`        | Trigger a background ingestion of uploaded file content into the KB.      |
+| PUT    | `/admin/kb/sources/web/{name}`  | Delete `name`'s existing documents/chunks, then re-run a web crawl.       |
+| PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
+| GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                             |
+| GET    | `/admin/kb/sources`             | List distinct KB document `source` names with their document counts.      |
+| DELETE | `/admin/kb/sources`             | Delete every document (and chunks) whose `source` matches `?name=`.       |
 
 Both `POST` routes return **`202 Accepted`** immediately with a
 `run_id` and `phase: "running"` — the crawl/ingest itself runs as a
@@ -323,6 +325,12 @@ kb_source_run_already_in_progress`. This is intentional: admins can
 > see in the UI that a run is active and simply wait. There is no
 > per-run history — `GET /admin/kb/sources/status` always reports the
 > most recent run, resetting to `idle` on process restart.
+>
+> **Duplicate source names:** `POST` rejects a `name` that already has
+> KB documents with `409 source_already_exists` — re-running the same
+> source no longer silently creates a second, independent set of
+> documents. Use `PUT /admin/kb/sources/{web,file}/{name}` to
+> intentionally replace an existing source's documents/chunks.
 
 `POST /admin/kb/sources/web` body:
 
@@ -335,22 +343,26 @@ kb_source_run_already_in_progress`. This is intentional: admins can
   "max_pages": 100,
   "allowed_domains": ["example.com"],
   "exclude_patterns": ["/de/", "/es/"],
+  "ingest_linked_files": false,
+  "synthesize": false,
   "headers": { "Authorization": "Bearer ..." },
   "cookies": { "session_id": "..." }
 }
 ```
 
-| Field              | Required | Notes                                                                                                        |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `name`             | yes      | Used as the KB document `source`.                                                                            |
-| `urls`             | yes      | One or more start URLs; must be non-empty.                                                                   |
-| `topic`            | no       | Attached to every indexed document.                                                                          |
-| `max_depth`        | no       | Default `2`.                                                                                                 |
-| `max_pages`        | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                       |
-| `allowed_domains`  | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites. |
-| `exclude_patterns` | no       | URL substrings/paths to skip (e.g. translated pages).                                                        |
-| `headers`          | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.     |
-| `cookies`          | no       | Cookies sent with every crawl request (e.g. a session cookie).                                               |
+| Field                 | Required | Notes                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                | yes      | Used as the KB document `source`.                                                                                                                                                                                                                                                                                                                              |
+| `urls`                | yes      | One or more start URLs; must be non-empty.                                                                                                                                                                                                                                                                                                                     |
+| `topic`               | no       | Attached to every indexed document.                                                                                                                                                                                                                                                                                                                            |
+| `max_depth`           | no       | Default `2`.                                                                                                                                                                                                                                                                                                                                                   |
+| `max_pages`           | no       | Default `100`. Real cap on pages fetched per URL — the crawl stops early once reached.                                                                                                                                                                                                                                                                         |
+| `allowed_domains`     | no       | Defaults to each URL's own hostname when omitted, so the crawl doesn't wander onto unrelated external sites.                                                                                                                                                                                                                                                   |
+| `exclude_patterns`    | no       | URL substrings/paths to skip (e.g. translated pages).                                                                                                                                                                                                                                                                                                          |
+| `ingest_linked_files` | no       | Default `false`. When `true`, linked PDFs discovered during the crawl are downloaded, text-extracted, and indexed as their own documents instead of being silently skipped; still subject to `max_pages`/`allowed_domains`/`exclude_patterns` and a per-file size cap. Other non-HTML formats are still skipped regardless.                                    |
+| `synthesize`          | no       | Default `false`. When `true`, each page's content is run through the KB synthesizer (see [Feedback Synthesis](feedback-synthesis)) before chunking, indexing a concise, RAG-appropriate summary instead of the raw extracted text. Adds one LLM call per page; a per-page synthesis failure falls back to that page's raw content rather than failing the run. |
+| `headers`             | no       | Extra request headers sent with every crawl request (e.g. a bearer token) — for pages gated behind auth.                                                                                                                                                                                                                                                       |
+| `cookies`             | no       | Cookies sent with every crawl request (e.g. a session cookie).                                                                                                                                                                                                                                                                                                 |
 
 `headers`/`cookies` are never echoed back in the status response or audit log.
 
@@ -366,11 +378,12 @@ curl -sS -b cookies.txt -X POST \
   -F 'files=@notes.md;type=text/markdown'
 ```
 
-| Field   | Required | Notes                                                       |
-| ------- | -------- | ----------------------------------------------------------- |
-| `name`  | yes      | Used as the KB document `source`.                           |
-| `topic` | no       | Attached to every indexed document.                         |
-| `files` | yes      | One or more uploaded files. Each must decode as UTF-8 text. |
+| Field        | Required | Notes                                                                                                                                                                         |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`       | yes      | Used as the KB document `source`.                                                                                                                                             |
+| `topic`      | no       | Attached to every indexed document.                                                                                                                                           |
+| `synthesize` | no       | Default `false`. Same opt-in synthesis behavior as the web route's `synthesize` field above, applied per uploaded file.                                                       |
+| `files`      | yes      | One or more uploaded files. Each must decode as UTF-8 text, or be a `.pdf`/`application/pdf` upload (text is extracted from the PDF instead of UTF-8-decoding the raw bytes). |
 
 Response shape (`POST` and `GET status` share it):
 
@@ -391,6 +404,19 @@ Response shape (`POST` and `GET status` share it):
 }
 ```
 
+`PUT /admin/kb/sources/web/{name}` and
+`PUT /admin/kb/sources/file/{name}` take the _same body_ as the
+corresponding `POST` route minus `name` (taken from the path instead),
+and return the same `202`/status response shape. Unlike `POST`, they
+don't reject an existing source — that's the point: all of `name`'s
+existing documents and chunks are deleted first (a no-op if `name` has
+no documents yet), then the normal ingestion runs exactly like `POST`.
+If ingestion fails partway after the delete, the old content is already
+gone — there is no partial rollback. Emits a `kb.source.override` audit
+record (start + complete) noting the prior document/chunk counts
+removed. Subject to the same single-global-run lock as `POST` (`409
+kb_source_run_already_in_progress`).
+
 | Field             | Notes                                                                                                                                                                                                                      |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `phase`           | `idle` / `running` / `completed` / `failed`.                                                                                                                                                                               |
@@ -401,14 +427,15 @@ Response shape (`POST` and `GET status` share it):
 | `error`           | Set only if the whole run crashed with an unhandled exception (`phase: "failed"`).                                                                                                                                         |
 | `errors`          | Per-item failures (a page that failed to fetch, a file that failed to chunk/embed) that did **not** abort the run — a `"completed"` run with 0 results and a non-empty `errors` list means everything failed individually. |
 
-| HTTP | `code`                              | When                                                           |
-| ---- | ----------------------------------- | -------------------------------------------------------------- |
-| 202  | —                                   | Run accepted; poll `GET .../status`.                           |
-| 409  | `kb_source_run_already_in_progress` | Another run is already in flight.                              |
-| 422  | `no_files_uploaded`                 | `POST .../file` with zero files attached.                      |
-| 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text (e.g. a PDF or image). |
-| 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
-| 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup. |
+| HTTP | `code`                              | When                                                                                                |
+| ---- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 202  | —                                   | Run accepted; poll `GET .../status`.                                                                |
+| 409  | `kb_source_run_already_in_progress` | Another run is already in flight.                                                                   |
+| 422  | `no_files_uploaded`                 | `POST .../file` with zero files attached.                                                           |
+| 422  | `invalid_file_encoding`             | An uploaded file isn't valid UTF-8 text and isn't a recognized PDF (e.g. an image or zip).          |
+| 422  | `invalid_pdf_file`                  | An uploaded `.pdf` (or `application/pdf`) file is corrupted, encrypted, or has no extractable text. |
+| 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                      |
+| 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup.                                      |
 
 `GET /admin/kb/sources` lists every distinct `source` value across KB
 documents — not just ones ingested via the two routes above; the
@@ -539,18 +566,18 @@ All admin errors share a single flat shape:
 }
 ```
 
-| HTTP | `code`                                        | When                                                                       |
-| ---- | --------------------------------------------- | -------------------------------------------------------------------------- |
-| 400  | `invalid_filters`                             | Bad date window, malformed query value.                                    |
-| 401  | `not_authenticated`                           | No identity source resolved the caller.                                    |
-| 403  | `not_admin`                                   | Identity resolved but `AdminAuthorizer` rejected it.                       |
-| 404  | `not_found`                                   | Target id doesn't exist.                                                   |
-| 409  | `invalid_status_transition`                   | Feedback PATCH attempts a forbidden review-status transition.              |
-| 409  | `kb_source_run_already_in_progress`           | Another KB source-ingestion run is already in flight.                      |
-| 422  | (validation error from FastAPI)               | Body / path / query failed Pydantic validation.                            |
-| 422  | `no_files_uploaded` / `invalid_file_encoding` | KB source file upload has no files, or one isn't UTF-8 text.               |
-| 422  | `upload_too_large`                            | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap. |
-| 503  | `kb_source_ingestion_unavailable`             | KB source-ingestion routes called without an embedding client/model wired. |
+| HTTP | `code`                                                             | When                                                                                                                    |
+| ---- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 400  | `invalid_filters`                                                  | Bad date window, malformed query value.                                                                                 |
+| 401  | `not_authenticated`                                                | No identity source resolved the caller.                                                                                 |
+| 403  | `not_admin`                                                        | Identity resolved but `AdminAuthorizer` rejected it.                                                                    |
+| 404  | `not_found`                                                        | Target id doesn't exist.                                                                                                |
+| 409  | `invalid_status_transition`                                        | Feedback PATCH attempts a forbidden review-status transition.                                                           |
+| 409  | `kb_source_run_already_in_progress`                                | Another KB source-ingestion run is already in flight.                                                                   |
+| 422  | (validation error from FastAPI)                                    | Body / path / query failed Pydantic validation.                                                                         |
+| 422  | `no_files_uploaded` / `invalid_file_encoding` / `invalid_pdf_file` | KB source file upload has no files, one isn't UTF-8 text (and isn't a recognized PDF), or a PDF is corrupted/encrypted. |
+| 422  | `upload_too_large`                                                 | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                              |
+| 503  | `kb_source_ingestion_unavailable`                                  | KB source-ingestion routes called without an embedding client/model wired.                                              |
 
 ---
 
@@ -602,9 +629,6 @@ ergonomic, but it is a foot-gun:
 - `POST /admin/kb/documents` (raw document creation) — content only enters
   the KB via the populate pipeline, the synthesizer (see
   [Feedback Synthesis](feedback-synthesis)), or `/admin/kb/sources/*` above.
-- Dashboard UI button to trigger `/admin/kb/sources/*` — tracked as a
-  separate follow-up ticket; the HTTP endpoints exist today but aren't
-  yet surfaced in the Dashboard.
 - Scheduling/cron-based recurring re-crawls of a KB source.
 - Rate limiting — operationally enforced upstream (Nginx / ALB).
 - Persisting audit logs to a DB table — handled by the host app's log

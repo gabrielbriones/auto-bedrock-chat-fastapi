@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -263,3 +264,51 @@ class TestSessionManagerReconnect:
 
         sid = await session_manager.create_session(websocket=ws)
         uuid.UUID(sid)  # Validates format
+
+
+class TestPeekSessionDoesNotCountAsActivity:
+    """peek_session() must not reset last_activity, or a periodic background
+    message (e.g. refresh_session_token) would prevent idle sessions from ever
+    being swept by _cleanup_expired_sessions (PR #150 round 8 review)."""
+
+    @pytest.fixture
+    def session_manager(self):
+        from autolangchat.session_manager import ChatSessionManager
+
+        cfg = MagicMock()
+        cfg.max_sessions = 100
+        cfg.session_timeout = 3600
+        return ChatSessionManager(cfg)
+
+    @pytest.mark.asyncio
+    async def test_peek_session_leaves_last_activity_unchanged(self, session_manager):
+        ws = MagicMock()
+        ws.headers = {}
+        sid = await session_manager.create_session(websocket=ws)
+        session = await session_manager.get_session_by_id(sid)
+        session.last_activity = datetime.now() - timedelta(hours=2)
+        stale_activity = session.last_activity
+
+        result = await session_manager.peek_session(ws)
+
+        assert result is session
+        assert session.last_activity == stale_activity
+
+    @pytest.mark.asyncio
+    async def test_get_session_still_updates_last_activity(self, session_manager):
+        ws = MagicMock()
+        ws.headers = {}
+        sid = await session_manager.create_session(websocket=ws)
+        session = await session_manager.get_session_by_id(sid)
+        session.last_activity = datetime.now() - timedelta(hours=2)
+
+        await session_manager.get_session(ws)
+
+        assert (datetime.now() - session.last_activity).total_seconds() < 5
+
+    @pytest.mark.asyncio
+    async def test_peek_session_returns_none_for_unknown_websocket(self, session_manager):
+        ws = MagicMock()
+        ws.headers = {}
+
+        assert await session_manager.peek_session(ws) is None

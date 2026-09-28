@@ -1,6 +1,7 @@
 """Tests for the ``/admin/kb/sources/{web,file}`` ingestion routes and status endpoint."""
 
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -53,6 +54,43 @@ from autolangchat.rag.kb_ingestion import ingest_uploaded_files  # noqa: E402
 _LONG_TEXT = "hello world " * 60
 
 
+def _build_minimal_pdf(text: bytes) -> bytes:
+    """Build a minimal single-page real PDF with a text-drawing content stream.
+
+    Hand-rolled (rather than via a fixture file) so the exact xref byte
+    offsets are always valid; used to exercise the real pypdf integration
+    end-to-end through the route, not just a mocked extract_pdf_text.
+    """
+    objects = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "
+        b"/MediaBox [0 0 200 200] /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    ]
+    stream = b"BT /F1 24 Tf 10 100 Td (" + text + b") Tj ET"
+    objects.append(
+        b"5 0 obj\n<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream\nendobj\n"
+    )
+
+    body = b"%PDF-1.4\n"
+    offsets = []
+    for obj in objects:
+        offsets.append(len(body))
+        body += obj
+
+    xref_start = len(body)
+    xref = b"xref\n0 " + str(len(objects) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n".encode()
+
+    trailer = (
+        b"trailer\n<< /Size " + str(len(objects) + 1).encode() + b" /Root 1 0 R >>\n"
+        b"startxref\n" + str(xref_start).encode() + b"\n%%EOF"
+    )
+    return body + xref + trailer
+
+
 class _Identity(SimpleNamespace):
     user_id: str = "admin"
 
@@ -70,6 +108,23 @@ class _FakeKBStore:
     def get_document(self, doc_id):
         return self.documents.get(doc_id)
 
+    def count_documents(self, filters):
+        source = getattr(filters, "source", None)
+        if source is None:
+            return len(self.documents)
+        return sum(1 for doc in self.documents.values() if doc.get("source") == source)
+
+    def list_document_ids(self, filters, limit=200, offset=0):
+        source = getattr(filters, "source", None)
+        ids = [doc_id for doc_id, doc in self.documents.items() if source is None or doc.get("source") == source]
+        return ids[offset : offset + limit]
+
+    def delete_document(self, doc_id):
+        self.documents.pop(doc_id, None)
+        removed_chunks = [c for c in self.chunks if c.get("document_id") == doc_id]
+        self.chunks = [c for c in self.chunks if c.get("document_id") != doc_id]
+        return len(removed_chunks)
+
     def update_document(self, doc_id, *, content=None, **kwargs):
         doc = self.documents.setdefault(doc_id, {})
         if content is not None:
@@ -85,6 +140,24 @@ class _FakeKBStore:
 
     def add_chunk(self, *, chunk_id, **kwargs):
         self.chunks.append({"chunk_id": chunk_id, **kwargs})
+
+
+class _FakeSynthesizer:
+    """Records ``synthesize_raw_content`` calls; optionally fails or returns
+    an empty response for given titles."""
+
+    def __init__(self, fail_for=(), empty_for=()):
+        self.calls = []
+        self._fail_for = set(fail_for)
+        self._empty_for = set(empty_for)
+
+    async def synthesize_raw_content(self, *, content, title, topic=None):
+        self.calls.append({"content": content, "title": title, "topic": topic})
+        if title in self._fail_for:
+            raise RuntimeError("simulated synthesis failure")
+        if title in self._empty_for:
+            return "   "
+        return f"SYNTHESIZED: {content}"
 
 
 class _FailingKBStore(_FakeKBStore):
@@ -158,7 +231,9 @@ def _slow_embedding_client(delay: float = 0.3):
     return client
 
 
-def _build_app(*, kb_store=None, embedding_client=None, embedding_model="fake-model", authenticated=True):
+def _build_app(
+    *, kb_store=None, embedding_client=None, embedding_model="fake-model", authenticated=True, synthesizer=None
+):
     app = FastAPI()
     register_admin_error_handlers(app)
 
@@ -179,6 +254,7 @@ def _build_app(*, kb_store=None, embedding_client=None, embedding_model="fake-mo
         require_admin=require_admin,
         embedding_client=embedding_client,
         embedding_model=embedding_model,
+        synthesizer=synthesizer,
     )
     return app
 
@@ -265,6 +341,20 @@ def test_file_source_rejects_non_utf8_file():
     assert resp.json()["code"] == "invalid_file_encoding"
 
 
+def test_file_source_rejects_unparseable_pdf():
+    app = _build_app(embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    with patch.object(kb_routes_mod, "extract_pdf_text", side_effect=kb_routes_mod.PDFExtractionError("bad pdf")):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s"},
+            files=[("files", ("bad.pdf", b"%PDF-not-really", "application/pdf"))],
+        )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "invalid_pdf_file"
+
+
 def test_ingestion_unavailable_without_embedding_client():
     app = _build_app(embedding_client=None)
     client = TestClient(app)
@@ -335,6 +425,158 @@ def test_trigger_file_source_ingests_upload_into_kb_store():
     assert kb_store.chunks
 
 
+# ---------------------------------------------------------------------------
+# End-to-end route wiring for the opt-in `synthesize` flag -- XMGPLAT-11402
+#
+# The unit tests above (test_ingest_*_synthesize_*) exercise
+# ingest_web_source()/ingest_uploaded_files() directly with synthesize=
+# passed in by hand. These instead go through the actual HTTP routes (JSON
+# body field for /web, multipart form field for /file) and the
+# register_admin_kb_routes(synthesizer=...) wiring, so a regression that
+# drops the flag/synthesizer somewhere in that plumbing (route handler ->
+# background task -> ingest_*) would be caught here even if the ingestion
+# functions themselves still behave correctly in isolation.
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_web_source_with_synthesize_true_indexes_synthesized_content():
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"], "synthesize": True},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["https://example.com/"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
+def test_trigger_file_source_with_synthesize_true_indexes_synthesized_content():
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads", "synthesize": "true"},
+            files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["uploads/notes.md"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
+def test_put_web_source_with_synthesize_true_indexes_synthesized_content():
+    """PR #160 review: synthesize forwarding on PUT overrides had no test
+    coverage even though the wiring already passed it through -- close the
+    gap so a future regression here doesn't slip past POST-only tests."""
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/web/docs",
+            json={"urls": ["https://example.com/"], "synthesize": True},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["https://example.com/"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
+def test_put_file_source_with_synthesize_true_indexes_synthesized_content():
+    """PR #160 review: same gap as above but for the PUT /file override."""
+    kb_store = _FakeKBStore()
+    synthesizer = _FakeSynthesizer()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client(), synthesizer=synthesizer)
+
+    with TestClient(app) as client:
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/file/uploads",
+            data={"synthesize": "true"},
+            files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["uploads/notes.md"]
+    assert doc["content"].startswith("SYNTHESIZED:")
+    assert doc["metadata"]["synthesized"] is True
+
+
+def test_trigger_file_source_ingests_pdf_upload_into_kb_store():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    with TestClient(app) as client, patch.object(kb_routes_mod, "extract_pdf_text", return_value=_LONG_TEXT):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads"},
+            files=[("files", ("guide.pdf", b"%PDF-1.4 fake bytes", "application/pdf"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["files_processed"] == 1
+    assert final.json()["chunks_written"] >= 1
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_trigger_file_source_ingests_real_pdf_upload_into_kb_store():
+    """Unlike the mocked test above, uploads a real (hand-built) PDF and lets
+    the actual pypdf-based extract_pdf_text() run, end-to-end through the route.
+    """
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads"},
+            files=[("files", ("guide.pdf", pdf_bytes, "application/pdf"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["files_processed"] == 1
+    assert final.json()["chunks_written"] >= 1
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
 def test_second_concurrent_run_is_rejected():
     app = _build_app(embedding_client=_slow_embedding_client())
 
@@ -355,6 +597,291 @@ def test_second_concurrent_run_is_rejected():
         assert second.json()["code"] == "kb_source_run_already_in_progress"
 
         _wait_until_not_running(client)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate source-name rejection (POST)
+# ---------------------------------------------------------------------------
+
+
+def test_web_source_rejects_duplicate_name():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/existing", source="docs", content="old content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bedrock-chat/admin/kb/sources/web",
+        json={"name": "docs", "urls": ["https://example.com/"]},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "source_already_exists"
+
+
+def test_file_source_rejects_duplicate_name():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="uploads/existing.txt", source="uploads", content="old content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bedrock-chat/admin/kb/sources/file",
+        data={"name": "uploads"},
+        files=[("files", ("a.txt", b"hello", "text/plain"))],
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "source_already_exists"
+
+
+def test_file_source_rejects_duplicate_name_without_reading_uploads():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="uploads/existing.txt", source="uploads", content="old content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    client = TestClient(app)
+
+    # Duplicate-name check runs before the (expensive) upload-decode loop --
+    # a huge/slow file here must not add latency to the 409 response.
+    with patch.object(kb_routes_mod, "_read_upload_capped") as mock_read:
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "uploads"},
+            files=[("files", ("a.txt", b"hello", "text/plain"))],
+        )
+        assert resp.status_code == 409
+        mock_read.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# PUT override (delete existing source, then re-ingest)
+# ---------------------------------------------------------------------------
+
+
+def test_put_web_source_clears_old_documents_before_reingesting():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/web/docs",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+        assert resp.json()["phase"] == "running"
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert "docs/old-page" not in kb_store.documents
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_put_web_source_delete_failure_marks_run_failed_not_stuck_running():
+    """A failure during the delete phase (before ingestion even starts) must
+    still mark the run failed and release the global run lock -- otherwise
+    it stays stuck at "running" forever and blocks every future run."""
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated store failure")
+
+    kb_store.list_document_ids = _boom
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    with TestClient(app) as client:
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/web/docs",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+        assert final.json()["phase"] == "failed"
+        assert "simulated store failure" in (final.json()["error"] or "")
+
+        # The lock must be released -- a subsequent run should not be
+        # rejected with kb_source_run_already_in_progress.
+        kb_store.list_document_ids = _FakeKBStore.list_document_ids.__get__(kb_store)
+        second = client.put(
+            "/bedrock-chat/admin/kb/sources/web/other",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert second.status_code == 202
+
+
+def test_put_web_source_partial_delete_failure_preserves_removed_counts(caplog):
+    """If the delete phase fails partway through a multi-document source,
+    the audit record must reflect however many documents were actually
+    removed before the failure, not 0 -- the tuple-unpack in the caller
+    never completes when the helper raises mid-loop."""
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/page-1", source="docs", content="stale 1")
+    kb_store.add_document(doc_id="docs/page-2", source="docs", content="stale 2")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    real_delete = kb_store.delete_document
+    calls = {"n": 0}
+
+    def _delete_then_fail(doc_id):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("simulated store failure mid-batch")
+        return real_delete(doc_id)
+
+    kb_store.delete_document = _delete_then_fail
+
+    with caplog.at_level(logging.INFO, logger="bedrock.audit"):
+        with TestClient(app) as client:
+            resp = client.put(
+                "/bedrock-chat/admin/kb/sources/web/docs",
+                json={"urls": ["https://example.com/"]},
+            )
+            assert resp.status_code == 202
+            final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "failed"
+
+    complete_records = [
+        r
+        for r in caplog.records
+        if getattr(r, "action", None) == "kb.source.override" and getattr(r, "phase", None) == "complete"
+    ]
+    assert len(complete_records) == 1
+    assert complete_records[0].documents_removed == 1
+
+
+def test_put_web_source_name_with_slash_routes_correctly():
+    """Source names may legitimately contain `/` (POST accepts any string
+    and persists it verbatim); the PUT path param must use the `:path`
+    converter -- like the existing `{doc_id:path}` document routes -- or
+    such a name 404s instead of being overridable."""
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="team/docs/old-page", source="team/docs", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/web/team/docs",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert "team/docs/old-page" not in kb_store.documents
+    assert kb_store.documents
+
+
+def test_put_file_source_clears_old_documents_before_reingesting():
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="uploads/old.txt", source="uploads", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+
+    with TestClient(app) as client:
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/file/uploads",
+            data={},
+            files=[("files", ("notes.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert "uploads/old.txt" not in kb_store.documents
+    assert kb_store.documents
+    assert kb_store.chunks
+
+
+def test_put_web_source_on_nonexistent_name_behaves_like_fresh_ingest():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        resp = client.put(
+            "/bedrock-chat/admin/kb/sources/web/brand-new",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["errors"] == []
+    assert kb_store.documents
+
+
+def test_put_web_source_rejects_while_another_run_is_in_progress():
+    app = _build_app(embedding_client=_slow_embedding_client())
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/bedrock-chat/admin/kb/sources/file",
+            data={"name": "s1"},
+            files=[("files", ("a.md", _LONG_TEXT.encode("utf-8"), "text/markdown"))],
+        )
+        assert first.status_code == 202
+
+        second = client.put(
+            "/bedrock-chat/admin/kb/sources/web/s2",
+            json={"urls": ["https://example.com/"]},
+        )
+        assert second.status_code == 409
+        assert second.json()["code"] == "kb_source_run_already_in_progress"
+
+        _wait_until_not_running(client)
+
+
+def test_put_web_source_requires_admin_auth():
+    app = _build_app(authenticated=False, embedding_client=_embedding_client())
+    client = TestClient(app)
+    resp = client.put(
+        "/bedrock-chat/admin/kb/sources/web/docs",
+        json={"urls": ["https://example.com/"]},
+    )
+    assert resp.status_code == 401
+
+
+def test_put_file_source_requires_admin_auth():
+    app = _build_app(authenticated=False, embedding_client=_embedding_client())
+    client = TestClient(app)
+    resp = client.put(
+        "/bedrock-chat/admin/kb/sources/file/uploads",
+        data={},
+        files=[("files", ("a.txt", b"hello", "text/plain"))],
+    )
+    assert resp.status_code == 401
+
+
+def test_put_web_source_audit_log_reports_removed_counts(caplog):
+    kb_store = _FakeKBStore()
+    kb_store.add_document(doc_id="docs/old-page", source="docs", content="stale content")
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+
+    with caplog.at_level(logging.INFO, logger="bedrock.audit"):
+        with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+            resp = client.put(
+                "/bedrock-chat/admin/kb/sources/web/docs",
+                json={"urls": ["https://example.com/"]},
+            )
+            assert resp.status_code == 202
+            _wait_until_not_running(client)
+
+    complete_records = [
+        r
+        for r in caplog.records
+        if getattr(r, "action", None) == "kb.source.override" and getattr(r, "phase", None) == "complete"
+    ]
+    assert len(complete_records) == 1
+    assert complete_records[0].documents_removed == 1
+    assert complete_records[0].chunks_removed == 0
 
 
 # ---------------------------------------------------------------------------
@@ -785,6 +1312,152 @@ async def test_ingest_uploaded_files_reingest_clears_stale_chunks():
 
 
 # ---------------------------------------------------------------------------
+# Opt-in AI synthesis (synthesize=true) -- XMGPLAT-11402
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesize_false_does_not_call_synthesizer():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer()
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=False,
+        synthesizer=synthesizer,
+    )
+
+    assert result["documents"] == 1
+    assert synthesizer.calls == []
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesize_true_indexes_synthesized_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer()
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=synthesizer,
+    )
+
+    assert result["documents"] == 1
+    assert len(synthesizer.calls) == 1
+    assert synthesizer.calls[0]["title"] == "doc.txt"
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == f"SYNTHESIZED: {_LONG_TEXT}"
+    assert doc["metadata"]["synthesized"] is True
+    # Chunked output must reflect the synthesized text, not the raw upload.
+    chunk_contents = " ".join(c["content"] for c in kb_store.chunks if c["document_id"] == "src/doc.txt")
+    assert "SYNTHESIZED:" in chunk_contents
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesis_failure_falls_back_to_raw_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer(fail_for={"doc.txt"})
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=synthesizer,
+    )
+
+    # A failed synthesis call must not raise / abort the run -- it falls
+    # back to raw content for this document only.
+    assert result["documents"] == 1
+    assert result["errors"] == []
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesis_empty_response_falls_back_to_raw_content():
+    """An empty/whitespace-only LLM response must be treated as a synthesis
+    failure (PR #160 review), not indexed as a successful empty document."""
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer(empty_for={"doc.txt"})
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=synthesizer,
+    )
+
+    assert result["documents"] == 1
+    assert result["errors"] == []
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_uploaded_files_synthesize_true_without_synthesizer_falls_back():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+
+    kb_store = _FakeKBStore()
+    chunker = TextChunker()
+    embedding_client = _embedding_client()
+
+    result = await ingest_uploaded_files(
+        vector_db=kb_store,
+        bedrock_client=embedding_client,
+        chunker=chunker,
+        embedding_model="fake-model",
+        source_name="src",
+        files=[("doc.txt", _LONG_TEXT)],
+        synthesize=True,
+        synthesizer=None,
+    )
+
+    assert result["documents"] == 1
+    doc = kb_store.documents["src/doc.txt"]
+    assert doc["content"] == _LONG_TEXT
+    assert doc["metadata"]["synthesized"] is False
+
+
+# ---------------------------------------------------------------------------
 # processed_urls marked only after a fully successful write
 # ---------------------------------------------------------------------------
 
@@ -839,6 +1512,72 @@ async def test_ingest_web_source_failed_page_can_be_retried_by_a_later_source():
         )
         assert second["documents"] == 1
         assert "https://example.com/" in processed_urls
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_source_synthesize_true_indexes_synthesized_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+    from autolangchat.rag.kb_ingestion import ingest_web_source
+
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+    chunker = TextChunker()
+    kb_store = _FakeKBStore()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer()
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        result = await ingest_web_source(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model="fake-model",
+            source_name="src",
+            urls=["https://example.com/"],
+            synthesize=True,
+            synthesizer=synthesizer,
+        )
+
+    assert result["documents"] == 1
+    assert len(synthesizer.calls) == 1
+    doc = kb_store.documents["https://example.com/"]
+    # HTML text extraction normalizes whitespace, so compare on the prefix
+    # (proof chunking/storage used the synthesized text) rather than exact
+    # equality with the raw source string.
+    assert doc["content"].startswith("SYNTHESIZED: hello world")
+    assert doc["metadata"]["synthesized"] is True
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_source_synthesis_failure_falls_back_to_raw_content():
+    from autolangchat.rag.embedding_pipeline import TextChunker
+    from autolangchat.rag.kb_ingestion import ingest_web_source
+
+    html = f"<html><body>{_LONG_TEXT}</body></html>"
+    chunker = TextChunker()
+    kb_store = _FakeKBStore()
+    embedding_client = _embedding_client()
+    synthesizer = _FakeSynthesizer(fail_for={"Untitled"})
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession(html)):
+        result = await ingest_web_source(
+            vector_db=kb_store,
+            bedrock_client=embedding_client,
+            chunker=chunker,
+            embedding_model="fake-model",
+            source_name="src",
+            urls=["https://example.com/"],
+            synthesize=True,
+            synthesizer=synthesizer,
+        )
+
+    # A failed synthesis call must not raise / abort the run -- it falls
+    # back to raw content for this document only.
+    assert len(synthesizer.calls) == 1
+    assert result["documents"] == 1
+    assert result["errors"] == []
+    doc = kb_store.documents["https://example.com/"]
+    assert doc["content"] == _LONG_TEXT.strip()
+    assert doc["metadata"]["synthesized"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1193,3 +1932,324 @@ def test_file_source_closes_each_upload_after_reading(monkeypatch):
         _wait_until_not_running(client)
 
     assert "a.txt" in close_calls
+
+
+# ---------------------------------------------------------------------------
+# ingest_linked_files: optional linked-PDF ingestion during a web crawl
+# (XMGPLAT-11400)
+# ---------------------------------------------------------------------------
+
+
+class _FakeFileContent:
+    """Minimal aiohttp StreamReader stand-in supporting iter_chunked()."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    async def iter_chunked(self, chunk_size):
+        for i in range(0, len(self._data), chunk_size):
+            yield self._data[i : i + chunk_size]
+
+
+class _FakeFileResponse:
+    """Minimal aiohttp response stand-in for a non-HTML linked file (e.g. a PDF)."""
+
+    def __init__(self, data: bytes, content_type: str = "application/pdf", content_length=None, status: int = 200):
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+        if content_length is not None:
+            self.headers["Content-Length"] = str(content_length)
+        self.content = _FakeFileContent(data)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _PageWithLinkedFileSession:
+    """Serves an HTML root page (linking to one file) plus a configurable
+    response for that file's own URL."""
+
+    def __init__(self, root_html: str, file_url_substr: str, file_response):
+        self._root_html = root_html
+        self._file_url_substr = file_url_substr
+        self._file_response = file_response
+
+    def get(self, url, **kwargs):
+        if self._file_url_substr in url:
+            return self._file_response
+        return _FakeHTMLResponse(self._root_html)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def test_is_supported_linked_file_matches_content_type_or_extension():
+    crawler = ContentCrawler()
+    assert crawler._is_supported_linked_file("https://example.com/guide.pdf", "application/octet-stream")
+    assert crawler._is_supported_linked_file("https://example.com/guide", "application/pdf")
+    assert not crawler._is_supported_linked_file("https://example.com/guide.zip", "application/zip")
+
+
+def test_trigger_web_source_skips_linked_pdf_by_default():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", _FakeFileResponse(pdf_bytes))
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=session):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"]},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["pages_processed"] == 1
+    assert not any(doc_id.endswith("guide.pdf") for doc_id in kb_store.documents)
+
+
+def test_trigger_web_source_ingests_linked_pdf_when_flag_enabled():
+    kb_store = _FakeKBStore()
+    app = _build_app(kb_store=kb_store, embedding_client=_embedding_client())
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", _FakeFileResponse(pdf_bytes))
+
+    with TestClient(app) as client, patch("aiohttp.ClientSession", return_value=session):
+        resp = client.post(
+            "/bedrock-chat/admin/kb/sources/web",
+            json={"name": "docs", "urls": ["https://example.com/"], "ingest_linked_files": True},
+        )
+        assert resp.status_code == 202
+
+        final = _wait_until_not_running(client)
+
+    assert final.json()["phase"] == "completed"
+    assert final.json()["pages_processed"] == 2
+    assert any(doc_id.endswith("guide.pdf") for doc_id in kb_store.documents)
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_detected_via_url_extension_when_content_type_is_generic():
+    """A server that mislabels a .pdf link with a generic Content-Type must
+    still be detected, via the URL's own .pdf extension."""
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    response = _FakeFileResponse(pdf_bytes, content_type="application/octet-stream")
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 2
+    pdf_doc = next(d for d in docs if d["url"].endswith("guide.pdf"))
+    assert pdf_doc["title"] == "guide.pdf"
+
+
+@pytest.mark.asyncio
+async def test_linked_unsupported_format_still_skipped_when_enabled():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/archive.zip">zip</a></body></html>'
+    zip_response = _FakeFileResponse(b"PK\x03\x04fake", content_type="application/zip")
+    session = _PageWithLinkedFileSession(root_html, "archive.zip", zip_response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 1
+    assert docs[0]["url"] == "https://example.com/"
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_exceeding_content_length_cap_is_skipped(monkeypatch):
+    monkeypatch.setattr(ContentCrawler, "_MAX_LINKED_FILE_BYTES", 10)
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    oversized_response = _FakeFileResponse(b"x" * 1000, content_length=1000)
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", oversized_response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 1  # only the HTML root -- the oversized file is skipped
+    assert any("too large" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_exceeding_byte_cap_without_content_length_header_is_skipped(monkeypatch):
+    """The chunked-read bound must apply even when the server sends no
+    Content-Length header at all."""
+    monkeypatch.setattr(ContentCrawler, "_MAX_LINKED_FILE_BYTES", 10)
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/guide.pdf">guide</a></body></html>'
+    response = _FakeFileResponse(b"x" * 1000)
+    session = _PageWithLinkedFileSession(root_html, "guide.pdf", response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    assert len(docs) == 1
+    assert any("exceeds" in e and "byte limit" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_extraction_failure_is_skipped_not_fatal():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/bad.pdf">bad</a></body></html>'
+    bad_response = _FakeFileResponse(b"not a real pdf")
+    session = _PageWithLinkedFileSession(root_html, "bad.pdf", bad_response)
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=session):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    # The good HTML root is still indexed; the bad PDF is skipped, not a
+    # fatal crawl failure.
+    assert len(docs) == 1
+    assert docs[0]["url"] == "https://example.com/"
+    assert any("failed to extract linked PDF" in e for e in crawler.errors)
+
+
+@pytest.mark.asyncio
+async def test_max_pages_caps_linked_pdf_fetches():
+    root_html = (
+        f"<html><body>{_LONG_TEXT}" + "".join(f'<a href="/doc{i}.pdf">d{i}</a>' for i in range(5)) + "</body></html>"
+    )
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    fetched = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            if url.endswith(".pdf"):
+                return _FakeFileResponse(pdf_bytes)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        docs = await crawler.crawl_url(
+            "https://example.com/", recursive=True, max_depth=1, max_pages=2, ingest_linked_files=True
+        )
+
+    # Root + exactly 1 linked PDF fetched before the cap trips -- not all 5.
+    assert len(fetched) == 2
+    assert len(docs) == 2
+
+
+@pytest.mark.asyncio
+async def test_allowed_domains_excludes_linked_pdf_on_external_domain():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="https://external.example/other.pdf">external pdf</a></body></html>'
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    fetched = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            if "external.example" in url:
+                return _FakeFileResponse(pdf_bytes)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        docs = await crawler.crawl_url("https://example.com/", recursive=True, max_depth=1, ingest_linked_files=True)
+
+    # The external-domain PDF link is filtered out before ever being
+    # enqueued, same as any other external link -- never even fetched.
+    assert not any("external.example" in u for u in fetched)
+    assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_exclude_patterns_excludes_linked_pdf():
+    root_html = f'<html><body>{_LONG_TEXT}<a href="/de/guide.pdf">german pdf</a></body></html>'
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+    fetched = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            fetched.append(url)
+            if url.endswith(".pdf"):
+                return _FakeFileResponse(pdf_bytes)
+            return _FakeHTMLResponse(root_html)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler(rate_limit_delay=0)
+    with patch("aiohttp.ClientSession", return_value=_Session()):
+        docs = await crawler.crawl_url(
+            "https://example.com/",
+            recursive=True,
+            max_depth=1,
+            exclude_patterns=["/de/"],
+            ingest_linked_files=True,
+        )
+
+    assert not any(u.endswith(".pdf") for u in fetched)
+    assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_linked_pdf_detected_via_original_url_extension_after_redirect():
+    """A linked .pdf URL that redirects to an extensionless URL served with a
+    generic Content-Type must still be detected as a PDF, using the original
+    (pre-redirect) URL as an extension hint."""
+    pdf_bytes = _build_minimal_pdf(_LONG_TEXT.encode("utf-8"))
+
+    class _RedirectResponse:
+        def __init__(self):
+            self.status = 302
+            self.headers = {"Location": "https://example.com/downloads/final-blob"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _RedirectThenFileSession:
+        def __init__(self):
+            self._calls = 0
+
+        def get(self, url, **kwargs):
+            self._calls += 1
+            if self._calls == 1:
+                return _RedirectResponse()
+            return _FakeFileResponse(pdf_bytes, content_type="application/octet-stream")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    crawler = ContentCrawler()
+    with patch("aiohttp.ClientSession", return_value=_RedirectThenFileSession()):
+        doc = await crawler._fetch_and_parse("https://example.com/guide.pdf", "src", None, ingest_linked_files=True)
+
+    assert doc is not None
+    assert doc["url"] == "https://example.com/downloads/final-blob"

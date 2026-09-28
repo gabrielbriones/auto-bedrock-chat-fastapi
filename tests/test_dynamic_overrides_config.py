@@ -209,11 +209,16 @@ class TestModelProfileRestriction:
         } in ui_models
 
     def test_get_available_models_for_ui_max_output_tokens_varies_per_model(self):
-        """us.anthropic.claude-sonnet-4-6 caps output at 64000 tokens, unlike
-        claude-sonnet-5's 128000 -- confirms max_output_tokens actually varies
-        per model rather than being a constant ceiling."""
+        """max_output_tokens is read per model from _PROFILES rather than being
+        a constant ceiling. The catalog's real caps drift between langchain-aws
+        releases (sonnet-4-6 went 64000 -> 128000 in 1.7.9), so pin one entry
+        to a distinct value instead of asserting on live catalog numbers."""
         config = _load_config(AUTOCHAT_AVAILABLE_MODELS="us.anthropic.claude-sonnet-5,us.anthropic.claude-sonnet-4-6")
-        ui_models = {m["id"]: m for m in config.get_available_models_for_ui()}
+        import autolangchat.config as cfg_mod
+
+        pinned = {**cfg_mod._PROFILES["us.anthropic.claude-sonnet-4-6"], "max_output_tokens": 64000}
+        with patch.dict(cfg_mod._PROFILES, {"us.anthropic.claude-sonnet-4-6": pinned}):
+            ui_models = {m["id"]: m for m in config.get_available_models_for_ui()}
 
         assert ui_models["us.anthropic.claude-sonnet-5"]["max_output_tokens"] == 128000
         assert ui_models["us.anthropic.claude-sonnet-4-6"]["max_output_tokens"] == 64000
@@ -348,11 +353,18 @@ class TestValidateOverridesValueValidation:
         assert "max_output_tokens" in reasons[0]
 
     def test_max_tokens_validated_against_model_id_override_in_same_payload(self):
-        """us.anthropic.claude-sonnet-4-6 caps at 64000 -- a max_tokens value
-        that would be fine for the default sonnet-5 (128000 cap) must still be
-        rejected when the same payload also switches the model."""
+        """A max_tokens value that would be fine for the default sonnet-5
+        (128000 cap) must still be rejected when the same payload also switches
+        to a model with a smaller cap. sonnet-4-6's real cap is pinned to 64000
+        here because the catalog value drifts across langchain-aws releases."""
         config = self._enabled_config()
-        valid, reasons = config.validate_overrides({"model_id": "us.anthropic.claude-sonnet-4-6", "max_tokens": 100000})
+        import autolangchat.config as cfg_mod
+
+        pinned = {**cfg_mod._PROFILES["us.anthropic.claude-sonnet-4-6"], "max_output_tokens": 64000}
+        with patch.dict(cfg_mod._PROFILES, {"us.anthropic.claude-sonnet-4-6": pinned}):
+            valid, reasons = config.validate_overrides(
+                {"model_id": "us.anthropic.claude-sonnet-4-6", "max_tokens": 100000}
+            )
         assert "max_tokens" not in valid
         assert any("max_output_tokens" in r for r in reasons)
 

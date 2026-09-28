@@ -178,6 +178,19 @@ class ChatSessionManager:
                 return session
         return None
 
+    async def peek_session(self, websocket: WebSocket) -> Optional[ChatSession]:
+        """Get session by WebSocket connection without updating last_activity.
+
+        For callers that need the session but aren't real user activity (e.g.
+        the periodic background token-renewal message) -- using get_session()
+        there would count as activity indefinitely and prevent the idle-session
+        cleanup sweep from ever expiring an abandoned connection.
+        """
+        session_id = self._websocket_to_session.get(websocket)
+        if session_id:
+            return self._sessions.get(session_id)
+        return None
+
     async def get_session_by_id(self, session_id: str) -> Optional[ChatSession]:
         """Get session by ID"""
         return self._sessions.get(session_id)

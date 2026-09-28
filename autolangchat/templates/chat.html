@@ -130,6 +130,7 @@
             ssoLoginUrl: {{ sso_login_url | tojson }},
             ssoAuthenticated: {{ 'true' if sso_authenticated else 'false' }},
             ssoUserDisplay: {{ sso_user_display | tojson }},
+            authExpirationBehaviour: {{ auth_expiration_behaviour | tojson }},
             feedbackEnabled: {{ 'true' if feedback_enabled else 'false' }},
             lockInputWhileResponding: {{ 'true' if lock_input_while_responding else 'false' }},
             adminEnabled: {{ 'true' if admin_enabled else 'false' }},

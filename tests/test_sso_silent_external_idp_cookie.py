@@ -169,6 +169,38 @@ async def test_valid_cognito_cookie_mints_session_token():
 
 
 @pytest.mark.asyncio
+async def test_real_access_token_jwt_populates_expires_in(monkeypatch):
+    """The silent-cookie path has no IdP-reported expires_in (unlike the
+    normal token-exchange callback), so it must derive one from the access
+    token's own exp claim -- otherwise the session is treated as valid for
+    the full app-session TTL regardless of the token's real (much shorter)
+    IdP expiry (PR #150 round 5 review)."""
+    import time
+
+    import jwt as pyjwt
+
+    config = _make_config()
+    sso_provider = MagicMock()
+    sso_provider.discover = AsyncMock()
+    sso_provider.validate_id_token = AsyncMock(return_value={"sub": "abc123"})
+    sso_session_store = MagicMock()
+    sso_session_store.create_session.return_value = "session-id-1"
+    sso_session_store.generate_session_token.return_value = "minted-session-token"
+    sso_session_store.get_session.return_value = {}
+    plugin = _make_bare_plugin(config, sso_provider=sso_provider, sso_session_store=sso_session_store)
+
+    exp = int(time.time()) + 1800
+    real_access_token = pyjwt.encode({"exp": exp, "sub": "abc123"}, "not-our-secret", algorithm="HS256")
+    request = _FakeRequest(_cognito_cookies(access_token=real_access_token))
+
+    await AutoLangChatPlugin._try_silent_external_idp_cookie_auth(plugin, request)
+
+    _, kwargs = sso_session_store.create_session.call_args
+    assert "expires_in" in kwargs["tokens"]
+    assert 1795 <= kwargs["tokens"]["expires_in"] <= 1800
+
+
+@pytest.mark.asyncio
 async def test_invalid_token_falls_back_to_none():
     from autolangchat.sso.sso_handler import SSOValidationError
 

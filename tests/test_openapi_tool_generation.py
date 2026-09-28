@@ -334,6 +334,91 @@ class TestToolManagerExecuteCap:
         call_ids = {c["id"] for c in calls}
         assert result_ids == call_ids
 
+    @pytest.mark.asyncio
+    async def test_http_error_surfaces_status_code_at_top_level_and_preserves_legacy_result(self):
+        """A real HTTP 401 must surface 'status_code' at the top level of the
+        result entry (callers like tools_execution_node's reactive
+        auth-expiration handling check r.get("status_code") directly), while
+        the nested "result" dict stays exactly {"error", "details"} -- with
+        no other keys -- matching the pre-XMGPLAT-11046 shape byte-for-byte,
+        so auth_expiration_behaviour="none" (and any caller not opted into
+        reactive handling) sees the exact same tool_msg content as before
+        this feature existed (PR #150 round 6 review -- status_code must not
+        leak into the nested legacy dict)."""
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 401
+        fake_response.text = "Unauthorized"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        results = await manager.execute_tool_calls(_make_calls(1))
+
+        assert len(results) == 1
+        entry = results[0]
+        assert entry["status_code"] == 401
+        assert entry["result"] == {"error": "HTTP 401", "details": "Unauthorized"}
+        assert "error" not in entry
+
+    @pytest.mark.asyncio
+    async def test_successful_response_with_an_error_field_is_not_misclassified(self):
+        """A 2xx response body that legitimately contains an "error" key (e.g.
+        {"error": null, "data": ...}) must still be treated as a successful
+        result, not flattened into a tool failure (PR #150 round 2 review)."""
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {"error": None, "data": {"jobs": []}}
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        results = await manager.execute_tool_calls(_make_calls(1))
+
+        assert len(results) == 1
+        entry = results[0]
+        assert "error" not in entry
+        assert entry["result"] == {"error": None, "data": {"jobs": []}}
+
+    @pytest.mark.asyncio
+    async def test_successful_response_reusing_status_code_key_is_not_misclassified(self):
+        """A 2xx response body that legitimately contains its own "status_code"
+        field (e.g. {"status_code": 200, "data": ...}) must still be treated
+        as a successful result -- error detection is by exception type
+        (ToolHTTPError), never by sniffing business-payload key names
+        (PR #150 round 4 review)."""
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {"status_code": 200, "data": {"jobs": []}}
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        results = await manager.execute_tool_calls(_make_calls(1))
+
+        assert len(results) == 1
+        entry = results[0]
+        assert "error" not in entry
+        assert entry["result"] == {"status_code": 200, "data": {"jobs": []}}
+
+    @pytest.mark.asyncio
+    async def test_call_tool_raises_tool_http_error_for_http_failure(self):
+        """call_tool() (used by the MCP tools/call handler) must let a real
+        HTTP failure propagate as a raised ToolHTTPError -- matching its own
+        documented "exceptions propagate" contract -- rather than returning
+        an error dict indistinguishable from a successful payload."""
+        from autolangchat.exceptions import ToolHTTPError
+
+        manager = _make_manager_with_limit(None)
+
+        fake_response = MagicMock()
+        fake_response.status_code = 401
+        fake_response.text = "Unauthorized"
+        manager._http_client.request = AsyncMock(return_value=fake_response)
+
+        with pytest.raises(ToolHTTPError) as exc_info:
+            await manager.call_tool("list_jobs", {})
+        assert exc_info.value.status_code == 401
+
 
 # ------------------------------------------------------
 # ToolManager.execute_tool_calls — concurrent execution

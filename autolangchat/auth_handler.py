@@ -104,6 +104,19 @@ class Credentials:
         )
 
 
+def can_refresh(credentials: Optional["Credentials"], sso_session: Optional[Dict[str, Any]]) -> bool:
+    """Return ``True`` if ``credentials`` has a server-side refresh path available.
+
+    Takes the already-looked-up SSO session dict (from ``SSOSessionStore.get_session()``)
+    rather than the store itself, so this module stays decoupled from the ``.sso`` package.
+    Only SSO credentials backed by a session with a ``refresh_token`` can be refreshed;
+    manual bearer tokens and every other auth type have no server-side refresh path.
+    """
+    if credentials is None or credentials.auth_type != AuthType.SSO:
+        return False
+    return bool(sso_session and sso_session.get("refresh_token"))
+
+
 class AuthenticationHandler:
     """Handles authentication for API tool calls"""
 

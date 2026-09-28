@@ -66,6 +66,7 @@ _handler_stubs = {
         AuthenticationHandler=object,
         AuthType=object,
         Credentials=object,
+        can_refresh=lambda *args, **kwargs: False,
     ),
     "autolangchat.config": _stub_module("autolangchat.config", ChatConfig=object),
     "autolangchat.db": _stub_module(

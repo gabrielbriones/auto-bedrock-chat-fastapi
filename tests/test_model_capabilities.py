@@ -51,10 +51,13 @@ class TestGetModelProfile:
         assert get_model_profile("nope.not-a-model") == {}
 
     def test_prefixed_id_falls_back_to_bare_profile(self):
-        # "us.meta.llama3-3-70b-instruct-v1:0" is what the inference-profile
-        # retry in llm_call_node builds, and it has no _PROFILES entry of its
-        # own — capabilities must still resolve via the bare id.
-        assert get_model_profile(f"us.{LLAMA_3_3}") == get_model_profile(LLAMA_3_3)
+        # The inference-profile retry in llm_call_node builds a "us."-prefixed
+        # id that may have no _PROFILES entry of its own — capabilities must
+        # still resolve via the bare id. Uses a fake catalog: the real
+        # us.meta.llama3-3-70b-instruct-v1:0 gained its own entry in
+        # langchain-aws 1.7.9, so it no longer exercises the fallback.
+        with patch("autolangchat.model_capabilities._PROFILES", FAKE_PROFILES):
+            assert get_model_profile("us.vendor.bare-only")["name"] == "Bare Only"
 
     def test_bare_id_falls_back_to_prefixed_profile(self):
         with patch("autolangchat.model_capabilities._PROFILES", FAKE_PROFILES):

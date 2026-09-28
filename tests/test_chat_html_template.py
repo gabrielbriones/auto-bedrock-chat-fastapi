@@ -39,6 +39,7 @@ def _render(**context_overrides):
         "sso_login_url": "/chat/auth/sso/login",
         "sso_authenticated": False,
         "sso_user_display": "",
+        "auth_expiration_behaviour": "none",
         "feedback_enabled": False,
         "lock_input_while_responding": True,
         "admin_enabled": False,

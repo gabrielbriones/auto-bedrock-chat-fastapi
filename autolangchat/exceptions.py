@@ -80,6 +80,22 @@ class ToolError(AutoLangChatError):
     pass
 
 
+class ToolHTTPError(ToolError):
+    """Raised by ToolManager._execute_single_tool_call() for an HTTP >=400 response.
+
+    Carries status_code/details as attributes so callers (execute_tool_calls()'s
+    result-shape handling, reactive auth-expiration detection) can identify an
+    HTTP failure by exception type alone -- never by sniffing dict keys, which
+    would risk misclassifying an arbitrary successful JSON payload that happens
+    to reuse the same key names (e.g. {"status_code": 200, "data": ...}).
+    """
+
+    def __init__(self, status_code: int, details: str):
+        self.status_code = status_code
+        self.details = details
+        super().__init__(f"HTTP {status_code}")
+
+
 class AuthenticationError(AutoLangChatError):
     """Raised when there's an authentication issue"""
 

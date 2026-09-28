@@ -318,6 +318,7 @@ function submitAuth() {
             console.log('submitAuth: Closing stale connection');
             window.chatClient.intentionalClose = true;
             window.chatClient.ws.close();
+            window.chatClient.destroy();
         }
         console.log('submitAuth: Creating new ChatClient with auth credentials');
         window.chatClient = new ChatClient(payload);
@@ -337,6 +338,9 @@ function skipAuth() {
 
     // Just hide modal, use existing connection or create new one without auth
     if (!window.chatClient || !window.chatClient.ws || window.chatClient.ws.readyState !== WebSocket.OPEN) {
+        if (window.chatClient) {
+            window.chatClient.destroy();
+        }
         window.chatClient = new ChatClient();
     }
     document.getElementById('authModal').classList.add('hidden');
