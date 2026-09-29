@@ -9,6 +9,8 @@ description = "Automatically add AI chat capabilities to your REST API applicati
 readme = "README.md"
 license = "MIT"
 authors = ["Gabriel Briones <gabriel.briones.dev@gmail.com>"]
+# Gitignored build output, so it must be listed explicitly to land in the wheel.
+include = [{ path = "autolangchat/_spa/**/*", format = ["sdist", "wheel"] }]
 keywords = ["fastapi", "bedrock", "ai", "chat", "aws", "claude", "chatbot"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -32,7 +34,6 @@ pydantic-settings = ">=2.0.0"
 boto3 = ">=1.34.0"
 websockets = ">=11.0.0"
 uvicorn = ">=0.23.0"
-jinja2 = ">=3.1.0"
 python-multipart = ">=0.0.18"
 httpx = ">=0.24.0"
 sqlite-vec = "^0.1.6"
@@ -64,7 +65,8 @@ langchain-core = ">=0.3.0"
 version_toml = ["pyproject.toml:tool.poetry.version"]
 # Also bump the fallback constant used when package metadata is unavailable.
 version_variables = ["autolangchat/__init__.py:__version__"]
-build_command = "pip install poetry && poetry build"
+# Fails the release before tagging if the SPA (built by release.yml) is missing from the wheel.
+build_command = 'pip install poetry && poetry build && python -c "import glob, sys, zipfile; sys.exit(\"autolangchat/_spa/index.html\" not in zipfile.ZipFile(glob.glob(\"dist/*.whl\")[0]).namelist())"'
 commit_message = "chore(release): {version} [skip ci]"
 tag_format = "v{version}"
 

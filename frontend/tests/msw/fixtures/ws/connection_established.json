@@ -1,0 +1,6 @@
+{
+  "type": "connection_established",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "session_id": "session-1",
+  "message": "Connected"
+}

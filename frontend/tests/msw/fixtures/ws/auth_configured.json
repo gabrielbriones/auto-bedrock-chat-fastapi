@@ -1,0 +1,7 @@
+{
+  "type": "auth_configured",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "message": "Authenticated",
+  "auth_type": "sso",
+  "display_name": "Test User"
+}

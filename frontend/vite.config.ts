@@ -1,0 +1,85 @@
+import path from 'node:path';
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
+
+import tailwindcss from '@tailwindcss/vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
+
+// Dev server only: dashboard URLs are answered by the SPA's own index.html and chat URLs by Vite
+// itself; everything else under /bedrock-chat is proxied to the backend.
+const serveSpaRoutesLocally = (req: { url?: string }): string | undefined => {
+  const url = req.url ?? ''
+  if (/^\/bedrock-chat\/dashboard(?:\/|\?|$)/.test(url)) return '/bedrock-chat/ui/'
+  // Vite 404s the bare base path; the backend serves it, so match that here.
+  if (/^\/bedrock-chat\/ui(?:\?|$)/.test(url)) return url.replace('/bedrock-chat/ui', '/bedrock-chat/ui/')
+  if (url.startsWith('/bedrock-chat/ui/')) return url
+  return undefined
+}
+
+// Dev only: pre-transform the split dashboard routes so a first visit is not a compile waterfall.
+const WARMUP_FILES = ['./src/routes/dashboard/*.tsx', './src/domains/*/presentation/*.tsx']
+
+// https://vite.dev/config/
+export default defineConfig(({ mode }) => {
+const env = loadEnv(mode, process.cwd(), '');
+const proxyTarget = env.VITE_API_URL;
+const port = env.PORT === undefined || env.PORT.length === 0 ? undefined : Number(env.PORT);
+// Deployed builds set SOURCEMAP=hidden so bundles don't reference their maps (FR-TOOL-004).
+const sourcemap = env.SOURCEMAP === 'hidden' ? 'hidden' : true;
+
+return {
+  // Assets are served at the chat mount; the router also serves dashboard routes beside it.
+  base: '/bedrock-chat/ui/',
+  plugins: [
+    // Must precede @vitejs/plugin-react: it generates routeTree.gen.ts from src/routes/ and
+    // rewrites route modules for code splitting before React's transform runs (FR-TOOL-005).
+    // Specs live in tests/ (STD-002 §8.1); the ignore pattern is a backstop for one filed by
+    // mistake under src/routes/, which the generator would otherwise turn into a route.
+    tanstackRouter({
+      target: 'react',
+      autoCodeSplitting: true,
+      routeFileIgnorePattern: '\\.(test|type-test)\\.tsx?$',
+    }),
+    react(),
+    tailwindcss(),
+  ],
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
+  server: {
+    port,
+    strictPort: true,
+    warmup: { clientFiles: WARMUP_FILES },
+    proxy: {
+      '/bedrock-chat': {
+        target: proxyTarget,
+        changeOrigin: false,
+        ws: true,
+        bypass: serveSpaRoutesLocally,
+      },
+      '/chat': { target: proxyTarget, changeOrigin: false, ws: true },
+      '/api': { target: proxyTarget, changeOrigin: false },
+    },
+  },
+  build: {
+    sourcemap,
+    // Read by scripts/check-chunk-split.mjs to assert the admin split (FR-SHELL-015) from the
+    // build's own static/dynamic import graph rather than by grepping bundles.
+    manifest: true,
+    rollupOptions: {
+      output: {
+        // FR-SHELL-015: the router plugin already splits every route; naming the admin ones
+        // `admin.*` gives size-limit a stable path to budget (STD-002 §7.1) and the split check
+        // something to assert against. Grouping them into one chunk instead was rejected — it
+        // duplicated React, the router and Zod into the admin bundle.
+        chunkFileNames: (chunk) =>
+          chunk.facadeModuleId?.includes('/src/routes/dashboard/') === true
+            ? 'assets/admin.[name]-[hash].js'
+            : 'assets/[name]-[hash].js',
+      },
+    },
+  },
+};
+})

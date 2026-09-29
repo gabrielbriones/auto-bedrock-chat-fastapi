@@ -1,0 +1,66 @@
+.conversation-title-viewport {
+  container-type: inline-size;
+  display: block;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.conversation-title-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+}
+
+/* On a pointer device the options trigger holds no slot of its own: the title spans the whole row
+   and the trigger floats over its right end only while the row is hovered, focused, or its menu is
+   open. Touch devices keep the trigger in flow so it is always reachable. */
+@media (hover: hover) and (pointer: fine) {
+  .conversation-options {
+    position: absolute;
+    top: 50%;
+    right: 0.5rem;
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .conversation-row:hover .conversation-options,
+  .conversation-row:focus-within .conversation-options,
+  .conversation-options[data-popup-open] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Clear the title out from under the floating trigger and fade it into that gap, so the row
+     reads like a full-width title with the actions laid on top rather than a title cut short. */
+  .conversation-row:hover .conversation-title-viewport,
+  .conversation-row:focus-within .conversation-title-viewport,
+  .conversation-row:has(.conversation-options[data-popup-open]) .conversation-title-viewport {
+    padding-right: 1.5rem;
+    mask-image: linear-gradient(to right, black calc(100% - 2.5rem), transparent calc(100% - 1.5rem));
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .conversation-row:hover .conversation-title-text,
+  .conversation-row > button:focus-visible .conversation-title-text {
+    width: max-content;
+    min-width: 100%;
+    overflow: visible;
+    mask-image: none;
+    animation: conversation-title-slide var(--title-slide-duration, 0.1s) linear 0.15s infinite alternate;
+  }
+}
+
+@keyframes conversation-title-slide {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(min(0px, calc(100cqi - 100%)));
+  }
+}

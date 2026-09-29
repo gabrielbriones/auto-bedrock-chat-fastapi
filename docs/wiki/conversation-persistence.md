@@ -235,7 +235,8 @@ drawer. The sidebar is populated purely from the WebSocket messages above
 — it re-requests the list and re-loads the last-active conversation
 automatically on every reconnect.
 
-The gate is `window.CONFIG.conversationPersistenceEnabled && authenticated`
+The gate is `conversationPersistenceEnabled && authenticated`, read from the
+`GET {chat_endpoint}/config` bootstrap payload the SPA fetches at start-up
 — hiding the UI is not a security boundary; the same auth/ownership checks
 described above apply regardless of what the client renders.
 

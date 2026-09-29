@@ -68,6 +68,22 @@ class TestAutochatEnvVarPrefix:
         config = _load_config(AUTOCHAT_SYSTEM_PROMPT="You are a helpful assistant.")
         assert config.system_prompt == "You are a helpful assistant."
 
+    def test_sso_allowed_return_prefixes_default_to_ui_endpoint(self):
+        config = _load_config(AUTOCHAT_UI_ENDPOINT="/custom/chat/ui")
+        assert config.sso_allowed_return_prefixes == ["/custom/chat/ui"]
+
+    def test_ui_dist_dir_defaults_to_none(self):
+        config = _load_config()
+        assert config.ui_dist_dir is None
+
+    def test_ui_dist_dir_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_UI_DIST_DIR="/srv/spa")
+        assert config.ui_dist_dir == "/srv/spa"
+
+    def test_sso_allowed_return_prefixes_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES="/chat/ui,/ui")
+        assert config.sso_allowed_return_prefixes == ["/chat/ui", "/ui"]
+
     def test_feedback_enabled_from_autochat_var(self):
         config = _load_config(AUTOCHAT_FEEDBACK_ENABLED="true")
         assert config.feedback_enabled is True

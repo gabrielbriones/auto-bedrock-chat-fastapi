@@ -16,6 +16,8 @@ handler needing to call ``aget_state`` and prepend manually.
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime
 from typing import Any, Dict
 
 from langchain_core.runnables import RunnableConfig
@@ -44,7 +46,14 @@ async def init_turn_node(state: ChatState, config: RunnableConfig) -> Dict[str, 
     chat_config = configurable.get("chat_config")
 
     if user_message:
-        messages = messages + [{"role": "user", "content": user_message}]
+        # Stamped like assistant messages so history keeps its order and ids client-side.
+        messages = messages + [
+            {
+                "role": "user",
+                "content": user_message,
+                "metadata": {"message_id": str(uuid.uuid4()), "timestamp": datetime.now().isoformat()},
+            }
+        ]
         logger.debug(
             "init_turn: appended user message (%d chars), history now %d messages", len(user_message), len(messages)
         )

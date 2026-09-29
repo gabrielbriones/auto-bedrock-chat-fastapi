@@ -68,10 +68,10 @@ a `feedback_unavailable` error rather than a crash.
 
 ## UI rendering gate
 
-The built-in chat template renders rating controls only when the server
-injects `window.CONFIG.feedbackEnabled = true`. The gate is computed in
-[`plugin.py`](../../autolangchat/plugin.py) at every chat-UI
-request and is **feature-only** — it answers "could this deployment
+The React SPA renders rating controls only when the `GET {chat_endpoint}/config`
+bootstrap payload it fetches at start-up carries `feedbackEnabled: true`. The
+gate is computed in [`plugin.py`](../../autolangchat/plugin.py) on every
+bootstrap request and is **feature-only** — it answers "could this deployment
 accept a feedback submission?", not "is _this user_ allowed to submit?":
 
 ```

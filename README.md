@@ -64,6 +64,12 @@ uvicorn app:app --reload
 
 Open `http://localhost:8000/chat/ui` and start chatting with your API.
 
+The UI is a React SPA under [`frontend/`](frontend/README.md), served by FastAPI from
+`frontend/dist`. Build it once with `cd frontend && npm ci && npm run build` (the `Dockerfile`
+does this for you); point `AUTOCHAT_UI_DIST_DIR` at the build if it lives elsewhere. Released
+wheels (`.github/workflows/release.yml`) ship the built SPA inside the package, so installing from a
+release wheel needs no Node toolchain.
+
 ### Using a Custom `lifespan`
 
 `autolangchat` does not use FastAPI's deprecated `@app.on_event("startup")` /
@@ -221,8 +227,8 @@ autolangchat/
 │   ├── kb_sqlite.py                 # SQLite KB store
 │   ├── kb_postgres.py               # Postgres KB store
 │   └── sql/                         # SQL schema files
-├── templates/                       # Chat UI HTML templates
-└── static/                          # Chat UI CSS and JS assets
+└── spa.py                           # Serves the React SPA build at ui_endpoint with fallback routing
+frontend/                            # React + Vite SPA sources (built into frontend/dist)
 ```
 
 ---

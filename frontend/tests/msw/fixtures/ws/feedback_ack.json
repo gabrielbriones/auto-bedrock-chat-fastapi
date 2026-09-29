@@ -1,0 +1,7 @@
+{
+  "type": "feedback_ack",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "message_id": "message-1",
+  "feedback_id": "feedback-1",
+  "status": "recorded"
+}

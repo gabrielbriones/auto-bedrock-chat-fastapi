@@ -1,0 +1,16 @@
+[
+  "Delete \"{title}\"? This cannot be undone.",
+  "Delete this rejected entry? This cannot be undone.",
+  "This field is required.",
+  "Invalid JSON syntax.",
+  "Must be a JSON object mapping header names to string values.",
+  "Login with SSO",
+  "Redirecting…",
+  "Authenticating…",
+  "Skip",
+  "Authenticate",
+  "Click below to log in with your organization's identity provider.",
+  "Log in",
+  "Log out",
+  "Showing {from}–{to} of {total}"
+]

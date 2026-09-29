@@ -1,0 +1,14 @@
+{
+  "run_id": null,
+  "phase": "idle",
+  "source_name": null,
+  "source_type": null,
+  "started_at": null,
+  "finished_at": null,
+  "pages_crawled": 0,
+  "pages_processed": 0,
+  "files_processed": 0,
+  "chunks_written": 0,
+  "error": null,
+  "errors": []
+}

@@ -36,6 +36,7 @@ from .exceptions import (
     WebSocketError,
 )
 from .graph.tools.manager import AuthInfo
+from .history import format_history_messages
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
@@ -1386,18 +1387,7 @@ class WebSocketChatHandler:
     @staticmethod
     def _format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert LangGraph checkpoint message dicts to the client-facing history shape."""
-        return [
-            {
-                "message_id": m.get("metadata", {}).get("message_id"),
-                "role": m.get("role"),
-                "content": m.get("content", ""),
-                "timestamp": m.get("metadata", {}).get("timestamp"),
-                "tool_calls": m.get("tool_calls", []),
-                "tool_results": m.get("tool_results", []),
-                "metadata": m.get("metadata", {}),
-            }
-            for m in raw_messages
-        ]
+        return format_history_messages(raw_messages)
 
     async def _conversation_guard(self, websocket: WebSocket) -> Optional[ChatSession]:
         """Common preamble for every ``conversation_*`` message handler.

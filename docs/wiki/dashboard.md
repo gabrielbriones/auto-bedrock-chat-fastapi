@@ -1,16 +1,17 @@
 # Admin Dashboard UI
 
 The Admin Dashboard is a browser-based control surface for expert
-reviewers and KB administrators. It is served at
-`{chat_endpoint}/dashboard` (default: `/chat/dashboard`) when
-both `admin_enabled=True` and `enable_ui=True` are set.
+reviewers and KB administrators. It is the admin area of the React SPA,
+served at `{ui_endpoint}/admin` (default: `/chat/ui/admin`) when
+both `admin_enabled=True` and `enable_ui=True` are set. The bootstrap
+payload's `dashboardUrl` field points at it.
 
-The dashboard is a pure client-side application: the HTML shell is
-server-rendered by FastAPI at `GET {chat_endpoint}/dashboard`, but all
-data is loaded via XHR calls to the existing [Admin API](admin-api.md).
-The only new Admin API endpoint introduced is the capability probe
-(`GET /admin/_capabilities`) used to show or hide the Dashboard button
-in the Chat UI header.
+The dashboard is a pure client-side application: FastAPI serves the SPA
+build, and all data is loaded via XHR calls to the existing
+[Admin API](admin-api.md).
+The only Admin API endpoint introduced for it is the capability probe
+(`GET /admin/_capabilities`) used to show or hide the Dashboard entry
+in the Chat UI.
 
 ---
 
@@ -26,10 +27,10 @@ AUTOCHAT_ADMIN_REQUIRED_GROUPS=kb-admins
 The Chat UI automatically displays a **Dashboard** button in the header
 when both conditions are met:
 
-1. `admin_enabled=True` (the button element is rendered in the HTML).
+1. `admin_enabled=True` (the entry is included in the bootstrap payload).
 2. `GET /admin/_capabilities` returns `{"is_admin": true, ...}`.
 
-Non-admin users never see the button. Visiting `/chat/dashboard`
+Non-admin users never see the button. Visiting `/chat/ui/admin`
 directly without admin access renders an "Access Denied" empty state —
 the page itself loads no data until capability is confirmed.
 
@@ -311,7 +312,7 @@ the Chat UI grants admin access.
 - The Dashboard button is **hidden** (not disabled) for non-admins and
   for unauthenticated users. Hiding is a UX courtesy only; server-side
   authorization is the enforced boundary.
-- Manually visiting `/chat/dashboard` without admin access
+- Manually visiting `/chat/ui/admin` without admin access
   renders the "Access Denied" empty state. No data is leaked because
   every XHR call is gated by `require_admin`.
 - All user-supplied strings (feedback content, KB content, user IDs) are
