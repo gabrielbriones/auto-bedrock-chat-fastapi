@@ -14,11 +14,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import aiohttp
 import html2text
 from bs4 import BeautifulSoup
+
+from .pdf_extraction import PDFExtractionError, extract_pdf_text
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -151,6 +153,7 @@ class ContentCrawler:
         allowed_domains: Optional[List[str]] = None,
         exclude_patterns: Optional[List[str]] = None,
         max_pages: Optional[int] = None,
+        ingest_linked_files: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Crawl a URL and extract content.
@@ -168,6 +171,8 @@ class ContentCrawler:
                 ``[]`` explicitly to disable domain restriction entirely.
             exclude_patterns: URL patterns to exclude (e.g., ['/de/', '/es/'] for translations)
             max_pages: Maximum number of pages to fetch during a recursive crawl (``None`` = unbounded)
+            ingest_linked_files: Whether to download/index linked non-HTML files (currently
+                PDF only) instead of silently skipping them. Disabled by default.
 
         Returns:
             List of extracted documents with metadata
@@ -185,10 +190,17 @@ class ContentCrawler:
             else:
                 effective_allowed_domains = allowed_domains
             documents = await self._crawl_recursive(
-                url, source, topic, max_depth, effective_allowed_domains, exclude_patterns or [], max_pages
+                url,
+                source,
+                topic,
+                max_depth,
+                effective_allowed_domains,
+                exclude_patterns or [],
+                max_pages,
+                ingest_linked_files,
             )
         else:
-            doc = await self._fetch_and_parse(url, source, topic)
+            doc = await self._fetch_and_parse(url, source, topic, ingest_linked_files)
             if self.progress_cb is not None:
                 # Count the attempt even on failure, so a single-URL crawl
                 # that errors doesn't leave /admin/kb/sources/status looking
@@ -241,6 +253,7 @@ class ContentCrawler:
         allowed_domains: List[str],
         exclude_patterns: List[str],
         max_pages: Optional[int] = None,
+        ingest_linked_files: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Recursively crawl URLs following links.
@@ -306,7 +319,7 @@ class ContentCrawler:
 
             # Fetch and parse using ORIGINAL URL (preserves trailing slash for link resolution)
             pages_attempted += 1
-            doc = await self._fetch_and_parse(url, source, topic)
+            doc = await self._fetch_and_parse(url, source, topic, ingest_linked_files)
             if self.progress_cb is not None:
                 # Count the attempt even on failure/non-HTML skip, so status
                 # reporting advances during a crawl that's actively making
@@ -382,6 +395,14 @@ class ContentCrawler:
     #: without letting a target bounce a request through an unbounded chain.
     _MAX_REDIRECTS = 5
 
+    #: Per-file cap on a downloaded linked non-HTML file (currently PDF
+    #: only, when ``ingest_linked_files`` is enabled) — matches the
+    #: per-file upload cap in admin_kb_routes.py (_MAX_FILE_BYTES) so both
+    #: ingestion paths apply the same limit. Read in bounded chunks so an
+    #: oversized file is never buffered in full.
+    _MAX_LINKED_FILE_BYTES = 10 * 1024 * 1024
+    _LINKED_FILE_READ_CHUNK_BYTES = 1024 * 1024
+
     async def _is_safe_host(self, hostname: str) -> bool:
         """Resolve ``hostname`` and reject it if any address is internal.
 
@@ -428,9 +449,94 @@ class ContentCrawler:
             return False
         return await self._is_safe_host(parsed.hostname)
 
-    async def _fetch_and_parse(self, url: str, source: str, topic: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _is_supported_linked_file(self, url: str, content_type: str) -> bool:
+        """Whether a non-HTML linked file is a type we know how to extract text from.
+
+        Currently PDF only, detected via ``content_type`` (already stripped
+        of parameters and lowercased by the caller) *or* a ``.pdf`` URL path
+        extension — some servers mislabel PDF links with a generic
+        Content-Type like ``application/octet-stream``. Mirrors the same
+        extension-or-content-type detection ``trigger_file_source`` applies
+        to uploaded files.
+        """
+        if content_type == "application/pdf":
+            return True
+        return urlparse(url).path.lower().endswith(".pdf")
+
+    async def _download_and_extract_linked_file(
+        self, response: aiohttp.ClientResponse, url: str, source: str, topic: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Download a linked non-HTML file (currently PDF only) and extract its text.
+
+        Only called once ``_fetch_and_parse`` has already confirmed the
+        format is supported and ``ingest_linked_files`` is enabled.
+        Enforces ``_MAX_LINKED_FILE_BYTES`` via ``Content-Length`` (when
+        present) and a bounded chunked read regardless, so an oversized
+        file is never buffered in full — same failure mode as any other
+        fetch error (recorded in ``self.errors``, not raised).
+        """
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                too_large = int(content_length) > self._MAX_LINKED_FILE_BYTES
+            except ValueError:
+                too_large = False  # malformed header -- fall through to the bounded read below
+            if too_large:
+                message = f"linked file too large ({content_length} bytes, limit {self._MAX_LINKED_FILE_BYTES}): {url}"
+                logger.warning(message)
+                self.errors.append(message)
+                return None
+
+        chunks: List[bytes] = []
+        total = 0
+        async for chunk in response.content.iter_chunked(self._LINKED_FILE_READ_CHUNK_BYTES):
+            total += len(chunk)
+            if total > self._MAX_LINKED_FILE_BYTES:
+                message = f"linked file exceeds {self._MAX_LINKED_FILE_BYTES} byte limit: {url}"
+                logger.warning(message)
+                self.errors.append(message)
+                return None
+            chunks.append(chunk)
+
+        try:
+            text = await asyncio.to_thread(extract_pdf_text, b"".join(chunks))
+        except PDFExtractionError as exc:
+            message = f"failed to extract linked PDF {url}: {exc.message}"
+            logger.warning(message)
+            self.errors.append(message)
+            return None
+
+        # Title is the file's own name, not the full URL -- e.g. a PDF
+        # linked from /docs/_downloads/<hash>/My_Guide.pdf is titled
+        # "My_Guide.pdf". Falls back to the full URL if the path has no
+        # filename segment. source_url is still the full URL.
+        # no raw_html since a PDF has no links for the recursive crawl to
+        # discover -- it's always a leaf node.
+        filename = Path(unquote(urlparse(url).path)).name or url
+        return {
+            "id": self._generate_doc_id(url),
+            "url": url,
+            "title": filename,
+            "content": text,
+            "description": None,
+            "source": source,
+            "topic": topic,
+            "date_published": None,
+            "author": None,
+            "word_count": len(text.split()),
+            "raw_html": "",
+            "crawled_at": datetime.now().isoformat(),
+        }
+
+    async def _fetch_and_parse(
+        self, url: str, source: str, topic: Optional[str], ingest_linked_files: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """
         Fetch URL and parse content.
+
+        ``ingest_linked_files`` opts into downloading/indexing a linked
+        non-HTML file (currently PDF only, see
+        :meth:`_is_supported_linked_file`) instead of skipping it.
 
         Returns:
             Document dict or None if failed
@@ -481,16 +587,28 @@ class ContentCrawler:
                         # otherwise wastes bandwidth and can raise decode errors
                         # or trigger a slow-download timeout.
                         content_type = response.headers.get("Content-Type", "")
-                        if "text/html" not in content_type.lower():
+                        normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+
+                        if "text/html" in normalized_content_type:
+                            html_content = await response.text()
+                            # Use current_url (the final, post-redirect address) so
+                            # the indexed doc's URL/ID and link-resolution base
+                            # reflect where the content actually came from, not the
+                            # pre-redirect address.
+                            return self._parse_html(html_content, current_url, source, topic)
+
+                        # Check both the final and original URL for a supported
+                        # extension -- a linked "/guide.pdf" can redirect to an
+                        # extensionless CDN URL served with a generic Content-Type,
+                        # and the original link is still a reliable PDF hint.
+                        is_supported_linked_file = self._is_supported_linked_file(
+                            current_url, normalized_content_type
+                        ) or self._is_supported_linked_file(url, normalized_content_type)
+                        if not ingest_linked_files or not is_supported_linked_file:
                             logger.debug(f"Skipping non-HTML content ({content_type or 'unknown'}): {current_url}")
                             return None
 
-                        html_content = await response.text()
-                        # Use current_url (the final, post-redirect address) so
-                        # the indexed doc's URL/ID and link-resolution base
-                        # reflect where the content actually came from, not the
-                        # pre-redirect address.
-                        return self._parse_html(html_content, current_url, source, topic)
+                        return await self._download_and_extract_linked_file(response, current_url, source, topic)
 
                 message = f"too many redirects fetching {url}"
                 logger.error(message)
