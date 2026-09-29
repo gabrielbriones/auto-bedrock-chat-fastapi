@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => {
 const env = loadEnv(mode, process.cwd(), '');
 const proxyTarget = env.VITE_API_URL;
 const port = env.PORT === undefined || env.PORT.length === 0 ? undefined : Number(env.PORT);
+// Deployed builds set SOURCEMAP=hidden so bundles don't reference their maps (FR-TOOL-004).
+const sourcemap = env.SOURCEMAP === 'hidden' ? 'hidden' : true;
 
 return {
   // Assets are served at the chat mount; the router also serves dashboard routes beside it.
@@ -62,7 +64,7 @@ return {
     },
   },
   build: {
-    sourcemap: true,
+    sourcemap,
     // Read by scripts/check-chunk-split.mjs to assert the admin split (FR-SHELL-015) from the
     // build's own static/dynamic import graph rather than by grepping bundles.
     manifest: true,

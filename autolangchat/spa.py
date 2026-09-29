@@ -1,6 +1,7 @@
 """Serve the React SPA build from FastAPI (CONTRACT-002 BC-002, Mechanism A).
 
-The SPA under ``frontend/`` is built by Vite into ``frontend/dist`` and mounted
+The SPA under ``frontend/`` is built by Vite into ``frontend/dist`` (copied into
+``autolangchat/_spa`` for the wheel by the release workflow) and mounted
 at ``config.ui_endpoint`` and its sibling ``/dashboard`` when the UI endpoint
 ends in ``/ui``. The API, SSO cookie, and chat WebSocket share one origin
 (ADR-006). No standalone Vite server is involved in the served application.
@@ -28,9 +29,15 @@ NO_STORE = "no-store"
 HASHED_ASSET_PREFIX = "assets/"
 
 
+PACKAGED_DIST_DIR = Path(__file__).resolve().parent / "_spa"
+SOURCE_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
 def default_dist_dir() -> Path:
-    """``<repo>/frontend/dist`` relative to the installed package."""
-    return Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    """``<repo>/frontend/dist`` in a source checkout, else the build bundled into the wheel."""
+    if (SOURCE_DIST_DIR / "index.html").is_file():
+        return SOURCE_DIST_DIR
+    return PACKAGED_DIST_DIR
 
 
 def resolve_dist_dir(config: ChatConfig) -> Path:

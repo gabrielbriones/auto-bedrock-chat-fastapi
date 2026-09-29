@@ -7,7 +7,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 # Emits /frontend/dist, served by autolangchat at /ui (BC-002).
-RUN npm run build
+RUN SOURCEMAP=hidden npm run build && find dist -name '*.map' -delete
 
 FROM python:3.14-slim AS builder
 

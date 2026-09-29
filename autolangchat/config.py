@@ -461,7 +461,8 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_UI_DIST_DIR",
         description=(
             "Directory containing the built SPA (Vite ``dist/`` with ``index.html``). "
-            "Defaults to ``<repo>/frontend/dist`` next to the installed package."
+            "Defaults to ``<repo>/frontend/dist`` in a source checkout, else the build bundled "
+            "into the wheel (``autolangchat/_spa``)."
         ),
     )
 

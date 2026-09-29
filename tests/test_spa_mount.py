@@ -15,6 +15,7 @@ import pytest
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 
+from autolangchat import spa
 from autolangchat.config import ChatConfig
 from autolangchat.spa import IMMUTABLE_CACHE, NO_STORE, dashboard_path, default_dist_dir, mount_spa, resolve_dist_dir
 
@@ -58,9 +59,23 @@ def _app_with_spa(dist_dir, **config_overrides):
     return app, served
 
 
-def test_resolve_dist_dir_defaults_to_repo_frontend_dist():
+def test_resolve_dist_dir_defaults_to_default_dist_dir():
     assert resolve_dist_dir(_config()) == default_dist_dir()
-    assert default_dist_dir().parts[-2:] == ("frontend", "dist")
+
+
+def test_default_dist_dir_prefers_source_checkout_build(tmp_path, monkeypatch):
+    source = tmp_path / "frontend" / "dist"
+    source.mkdir(parents=True)
+    (source / "index.html").write_text(INDEX_HTML)
+    monkeypatch.setattr(spa, "SOURCE_DIST_DIR", source)
+    monkeypatch.setattr(spa, "PACKAGED_DIST_DIR", tmp_path / "_spa")
+    assert default_dist_dir() == source
+
+
+def test_default_dist_dir_falls_back_to_packaged_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(spa, "SOURCE_DIST_DIR", tmp_path / "frontend" / "dist")
+    monkeypatch.setattr(spa, "PACKAGED_DIST_DIR", tmp_path / "_spa")
+    assert default_dist_dir() == tmp_path / "_spa"
 
 
 def test_resolve_dist_dir_honours_override(tmp_path):

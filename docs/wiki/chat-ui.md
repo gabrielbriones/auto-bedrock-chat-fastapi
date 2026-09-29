@@ -15,7 +15,8 @@ autolangchat_plugin = add_autolangchat(
 ```
 
 Open your browser to `http://localhost:8000/chat/ui`. The build directory is
-`AUTOCHAT_UI_DIST_DIR` (defaults to `<repo>/frontend/dist`). Build it with
+`AUTOCHAT_UI_DIST_DIR` (defaults to `<repo>/frontend/dist`, else the build bundled into
+release wheels by `.github/workflows/release.yml`). Build it with
 `cd frontend && npm ci && npm run build`; the `Dockerfile` does this automatically.
 
 ---

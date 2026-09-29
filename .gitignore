@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 /lib/
+/autolangchat/_spa/
 /lib64/
 parts/
 sdist/
