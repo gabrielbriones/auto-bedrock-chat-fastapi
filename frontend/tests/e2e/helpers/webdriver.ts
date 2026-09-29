@@ -15,11 +15,16 @@ import type { Command } from 'selenium-webdriver/lib/command.js'
 //                 stderr, so a run can also be read back afterwards.
 //   E2E_SLOWMO=ms pauses that long before each interaction (default 500 when HEADED=1, else 0).
 // `npm run test:e2e:headed` sets both and runs one spec at a time; see README "Verify".
-export async function buildChromeDriver(extraArgs: readonly string[] = []): Promise<WebDriver> {
-  requireBuiltBundle()
+export async function buildChromeDriver(
+  extraArgs: readonly string[] = [],
+  requireBuild = true,
+  pageLoadStrategy: 'normal' | 'none' = 'normal',
+): Promise<WebDriver> {
+  if (requireBuild) requireBuiltBundle()
   const watch = readWatchOptions()
 
   const options = new chrome.Options()
+  options.setPageLoadStrategy(pageLoadStrategy)
   options.addArguments(
     '--no-sandbox',
     '--disable-dev-shm-usage',

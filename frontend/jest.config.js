@@ -1,7 +1,7 @@
 // `tests/` mirrors `src/` per bounded context, alongside four suites that belong to no context:
 // `e2e/` (selenium, never jsdom), `msw/`, `lint/` and `setup/`. The context mirrors are what
 // `unit` and `component` claim, so those four are subtracted from them here.
-const NON_CONTEXT_SUITES = ['<rootDir>/tests/e2e/', '<rootDir>/tests/msw/', '<rootDir>/tests/lint/', '<rootDir>/tests/setup/']
+const NON_CONTEXT_SUITES = ['<rootDir>/tests/e2e/', '<rootDir>/tests/e2e-live/', '<rootDir>/tests/msw/', '<rootDir>/tests/lint/', '<rootDir>/tests/setup/']
 
 // The package is `"type": "module"` and `eslint/**/*.js` is imported by the lint suite, so Jest
 // runs in native ESM mode (`--experimental-vm-modules`, see the npm scripts) rather than
@@ -59,6 +59,10 @@ export default {
     project('e2e', {
       testEnvironment: 'node',
       testMatch: ['<rootDir>/tests/e2e/**/*.test.ts'],
+    }),
+    project('e2e-live', {
+      testEnvironment: 'node',
+      testMatch: ['<rootDir>/tests/e2e-live/**/*.test.ts'],
     }),
   ],
   coverageProvider: 'v8',
