@@ -617,7 +617,6 @@ class AutoLangChatPlugin:
             # absent so any stale client request gets 404.
             "admin_enabled": self.config.admin_enabled,
             "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
-
             "dashboard_url": dashboard_path(self.config.ui_endpoint) if self.config.admin_enabled else "",
             "conversation_persistence_enabled": conversation_persistence_enabled,
             # Dynamic parameter overrides settings sidebar.

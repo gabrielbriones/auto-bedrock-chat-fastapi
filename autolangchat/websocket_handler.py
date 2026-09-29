@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from .auth_handler import AuthenticationHandler, AuthType, Credentials, can_refresh
 from .config import ChatConfig
 from .conversation_titler import generate_conversation_title
-from .history import format_history_messages
 from .db import (
     AuthenticatedUserAuthorizer,
     BaseConversationStore,
@@ -37,6 +36,7 @@ from .exceptions import (
     WebSocketError,
 )
 from .graph.tools.manager import AuthInfo
+from .history import format_history_messages
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager

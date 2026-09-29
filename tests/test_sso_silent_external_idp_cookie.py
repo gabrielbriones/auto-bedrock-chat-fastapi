@@ -334,9 +334,7 @@ async def test_resolve_sso_session_expired_own_session_falls_back():
 
 
 def _make_plugin_for_return_to(ui_endpoint="/chat/ui"):
-    return _make_bare_plugin(
-        _make_config(ui_endpoint=ui_endpoint, sso_allowed_return_prefixes=[ui_endpoint])
-    )
+    return _make_bare_plugin(_make_config(ui_endpoint=ui_endpoint, sso_allowed_return_prefixes=[ui_endpoint]))
 
 
 def test_safe_return_to_none_when_missing():

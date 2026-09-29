@@ -19,9 +19,7 @@ from autolangchat import spa
 from autolangchat.config import ChatConfig
 from autolangchat.spa import IMMUTABLE_CACHE, NO_STORE, dashboard_path, default_dist_dir, mount_spa, resolve_dist_dir
 
-INDEX_HTML = (
-    '<!doctype html><html><head><script type="module" src="/bedrock-chat/ui/assets/index-abc123.js"></script></head></html>'
-)
+INDEX_HTML = '<!doctype html><html><head><script type="module" src="/bedrock-chat/ui/assets/index-abc123.js"></script></head></html>'
 
 
 @pytest.fixture
@@ -169,7 +167,10 @@ def test_route_table_only_gains_spa_entries(dist_dir):
 
     assert after[: len(before)] == before
     assert [p for _, p in after[len(before) :]] == [
-        "/bedrock-chat/ui", "/bedrock-chat/ui", "/bedrock-chat/dashboard", "/bedrock-chat/dashboard"
+        "/bedrock-chat/ui",
+        "/bedrock-chat/ui",
+        "/bedrock-chat/dashboard",
+        "/bedrock-chat/dashboard",
     ]
     assert [t for t, _ in after[len(before) :]] == ["APIRoute", "Mount", "APIRoute", "Mount"]
 
