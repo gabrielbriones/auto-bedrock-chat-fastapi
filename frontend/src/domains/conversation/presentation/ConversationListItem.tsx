@@ -26,14 +26,26 @@ export type ConversationListItemProps = {
   readonly onDelete: (id: ConversationId) => void
 }
 
+const TITLE_END_PAUSE_S = 0.75
+
 function setTitleSlideDuration(row: HTMLElement): void {
   const viewport = row.querySelector<HTMLElement>('.conversation-title-viewport')
   const text = row.querySelector<HTMLElement>('.conversation-title-text')
   if (!viewport || !text) return
 
-  const availableWidth = viewport.clientWidth - parseFloat(getComputedStyle(viewport).paddingRight)
+  const style = getComputedStyle(viewport)
+  // The last characters must land left of the mask's fade, not inside it.
+  const fade = parseFloat(style.getPropertyValue('--title-fade')) || 0
+  const availableWidth = viewport.clientWidth - parseFloat(style.paddingRight) - fade
   const distance = Math.max(0, text.scrollWidth - availableWidth)
-  text.style.setProperty('--title-slide-duration', `${Math.max(distance / 40, 0.1)}s`)
+  text.style.setProperty('--title-slide-distance', `${distance}px`)
+  const slide = Math.max(distance / 40, 0.1)
+  // `alternate` replays each end's hold on the way back, so the title rests twice as long there.
+  const hold = TITLE_END_PAUSE_S / 2
+  const total = slide + 2 * hold
+  const pct = (seconds: number) => `${(seconds / total) * 100}%`
+  text.style.setProperty('--title-slide-duration', `${total}s`)
+  text.style.setProperty('--title-slide-easing', `linear(0, 0 ${pct(hold)}, 1 ${pct(hold + slide)}, 1)`)
 }
 
 function ConversationOptions({ title, onRename, onDelete }: {
@@ -106,7 +118,6 @@ export const ConversationListItem = memo(function ConversationListItem({
         size="sm"
         onClick={() => onOpen(id)}
         aria-current={active ? 'true' : undefined}
-        title={title}
         className={cn(
           // The row stays lit while the pointer is on the floating options trigger or its menu is
           // open; the trigger sits beside this button rather than inside it.

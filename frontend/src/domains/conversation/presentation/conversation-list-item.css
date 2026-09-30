@@ -1,5 +1,11 @@
+/* Registered so getComputedStyle resolves it to px for the slide-distance measurement. */
+@property --title-fade {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 .conversation-title-viewport {
-  container-type: inline-size;
   display: block;
   min-width: 0;
   width: 100%;
@@ -18,6 +24,10 @@
    and the trigger floats over its right end only while the row is hovered, focused, or its menu is
    open. Touch devices keep the trigger in flow so it is always reachable. */
 @media (hover: hover) and (pointer: fine) {
+  .conversation-title-viewport {
+    --title-fade: 1rem;
+  }
+
   .conversation-options {
     position: absolute;
     top: 50%;
@@ -40,7 +50,7 @@
   .conversation-row:focus-within .conversation-title-viewport,
   .conversation-row:has(.conversation-options[data-popup-open]) .conversation-title-viewport {
     padding-right: 1.5rem;
-    mask-image: linear-gradient(to right, black calc(100% - 2.5rem), transparent calc(100% - 1.5rem));
+    mask-image: linear-gradient(to right, black calc(100% - 1.5rem - var(--title-fade)), transparent calc(100% - 1.5rem));
   }
 }
 
@@ -51,7 +61,7 @@
     min-width: 100%;
     overflow: visible;
     mask-image: none;
-    animation: conversation-title-slide var(--title-slide-duration, 0.1s) linear 0.15s infinite alternate;
+    animation: conversation-title-slide var(--title-slide-duration, 0.1s) var(--title-slide-easing, linear) 0.15s infinite alternate;
   }
 }
 
@@ -61,6 +71,6 @@
   }
 
   100% {
-    transform: translateX(min(0px, calc(100cqi - 100%)));
+    transform: translateX(calc(-1 * var(--title-slide-distance, 0px)));
   }
 }
