@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,6 +18,7 @@ import { Page, PageHeader } from '@/components/ui/composed/page-header'
 import { TELEMETRY_COPY } from '@/shared/copy/telemetry'
 
 import type { TelemetrySnapshot } from '@/domains/telemetry/application/telemetry.store'
+import { modelDisplayName } from '@/domains/model-config/domain/public'
 import {
   createCursorlessPage,
   type ModelUsageRow,
@@ -38,11 +39,12 @@ export type UsageAnalyticsPageProps = {
 
 const TOP_USER_LIMITS = [5, 10, 20, 50, 100] as const
 
-const modelColumns: readonly DataTableColumn<ModelUsageRow>[] = [
-  { id: 'model', header: TELEMETRY_COPY.summary.model, cell: (row) => row.modelId || '—' },
-  { id: 'input', header: TELEMETRY_COPY.summary.input, cell: (row) => formatUsageNumber(row.tokens.input) },
-  { id: 'output', header: TELEMETRY_COPY.summary.output, cell: (row) => formatUsageNumber(row.tokens.output) },
-  { id: 'turns', header: TELEMETRY_COPY.summary.turns, cell: (row) => formatUsageNumber(row.turnCount) },
+const modelColumns = (modelName: (modelId: string) => string): readonly DataTableColumn<ModelUsageRow>[] => [
+  { id: 'model', header: TELEMETRY_COPY.summary.model, cell: (row) => modelName(row.modelId) || '—', sortValue: (row) => modelName(row.modelId) },
+  { id: 'input', header: TELEMETRY_COPY.summary.input, cell: (row) => formatUsageNumber(row.tokens.input), sortValue: (row) => row.tokens.input },
+  { id: 'output', header: TELEMETRY_COPY.summary.output, cell: (row) => formatUsageNumber(row.tokens.output), sortValue: (row) => row.tokens.output },
+  { id: 'total', header: TELEMETRY_COPY.summary.totalTokens, cell: (row) => formatUsageNumber(row.tokens.total), sortValue: (row) => row.tokens.total },
+  { id: 'turns', header: TELEMETRY_COPY.summary.turns, cell: (row) => formatUsageNumber(row.turnCount), sortValue: (row) => row.turnCount },
 ]
 
 const topUserColumns: readonly DataTableColumn<UserUsageRow>[] = [
@@ -63,6 +65,9 @@ function SectionCard({ title, children }: { readonly title: string; readonly chi
 }
 
 function SummarySection({ snapshot, load }: { readonly snapshot: TelemetrySnapshot['summary']; readonly load: () => void }) {
+  const { catalog } = useContainerStore('modelConfig').profile
+  const modelName = useCallback((modelId: string) => modelDisplayName(catalog, modelId), [catalog])
+  const columns = useMemo(() => modelColumns(modelName), [modelName])
   const error = snapshot.status === 'error' ? <ErrorState description={TELEMETRY_COPY.summary.loadError} onRetry={load} /> : undefined
   return (
     <SectionCard title={TELEMETRY_COPY.summary.title}>
@@ -71,8 +76,8 @@ function SummarySection({ snapshot, load }: { readonly snapshot: TelemetrySnapsh
       {snapshot.status === 'ready' && snapshot.rows.length === 0 ? <EmptyState title={TELEMETRY_COPY.summary.empty} /> : null}
       {snapshot.status === 'ready' && snapshot.rows.length > 0 ? (
         <>
-          <ModelUsageChart rows={snapshot.rows} />
-          <DataTable caption={TELEMETRY_COPY.summary.table} columns={modelColumns} rows={snapshot.rows} rowKey={(row) => row.modelId} emptyTitle={TELEMETRY_COPY.summary.empty} />
+          <ModelUsageChart rows={snapshot.rows} modelName={modelName} />
+          <DataTable caption={TELEMETRY_COPY.summary.table} columns={columns} rows={snapshot.rows} rowKey={(row) => row.modelId} emptyTitle={TELEMETRY_COPY.summary.empty} />
         </>
       ) : null}
     </SectionCard>

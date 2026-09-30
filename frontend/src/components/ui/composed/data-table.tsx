@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon } from 'lucide-react'
 
 import {
   Table,
@@ -19,7 +20,11 @@ export type DataTableColumn<Row> = {
   readonly header: ReactNode
   readonly cell: (row: Row) => ReactNode
   readonly className?: string
+  /** Present only on sortable columns. */
+  readonly sortValue?: (row: Row) => string | number
 }
+
+type SortState = { readonly columnId: string; readonly direction: 'ascending' | 'descending' }
 
 export type DataTableRowAction<Row> = {
   /** The accessible name of the row's control — what the reviewer is about to open. */
@@ -154,6 +159,47 @@ function BodyState<Row>({
   )
 }
 
+const compareValues = (a: string | number, b: string | number): number =>
+  typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))
+
+function useSortedRows<Row>(rows: readonly Row[], columns: readonly DataTableColumn<Row>[], sort: SortState | null) {
+  return useMemo(() => {
+    const sortValue = columns.find((column) => column.id === sort?.columnId)?.sortValue
+    if (sort === null || sortValue === undefined) {
+      return rows
+    }
+    const sign = sort.direction === 'ascending' ? 1 : -1
+    return [...rows].sort((a, b) => sign * compareValues(sortValue(a), sortValue(b)))
+  }, [rows, columns, sort])
+}
+
+function HeaderCell<Row>({ column, sort, onSort }: {
+  readonly column: DataTableColumn<Row>
+  readonly sort: SortState | null
+  readonly onSort: (columnId: string) => void
+}) {
+  const direction = sort?.columnId === column.id ? sort.direction : undefined
+  const Icon = direction === 'ascending' ? ArrowUpIcon : direction === 'descending' ? ArrowDownIcon : ArrowUpDownIcon
+
+  return (
+    <TableHead
+      className={cn(column.className, 'align-middle')}
+      {...(column.sortValue === undefined ? {} : { 'aria-sort': direction ?? 'none' })}
+    >
+      {column.sortValue === undefined ? column.header : (
+        <button
+          type="button"
+          className="inline-flex cursor-pointer items-center gap-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          onClick={() => { onSort(column.id) }}
+        >
+          {column.header}
+          <Icon aria-hidden="true" className={cn('size-3.5', direction === undefined && 'opacity-50')} />
+        </button>
+      )}
+    </TableHead>
+  )
+}
+
 // SPEC-020 §3.2: the one table every admin list is built from, so loading, empty and error states
 // cannot drift between the review queue, the KB browser and usage analytics.
 export function DataTable<Row>({
@@ -171,6 +217,14 @@ export function DataTable<Row>({
   tableClassName,
 }: DataTableProps<Row>) {
   const showRows = !isLoading && error === undefined && rows.length > 0
+  const [sort, setSort] = useState<SortState | null>(null)
+  const sortedRows = useSortedRows(rows, columns, sort)
+  const toggleSort = (columnId: string) => {
+    setSort((current) => ({
+      columnId,
+      direction: current?.columnId === columnId && current.direction === 'ascending' ? 'descending' : 'ascending',
+    }))
+  }
 
   return (
     <div className={cn('overflow-hidden rounded-xl border border-border bg-card', className)}>
@@ -178,16 +232,12 @@ export function DataTable<Row>({
       <TableCaption className="sr-only">{caption}</TableCaption>
       <TableHeader>
         <TableRow>
-          {columns.map((column) => (
-            <TableHead key={column.id} className={cn(column.className, 'align-middle')}>
-              {column.header}
-            </TableHead>
-          ))}
+          {columns.map((column) => <HeaderCell key={column.id} column={column} sort={sort} onSort={toggleSort} />)}
         </TableRow>
       </TableHeader>
       <TableBody>
         {showRows ? (
-          rows.map((row) => <BodyRow key={rowKey(row)} row={row} columns={columns} rowKey={rowKey} rowAction={rowAction} selectedKeys={selectedKeys} />)
+          sortedRows.map((row) => <BodyRow key={rowKey(row)} row={row} columns={columns} rowKey={rowKey} rowAction={rowAction} selectedKeys={selectedKeys} />)
         ) : (
           <BodyState columns={columns} isLoading={isLoading} error={error} emptyTitle={emptyTitle} emptyDescription={emptyDescription} />
         )}
