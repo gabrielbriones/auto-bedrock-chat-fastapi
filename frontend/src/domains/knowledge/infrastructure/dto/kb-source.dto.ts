@@ -90,6 +90,7 @@ export type WebCrawlBody = {
   readonly allowed_domains?: readonly string[]
   readonly exclude_patterns?: readonly string[]
   readonly ingest_linked_files?: true
+  readonly synthesize?: true
   readonly headers?: Readonly<Record<string, string>>
   readonly cookies?: Readonly<Record<string, string>>
 }
@@ -106,6 +107,7 @@ export const fromWebCrawlRequest = (request: WebCrawlRequest, withName: boolean)
   ...(request.allowedDomains === null ? {} : { allowed_domains: request.allowedDomains }),
   ...(request.excludePatterns === null ? {} : { exclude_patterns: request.excludePatterns }),
   ...(request.ingestLinkedFiles ? { ingest_linked_files: true as const } : {}),
+  ...(request.synthesize ? { synthesize: true as const } : {}),
   ...(request.headers === null ? {} : { headers: request.headers }),
   ...(request.cookies === null ? {} : { cookies: request.cookies }),
 })
@@ -118,6 +120,9 @@ export const toFileIngestFormData = (request: FileIngestRequest, withName: boole
   }
   if (request.topic !== null) {
     formData.append('topic', request.topic)
+  }
+  if (request.synthesize) {
+    formData.append('synthesize', 'true')
   }
   for (const file of request.files) {
     formData.append('files', file, file.name)

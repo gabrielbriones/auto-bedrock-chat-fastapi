@@ -1,10 +1,8 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { ChevronDownIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Label } from '@/components/ui/label'
 import { KNOWLEDGE_COPY } from '@/shared/copy/knowledge'
 import { isOk } from '@/shared/kernel/result'
 
@@ -17,7 +15,7 @@ import {
   type WebCrawlIssues,
   type WebCrawlRequest,
 } from '@/domains/knowledge/domain/public'
-import { DraftTextArea, DraftTextField } from '@/domains/knowledge/presentation/kb-source-fields'
+import { DraftCheckbox, DraftTextArea, DraftTextField } from '@/domains/knowledge/presentation/kb-source-fields'
 
 const WEB = KNOWLEDGE_COPY.sources.web
 
@@ -58,25 +56,13 @@ function LimitFields({ draft, issues, disabled, onChange }: FieldsProps) {
   )
 }
 
-// XMGPLAT-11400: opt-in so linked PDFs are indexed as their own documents instead of skipped.
-function IngestLinkedFilesField({ draft, disabled, onChange }: FieldsProps) {
-  const id = useId()
-  const hintId = `${id}-hint`
-
+// Linked PDFs (XMGPLAT-11400) and AI synthesis (XMGPLAT-11801) are both off unless opted into.
+function OptInFields({ draft, disabled, onChange }: FieldsProps) {
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id={id}
-          checked={draft.ingestLinkedFiles}
-          disabled={disabled}
-          aria-describedby={hintId}
-          onCheckedChange={(checked) => onChange({ ingestLinkedFiles: checked === true })}
-        />
-        <Label htmlFor={id}>{WEB.ingestLinkedFiles}</Label>
-      </div>
-      <p id={hintId} className="text-sm text-muted-foreground">{WEB.ingestLinkedFilesHint}</p>
-    </div>
+    <>
+      <DraftCheckbox label={WEB.ingestLinkedFiles} hint={WEB.ingestLinkedFilesHint} checked={draft.ingestLinkedFiles} disabled={disabled} onChange={(ingestLinkedFiles) => onChange({ ingestLinkedFiles })} />
+      <DraftCheckbox label={WEB.synthesize} hint={WEB.synthesizeHint} checked={draft.synthesize} disabled={disabled} onChange={(synthesize) => onChange({ synthesize })} />
+    </>
   )
 }
 
@@ -123,7 +109,7 @@ export function WebCrawlForm({ busy, submitting, onSubmit }: WebCrawlFormProps) 
     <form className="grid gap-5" aria-label={WEB.title} onSubmit={submit}>
       <IdentityFields {...fields} />
       <LimitFields {...fields} />
-      <IngestLinkedFilesField {...fields} />
+      <OptInFields {...fields} />
       <AdvancedFields {...fields} />
       <Button type="submit" className="w-fit" disabled={busy} aria-label={submitting ? WEB.starting : undefined}>
         {WEB.submit}

@@ -34,6 +34,7 @@ const webRequest: WebCrawlRequest = {
   allowedDomains: null,
   excludePatterns: null,
   ingestLinkedFiles: false,
+  synthesize: false,
   headers: null,
   cookies: null,
 }
@@ -42,6 +43,7 @@ const fileRequest: FileIngestRequest = {
   name: 'notes',
   topic: null,
   files: [new File(['hello'], 'notes.txt', { type: 'text/plain' })],
+  synthesize: false,
 }
 
 const problem = (overrides: Partial<Problem>): Problem => ({ code: 'http-error', title: 'Request failed', ...overrides })

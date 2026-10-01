@@ -139,6 +139,9 @@ export const KNOWLEDGE_COPY = {
       excludePatterns: 'Exclude patterns (comma-separated, optional)',
       ingestLinkedFiles: 'Ingest linked PDF files',
       ingestLinkedFilesHint: 'Download and index PDFs discovered via links on crawled pages, in addition to HTML pages.',
+      synthesize: 'Synthesize with AI before indexing',
+      synthesizeHint:
+        'Runs each page through the KB synthesizer to produce a more concise, RAG-friendly document instead of indexing the raw extracted text. Adds one LLM call per page; falls back to the raw page content if synthesis fails.',
       advanced: 'Advanced: headers / cookies (optional)',
       headers: 'Headers (JSON object, optional)',
       headersPlaceholder: '{"Authorization": "Bearer ..."}',
@@ -157,6 +160,9 @@ export const KNOWLEDGE_COPY = {
       topic: 'Topic (optional)',
       files: 'Files',
       filesHint: 'Up to 10 MB per file and 50 MB in total.',
+      synthesize: 'Synthesize with AI before indexing',
+      synthesizeHint:
+        'Runs each file through the KB synthesizer to produce a more concise, RAG-friendly document instead of indexing the raw file text. Adds one LLM call per file; falls back to the raw file content if synthesis fails.',
       submit: 'Upload & ingest',
       uploading: 'Uploading…',
       started: (runId: string) => `File ingestion started (run ${runId}).`,
