@@ -56,7 +56,7 @@ export const MessageBubble = memo(function MessageBubble({ entry, renderFeedback
   if (entry.progress) {
     return (
       <div
-        className={cn('max-w-prose rounded-lg px-4 py-2 text-sm italic', BUBBLE_CLASS.assistant)}
+        className={cn('max-w-[85%] rounded-lg px-4 py-2 text-sm italic', BUBBLE_CLASS.assistant)}
       >
         <span className="text-shimmer">{message.raw}</span>
       </div>
@@ -76,7 +76,7 @@ export const MessageBubble = memo(function MessageBubble({ entry, renderFeedback
     <article
       aria-label={ROLE_LABEL[message.role]}
       className={cn(
-        'max-w-prose rounded-lg px-4 py-2',
+        'max-w-[85%] rounded-lg px-4 py-2',
         // Markdown already renders its own block spacing; pre-wrap would double every line break.
         plainText && 'whitespace-pre-wrap',
         BUBBLE_CLASS[message.role],

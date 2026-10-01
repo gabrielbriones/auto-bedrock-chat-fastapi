@@ -30,7 +30,7 @@ export function PresetVariablePanel({
   }
 
   return (
-    <fieldset className="grid min-w-0 gap-4 sm:grid-cols-2">
+    <fieldset className="grid min-w-0 gap-4 rounded-xl border border-border/60 bg-card/40 p-4 shadow-sm backdrop-blur-sm sm:grid-cols-2">
       <legend className="sr-only">{PROMPT_CATALOG_COPY.variablePanel.label}</legend>
       {variableNames.map((name) => {
         const variable = variables[name]

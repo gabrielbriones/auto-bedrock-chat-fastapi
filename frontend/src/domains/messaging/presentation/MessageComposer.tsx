@@ -167,7 +167,7 @@ export function MessageComposer({
     // FR-SHELL-018: <main> is the only scroller, so the composer stays put by sticking to its bottom
     // edge rather than by owning a scroller of its own.
     <form onSubmit={submit} className="sticky bottom-0 z-10 shrink-0 bg-background px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
-      <div className="flex items-end gap-2 rounded-xl border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-offset-2 forced-colors:focus-within:outline-ring dark:bg-input/30">
+      <div className="mx-auto flex max-w-4xl items-end gap-2 rounded-xl border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-offset-2 forced-colors:focus-within:outline-ring dark:bg-input/30">
         <Textarea
           ref={field}
           rows={1}
@@ -182,7 +182,7 @@ export function MessageComposer({
         />
         <SendButton disabled={locked || !hasText} />
       </div>
-      <p id={hintId} className={hintVisible ? 'px-2 pt-2 text-xs text-muted-foreground' : 'sr-only'}>
+      <p id={hintId} className={hintVisible ? 'mx-auto max-w-4xl px-2 pt-2 text-xs text-muted-foreground' : 'sr-only'}>
         {availability.reason ?? COPY.hint}
       </p>
     </form>

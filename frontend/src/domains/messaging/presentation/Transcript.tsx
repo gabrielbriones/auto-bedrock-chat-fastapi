@@ -55,7 +55,7 @@ export function Transcript({ entries, welcome, presetArea, renderFeedback }: Tra
   const announcement = useThrottledValue(announcementFor(entries), ANNOUNCE_INTERVAL_MS)
 
   return (
-    <section ref={contentRef} aria-label={COPY.label} className="flex flex-1 flex-col gap-4 p-4">
+    <section ref={contentRef} aria-label={COPY.label} className="mx-auto flex w-full max-w-[58rem] flex-1 flex-col gap-4 px-3 py-4 sm:px-4">
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
