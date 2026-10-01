@@ -19,6 +19,7 @@ export type WebCrawlDraft = {
   readonly allowedDomains: string
   readonly excludePatterns: string
   readonly ingestLinkedFiles: boolean
+  readonly synthesize: boolean
   readonly headers: string
   readonly cookies: string
 }
@@ -32,6 +33,7 @@ export const EMPTY_WEB_CRAWL_DRAFT: WebCrawlDraft = Object.freeze({
   allowedDomains: '',
   excludePatterns: '',
   ingestLinkedFiles: false,
+  synthesize: false,
   headers: '',
   cookies: '',
 })
@@ -40,9 +42,10 @@ export type FileIngestDraft = {
   readonly name: string
   readonly topic: string
   readonly files: readonly File[]
+  readonly synthesize: boolean
 }
 
-export const EMPTY_FILE_INGEST_DRAFT: FileIngestDraft = Object.freeze({ name: '', topic: '', files: [] })
+export const EMPTY_FILE_INGEST_DRAFT: FileIngestDraft = Object.freeze({ name: '', topic: '', files: [], synthesize: false })
 
 export type KbSourceIssue =
   | 'name-required'
@@ -144,6 +147,7 @@ export const validateWebCrawlDraft = (draft: WebCrawlDraft): Result<WebCrawlRequ
     allowedDomains: optionalList(draft.allowedDomains),
     excludePatterns: optionalList(draft.excludePatterns),
     ingestLinkedFiles: draft.ingestLinkedFiles,
+    synthesize: draft.synthesize,
     headers: unwrapOr(headers, null),
     cookies: unwrapOr(cookies, null),
   })
@@ -162,5 +166,5 @@ export const validateFileIngestDraft = (
     return err(issues)
   }
 
-  return ok({ name, topic: optionalText(draft.topic), files: draft.files })
+  return ok({ name, topic: optionalText(draft.topic), files: draft.files, synthesize: draft.synthesize })
 }

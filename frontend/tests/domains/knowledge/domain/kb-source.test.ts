@@ -100,6 +100,7 @@ describe('validateWebCrawlDraft', () => {
       allowedDomains: null,
       excludePatterns: null,
       ingestLinkedFiles: false,
+      synthesize: false,
       headers: null,
       cookies: null,
     })
@@ -114,6 +115,7 @@ describe('validateWebCrawlDraft', () => {
         allowedDomains: 'a.example, b.example',
         excludePatterns: '/de/\n/es/',
         ingestLinkedFiles: true,
+        synthesize: true,
         headers: '{"Authorization": "Bearer x"}',
         cookies: '{"session_id": "s"}',
       }),
@@ -126,6 +128,7 @@ describe('validateWebCrawlDraft', () => {
       allowedDomains: ['a.example', 'b.example'],
       excludePatterns: ['/de/', '/es/'],
       ingestLinkedFiles: true,
+      synthesize: true,
       headers: { Authorization: 'Bearer x' },
       cookies: { session_id: 's' },
     })
@@ -142,15 +145,15 @@ describe('validateFileIngestDraft', () => {
   })
 
   it('trims the name and drops a blank topic', () => {
-    const result = validateFileIngestDraft({ name: ' notes ', topic: ' ', files: [file] })
+    const result = validateFileIngestDraft({ name: ' notes ', topic: ' ', files: [file], synthesize: false })
 
-    expect(isOk(result) && result.value).toEqual({ name: 'notes', topic: null, files: [file] })
+    expect(isOk(result) && result.value).toEqual({ name: 'notes', topic: null, files: [file], synthesize: false })
   })
 
-  it('keeps a supplied topic', () => {
-    const result = validateFileIngestDraft({ name: 'notes', topic: 'ops', files: [file] })
+  it('keeps a supplied topic and the synthesize opt-in', () => {
+    const result = validateFileIngestDraft({ name: 'notes', topic: 'ops', files: [file], synthesize: true })
 
-    expect(isOk(result) && result.value.topic).toBe('ops')
+    expect(isOk(result) && result.value).toMatchObject({ topic: 'ops', synthesize: true })
   })
 })
 

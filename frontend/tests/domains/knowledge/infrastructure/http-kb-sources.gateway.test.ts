@@ -22,6 +22,7 @@ const webRequest: WebCrawlRequest = {
   allowedDomains: null,
   excludePatterns: null,
   ingestLinkedFiles: true,
+  synthesize: true,
   headers: null,
   cookies: null,
 }
@@ -30,6 +31,7 @@ const fileRequest: FileIngestRequest = {
   name: 'notes',
   topic: 'ops',
   files: [new File(['hello'], 'notes.txt', { type: 'text/plain' })],
+  synthesize: true,
 }
 
 beforeAll(() => {
@@ -80,7 +82,7 @@ describe('HttpKbSourcesGateway web crawls', () => {
 
     const result = await gateway.startWebCrawl(webRequest)
 
-    expect(body).toEqual({ name: 'intel docs/2026', urls: ['https://example.com'], max_depth: 2, ingest_linked_files: true })
+    expect(body).toEqual({ name: 'intel docs/2026', urls: ['https://example.com'], max_depth: 2, ingest_linked_files: true, synthesize: true })
     expect(isOk(result) && result.value).toMatchObject({ runId: 'run-9', phase: 'running' })
   })
 
@@ -96,7 +98,7 @@ describe('HttpKbSourcesGateway web crawls', () => {
     const result = await gateway.overrideWebCrawl(webRequest)
 
     expect(last()).toEqual({ method: 'PUT', url: `${ADMIN}/kb/sources/web/intel%20docs%2F2026` })
-    expect(body).toEqual({ urls: ['https://example.com'], max_depth: 2, ingest_linked_files: true })
+    expect(body).toEqual({ urls: ['https://example.com'], max_depth: 2, ingest_linked_files: true, synthesize: true })
     expect(isOk(result) && result.value.runId).toBe('run-10')
   })
 
@@ -121,7 +123,7 @@ describe('HttpKbSourcesGateway web crawls', () => {
 })
 
 describe('HttpKbSourcesGateway file ingestion', () => {
-  it('POSTs multipart form data carrying name, topic and files', async () => {
+  it('POSTs multipart form data carrying name, topic, synthesize and files', async () => {
     let received: FormData | undefined
     server.use(
       http.post(`${ADMIN}/kb/sources/file`, async ({ request }) => {
@@ -134,6 +136,7 @@ describe('HttpKbSourcesGateway file ingestion', () => {
 
     expect(received?.get('name')).toBe('notes')
     expect(received?.get('topic')).toBe('ops')
+    expect(received?.get('synthesize')).toBe('true')
     expect((received?.get('files') as File).name).toBe('notes.txt')
     expect(isOk(result) && result.value.sourceType).toBe('file')
   })
@@ -151,6 +154,7 @@ describe('HttpKbSourcesGateway file ingestion', () => {
 
     expect(last()).toEqual({ method: 'PUT', url: `${ADMIN}/kb/sources/file/notes` })
     expect(received?.has('name')).toBe(false)
+    expect(received?.get('synthesize')).toBe('true')
     expect(received?.getAll('files')).toHaveLength(1)
   })
 })

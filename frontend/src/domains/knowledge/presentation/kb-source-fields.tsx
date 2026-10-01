@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from 'react'
 
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -67,6 +68,35 @@ export function DraftTextField({ label, value, onChange, disabled, hint, issue, 
         />
       )}
     </FieldFrame>
+  )
+}
+
+type DraftCheckboxProps = {
+  readonly label: string
+  readonly hint: string
+  readonly checked: boolean
+  readonly onChange: (checked: boolean) => void
+  readonly disabled: boolean
+}
+
+export function DraftCheckbox({ label, hint, checked, onChange, disabled }: DraftCheckboxProps) {
+  const id = useId()
+  const hintId = `${id}-hint`
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id={id}
+          checked={checked}
+          disabled={disabled}
+          aria-describedby={hintId}
+          onCheckedChange={(value) => onChange(value === true)}
+        />
+        <Label htmlFor={id}>{label}</Label>
+      </div>
+      <p id={hintId} className="text-sm text-muted-foreground">{hint}</p>
+    </div>
   )
 }
 

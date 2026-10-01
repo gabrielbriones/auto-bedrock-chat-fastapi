@@ -12,7 +12,7 @@ import {
   type FileIngestIssues,
   type FileIngestRequest,
 } from '@/domains/knowledge/domain/public'
-import { DraftTextField, FieldFrame } from '@/domains/knowledge/presentation/kb-source-fields'
+import { DraftCheckbox, DraftTextField, FieldFrame } from '@/domains/knowledge/presentation/kb-source-fields'
 
 const FILE = KNOWLEDGE_COPY.sources.file
 
@@ -62,6 +62,7 @@ export function FileIngestForm({ busy, submitting, onSubmit }: FileIngestFormPro
           />
         )}
       </FieldFrame>
+      <DraftCheckbox label={FILE.synthesize} hint={FILE.synthesizeHint} checked={draft.synthesize} disabled={busy} onChange={(synthesize) => patch({ synthesize })} />
       <Button type="submit" className="w-fit" disabled={busy} aria-label={submitting ? FILE.uploading : undefined}>
         {FILE.submit}
       </Button>

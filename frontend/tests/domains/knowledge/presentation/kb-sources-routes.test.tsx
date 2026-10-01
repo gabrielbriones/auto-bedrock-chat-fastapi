@@ -135,12 +135,13 @@ describe('web crawl form', () => {
     expect(gateway.startWebCrawl).not.toHaveBeenCalled()
   })
 
-  it('starts a crawl from the parsed draft, including the linked-PDF opt-in, and shows the run', async () => {
+  it('starts a crawl from the parsed draft, including the linked-PDF and synthesis opt-ins, and shows the run', async () => {
     const user = userEvent.setup()
     const { gateway, notifications } = renderAt()
 
     const form = await fillWebForm(user, 'intel-docs')
     await user.click(within(form).getByRole('checkbox', { name: SOURCES.web.ingestLinkedFiles }))
+    await user.click(within(form).getByRole('checkbox', { name: SOURCES.web.synthesize }))
     await user.click(within(form).getByRole('button', { name: SOURCES.web.submit }))
 
     await waitFor(() => expect(gateway.startWebCrawl).toHaveBeenCalledTimes(1))
@@ -153,6 +154,7 @@ describe('web crawl form', () => {
       allowedDomains: null,
       excludePatterns: null,
       ingestLinkedFiles: true,
+      synthesize: true,
       headers: null,
       cookies: null,
     })
@@ -216,11 +218,12 @@ describe('file ingestion form', () => {
       new File(['hello'], 'notes.txt', { type: 'text/plain' }),
       new File(['%PDF'], 'guide.pdf', { type: 'application/pdf' }),
     ])
+    await user.click(within(form).getByRole('checkbox', { name: SOURCES.file.synthesize }))
     await user.click(within(form).getByRole('button', { name: SOURCES.file.submit }))
 
     await waitFor(() => expect(gateway.startFileIngest).toHaveBeenCalledTimes(1))
     const request = jest.mocked(gateway.startFileIngest).mock.calls[0]?.[0]
-    expect(request).toMatchObject({ name: 'notes', topic: null })
+    expect(request).toMatchObject({ name: 'notes', topic: null, synthesize: true })
     expect(request?.files.map((file) => file.name)).toEqual(['notes.txt', 'guide.pdf'])
     expect(notifications.messages()).toContain(SOURCES.file.started('run-1'))
     await waitFor(() => expect((within(form).getByLabelText(SOURCES.file.files) as HTMLInputElement).files).toHaveLength(0))

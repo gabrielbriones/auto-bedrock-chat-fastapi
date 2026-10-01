@@ -64,6 +64,7 @@ export type WebCrawlRequest = {
   readonly allowedDomains: readonly string[] | null
   readonly excludePatterns: readonly string[] | null
   readonly ingestLinkedFiles: boolean
+  readonly synthesize: boolean
   readonly headers: Readonly<Record<string, string>> | null
   readonly cookies: Readonly<Record<string, string>> | null
 }
@@ -72,4 +73,5 @@ export type FileIngestRequest = {
   readonly name: string
   readonly topic: string | null
   readonly files: readonly File[]
+  readonly synthesize: boolean
 }

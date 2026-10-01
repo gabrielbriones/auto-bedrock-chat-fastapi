@@ -19,6 +19,7 @@ const request: WebCrawlRequest = {
   allowedDomains: ['example.com'],
   excludePatterns: ['/de/'],
   ingestLinkedFiles: true,
+  synthesize: true,
   headers: { Authorization: 'Bearer x' },
   cookies: { session_id: 's' },
 }
@@ -104,13 +105,14 @@ describe('web crawl body serialisation', () => {
       allowed_domains: ['example.com'],
       exclude_patterns: ['/de/'],
       ingest_linked_files: true,
+      synthesize: true,
       headers: { Authorization: 'Bearer x' },
       cookies: { session_id: 's' },
     })
     expect(fromWebCrawlRequest(request, false)).not.toHaveProperty('name')
   })
 
-  it('omits absent optionals so server defaults apply, including an unchecked linked-files flag', () => {
+  it('omits absent optionals so server defaults apply, including unchecked opt-in flags', () => {
     const minimal: WebCrawlRequest = {
       ...request,
       topic: null,
@@ -119,6 +121,7 @@ describe('web crawl body serialisation', () => {
       allowedDomains: null,
       excludePatterns: null,
       ingestLinkedFiles: false,
+      synthesize: false,
       headers: null,
       cookies: null,
     }
@@ -129,21 +132,23 @@ describe('web crawl body serialisation', () => {
 
 describe('file ingestion form data', () => {
   const files = [new File(['a'], 'a.txt', { type: 'text/plain' }), new File(['%PDF'], 'b.pdf', { type: 'application/pdf' })]
-  const ingest: FileIngestRequest = { name: 'notes', topic: 'ops', files }
+  const ingest: FileIngestRequest = { name: 'notes', topic: 'ops', files, synthesize: true }
 
-  it('includes name and topic for POST and every file under `files`', () => {
+  it('includes name, topic and synthesize for POST and every file under `files`', () => {
     const formData = toFileIngestFormData(ingest, true)
 
     expect(formData.get('name')).toBe('notes')
     expect(formData.get('topic')).toBe('ops')
+    expect(formData.get('synthesize')).toBe('true')
     expect(formData.getAll('files').map((entry) => (entry as File).name)).toEqual(['a.txt', 'b.pdf'])
   })
 
-  it('leaves name out for PUT and topic out when absent', () => {
-    const formData = toFileIngestFormData({ ...ingest, topic: null }, false)
+  it('leaves name out for PUT and topic and synthesize out when absent', () => {
+    const formData = toFileIngestFormData({ ...ingest, topic: null, synthesize: false }, false)
 
     expect(formData.has('name')).toBe(false)
     expect(formData.has('topic')).toBe(false)
+    expect(formData.has('synthesize')).toBe(false)
     expect(formData.getAll('files')).toHaveLength(2)
   })
 })
