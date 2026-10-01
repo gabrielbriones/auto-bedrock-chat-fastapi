@@ -92,7 +92,7 @@ describe('Phase 10 forced-colors smoke test', function () {
   })
 
   it('keeps the chat composer usable and axe-clean under forced colors', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     await driver.wait(until.elementLocated(By.css('textarea[aria-label="Message"]:not([disabled])')), 15_000)
     await enableForcedColors(driver)
 
@@ -103,7 +103,7 @@ describe('Phase 10 forced-colors smoke test', function () {
   })
 
   it('keeps the knowledge-base credibility badges legible under forced colors', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/dashboard/kb-browser`)
+    await driver.get(`${server.origin}/chat/dashboard/kb-browser`)
     await driver.wait(until.elementLocated(By.css('main tbody tr')), 15_000)
     await enableForcedColors(driver)
 

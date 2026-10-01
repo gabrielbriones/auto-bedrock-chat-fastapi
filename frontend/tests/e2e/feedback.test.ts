@@ -48,7 +48,7 @@ describe('E9 — feedback', function () {
     )
 
   const sendFirstTurn = async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     await byText('GEMM tuning')
 
     const composer = await driver.findElement(By.css('textarea'))
@@ -166,11 +166,11 @@ describe('E9 — feedback', function () {
 
     // FR-FB-004a: switching away and back leaves the rating in place, never a blank control.
     await (await driver.findElement(By.xpath("//button[normalize-space()='Stream triad']"))).click()
-    await waitForPath('/bedrock-chat/ui/c/conv-2')
+    await waitForPath('/chat/ui/c/conv-2')
     await (
       await driver.findElement(By.xpath("//button[normalize-space()='Job 42 analysis']"))
     ).click()
-    await waitForPath('/bedrock-chat/ui/c/conv-3')
+    await waitForPath('/chat/ui/c/conv-3')
 
     await byText('✓ Feedback submitted')
     expect(await driver.findElements(ratingButton('Rate response unhelpful'))).toHaveLength(0)

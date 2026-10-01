@@ -5,13 +5,17 @@ import type { HttpClient } from '@/shared/http/http-client';
 import { toChatBootstrap, type BootstrapParseError } from '@/app/bootstrap/bootstrap-config.dto';
 import type { ChatBootstrap } from '@/app/bootstrap/chat-bootstrap';
 
-const DEFAULT_CHAT_BASE = '/bedrock-chat';
+const DEFAULT_CHAT_BASE = '/chat';
 
 export type BootstrapLoadError = Problem | BootstrapParseError;
 
 // STD-001 §9: the only build-time value; every other path comes from the resolved bootstrap.
 // Requests stay same-origin (no absolute backend origin is ever configured client-side).
 export const chatBase = (): string => {
+  const served = typeof document === 'undefined'
+    ? null
+    : document.querySelector<HTMLMetaElement>('meta[name="autochat-chat-endpoint"]')?.content;
+  if (served) return served;
   const configured = import.meta.env.VITE_CHAT_BASE as string | undefined;
   return configured !== undefined && configured.length > 0 ? configured : DEFAULT_CHAT_BASE;
 };

@@ -16,7 +16,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-const ADMIN = 'http://localhost/bedrock-chat/admin'
+const ADMIN = 'http://localhost/chat/admin'
 
 const fetchJson = async (path: string, init?: RequestInit, status = 200): Promise<unknown> => {
   const response = await fetch(`${ADMIN}${path}`, init)

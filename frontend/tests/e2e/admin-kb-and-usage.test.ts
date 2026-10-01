@@ -85,23 +85,23 @@ const startAdminTestServer = async (): Promise<AdminTestServer> => {
   const server = createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
     const requestPath = requestUrl.pathname
-    const adminPath = requestPath.startsWith('/bedrock-chat/admin')
-      ? requestPath.slice('/bedrock-chat/admin'.length)
+    const adminPath = requestPath.startsWith('/chat/admin')
+      ? requestPath.slice('/chat/admin'.length)
       : null
 
-    if (requestPath === '/bedrock-chat/config') {
+    if (requestPath === '/chat/config') {
       const address = server.address()
       const port = address !== null && typeof address !== 'string' ? address.port : 0
       sendJson(response, {
         ...baseConfig,
         authEnabled: false,
         adminEnabled: true,
-        websocketUrl: `ws://127.0.0.1:${port}/bedrock-chat/ws`,
+        websocketUrl: `ws://127.0.0.1:${port}/chat/ws`,
       })
       return
     }
 
-    if (requestPath === '/bedrock-chat/admin/_capabilities') {
+    if (requestPath === '/chat/admin/_capabilities') {
       sendJson(response, {
         is_admin: true,
         anonymous: false,
@@ -172,8 +172,8 @@ const startAdminTestServer = async (): Promise<AdminTestServer> => {
       return
     }
 
-    const relativePath = requestPath.startsWith('/bedrock-chat/ui/assets/')
-      ? requestPath.slice('/bedrock-chat/ui/'.length)
+    const relativePath = requestPath.startsWith('/chat/ui/assets/')
+      ? requestPath.slice('/chat/ui/'.length)
       : 'index.html'
 
     try {
@@ -257,7 +257,7 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
   })
 
   it('E14 — filters flagged KB documents and confirms the sparse re-embed patch', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/dashboard/kb-browser`)
+    await driver.get(`${server.origin}/chat/dashboard/kb-browser`)
     await byText('Knowledge base')
 
     await (await driver.findElement(By.css('[role="checkbox"]'))).click()
@@ -301,7 +301,7 @@ describe('E14/E15 — admin knowledge base and usage analytics', function () {
   })
 
   it('E15 — validates a usage range, restores it from the URL, and paginates by user', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/dashboard/token-usages`)
+    await driver.get(`${server.origin}/chat/dashboard/token-usages`)
     await byText('Usage')
 
     await setDate('Start date', '2026-05-31')

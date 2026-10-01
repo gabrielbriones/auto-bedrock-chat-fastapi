@@ -72,6 +72,11 @@ class TestAutochatEnvVarPrefix:
         config = _load_config(AUTOCHAT_UI_ENDPOINT="/custom/chat/ui")
         assert config.sso_allowed_return_prefixes == ["/custom/chat/ui"]
 
+    @pytest.mark.parametrize("endpoint", ["/portal", "portal/ui", "//external/ui"])
+    def test_ui_endpoint_must_use_ui_route(self, endpoint):
+        with pytest.raises(ValidationError, match="ui_endpoint must be an absolute path ending in /ui"):
+            _load_config(AUTOCHAT_UI_ENDPOINT=endpoint)
+
     def test_ui_dist_dir_defaults_to_none(self):
         config = _load_config()
         assert config.ui_dist_dir is None

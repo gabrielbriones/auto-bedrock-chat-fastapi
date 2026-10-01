@@ -31,21 +31,21 @@ const renderAt = (path: string, overrides: Partial<Container> = {}) => {
 describe('navigating the route tree', () => {
   // FR-CONV-011: the same chat view, addressed by conversation id.
   it('renders a conversation from its path parameter', async () => {
-    const { router } = renderAt('/bedrock-chat/ui/c/abc-123')
+    const { router } = renderAt('/chat/ui/c/abc-123')
 
     expect(await findComposer()).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/ui/c/abc-123')
   })
 
   it('sends the bare admin path to the review queue', async () => {
-    const { router } = renderAt('/bedrock-chat/dashboard')
+    const { router } = renderAt('/chat/dashboard')
 
     expect(await screen.findByRole('heading', { name: 'Feedback queue' })).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/dashboard/feedback')
   })
 
   it('renders a not-found state with a way back for an unknown address', async () => {
-    renderAt('/bedrock-chat/ui/nope')
+    renderAt('/chat/ui/nope')
 
     expect(await screen.findByText(SHELL.notFound.title)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: SHELL.notFound.action })).toBeInTheDocument()
@@ -54,7 +54,7 @@ describe('navigating the route tree', () => {
 
 describe('admin capability guard', () => {
   it('renders access denied without rendering the admin subtree for a non-admin', async () => {
-    renderAt('/bedrock-chat/dashboard/feedback', {
+    renderAt('/chat/dashboard/feedback', {
       capabilityProbe: {
         probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
@@ -73,7 +73,7 @@ describe('admin capability guard', () => {
       // The admin nav preloads its sections on render, and each preload re-runs the guard.
       .mockResolvedValue(admin)
     const invalidate = jest.fn()
-    renderAt('/bedrock-chat/dashboard/feedback', { capabilityProbe: { probe, invalidate } })
+    renderAt('/chat/dashboard/feedback', { capabilityProbe: { probe, invalidate } })
 
     fireEvent.click(await screen.findByRole('button', { name: IAM_COPY.accessDenied.retry }))
 
@@ -83,7 +83,7 @@ describe('admin capability guard', () => {
   })
 
   it('hides and rejects Usage when token tracking is unavailable', async () => {
-    renderAt('/bedrock-chat/dashboard/token-usages', {
+    renderAt('/chat/dashboard/token-usages', {
       capabilityProbe: {
         probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
@@ -95,7 +95,7 @@ describe('admin capability guard', () => {
   })
 
   it('hides and rejects KB sources when source ingestion is not configured', async () => {
-    renderAt('/bedrock-chat/dashboard/kb-sources', {
+    renderAt('/chat/dashboard/kb-sources', {
       capabilityProbe: {
         probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
@@ -110,16 +110,16 @@ describe('admin capability guard', () => {
 
 describe('the shell around the routes', () => {
   it('shows an admin dashboard button in the chat header for an admin', async () => {
-    renderAt('/bedrock-chat/ui')
+    renderAt('/chat/ui')
 
     expect(await screen.findByRole('link', { name: SHELL.admin.openDashboard })).toHaveAttribute(
       'href',
-      '/bedrock-chat/dashboard',
+      '/chat/dashboard',
     )
   })
 
   it('hides the admin dashboard button in the chat header for a non-admin', async () => {
-    renderAt('/bedrock-chat/ui', {
+    renderAt('/chat/ui', {
       capabilityProbe: {
         probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
         invalidate: () => {},
@@ -132,7 +132,7 @@ describe('the shell around the routes', () => {
   })
 
   it('wraps admin routes in the admin layout with its section navigation', async () => {
-    renderAt('/bedrock-chat/dashboard/token-usages')
+    renderAt('/chat/dashboard/token-usages')
 
     await screen.findByRole('heading', { name: SHELL.admin.usage })
 
@@ -143,7 +143,7 @@ describe('the shell around the routes', () => {
   })
 
   it('titles the chat route with the app title from the bootstrap payload', async () => {
-    renderAt('/bedrock-chat/ui')
+    renderAt('/chat/ui')
 
     await findComposer()
 
@@ -151,7 +151,7 @@ describe('the shell around the routes', () => {
   })
 
   it('titles an admin route with its view name', async () => {
-    renderAt('/bedrock-chat/dashboard/kb-browser')
+    renderAt('/chat/dashboard/kb-browser')
 
     await screen.findByRole('heading', { name: SHELL.admin.knowledge })
 
@@ -159,7 +159,7 @@ describe('the shell around the routes', () => {
   })
 
   it('shows a dismissible dev-mode warning across admin navigation', async () => {
-    const { router } = renderAt('/bedrock-chat/dashboard/feedback', {
+    const { router } = renderAt('/chat/dashboard/feedback', {
       capabilityProbe: {
         probe: async () => ({ isAdmin: true, isAnonymousAdmin: true, tokenUsageEnabled: true, kbSourceIngestionEnabled: true }),
         invalidate: () => {},

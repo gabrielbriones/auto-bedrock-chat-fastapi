@@ -229,7 +229,7 @@ describe('the identity store', () => {
   it('pre-selects a kind from ?auth_method without redirecting', () => {
     const { store, ssoGateway } = setup()
 
-    store.applyDeepLink('bearer_token', '/bedrock-chat/ui/')
+    store.applyDeepLink('bearer_token', '/chat/ui/')
 
     expect(store.getSnapshot().preselectedKind).toBe('bearer_token')
     expect(ssoGateway.beginLogin).not.toHaveBeenCalled()
@@ -238,16 +238,16 @@ describe('the identity store', () => {
   it('auto-redirects for ?auth_method=sso, preserving the deep link', () => {
     const { store, ssoGateway } = setup()
 
-    store.applyDeepLink('sso', '/bedrock-chat/ui/?prompt=workload-analysis&JOB_ID=123')
+    store.applyDeepLink('sso', '/chat/ui/?prompt=workload-analysis&JOB_ID=123')
 
-    expect(ssoGateway.beginLogin).toHaveBeenCalledWith('/bedrock-chat/ui/?prompt=workload-analysis&JOB_ID=123')
+    expect(ssoGateway.beginLogin).toHaveBeenCalledWith('/chat/ui/?prompt=workload-analysis&JOB_ID=123')
   })
 
   it('ignores an unsupported or unknown auth_method', () => {
     const { store, ssoGateway } = setup({ supportedAuthTypes: ['bearer_token'], ssoEnabled: false })
 
-    store.applyDeepLink('sso', '/bedrock-chat/ui/')
-    store.applyDeepLink('nonsense', '/bedrock-chat/ui/')
+    store.applyDeepLink('sso', '/chat/ui/')
+    store.applyDeepLink('nonsense', '/chat/ui/')
 
     expect(store.getSnapshot().preselectedKind).toBeNull()
     expect(ssoGateway.beginLogin).not.toHaveBeenCalled()
@@ -256,7 +256,7 @@ describe('the identity store', () => {
   it('ignores a deep link once an SSO cookie has already authenticated the session', () => {
     const { store, ssoGateway } = setup({}, { ssoAuthenticated: true })
 
-    store.applyDeepLink('sso', '/bedrock-chat/ui/')
+    store.applyDeepLink('sso', '/chat/ui/')
 
     expect(ssoGateway.beginLogin).not.toHaveBeenCalled()
   })
@@ -273,7 +273,7 @@ describe('retrying a rejected credential', () => {
       clock: new SystemClock(),
       connectivity: { status: () => 'online', subscribe: () => () => {} },
       socketFactory,
-      url: 'wss://analyzer.test/bedrock-chat/ws',
+      url: 'wss://analyzer.test/chat/ws',
     })
     const messageBus = new MessageBus(new ConsoleLogger())
     client.onFrame((frame) => {

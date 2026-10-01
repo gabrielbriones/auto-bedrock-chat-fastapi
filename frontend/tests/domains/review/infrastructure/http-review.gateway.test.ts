@@ -12,7 +12,7 @@ import type { ReviewQuery } from '@/domains/review/application/ports'
 import { server } from '../../../msw/server'
 import { feedbackDeleteConflictHandler, synthesisRunningHandler } from '../../../msw/handlers/review'
 
-const ADMIN = 'http://localhost/bedrock-chat/admin'
+const ADMIN = 'http://localhost/chat/admin'
 
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
 

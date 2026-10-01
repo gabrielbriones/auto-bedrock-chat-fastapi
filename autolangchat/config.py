@@ -451,9 +451,9 @@ class ChatConfig(BaseSettings):
     )
 
     ui_endpoint: str = Field(
-        default="/bedrock-chat/ui",
+        default="/chat/ui",
         alias="AUTOCHAT_UI_ENDPOINT",
-        description="Site-root mount path for the chat UI (the React SPA build, BC-002)",
+        description="Site-root mount path for the React SPA; must end in /ui (chat and dashboard are sibling routes)",
     )
 
     ui_dist_dir: Optional[str] = Field(
@@ -1402,7 +1402,16 @@ class ChatConfig(BaseSettings):
     @field_validator("sso_allowed_return_prefixes")
     @classmethod
     def default_sso_allowed_return_prefixes(cls, v, info):
-        return v or [info.data["ui_endpoint"]]
+        # If ui_endpoint failed validation, let Pydantic report that error
+        # instead of masking it with a KeyError from this dependent default.
+        return v or ([info.data["ui_endpoint"]] if "ui_endpoint" in info.data else [])
+
+    @field_validator("ui_endpoint")
+    @classmethod
+    def validate_ui_endpoint(cls, v: str) -> str:
+        if not v.startswith("/") or not v.rstrip("/").endswith("/ui") or "//" in v:
+            raise ValueError("ui_endpoint must be an absolute path ending in /ui (e.g. /portal/ui)")
+        return v
 
     @field_validator("temperature")
     @classmethod

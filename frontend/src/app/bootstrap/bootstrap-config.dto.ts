@@ -37,6 +37,7 @@ const availableModelGroupSchema = z.object({
 
 const bootstrapConfigSchema = z.object({
   websocketUrl: z.string(),
+  uiEndpoint: z.string().regex(/^\/.*\/ui\/?$/, 'UI endpoint must end in /ui').default('/chat/ui'),
   authEnabled: z.boolean(),
   requireAuth: z.boolean(),
   supportedAuthTypes: z.array(z.string()),

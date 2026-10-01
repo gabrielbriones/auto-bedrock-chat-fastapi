@@ -134,19 +134,19 @@ describe('E5 — conversation lifecycle', function () {
   })
 
   it('creates, sends, renames, switches and deletes, keeping the URL in step', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     await byText('GEMM tuning')
 
     // FR-CONV-002: a new conversation has no id yet, so it lives at /ui.
     await (await driver.findElement(By.xpath("//button[normalize-space()='New chat']"))).click()
     expect(server.sentOf('conversation_new')).toHaveLength(1)
-    expect(await pathname()).toBe('/bedrock-chat/ui')
+    expect(await pathname()).toBe('/chat/ui')
 
     // FR-CONV-010 / FR-CONV-011: the id the first turn produces becomes the address.
     const composer = await driver.findElement(By.css('textarea'))
     await composer.sendKeys('analyse job 42', Key.ENTER)
     await byText('Here is the analysis.')
-    await driver.wait(async () => (await pathname()) === '/bedrock-chat/ui/c/conv-3', 10_000)
+    await driver.wait(async () => (await pathname()) === '/chat/ui/c/conv-3', 10_000)
 
     // FR-CONV-004 / FIX-15: a styled dialog, never window.prompt.
     // The options button is only revealed while its row is hovered (or focused) on a device with
@@ -165,7 +165,7 @@ describe('E5 — conversation lifecycle', function () {
 
     // FR-CONV-003 / FR-CONV-011.
     await (await driver.findElement(By.xpath("//button[normalize-space()='Stream triad']"))).click()
-    await driver.wait(async () => (await pathname()) === '/bedrock-chat/ui/c/conv-2', 10_000)
+    await driver.wait(async () => (await pathname()) === '/chat/ui/c/conv-2', 10_000)
     await byText('The measured bandwidth was 118 GB/s.')
     expect(await driver.findElements(By.xpath("//article[normalize-space(.)='Here is the analysis.']")))
       .toHaveLength(0)
@@ -194,7 +194,7 @@ describe('E5 — conversation lifecycle', function () {
       title: 'GEMM tuning settled',
     })
     await byText('GEMM tuning settled')
-    expect(await pathname()).toBe('/bedrock-chat/ui/c/conv-2')
+    expect(await pathname()).toBe('/chat/ui/c/conv-2')
     expect(
       await driver.findElements(
         By.xpath("//article[normalize-space(.)='Stale response from the previous conversation.']"),

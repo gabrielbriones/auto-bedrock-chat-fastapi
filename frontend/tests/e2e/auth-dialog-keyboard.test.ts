@@ -43,20 +43,20 @@ describe('Auth dialog keyboard journey', function () {
     server = createServer(async (request, response) => {
       const requestPath = new URL(request.url ?? '/', 'http://localhost').pathname
 
-      if (requestPath === '/bedrock-chat/config') {
+      if (requestPath === '/chat/config') {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ ...baseConfig, requireAuth }))
         return
       }
 
-      if (requestPath === '/bedrock-chat/admin/_capabilities') {
+      if (requestPath === '/chat/admin/_capabilities') {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ is_admin: false, anonymous: false, token_usage_enabled: false, kb_source_ingestion_enabled: false }))
         return
       }
 
-      const relativePath = requestPath.startsWith('/bedrock-chat/ui/assets/')
-        ? requestPath.slice('/bedrock-chat/ui/'.length)
+      const relativePath = requestPath.startsWith('/chat/ui/assets/')
+        ? requestPath.slice('/chat/ui/'.length)
         : 'index.html'
 
       try {
@@ -92,7 +92,7 @@ describe('Auth dialog keyboard journey', function () {
 
   const openDialog = async (authRequired = true) => {
     requireAuth = authRequired
-    await driver.get(`${origin}/bedrock-chat/ui/`)
+    await driver.get(`${origin}/chat/ui/`)
     await driver.wait(until.elementLocated(By.css('[role="dialog"]')), 15_000)
     // The route tree is code-split, so the page behind the dialog mounts a beat later. Waiting for
     // it is the point of the exercise: content that arrives after the dialog opened must be

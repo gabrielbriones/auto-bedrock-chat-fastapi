@@ -33,7 +33,7 @@ app = FastAPI(
 # Alternative: Create app with modern lifespan (uncomment to use)
 # from autolangchat import create_fastapi_with_autolangchat
 # app, plugin = create_fastapi_with_autolangchat(
-# Note: Plugin initialization moved to if __name__ == "__main__" to avoid repeated setup on module import#     title="Example E-commerce API",
+#     title="Example E-commerce API",
 #     description="A sample e-commerce API with AI chat assistance",
 #     version="1.0.0"
 # )
@@ -554,37 +554,31 @@ async def analytics_summary():
     }
 
 
-# Add Bedrock chat capabilities using .env configuration
-# Most configuration comes from .env file
-# We override the list fields here due to Pydantic v2 limitations with
-# .env list parsing
-autolangchat_plugin = add_autolangchat(
-    app,
-    # These list fields need to be set in code (Pydantic v2 limitation)
-    allowed_paths=[
-        "/products",
-        "/users",
-        "/orders",
-        "/search",
-        "/analytics",
-        "/health",
-    ],
-    excluded_paths=["/docs", "/redoc", "/openapi.json", "/chat", "/chat/ws", "/chat/ui"],
-    # All other settings (model_id, temperature, endpoints, etc.) come from
-    # .env
-)
+# Uvicorn's reload child may execute the script as __mp_main__ before importing
+# app_plugin. Register routes only on the app used by the server worker.
+if __name__ == "app_plugin":
+    # Most settings come from .env; list fields are supplied in code.
+    autolangchat_plugin = add_autolangchat(
+        app,
+        enable_tool_auth=False,
+        allowed_paths=[
+            "/products",
+            "/users",
+            "/orders",
+            "/search",
+            "/analytics",
+            "/health",
+        ],
+        excluded_paths=["/docs", "/redoc", "/openapi.json", "/chat", "/chat/ws", "/chat/ui"],
+    )
 
 if __name__ == "__main__":
     import uvicorn
 
-    # Initialize plugin now (not at module level to avoid re-initialization on reload)
-    autolangchat_plugin = add_autolangchat(app)
-
     print("🚀 Starting Example E-commerce API with AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")
-    print("💬 AI Chat Interface: http://localhost:8000/chat")
+    print("💬 AI Chat Interface (Vite dev server): http://localhost:3000/chat/ui/")
     print("🔗 WebSocket Chat: ws://localhost:8000/chat/ws")
     print("📊 Chat Health: http://localhost:8000/chat/health")
 
-    # Pass app object directly (not as string) to avoid re-importing the module
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run("app_plugin:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

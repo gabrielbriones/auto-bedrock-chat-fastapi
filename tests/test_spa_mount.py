@@ -4,7 +4,7 @@ Builds a throwaway Vite-shaped ``dist/`` on disk rather than depending on a
 real ``npm run build`` so the serving contract is checked in isolation:
 fallback routing, cache headers, no shadowing of pre-existing routes, and the
 same-origin cookie + WebSocket behaviour a page loaded at ``ui_endpoint``
-(``/bedrock-chat/ui`` by default) relies on.
+(``/chat/ui`` by default) relies on.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from autolangchat import spa
 from autolangchat.config import ChatConfig
 from autolangchat.spa import IMMUTABLE_CACHE, NO_STORE, dashboard_path, default_dist_dir, mount_spa, resolve_dist_dir
 
-INDEX_HTML = '<!doctype html><html><head><script type="module" src="/bedrock-chat/ui/assets/index-abc123.js"></script></head></html>'
+INDEX_HTML = '<!doctype html><html><head><script type="module" src="./assets/index-abc123.js"></script></head></html>'
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def _config(**overrides):
 def _app_with_spa(dist_dir, **config_overrides):
     app = FastAPI()
 
-    @app.get("/bedrock-chat/health")
+    @app.get("/chat/health")
     async def health():
         return {"status": "ok"}
 
@@ -47,7 +47,7 @@ def _app_with_spa(dist_dir, **config_overrides):
     async def jobs():
         return {"jobs": []}
 
-    @app.websocket("/bedrock-chat/ws")
+    @app.websocket("/chat/ws")
     async def ws(websocket: WebSocket):
         await websocket.accept()
         await websocket.send_json({"cookie": websocket.cookies.get("sso_session_token")})
@@ -81,7 +81,7 @@ def test_resolve_dist_dir_honours_override(tmp_path):
 
 
 def test_dashboard_path_never_uses_admin_segment():
-    assert dashboard_path("/bedrock-chat/ui") == "/bedrock-chat/dashboard"
+    assert dashboard_path("/chat/ui") == "/chat/dashboard"
     assert dashboard_path("/custom/ui/") == "/custom/dashboard"
     assert dashboard_path("/app/") == "/app/dashboard"
 
@@ -91,32 +91,34 @@ def test_ui_root_serves_index_without_redirect(dist_dir):
     assert served == dist_dir
     client = TestClient(app)
 
-    resp = client.get("/bedrock-chat/ui", follow_redirects=False)
+    resp = client.get("/chat/ui", follow_redirects=False)
 
     assert resp.status_code == 200
-    assert resp.text == INDEX_HTML
+    assert '<base href="/chat/ui/">' in resp.text
+    assert '<meta name="autochat-chat-endpoint" content="/chat">' in resp.text
+    assert "./assets/index-abc123.js" in resp.text
     assert resp.headers["cache-control"] == NO_STORE
-    assert client.get("/bedrock-chat/ui/", follow_redirects=False).status_code == 200
-    assert client.get("/bedrock-chat/dashboard", follow_redirects=False).text == INDEX_HTML
+    assert client.get("/chat/ui/", follow_redirects=False).status_code == 200
+    assert client.get("/chat/dashboard", follow_redirects=False).text == resp.text
 
 
 def test_deep_link_falls_back_to_index(dist_dir):
     app, _ = _app_with_spa(dist_dir)
     client = TestClient(app)
 
-    resp = client.get("/bedrock-chat/dashboard/kb-browser?flagged=true")
+    resp = client.get("/chat/dashboard/kb-browser?flagged=true")
 
     assert resp.status_code == 200
-    assert resp.text == INDEX_HTML
+    assert '<base href="/chat/ui/">' in resp.text
     assert resp.headers["cache-control"] == NO_STORE
-    assert client.get("/bedrock-chat/ui/c/abc123").text == INDEX_HTML
+    assert client.get("/chat/ui/c/abc123").text == resp.text
 
 
 def test_hashed_assets_are_immutable_cached(dist_dir):
     app, _ = _app_with_spa(dist_dir)
     client = TestClient(app)
 
-    resp = client.get("/bedrock-chat/ui/assets/index-abc123.js")
+    resp = client.get("/chat/ui/assets/index-abc123.js")
 
     assert resp.status_code == 200
     assert resp.text == "console.log('spa')"
@@ -127,7 +129,7 @@ def test_non_hashed_public_files_are_not_immutable(dist_dir):
     app, _ = _app_with_spa(dist_dir)
     client = TestClient(app)
 
-    resp = client.get("/bedrock-chat/ui/favicon.svg")
+    resp = client.get("/chat/ui/favicon.svg")
 
     assert resp.status_code == 200
     assert resp.headers["cache-control"] == NO_STORE
@@ -138,26 +140,26 @@ def test_missing_file_like_path_is_404_not_index(dist_dir):
     app, _ = _app_with_spa(dist_dir)
     client = TestClient(app)
 
-    assert client.get("/bedrock-chat/ui/assets/index-stale.js").status_code == 404
-    assert client.get("/bedrock-chat/ui/robots.txt").status_code == 404
-    assert client.get("/bedrock-chat/dashboard/missing.js").status_code == 404
+    assert client.get("/chat/ui/assets/index-stale.js").status_code == 404
+    assert client.get("/chat/ui/robots.txt").status_code == 404
+    assert client.get("/chat/dashboard/missing.js").status_code == 404
 
 
 def test_pre_existing_routes_are_not_shadowed(dist_dir):
     app, _ = _app_with_spa(dist_dir)
     client = TestClient(app)
 
-    assert client.get("/bedrock-chat/health").json() == {"status": "ok"}
+    assert client.get("/chat/health").json() == {"status": "ok"}
     assert client.get("/api/v1/jobs").json() == {"jobs": []}
     # Nothing outside the mount prefix falls back to the SPA.
     assert client.get("/nope").status_code == 404
-    assert client.get("/bedrock-chat/uix").status_code == 404
+    assert client.get("/chat/uix").status_code == 404
 
 
 def test_route_table_only_gains_spa_entries(dist_dir):
     app = FastAPI()
 
-    @app.get("/bedrock-chat/health")
+    @app.get("/chat/health")
     async def health():
         return {"status": "ok"}
 
@@ -167,10 +169,10 @@ def test_route_table_only_gains_spa_entries(dist_dir):
 
     assert after[: len(before)] == before
     assert [p for _, p in after[len(before) :]] == [
-        "/bedrock-chat/ui",
-        "/bedrock-chat/ui",
-        "/bedrock-chat/dashboard",
-        "/bedrock-chat/dashboard",
+        "/chat/ui",
+        "/chat/ui",
+        "/chat/dashboard",
+        "/chat/dashboard",
     ]
     assert [t for t, _ in after[len(before) :]] == ["APIRoute", "Mount", "APIRoute", "Mount"]
 
@@ -178,16 +180,16 @@ def test_route_table_only_gains_spa_entries(dist_dir):
 def test_warns_when_existing_route_lives_under_spa_prefix(dist_dir, caplog):
     app = FastAPI()
 
-    @app.get("/bedrock-chat/ui/legacy")
+    @app.get("/chat/ui/legacy")
     async def legacy():
         return {"legacy": True}
 
     with caplog.at_level(logging.WARNING, logger="autolangchat.spa"):
         mount_spa(app, _config(ui_dist_dir=str(dist_dir)))
 
-    assert "/bedrock-chat/ui/legacy" in caplog.text
+    assert "/chat/ui/legacy" in caplog.text
     # Registration order wins: the pre-existing route keeps resolving.
-    assert TestClient(app).get("/bedrock-chat/ui/legacy").json() == {"legacy": True}
+    assert TestClient(app).get("/chat/ui/legacy").json() == {"legacy": True}
 
 
 def test_websocket_upgrade_from_ui_page_carries_cookie(dist_dir):
@@ -195,19 +197,23 @@ def test_websocket_upgrade_from_ui_page_carries_cookie(dist_dir):
     client = TestClient(app)
     client.cookies.set("sso_session_token", "valid:sess-1")
 
-    assert client.get("/bedrock-chat/ui").status_code == 200
-    with client.websocket_connect("/bedrock-chat/ws") as websocket:
+    assert client.get("/chat/ui").status_code == 200
+    with client.websocket_connect("/chat/ws") as websocket:
         assert websocket.receive_json() == {"cookie": "valid:sess-1"}
 
 
 def test_custom_ui_endpoint(dist_dir):
-    app, _ = _app_with_spa(dist_dir, ui_endpoint="/app/")
+    app, _ = _app_with_spa(dist_dir, ui_endpoint="/app/ui", chat_endpoint="/internal/chat")
     client = TestClient(app)
 
-    assert client.get("/app", follow_redirects=False).status_code == 200
-    assert client.get("/app/admin").text == INDEX_HTML
-    assert client.get("/app/dashboard").text == INDEX_HTML
-    assert client.get("/bedrock-chat/ui").status_code == 404
+    resp = client.get("/app/ui", follow_redirects=False)
+    assert resp.status_code == 200
+    assert '<base href="/app/ui/">' in resp.text
+    assert '<meta name="autochat-chat-endpoint" content="/internal/chat">' in resp.text
+    assert client.get("/app/ui/assets/index-abc123.js").status_code == 200
+    assert client.get("/app/ui/c/abc123").text == resp.text
+    assert client.get("/app/dashboard/kb-browser").text == resp.text
+    assert client.get("/chat/ui").status_code == 404
 
 
 def test_missing_build_registers_503_placeholder(tmp_path, caplog):
@@ -218,7 +224,7 @@ def test_missing_build_registers_503_placeholder(tmp_path, caplog):
 
     assert served is None
     assert "SPA build not found" in caplog.text
-    for path in ("/bedrock-chat/ui", "/bedrock-chat/dashboard/kb-browser"):
+    for path in ("/chat/ui", "/chat/dashboard/kb-browser"):
         resp = client.get(path)
         assert resp.status_code == 503
         assert "npm run build" in resp.text

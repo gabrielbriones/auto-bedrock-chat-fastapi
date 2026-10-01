@@ -12,9 +12,10 @@ describe('toChatBootstrap', () => {
     expect(isOk(result)).toBe(true);
     if (isOk(result)) {
       expect(result.value).toMatchObject({
-        websocketUrl: `${apiUrl.replace(/^http/, 'ws')}/bedrock-chat/ws`,
+        websocketUrl: `${apiUrl.replace(/^http/, 'ws')}/chat/ws`,
+        uiEndpoint: '/chat/ui',
         authEnabled: true,
-        adminPrefix: '/bedrock-chat/admin',
+        adminPrefix: '/chat/admin',
         uiTitle: 'Workload Analyzer',
       });
     }

@@ -15,7 +15,7 @@ export type CreateAppRouterOptions = {
 export const createAppRouter = (container: Container, options: CreateAppRouterOptions = {}) =>
   createRouter({
     routeTree,
-    basepath: '/bedrock-chat',
+    basepath: container.bootstrap.uiEndpoint.replace(/\/$/, '').slice(0, -'/ui'.length) || '/',
     context: { container },
     defaultPreload: 'intent',
     // FR-SHELL-015: a first visit to a split route (chunk fetch + beforeLoad) must show progress

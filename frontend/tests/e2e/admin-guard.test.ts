@@ -31,13 +31,13 @@ describe('Admin capability guard', function () {
     server = createServer(async (request, response) => {
       const requestPath = new URL(request.url ?? '/', 'http://localhost').pathname
 
-      if (requestPath === '/bedrock-chat/config') {
+      if (requestPath === '/chat/config') {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(bootstrap)
         return
       }
 
-      if (requestPath === '/bedrock-chat/admin/_capabilities') {
+      if (requestPath === '/chat/admin/_capabilities') {
         capabilityRequests += 1
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({
@@ -49,15 +49,15 @@ describe('Admin capability guard', function () {
         return
       }
 
-      if (requestPath.startsWith('/bedrock-chat/admin/')) {
+      if (requestPath.startsWith('/chat/admin/')) {
         protectedAdminRequests += 1
         response.writeHead(403)
         response.end()
         return
       }
 
-      const relativePath = requestPath.startsWith('/bedrock-chat/ui/assets/')
-        ? requestPath.slice('/bedrock-chat/ui/'.length)
+      const relativePath = requestPath.startsWith('/chat/ui/assets/')
+        ? requestPath.slice('/chat/ui/'.length)
         : 'index.html'
 
       try {
@@ -87,7 +87,7 @@ describe('Admin capability guard', function () {
   })
 
   it('denies before an admin chunk or protected admin request is fetched', async () => {
-    await driver.get(`${origin}/bedrock-chat/dashboard/feedback`)
+    await driver.get(`${origin}/chat/dashboard/feedback`)
     const heading = await driver.wait(until.elementLocated(By.css('h1')), 10_000)
 
     expect(await heading.getText()).toBe('Access denied')

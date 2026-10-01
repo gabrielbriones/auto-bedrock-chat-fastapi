@@ -11,7 +11,7 @@ import { ChatPanel } from '@/domains/messaging/presentation/ChatPanel'
 import { FeedbackControls } from '@/domains/feedback/presentation/FeedbackControls'
 
 export type ConversationViewProps = {
-  /** Null at `/bedrock-chat/ui`, which is a new, unsaved conversation (FR-CONV-011). */
+  /** Null at `/chat/ui`, which is a new, unsaved conversation (FR-CONV-011). */
   readonly conversationId: ConversationId | null
 }
 

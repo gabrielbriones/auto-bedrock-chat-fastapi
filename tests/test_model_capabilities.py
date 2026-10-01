@@ -220,6 +220,18 @@ class TestBuildLLMUsesCapabilities:
             _build_llm(model_id, config)
         return mock_cls.call_args.kwargs
 
+    def test_debug_log_does_not_include_explicit_aws_credentials(self, caplog):
+        import logging
+
+        config = _config(aws_access_key_id="example-access-id", aws_secret_access_key="example-secret")
+        with caplog.at_level(logging.DEBUG, logger="autolangchat.graph.nodes.llm_call"):
+            kwargs = self._build(SONNET_5, config)
+
+        assert kwargs["aws_access_key_id"] == "example-access-id"
+        assert kwargs["aws_secret_access_key"] == "example-secret"
+        assert "example-access-id" not in caplog.text
+        assert "example-secret" not in caplog.text
+
     def test_temperature_dropped_for_models_that_reject_it(self):
         kwargs = self._build(SONNET_5, _config(temperature=0.7))
         assert "temperature" not in kwargs

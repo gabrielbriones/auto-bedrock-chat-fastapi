@@ -118,7 +118,7 @@ const routeSearch = (router: ReturnType<typeof createAppRouter>): Record<string,
 describe('knowledge browser URL binding', () => {
   it('restores filters and offset from a shareable URL', async () => {
     const { list } = renderAt(
-      '/bedrock-chat/dashboard/kb-browser?source=ISS%20docs&topic=memory%2Fcache&tags=ipc%2Cperf&from=2026-09-01&to=2026-09-08&flagged=true&offset=50',
+      '/chat/dashboard/kb-browser?source=ISS%20docs&topic=memory%2Fcache&tags=ipc%2Cperf&from=2026-09-01&to=2026-09-08&flagged=true&offset=50',
       { page: { ...response, offset: 50 } },
     )
 
@@ -136,7 +136,7 @@ describe('knowledge browser URL binding', () => {
 
   it('updates the URL when a filter changes and keeps the explicit offset reset', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser?offset=50')
+    const { router } = renderAt('/chat/dashboard/kb-browser?offset=50')
 
     await user.type(await screen.findByRole('searchbox', { name: KNOWLEDGE_COPY.filters.source }), 'ISS')
 
@@ -146,7 +146,7 @@ describe('knowledge browser URL binding', () => {
   it('restores filter controls and resets the URL-bound state', async () => {
     const user = userEvent.setup()
     const { router } = renderAt(
-      '/bedrock-chat/dashboard/kb-browser?source=ISS%20docs&topic=compute&tags=ipc&from=2026-09-01&to=2026-09-08&flagged=true&offset=50',
+      '/chat/dashboard/kb-browser?source=ISS%20docs&topic=compute&tags=ipc&from=2026-09-01&to=2026-09-08&flagged=true&offset=50',
       { page: { ...response, offset: 50 } },
     )
 
@@ -165,7 +165,7 @@ describe('knowledge browser URL binding', () => {
 
   it('toggles the removal filter from its inline label', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser')
+    const { router } = renderAt('/chat/dashboard/kb-browser')
     const label = await screen.findByText(KNOWLEDGE_COPY.filters.flagged)
 
     expect(label.parentElement).toHaveClass('flex', 'items-center', 'h-8')
@@ -179,7 +179,7 @@ describe('knowledge browser URL binding', () => {
 
 describe('knowledge browser status cues', () => {
   it('labels flagged rows and credibility bands without colour as the only cue', async () => {
-    renderAt('/bedrock-chat/dashboard/kb-browser')
+    renderAt('/chat/dashboard/kb-browser')
 
     const flaggedRow = await screen.findByText('Removal candidate')
     const row = flaggedRow.closest('tr')
@@ -195,7 +195,7 @@ describe('knowledge browser status cues', () => {
   })
 
   it('has no accessibility violations', async () => {
-    const { dom } = renderAt('/bedrock-chat/dashboard/kb-browser')
+    const { dom } = renderAt('/chat/dashboard/kb-browser')
 
     await screen.findByText('Healthy guide')
     const results = await axe(dom)
@@ -212,7 +212,7 @@ describe('knowledge editor drawer', () => {
 
   it('opens a row as a URL-addressable drawer, and keeps the editor field independent of the filter field (FIX-02)', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser')
+    const { router } = renderAt('/chat/dashboard/kb-browser')
 
     const dialog = await openRow(user)
 
@@ -241,7 +241,7 @@ describe('knowledge editor drawer', () => {
   it('blocks saving invalid metadata JSON without calling the gateway', async () => {
     const user = userEvent.setup()
     const patch = jest.fn<KnowledgeGateway['patch']>()
-    renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { patch } })
+    renderAt('/chat/dashboard/kb-browser', { gateway: { patch } })
 
     const dialog = await openRow(user)
     const metadata = within(dialog).getByRole('textbox', { name: KNOWLEDGE_COPY.editor.metadata })
@@ -255,7 +255,7 @@ describe('knowledge editor drawer', () => {
 
   it('prompts before discarding unsaved edits, and keeps the drawer open when declined', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser')
+    const { router } = renderAt('/chat/dashboard/kb-browser')
 
     const dialog = await openRow(user)
     const title = within(dialog).getByRole('textbox', { name: KNOWLEDGE_COPY.editor.title })
@@ -272,7 +272,7 @@ describe('knowledge editor drawer', () => {
 
   it('discards unsaved edits and closes the drawer when confirmed', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/kb-browser')
+    const { router } = renderAt('/chat/dashboard/kb-browser')
 
     const dialog = await openRow(user)
     const title = within(dialog).getByRole('textbox', { name: KNOWLEDGE_COPY.editor.title })
@@ -292,7 +292,7 @@ describe('knowledge editor drawer', () => {
     const resetCredibility = jest.fn<KnowledgeGateway['resetCredibility']>(async () =>
       ok(anOpenedDocument({ credibility: createCredibility(1, false) })),
     )
-    const { confirmations, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { resetCredibility } })
+    const { confirmations, notifications } = renderAt('/chat/dashboard/kb-browser', { gateway: { resetCredibility } })
 
     const dialog = await openRow(user)
     await user.click(within(dialog).getByRole('button', { name: KNOWLEDGE_COPY.editor.restoreScore }))
@@ -307,7 +307,7 @@ describe('knowledge editor drawer', () => {
     const rollback = jest.fn<KnowledgeGateway['rollback']>(async () =>
       ok({ kbDocumentId: anOpenedDocument().id, rolledBackAt: Instant.EPOCH } satisfies RollbackResult),
     )
-    const { router, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { rollback }, confirmAnswers: [true] })
+    const { router, notifications } = renderAt('/chat/dashboard/kb-browser', { gateway: { rollback }, confirmAnswers: [true] })
 
     const dialog = await openRow(user)
     await user.click(within(dialog).getByRole('button', { name: KNOWLEDGE_COPY.editor.rollback }))
@@ -321,7 +321,7 @@ describe('knowledge editor drawer', () => {
   it('deletes the document after confirmation, closes the drawer, and clears the doc param', async () => {
     const user = userEvent.setup()
     const remove = jest.fn<KnowledgeGateway['remove']>(async () => ok(undefined))
-    const { router, notifications } = renderAt('/bedrock-chat/dashboard/kb-browser', { gateway: { remove }, confirmAnswers: [true] })
+    const { router, notifications } = renderAt('/chat/dashboard/kb-browser', { gateway: { remove }, confirmAnswers: [true] })
 
     const dialog = await openRow(user)
     await user.click(within(dialog).getByRole('button', { name: KNOWLEDGE_COPY.editor.delete }))
