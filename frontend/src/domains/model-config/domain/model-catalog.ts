@@ -49,3 +49,28 @@ export const findModel = (catalog: ModelCatalog, modelId: string): ModelDescript
 
 export const familyOf = (catalog: ModelCatalog, modelId: string): ModelFamily | null =>
   catalog.families.find((family) => family.models.some((model) => model.id === modelId)) ?? null
+
+// Mirrors the backend's MODEL_ID_REGION_PREFIXES (autolangchat/config.py).
+const REGION_PREFIXES: ReadonlySet<string> = new Set(['us', 'eu', 'au', 'jp', 'global'])
+
+const bareModelId = (modelId: string): string => {
+  const [prefix = '', ...rest] = modelId.split('.')
+  return rest.length > 1 && REGION_PREFIXES.has(prefix) ? rest.join('.') : modelId
+}
+
+// Recorded ids may carry a cross-region inference-profile prefix the catalog entry lacks, or vice
+// versa; unknown ids fall back to the raw id.
+export const modelDisplayName = (catalog: ModelCatalog, modelId: string): string => {
+  const exact = findModel(catalog, modelId)
+  if (exact !== null) {
+    return exact.name
+  }
+  const bare = bareModelId(modelId)
+  for (const family of catalog.families) {
+    const match = family.models.find((model) => bareModelId(model.id) === bare)
+    if (match !== undefined) {
+      return match.name
+    }
+  }
+  return modelId
+}

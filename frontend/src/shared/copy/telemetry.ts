@@ -5,6 +5,7 @@ export const TELEMETRY_COPY = {
     chart: 'Total tokens per model',
     table: 'Token usage by model',
     model: 'Model',
+    totalTokens: 'Total tokens',
     input: 'Input',
     output: 'Output',
     turns: 'Turns',

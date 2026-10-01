@@ -100,6 +100,47 @@ const lastByUserQuery = (gateway: TelemetryGateway): ByUserUsageQuery | undefine
   jest.mocked(gateway.byUser).mock.calls.at(-1)?.[0] as ByUserUsageQuery | undefined
 
 describe('usage analytics route', () => {
+  it('shows catalog display names in the per-model table, falling back to the raw id', async () => {
+    const gateway = createGateway({
+      summary: jest.fn(async () => ok([
+        { modelId: 'anthropic.claude-sonnet-5', tokens: createTokenCount(10, 5), turnCount: 1 },
+        { modelId: 'unknown.model-x', tokens: createTokenCount(1, 1), turnCount: 1 },
+      ])),
+    })
+    renderAt('/bedrock-chat/dashboard/token-usages', gateway)
+    const table = await screen.findByRole('table', { name: TELEMETRY_COPY.summary.table })
+
+    expect(within(table).getByText('Claude Sonnet 5 (US)')).toBeInTheDocument()
+    expect(within(table).getByText('unknown.model-x')).toBeInTheDocument()
+    expect(within(table).queryByText('anthropic.claude-sonnet-5')).not.toBeInTheDocument()
+  })
+
+  it('sorts the per-model table by a column, toggling direction on each click', async () => {
+    const user = userEvent.setup()
+    const gateway = createGateway({
+      summary: jest.fn(async () => ok([
+        { modelId: 'b-model', tokens: createTokenCount(5, 0), turnCount: 1 },
+        { modelId: 'a-model', tokens: createTokenCount(50, 0), turnCount: 1 },
+        { modelId: 'c-model', tokens: createTokenCount(1, 0), turnCount: 1 },
+      ])),
+    })
+    renderAt('/bedrock-chat/dashboard/token-usages', gateway)
+    const table = await screen.findByRole('table', { name: TELEMETRY_COPY.summary.table })
+    const firstCells = () => within(table).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[0]?.textContent)
+    const inputHeader = within(table).getByRole('columnheader', { name: TELEMETRY_COPY.summary.input })
+
+    expect(firstCells()).toEqual(['b-model', 'a-model', 'c-model'])
+    expect(inputHeader).toHaveAttribute('aria-sort', 'none')
+
+    await user.click(within(inputHeader).getByRole('button'))
+    expect(firstCells()).toEqual(['c-model', 'b-model', 'a-model'])
+    expect(inputHeader).toHaveAttribute('aria-sort', 'ascending')
+
+    await user.click(within(inputHeader).getByRole('button'))
+    expect(firstCells()).toEqual(['a-model', 'b-model', 'c-model'])
+    expect(inputHeader).toHaveAttribute('aria-sort', 'descending')
+  })
+
   it('restores applied filters from the URL and fetches each selected section', async () => {
     const { gateway, router } = renderAt(
       '/bedrock-chat/dashboard/token-usages?topLimit=20&from=2026-05-01&to=2026-05-31&user=alice%40example.com&offset=50',

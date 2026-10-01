@@ -11,6 +11,7 @@ export {
   buildModelCatalog,
   familyOf,
   findModel,
+  modelDisplayName,
   type ModelCatalog,
   type ModelFamily,
 } from '@/domains/model-config/domain/model-catalog'

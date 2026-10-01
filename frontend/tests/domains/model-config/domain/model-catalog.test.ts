@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 
-import { buildModelCatalog, familyOf, findModel } from '@/domains/model-config/domain/model-catalog'
+import { buildModelCatalog, familyOf, findModel, modelDisplayName } from '@/domains/model-config/domain/model-catalog'
 import type { ModelDescriptor } from '@/domains/model-config/domain/model-descriptor'
 
 const model = (overrides: Partial<ModelDescriptor> = {}): ModelDescriptor => ({
@@ -60,5 +60,37 @@ describe('familyOf', () => {
   it('returns null when no family contains the model', () => {
     const catalog = buildModelCatalog([model()], [])
     expect(familyOf(catalog, 'missing')).toBeNull()
+  })
+})
+
+describe('modelDisplayName', () => {
+  const catalog = buildModelCatalog(
+    [
+      model({ id: 'anthropic.claude-opus-5', name: 'Claude Opus 5' }),
+      model({ id: 'us.anthropic.claude-sonnet-5', name: 'Claude Sonnet 5' }),
+      model({ id: 'meta.llama3-1-70b-instruct-v1:0', name: 'Llama 3.1 70B Instruct', provider: 'meta' }),
+    ],
+    [],
+  )
+
+  it('maps a catalog model id to its display name', () => {
+    expect(modelDisplayName(catalog, 'meta.llama3-1-70b-instruct-v1:0')).toBe('Llama 3.1 70B Instruct')
+  })
+
+  it('matches a region-prefixed id against a bare catalog id', () => {
+    expect(modelDisplayName(catalog, 'us.anthropic.claude-opus-5')).toBe('Claude Opus 5')
+  })
+
+  it('matches a bare id against a region-prefixed catalog id', () => {
+    expect(modelDisplayName(catalog, 'anthropic.claude-sonnet-5')).toBe('Claude Sonnet 5')
+  })
+
+  it('falls back to the raw id for an unknown model', () => {
+    expect(modelDisplayName(catalog, 'openai.gpt-unknown')).toBe('openai.gpt-unknown')
+  })
+
+  it('does not treat a two-segment id as region-prefixed', () => {
+    const bare = buildModelCatalog([model({ id: 'claude', name: 'Claude' })], [])
+    expect(modelDisplayName(bare, 'us.claude')).toBe('us.claude')
   })
 })

@@ -35,6 +35,28 @@ describe('ModelPicker', () => {
     expect(await screen.findByText('No temperature support')).toBeInTheDocument()
   })
 
+  it('opens the model submenu without a sideways entrance animation (XMGPLAT-11804)', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<ModelPicker catalog={catalog} selectedModelId="claude" onSelect={jest.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Claude' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'anthropic' }))
+
+    const submenu = (await screen.findByText('No temperature support')).closest('[data-slot="dropdown-menu-sub-content"]')
+    expect(submenu).not.toBeNull()
+    expect(submenu?.className).not.toMatch(/slide-in-from-|zoom-in-/)
+  })
+
+  it('opens the current model family once the picker has opened (FR-CFG-003a)', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<ModelPicker catalog={catalog} selectedModelId="claude" onSelect={jest.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Claude' }))
+
+    expect(await screen.findByRole('menuitemradio', { name: 'Claude' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitemradio', { name: 'GPT' })).toBeNull()
+  })
+
   it('supports full keyboard traversal into a second family (FR-CFG-003b)', async () => {
     const onSelect = jest.fn<(modelId: string) => void>()
     const user = userEvent.setup()

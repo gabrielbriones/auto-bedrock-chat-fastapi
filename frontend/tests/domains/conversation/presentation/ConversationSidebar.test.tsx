@@ -131,12 +131,28 @@ describe('ConversationSidebar', () => {
     expect(harness.gateway.methods()).not.toContain('load')
   })
 
-  it('keeps the full title available when the row is truncated', () => {
+  // The slide animation is the only preview; a native tooltip would duplicate it.
+  it('shows no native tooltip on a long title', () => {
     const harness = renderSidebar()
     const title = 'Low-IPC Network Test with a very long conversation title'
     harness.emit(anEvent.listed([aConversation('a', 9, title)]))
 
-    expect(screen.getByRole('button', { name: title })).toHaveAttribute('title', title)
+    expect(screen.getByRole('button', { name: title })).not.toHaveAttribute('title')
+  })
+
+  it('slides far enough to clear the trigger gap and the fade', () => {
+    renderSidebar()
+    const row = itemFor('Job 42')
+    const viewport = row.querySelector<HTMLElement>('.conversation-title-viewport')!
+    const text = row.querySelector<HTMLElement>('.conversation-title-text')!
+    viewport.style.paddingRight = '24px'
+    viewport.style.setProperty('--title-fade', '16px')
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 200 })
+    Object.defineProperty(text, 'scrollWidth', { configurable: true, value: 300 })
+
+    fireEvent.mouseEnter(row)
+
+    expect(text.style.getPropertyValue('--title-slide-distance')).toBe('140px')
   })
 
   it('moves overflowing titles at the same speed regardless of their length', () => {
@@ -156,7 +172,23 @@ describe('ConversationSidebar', () => {
       return parseFloat(text.style.getPropertyValue('--title-slide-duration'))
     })
 
-    expect(durations).toEqual([2, 6])
+    expect(durations).toEqual([2.5, 6.5])
+  })
+
+  it('rests at each end of the title for half a second before reversing', () => {
+    renderSidebar()
+    const row = itemFor('Job 42')
+    const viewport = row.querySelector<HTMLElement>('.conversation-title-viewport')!
+    const text = row.querySelector<HTMLElement>('.conversation-title-text')!
+    viewport.style.paddingRight = '0px'
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
+    Object.defineProperty(text, 'scrollWidth', { configurable: true, value: 120 })
+
+    fireEvent.mouseEnter(row)
+
+    // 0.5s of travel between two 0.25s holds, each doubled into 0.5s by `alternate`.
+    expect(text.style.getPropertyValue('--title-slide-duration')).toBe('1s')
+    expect(text.style.getPropertyValue('--title-slide-easing')).toBe('linear(0, 0 25%, 1 75%, 1)')
   })
 
   // FR-CONV-006: the indeterminate state is real, not a checked/unchecked approximation.
