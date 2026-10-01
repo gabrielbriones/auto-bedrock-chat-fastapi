@@ -1,4 +1,4 @@
-import { ArrowUpRight } from 'lucide-react'
+import { ActivityIcon, ArrowUpRight, GitCompareArrowsIcon, LayersIcon, type LucideIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -48,10 +48,10 @@ function PresetButton({ preset, variables, bindings, locked, lockedReason, onAct
   return (
     <div className="flex min-w-0 max-w-full flex-col gap-1">
       <Tooltip>
-        <TooltipTrigger render={<span />} tabIndex={disabled ? 0 : -1} aria-label={preset.label} aria-describedby={describedBy}>
-          <Button type="button" variant="outline" className="h-auto min-h-11 w-full justify-between gap-3 rounded-md px-3 py-2.5 text-left whitespace-normal disabled:opacity-70 [overflow-wrap:anywhere]" disabled={disabled} aria-describedby={describedBy} onClick={() => onActivate(preset.id)}>
+        <TooltipTrigger render={<span />} className={disabled ? 'cursor-not-allowed' : 'cursor-pointer'} tabIndex={disabled ? 0 : -1} aria-label={preset.label} aria-describedby={describedBy}>
+          <Button type="button" variant="ghost" className="group/preset h-auto min-h-10 w-full justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left text-sm font-normal whitespace-normal text-foreground/90 transition-all hover:border-primary/30 hover:bg-primary/10 hover:text-foreground disabled:opacity-50 [overflow-wrap:anywhere]" disabled={disabled} aria-describedby={describedBy} onClick={() => onActivate(preset.id)}>
             <span>{preset.displayLabel}</span>
-            <ArrowUpRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <ArrowUpRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover/preset:translate-x-0.5 group-hover/preset:-translate-y-0.5 group-hover/preset:text-primary" aria-hidden="true" />
           </Button>
         </TooltipTrigger>
         {hint === '' ? null : <TooltipContent role="tooltip">{hint}</TooltipContent>}
@@ -76,6 +76,14 @@ const groupedPresets = (presets: readonly PresetPrompt[]) => {
   return [...groups].map(([label, items]) => ({ label, items }))
 }
 
+// Group labels are catalog data, so icons are picked by keyword with a generic fallback.
+const groupIcon = (label: string): LucideIcon => {
+  const key = label.toLowerCase()
+  if (key.includes('analy')) return ActivityIcon
+  if (key.includes('valid') || key.includes('compar')) return GitCompareArrowsIcon
+  return LayersIcon
+}
+
 // Optional source metadata controls grouping; catalogs without it retain the original flat layout.
 export function PresetPromptBar(props: PresetPromptBarProps) {
   const { catalog } = props
@@ -87,12 +95,18 @@ export function PresetPromptBar(props: PresetPromptBarProps) {
     </div>
   }
 
-  return <div role="group" aria-label={PROMPT_CATALOG_COPY.bar.label} className="grid min-w-0 grid-cols-1 gap-5 sm:grid-cols-3">
-    {groupedPresets(catalog.presets).map((group) => <section key={group.label} className="min-w-0">
-      <h3 className="mb-2 text-sm font-medium text-foreground">{group.label}</h3>
-      <div className="grid gap-2">
+  return <div role="group" aria-label={PROMPT_CATALOG_COPY.bar.label} className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
+    {groupedPresets(catalog.presets).map((group) => {
+      const Icon = groupIcon(group.label)
+      return <section key={group.label} className="flex min-w-0 flex-col rounded-xl border border-border/60 bg-card/40 p-3 shadow-sm backdrop-blur-sm">
+      <div className="mb-2 flex items-center justify-between gap-2 border-b border-border/50 px-1 pb-2">
+        <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">{group.label}</h3>
+        <span aria-hidden="true" className="flex size-6 items-center justify-center rounded-full bg-primary/15 text-primary"><Icon className="size-3.5" /></span>
+      </div>
+      <div className="grid gap-1">
         {group.items.map((preset) => <PresetButton key={preset.id} {...props} preset={preset} variables={catalog.variables} />)}
       </div>
-    </section>)}
+    </section>
+    })}
   </div>
 }

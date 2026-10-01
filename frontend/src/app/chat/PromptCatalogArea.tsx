@@ -34,7 +34,7 @@ export function PromptCatalogArea() {
   }, [promptCatalog, availability.enabled])
 
   return (
-    <div className="mx-auto flex w-full max-w-prose min-w-0 flex-col gap-4 text-left">
+    <div className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-6 text-left">
       <PresetVariablePanel
         variableNames={allRequiredVariableNames(promptCatalog.catalog)}
         variables={promptCatalog.catalog.variables}
