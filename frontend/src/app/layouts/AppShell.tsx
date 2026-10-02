@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from 'react'
+import { useCallback, type CSSProperties, type ReactNode } from 'react'
 
 import { MAIN_SCROLL_CONTAINER_ID } from '@/components/ui/composed/scroll-container'
 import { SHELL } from '@/shared/copy/shell'
@@ -26,6 +26,7 @@ function SkipLink() {
 export type AppShellProps = {
   readonly header?: ReactNode
   readonly sidebar?: ReactNode
+  readonly sidebarWidth?: string
   readonly footer?: ReactNode
   readonly overlays?: ReactNode
   readonly mainLabel?: string
@@ -38,6 +39,7 @@ export type AppShellProps = {
 export function AppShell({
   header,
   sidebar,
+  sidebarWidth = '17rem',
   footer,
   overlays,
   mainLabel,
@@ -51,12 +53,17 @@ export function AppShell({
 
       <div
         className={cn(
-          'grid min-h-0 min-w-0 grid-cols-1',
-          sidebar !== undefined ? 'lg:grid-cols-[16rem_minmax(0,1fr)]' : undefined,
+          'grid min-h-0 min-w-0 grid-cols-1 transition-[grid-template-columns] duration-200 motion-reduce:transition-none',
+          sidebar !== undefined ? 'lg:grid-cols-[var(--sidebar-width)_minmax(0,1fr)]' : undefined,
         )}
+        style={sidebar !== undefined ? ({ '--sidebar-width': sidebarWidth } as CSSProperties) : undefined}
       >
         {sidebar !== undefined ? (
-          <aside className="hidden min-h-0 border-r border-border lg:block">{sidebar}</aside>
+          <aside className="hidden min-h-0 min-w-0 overflow-hidden p-2 lg:block">
+            <div className="h-full min-h-0 min-w-0 rounded-xl border bg-card shadow-sm">
+              {sidebar}
+            </div>
+          </aside>
         ) : null}
 
         <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto]">
