@@ -19,7 +19,6 @@ import { AuthStatusButton } from '@/domains/iam/presentation/AuthStatusButton'
 import { UserMenu } from '@/domains/iam/presentation/UserMenu'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
 import { ConnectionBadge } from '@/domains/messaging/presentation/ConnectionBadge'
-import { ModelConfigHeader } from '@/domains/model-config/presentation/ModelConfigHeader'
 
 const SIDEBAR_WIDTH = '17rem'
 const SIDEBAR_RAIL_WIDTH = '3.5rem'
@@ -74,7 +73,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
   useDocumentTitle(bootstrap.appTitle)
   useConversationVisibility()
   const { visible } = useContainerStore('conversations')
-  const { connection, configuredModel } = useContainerStore('chatSession')
+  const { connection } = useContainerStore('chatSession')
 
   const closeDrawer = useCallback(() => { setDrawerOpen(false) }, [])
   const openDrawer = useCallback(() => { setDrawerOpen(true) }, [])
@@ -94,7 +93,6 @@ export function ChatLayout({ children }: ChatLayoutProps) {
             <h1 className="min-w-0 truncate font-medium text-foreground">{bootstrap.uiTitle}</h1>
             <div className="ms-auto flex shrink-0 items-center gap-1 md:gap-2">
               {visible ? null : <NewChatButton />}
-              {bootstrap.enableConfigSidebar ? <ModelConfigHeader configuredModel={configuredModel} /> : null}
               <AdminDashboardLink />
               {visible ? null : <UserMenu variant="header" />}
               <AuthStatusButton />

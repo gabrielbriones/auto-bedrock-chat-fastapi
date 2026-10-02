@@ -58,6 +58,34 @@ const bareModelId = (modelId: string): string => {
   return rest.length > 1 && REGION_PREFIXES.has(prefix) ? rest.join('.') : modelId
 }
 
+/** The cross-region inference-profile prefix (`us`, `global`, ...), or null for a bare id. */
+export const regionOf = (modelId: string): string | null =>
+  bareModelId(modelId) === modelId ? null : (modelId.split('.')[0] ?? null)
+
+const byRegionlessFirst = (a: ModelDescriptor, b: ModelDescriptor): number =>
+  Number(regionOf(a.id) !== null) - Number(regionOf(b.id) !== null)
+
+/** Every catalog entry sharing `modelId`'s bare id, region-less one first. */
+export const regionVariants = (catalog: ModelCatalog, modelId: string): readonly ModelDescriptor[] => {
+  const bare = bareModelId(modelId)
+  return catalog.families
+    .flatMap((family) => family.models.filter((model) => bareModelId(model.id) === bare))
+    .sort(byRegionlessFirst)
+}
+
+/** One entry per bare id, in catalog order, represented by its region-less variant when present. */
+export const baseModels = (family: ModelFamily): readonly ModelDescriptor[] => {
+  const byBare = new Map<string, ModelDescriptor>()
+  for (const model of family.models) {
+    const bare = bareModelId(model.id)
+    const current = byBare.get(bare)
+    if (current === undefined || byRegionlessFirst(model, current) < 0) {
+      byBare.set(bare, model)
+    }
+  }
+  return Array.from(byBare.values())
+}
+
 // Recorded ids may carry a cross-region inference-profile prefix the catalog entry lacks, or vice
 // versa; unknown ids fall back to the raw id.
 export const modelDisplayName = (catalog: ModelCatalog, modelId: string): string => {

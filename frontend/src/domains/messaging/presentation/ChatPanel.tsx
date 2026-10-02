@@ -16,13 +16,15 @@ export type ChatPanelProps = {
     * `ConversationView`). Rendered only in the empty transcript's welcome area.
    */
   readonly presetArea?: ReactNode
+  /** Rendered inside the composer, beside the send button (the model picker, from `src/app`). */
+  readonly composerToolbar?: ReactNode
   /** FR-PROMPT-007: fired for every manually-sent message, before it goes out. */
   readonly onMessageSent?: (text: string) => void
   readonly renderFeedback?: (messageId: MessageId) => ReactNode
 }
 
 // SPEC-012 §5: badge, preset area (Task 23), transcript, composer.
-export function ChatPanel({ inputEnabled, presetArea, onMessageSent, renderFeedback }: ChatPanelProps) {
+export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessageSent, renderFeedback }: ChatPanelProps) {
   const { bootstrap, chatSession, notifications } = useContainer()
   const { connection, transcript, awaitingResponse } = useContainerStore('chatSession')
   const [draft, setDraft] = useState('')
@@ -64,6 +66,7 @@ export function ChatPanel({ inputEnabled, presetArea, onMessageSent, renderFeedb
         awaitingResponse={awaitingResponse}
         onChange={setDraft}
         onSend={send}
+        toolbar={composerToolbar}
       />
     </div>
   )

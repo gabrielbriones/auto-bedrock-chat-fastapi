@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, jest } from '@jest/globals'
 
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { buildModelCatalog } from '@/domains/model-config/domain/model-catalog'
 import { ModelPicker } from '@/domains/model-config/presentation/ModelPicker'
 
@@ -25,14 +26,28 @@ describe('ModelPicker', () => {
     expect(screen.getByRole('button', { name: 'Choose model' })).toBeInTheDocument()
   })
 
-  it('marks a model with no temperature support (FR-CFG-017)', async () => {
+  it('lists one entry per model, collapsing regional variants into the region-less one', async () => {
+    const onSelect = jest.fn<(modelId: string) => void>()
+    const regional = buildModelCatalog(
+      [
+        { id: 'us.anthropic.opus', name: 'Opus (US)', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+        { id: 'anthropic.opus', name: 'Opus', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+        { id: 'global.anthropic.opus', name: 'Opus (Global)', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+        { id: 'anthropic.haiku', name: 'Haiku', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+      ],
+      [],
+    )
     const user = userEvent.setup({ pointerEventsCheck: 0 })
-    render(<ModelPicker catalog={catalog} selectedModelId="claude" onSelect={jest.fn()} />)
+    render(<ModelPicker catalog={regional} selectedModelId="us.anthropic.opus" onSelect={onSelect} />)
 
-    await user.click(screen.getByRole('button', { name: 'Claude' }))
-    await user.click(await screen.findByRole('menuitem', { name: 'anthropic' }))
+    await user.click(screen.getByRole('button', { name: 'Opus (US)' }))
 
-    expect(await screen.findByText('No temperature support')).toBeInTheDocument()
+    const items = await screen.findAllByRole('menuitemradio')
+    expect(items.map((item) => item.textContent)).toEqual(['Opus', 'Haiku'])
+    expect(screen.getByRole('menuitemradio', { name: 'Opus' })).toHaveAttribute('aria-checked', 'true')
+
+    await user.click(screen.getByRole('menuitemradio', { name: 'Haiku' }))
+    expect(onSelect).toHaveBeenCalledWith('anthropic.haiku')
   })
 
   it('opens the model submenu without a sideways entrance animation (XMGPLAT-11804)', async () => {
@@ -42,7 +57,7 @@ describe('ModelPicker', () => {
     await user.click(screen.getByRole('button', { name: 'Claude' }))
     await user.click(await screen.findByRole('menuitem', { name: 'anthropic' }))
 
-    const submenu = (await screen.findByText('No temperature support')).closest('[data-slot="dropdown-menu-sub-content"]')
+    const submenu = (await screen.findByRole('menuitemradio', { name: 'No Temp Model' })).closest('[data-slot="dropdown-menu-sub-content"]')
     expect(submenu).not.toBeNull()
     expect(submenu?.className).not.toMatch(/slide-in-from-|zoom-in-/)
   })
@@ -71,5 +86,21 @@ describe('ModelPicker', () => {
     await user.keyboard('[Enter]')
 
     expect(onSelect).toHaveBeenCalledWith('gpt')
+  })
+
+  it('renders the footer below the families, and only the footer when not selectable', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const footer = <DropdownMenuItem>Model settings…</DropdownMenuItem>
+    const { unmount } = render(<ModelPicker catalog={catalog} selectedModelId="claude" onSelect={jest.fn()} footer={footer} />)
+
+    await user.click(screen.getByRole('button', { name: 'Claude' }))
+    expect(await screen.findByRole('menuitem', { name: 'Model settings…' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'openai' })).toBeInTheDocument()
+    unmount()
+
+    render(<ModelPicker catalog={catalog} selectedModelId="claude" onSelect={jest.fn()} footer={footer} selectable={false} />)
+    await user.click(screen.getByRole('button', { name: 'Claude' }))
+    expect(await screen.findByRole('menuitem', { name: 'Model settings…' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'openai' })).toBeNull()
   })
 })
