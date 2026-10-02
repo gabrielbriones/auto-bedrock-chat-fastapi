@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react'
-
 import { PanelLeftIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
 
@@ -20,9 +19,6 @@ export function ConversationDrawer({ open, onOpenChange, onNavigate, footer }: C
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="p-0 lg:hidden">
-        <SheetHeader>
-          <SheetTitle>{CONVERSATION_COPY.sidebar.label}</SheetTitle>
-        </SheetHeader>
         <ConversationSidebar onNavigate={onNavigate} footer={footer} />
       </SheetContent>
     </Sheet>

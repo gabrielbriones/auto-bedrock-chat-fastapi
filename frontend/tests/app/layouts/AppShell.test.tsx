@@ -20,6 +20,18 @@ describe('AppShell', () => {
     expect(container.querySelector('[data-slot="app-shell"]')).toHaveClass('overflow-hidden')
   })
 
+  it('sizes the desktop sidebar column from the requested width', () => {
+    const { container } = render(
+      <AppShell sidebar={<nav>side</nav>} sidebarWidth="3.5rem">
+        <p>body</p>
+      </AppShell>,
+    )
+
+    const grid = container.querySelector('aside')?.parentElement
+    expect(grid).toHaveStyle({ '--sidebar-width': '3.5rem' })
+    expect(grid).toHaveClass('lg:grid-cols-[var(--sidebar-width)_minmax(0,1fr)]', 'motion-reduce:transition-none')
+  })
+
   it('offers the skip link as the first focusable element and moves focus to main', async () => {
     const user = userEvent.setup()
 

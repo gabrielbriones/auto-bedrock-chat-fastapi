@@ -8,6 +8,17 @@ export const CONVERSATION_COPY = {
     close: 'Close conversations',
     empty: 'No conversations yet.',
     emptyHint: 'Ask something to start one.',
+    emptyAction: 'Start a new chat',
+    collapse: 'Collapse conversations',
+    expand: 'Expand conversations',
+    select: 'Select conversations to delete',
+    done: 'Done selecting',
+    groups: {
+      today: 'Today',
+      yesterday: 'Yesterday',
+      previous7Days: 'Previous 7 days',
+      older: 'Older',
+    },
   },
 
   // FR-CONV-014.

@@ -20,6 +20,7 @@ export type ConversationListItemProps = {
   readonly conversation: Conversation
   readonly active: boolean
   readonly selected: boolean
+  readonly selectionMode: boolean
   readonly onOpen: (id: ConversationId) => void
   readonly onToggleSelect: (id: ConversationId) => void
   readonly onRename: (id: ConversationId) => void
@@ -93,6 +94,7 @@ export const ConversationListItem = memo(function ConversationListItem({
   conversation,
   active,
   selected,
+  selectionMode,
   onOpen,
   onToggleSelect,
   onRename,
@@ -103,15 +105,17 @@ export const ConversationListItem = memo(function ConversationListItem({
 
   return (
     <li
-      className="conversation-row group relative flex items-center gap-1 px-2"
+      className="conversation-row group relative flex items-center gap-1 rounded-lg px-2 py-0.5"
       onMouseEnter={(event) => setTitleSlideDuration(event.currentTarget)}
       onFocus={(event) => setTitleSlideDuration(event.currentTarget)}
     >
-      <Checkbox
-        checked={selected}
-        onCheckedChange={() => onToggleSelect(id)}
-        aria-label={CONVERSATION_COPY.item.select(title)}
-      />
+      {selectionMode ? (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggleSelect(id)}
+          aria-label={CONVERSATION_COPY.item.select(title)}
+        />
+      ) : null}
 
       <Button
         variant="ghost"

@@ -1,6 +1,7 @@
+import type { ComponentProps } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from '@jest/globals'
+import { describe, expect, it, jest } from '@jest/globals'
 import { axe } from 'jest-axe'
 
 import { ContainerContext } from '@/app/bootstrap/container-context'
@@ -15,7 +16,10 @@ import { aConversation, anEvent, id } from '../domain/conversation.fixture'
 import { BulkDeleteBar } from '@/domains/conversation/presentation/BulkDeleteBar'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
 
-const renderSidebar = (options: HarnessOptions = {}) => {
+const renderSidebar = (
+  options: HarnessOptions = {},
+  props: Partial<ComponentProps<typeof ConversationSidebar>> = {},
+) => {
   const harness = createHarness(options)
   harness.gateway.emit(
     anEvent.listed([aConversation('a', 9, 'Job 42'), aConversation('b', 0, null)]),
@@ -26,7 +30,7 @@ const renderSidebar = (options: HarnessOptions = {}) => {
 
   const view = render(
     <ContainerContext.Provider value={container}>
-      <ConversationSidebar />
+      <ConversationSidebar {...props} />
     </ContainerContext.Provider>,
   )
 
@@ -44,6 +48,9 @@ const renderSidebar = (options: HarnessOptions = {}) => {
 
 const itemFor = (title: string) =>
   screen.getByRole('button', { name: title }).closest('li') as HTMLElement
+
+const enterSelectionMode = (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.select }))
 
 describe('ConversationSidebar', () => {
   it('renders nothing when the roster is not available (FR-CONV-001)', () => {
@@ -71,6 +78,7 @@ describe('ConversationSidebar', () => {
   it('reaches the whole first item by keyboard alone', async () => {
     renderSidebar()
     const user = userEvent.setup()
+    await enterSelectionMode(user)
     const reached: (string | null)[] = []
 
     for (let step = 0; step < 4; step += 1) {
@@ -80,11 +88,57 @@ describe('ConversationSidebar', () => {
     }
 
     expect(reached).toEqual([
-      CONVERSATION_COPY.bulk.selectAll,
       CONVERSATION_COPY.sidebar.newChat,
       CONVERSATION_COPY.item.select('Job 42'),
       'Job 42',
+      CONVERSATION_COPY.item.options('Job 42'),
     ])
+  })
+
+  it('shows row checkboxes only in selection mode and clears the selection on Done', async () => {
+    const harness = renderSidebar()
+    const user = userEvent.setup()
+
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+
+    await enterSelectionMode(user)
+    await user.click(
+      within(itemFor('Job 42')).getByRole('checkbox', { name: CONVERSATION_COPY.item.select('Job 42') }),
+    )
+    expect(harness.store.getSnapshot().selection.has(id('a'))).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.done }))
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(harness.store.getSnapshot().selection.size).toBe(0)
+  })
+
+  it('offers a collapse control that reports back to the shell', async () => {
+    const onToggleCollapsed = jest.fn()
+    const user = userEvent.setup()
+    renderSidebar({}, { onToggleCollapsed })
+
+    await user.click(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.collapse }))
+
+    expect(onToggleCollapsed).toHaveBeenCalledTimes(1)
+  })
+
+  it('reduces to an icon rail when collapsed', () => {
+    renderSidebar({}, { collapsed: true, onToggleCollapsed: () => {} })
+
+    expect(screen.queryByRole('button', { name: 'Job 42' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: CONVERSATION_COPY.sidebar.select })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.expand })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.newChat })).toBeInTheDocument()
+  })
+
+  it('offers a subtle new-chat action when the roster is empty', async () => {
+    const harness = renderSidebar()
+    const user = userEvent.setup()
+
+    harness.emit(anEvent.listed([]))
+    await user.click(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.emptyAction }))
+
+    expect(harness.gateway.calls).toContainEqual(['create'])
   })
 
   // FR-CONV-015: the title is a real button, so Enter and Space activate it with no key handler.
@@ -105,6 +159,7 @@ describe('ConversationSidebar', () => {
   it('does not open the conversation from its row controls', async () => {
     const harness = renderSidebar()
     const user = userEvent.setup()
+    await enterSelectionMode(user)
 
     await user.click(
       within(itemFor('Job 42')).getByRole('checkbox', {
@@ -172,7 +227,7 @@ describe('ConversationSidebar', () => {
       return parseFloat(text.style.getPropertyValue('--title-slide-duration'))
     })
 
-    expect(durations).toEqual([2.5, 6.5])
+    expect(durations).toEqual([2.75, 6.75])
   })
 
   it('rests at each end of the title for half a second before reversing', () => {
@@ -186,15 +241,16 @@ describe('ConversationSidebar', () => {
 
     fireEvent.mouseEnter(row)
 
-    // 0.5s of travel between two 0.25s holds, each doubled into 0.5s by `alternate`.
-    expect(text.style.getPropertyValue('--title-slide-duration')).toBe('1s')
-    expect(text.style.getPropertyValue('--title-slide-easing')).toBe('linear(0, 0 25%, 1 75%, 1)')
+    // The 0.5s of travel is bracketed by 0.375s holds, doubled at each end by `alternate`.
+    expect(text.style.getPropertyValue('--title-slide-duration')).toBe('1.25s')
+    expect(text.style.getPropertyValue('--title-slide-easing')).toBe('linear(0, 0 30%, 1 70%, 1)')
   })
 
   // FR-CONV-006: the indeterminate state is real, not a checked/unchecked approximation.
   it('reports a partial selection as indeterminate on the select-all control', async () => {
     renderSidebar()
     const user = userEvent.setup()
+    await enterSelectionMode(user)
     const selectAll = screen.getByRole('checkbox', { name: CONVERSATION_COPY.bulk.selectAll })
 
     await user.click(
@@ -206,22 +262,33 @@ describe('ConversationSidebar', () => {
     expect(selectAll).toHaveAttribute('aria-checked', 'mixed')
   })
 
-  it('hides the bulk bar at zero selection and shows the count once something is selected', async () => {
+  it('hides the bulk bar outside selection mode and shows the count once something is selected', async () => {
     renderSidebar()
     const user = userEvent.setup()
 
-    expect(screen.queryByText(CONVERSATION_COPY.bulk.selected(1))).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: CONVERSATION_COPY.bulk.action })).not.toBeInTheDocument()
+    await enterSelectionMode(user)
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.bulk.action })).toBeDisabled()
     await user.click(screen.getByRole('checkbox', { name: CONVERSATION_COPY.bulk.selectAll }))
 
     expect(screen.getByText(CONVERSATION_COPY.bulk.selected(2))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.bulk.action })).toBeEnabled()
   })
 
   it('keeps a double-digit selection count visible above the full-width delete action', () => {
-    render(<BulkDeleteBar count={12} inFlight={false} onClear={() => {}} onDelete={() => {}} />)
+    render(
+      <BulkDeleteBar
+        count={12}
+        inFlight={false}
+        selectionState="partial"
+        onToggleSelectAll={() => {}}
+        onClear={() => {}}
+        onDelete={() => {}}
+      />,
+    )
 
     const count = screen.getByText(CONVERSATION_COPY.bulk.selected(12))
-    expect(count).toHaveClass('whitespace-nowrap', 'tabular-nums')
-    expect(count.parentElement).toHaveClass('justify-between')
+    expect(count).toHaveClass('whitespace-nowrap', 'tabular-nums', 'me-auto')
     expect(screen.getByRole('button', { name: CONVERSATION_COPY.bulk.clear })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: CONVERSATION_COPY.bulk.action })).toHaveClass('w-full')
   })

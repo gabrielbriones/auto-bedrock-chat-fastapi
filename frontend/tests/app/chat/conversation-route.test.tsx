@@ -15,8 +15,8 @@ import { aConversation, anEvent, id } from '../../domains/conversation/domain/co
 
 const ROSTER = [aConversation('a', 9, 'GEMM tuning'), aConversation('b', 0, 'Stream triad')]
 
-const renderAt = (path: string) => {
-  const harness = createHarness()
+const renderAt = (path: string, options: { readonly persistenceEnabled?: boolean } = {}) => {
+  const harness = createHarness({ persistenceEnabled: options.persistenceEnabled ?? true })
   const container = fakeContainer({ conversations: harness.store })
   const router = createAppRouter(container, {
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -40,7 +40,10 @@ const renderAt = (path: string) => {
 // The router resolves the route asynchronously, so nothing may be emitted until it has mounted.
 const routeReady = () => screen.findByRole('textbox', { name: MESSAGING_COPY.composer.label })
 
-const authenticate = async (container: ReturnType<typeof fakeContainer>) => {
+const authenticate = async (
+  container: ReturnType<typeof fakeContainer>,
+  conversationsVisible = true,
+) => {
   act(() => {
     container.messageBus.receive(
       JSON.stringify({
@@ -52,10 +55,40 @@ const authenticate = async (container: ReturnType<typeof fakeContainer>) => {
       }),
     )
   })
-  await waitFor(() => expect(container.conversations.getSnapshot().visible).toBe(true))
+  if (conversationsVisible) {
+    await waitFor(() => expect(container.conversations.getSnapshot().visible).toBe(true))
+  } else {
+    await waitFor(() => expect(container.identity.getSnapshot().status).toBe('authenticated'))
+  }
 }
 
 describe('conversation URL binding', () => {
+  it('keeps New chat and a single UserMenu in the header when conversations are visible', async () => {
+    const { container, emit } = renderAt('/bedrock-chat/ui')
+    await routeReady()
+    await authenticate(container)
+    emit(anEvent.listed(ROSTER))
+
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.newChat })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Test user' })).toHaveLength(1)
+  })
+
+  it('keeps New chat and a single UserMenu in the header when conversations are disabled', async () => {
+    const { container, router } = renderAt('/bedrock-chat/ui/c/conv-1', {
+      persistenceEnabled: false,
+    })
+    await routeReady()
+    await authenticate(container, false)
+
+    expect(container.conversations.getSnapshot().visible).toBe(false)
+    expect(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.newChat })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Test user' })).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: CONVERSATION_COPY.sidebar.newChat }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/ui'))
+  })
+
   // FR-CONV-011: a direct visit loads that conversation.
   it('loads the conversation named by the path', async () => {
     const { gateway } = renderAt('/chat/ui/c/conv-1')

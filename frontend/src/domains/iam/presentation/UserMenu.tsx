@@ -16,6 +16,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { IAM_COPY } from '@/shared/copy/iam'
 
+export type UserMenuProps = {
+  /** `rail` is the collapsed sidebar: avatar only, but still at the foot of the roster. */
+  readonly variant?: 'sidebar' | 'rail' | 'header'
+}
+
 const initialsOf = (displayName: string): string => {
   const [first, second] = displayName.trim().split(/\s+/)
   return `${first?.charAt(0) ?? ''}${second?.charAt(0) ?? ''}`.toUpperCase() || '?'
@@ -41,11 +46,27 @@ function ThemeOptions() {
   )
 }
 
-// FR-IAM-016: the authenticated identity now sits at the foot of the conversation roster rather
-// than the header, next to the logout action it owns. Absent when unauthenticated or when the
-// deployment has authentication switched off, since there is no identity to show or discard.
-export function UserMenu() {
-  const { identity, authPolicy, logger } = useContainer()
+function LogoutItem() {
+  const { identity, logger } = useContainer()
+
+  return (
+    <DropdownMenuItem
+      variant="destructive"
+      onClick={() => {
+        identity.logout().catch((error: unknown) => {
+          logger.error('logout_failed', { name: String(error) })
+        })
+      }}
+    >
+      <LogOutIcon aria-hidden />
+      {IAM_COPY.status.logOut}
+    </DropdownMenuItem>
+  )
+}
+
+// FR-IAM-016: absent when unauthenticated or when authentication is switched off.
+export function UserMenu({ variant = 'sidebar' }: UserMenuProps) {
+  const { authPolicy } = useContainer()
   const session = useContainerStore('identity')
 
   if (!authPolicy.enabled || session.status !== 'authenticated') {
@@ -53,43 +74,42 @@ export function UserMenu() {
   }
 
   const { displayName } = session.principal
+  const iconOnly = variant !== 'sidebar'
+
+  const wrapperClassName = variant === 'sidebar'
+    ? 'border-t border-border p-2'
+    : variant === 'rail'
+      ? 'flex justify-center border-t border-border p-2'
+      : undefined
 
   return (
-    <div className="border-t border-border p-2">
+    <div className={wrapperClassName}>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
             <Button
               type="button"
               variant="ghost"
+              size={iconOnly ? 'icon' : 'default'}
               aria-label={displayName ?? IAM_COPY.status.account}
-              className="w-full min-w-0 justify-start gap-2 px-2"
+              className={iconOnly ? 'size-8 p-0' : 'w-full min-w-0 justify-start gap-2 px-2'}
             />
           }
         >
           <Avatar size="sm">
             <AvatarFallback>{displayName !== null ? initialsOf(displayName) : '?'}</AvatarFallback>
           </Avatar>
-          {displayName !== null ? (
+          {!iconOnly && displayName !== null ? (
             <span className="min-w-0 flex-1 truncate text-start text-sm font-medium">
               {displayName}
             </span>
           ) : null}
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start">
+        <DropdownMenuContent align={variant === 'header' ? 'end' : 'start'}>
+          <DropdownMenuLabel>{displayName ?? IAM_COPY.status.account}</DropdownMenuLabel>
           <ThemeOptions />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => {
-              identity.logout().catch((error: unknown) => {
-                logger.error('logout_failed', { name: String(error) })
-              })
-            }}
-          >
-            <LogOutIcon aria-hidden />
-            {IAM_COPY.status.logOut}
-          </DropdownMenuItem>
+          <LogoutItem />
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
