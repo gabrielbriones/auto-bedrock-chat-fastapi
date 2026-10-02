@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
@@ -65,14 +66,10 @@ class SPAStaticFiles(StaticFiles):
 
     def __init__(self, directory: os.PathLike, ui_endpoint: str, chat_endpoint: str) -> None:
         super().__init__(directory=str(directory), html=False, check_dir=True)
+        self.index_path = Path(directory) / "index.html"
         base = html.escape(f"{ui_endpoint.rstrip('/')}/", quote=True)
         chat = html.escape(chat_endpoint, quote=True)
-        index = (Path(directory) / "index.html").read_text(encoding="utf-8")
-        self.index_html = index.replace(
-            "<head>",
-            f'<head><base href="{base}"><meta name="autochat-chat-endpoint" content="{chat}">',
-            1,
-        )
+        self.head = f'<head><base href="{base}"><meta name="autochat-chat-endpoint" content="{chat}">'
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         if path in ("", ".", "index.html"):
@@ -91,7 +88,15 @@ class SPAStaticFiles(StaticFiles):
         return response
 
     async def _index(self, scope: Scope) -> Response:
-        return HTMLResponse(self.index_html, headers={"Cache-Control": NO_STORE})
+        if scope["method"] not in ("GET", "HEAD"):
+            raise HTTPException(status_code=405)
+        # The index is mutable across builds; unlike hashed assets it must not be held in memory.
+        # Read on a worker thread so a rebuild does not block the event loop.
+        try:
+            index = await run_in_threadpool(self.index_path.read_text, encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404) from exc
+        return HTMLResponse(index.replace("<head>", self.head, 1), headers={"Cache-Control": NO_STORE})
 
 
 def _looks_like_file(path: str) -> bool:

@@ -102,6 +102,21 @@ def test_ui_root_serves_index_without_redirect(dist_dir):
     assert client.get("/chat/dashboard", follow_redirects=False).text == resp.text
 
 
+def test_index_updates_after_rebuild_without_restarting_app(dist_dir):
+    app, _ = _app_with_spa(dist_dir)
+    client = TestClient(app)
+    first = client.get("/chat/ui")
+
+    (dist_dir / "index.html").write_text(INDEX_HTML.replace("index-abc123.js", "index-def456.js"))
+
+    refreshed = client.get("/chat/dashboard/feedback")
+    assert "index-abc123.js" in first.text
+    assert "index-def456.js" in refreshed.text
+    assert "index-abc123.js" not in refreshed.text
+    assert '<base href="/chat/ui/">' in refreshed.text
+    assert refreshed.headers["cache-control"] == NO_STORE
+
+
 def test_deep_link_falls_back_to_index(dist_dir):
     app, _ = _app_with_spa(dist_dir)
     client = TestClient(app)

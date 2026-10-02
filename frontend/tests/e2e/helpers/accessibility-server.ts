@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from 'node:http'
 import path from 'node:path'
 
 import { WebSocketServer, type WebSocket } from 'ws'
+import { readSpaFile } from './spa-file.js'
 
 type ClientFrame = Record<string, unknown> & { readonly type: string }
 
@@ -127,7 +128,7 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
       : 'index.html'
 
     try {
-      const body = await readFile(path.join(dist, relativePath))
+      const body = await readSpaFile(dist, relativePath)
       response.writeHead(200, { 'content-type': contentType(relativePath) })
       response.end(body)
     } catch {

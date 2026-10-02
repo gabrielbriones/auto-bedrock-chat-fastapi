@@ -1411,7 +1411,7 @@ class ChatConfig(BaseSettings):
     def validate_ui_endpoint(cls, v: str) -> str:
         if not v.startswith("/") or not v.rstrip("/").endswith("/ui") or "//" in v:
             raise ValueError("ui_endpoint must be an absolute path ending in /ui (e.g. /portal/ui)")
-        return v
+        return v.rstrip("/")
 
     @field_validator("temperature")
     @classmethod

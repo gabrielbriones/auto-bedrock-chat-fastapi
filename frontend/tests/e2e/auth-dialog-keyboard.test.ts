@@ -6,6 +6,7 @@ import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver } from 'selenium-webdriver'
 
 import { buildChromeDriver } from './helpers/webdriver.js'
+import { readSpaFile } from './helpers/spa-file.js'
 
 const contentType = (filePath: string): string => {
   if (filePath.endsWith('.js')) return 'text/javascript'
@@ -60,7 +61,7 @@ describe('Auth dialog keyboard journey', function () {
         : 'index.html'
 
       try {
-        const body = await readFile(path.join(dist, relativePath))
+        const body = await readSpaFile(dist, relativePath)
         response.writeHead(200, { 'content-type': contentType(relativePath) })
         response.end(body)
       } catch {

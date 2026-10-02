@@ -555,8 +555,8 @@ async def analytics_summary():
 
 
 # Uvicorn's reload child may execute the script as __mp_main__ before importing
-# app_plugin. Register routes only on the app used by the server worker.
-if __name__ == "app_plugin":
+# the app. Register routes on imports, including package-qualified ASGI imports.
+if __name__ not in ("__main__", "__mp_main__"):
     # Most settings come from .env; list fields are supplied in code.
     autolangchat_plugin = add_autolangchat(
         app,

@@ -6,6 +6,7 @@ import { expect } from '@jest/globals'
 import { By, Key, until, type WebDriver, type WebElement } from 'selenium-webdriver'
 
 import { assertNoAxeViolations } from './helpers/axe.js'
+import { readSpaFile } from './helpers/spa-file.js'
 import { buildChromeDriver } from './helpers/webdriver.js'
 
 const KB_ID = 'kb/2026/perf-guide'
@@ -177,7 +178,7 @@ const startAdminTestServer = async (): Promise<AdminTestServer> => {
       : 'index.html'
 
     try {
-      const body = await readFile(path.join(dist, relativePath))
+      const body = await readSpaFile(dist, relativePath)
       response.writeHead(200, { 'content-type': contentType(relativePath) })
       response.end(body)
     } catch {

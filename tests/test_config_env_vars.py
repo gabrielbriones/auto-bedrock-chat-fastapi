@@ -72,6 +72,18 @@ class TestAutochatEnvVarPrefix:
         config = _load_config(AUTOCHAT_UI_ENDPOINT="/custom/chat/ui")
         assert config.sso_allowed_return_prefixes == ["/custom/chat/ui"]
 
+    def test_trailing_slash_ui_endpoint_is_canonicalized_for_sso(self):
+        from autolangchat.plugin import AutoLangChatPlugin
+
+        config = _load_config(AUTOCHAT_UI_ENDPOINT="/portal/ui/")
+        assert config.ui_endpoint == "/portal/ui"
+        assert config.sso_allowed_return_prefixes == ["/portal/ui"]
+
+        plugin = object.__new__(AutoLangChatPlugin)
+        plugin.config = config
+        target = "/portal/ui?prompt=welcome"
+        assert plugin._safe_return_to(target) == target
+
     @pytest.mark.parametrize("endpoint", ["/portal", "portal/ui", "//external/ui"])
     def test_ui_endpoint_must_use_ui_route(self, endpoint):
         with pytest.raises(ValidationError, match="ui_endpoint must be an absolute path ending in /ui"):

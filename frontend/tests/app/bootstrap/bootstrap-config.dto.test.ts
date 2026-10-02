@@ -30,6 +30,17 @@ describe('toChatBootstrap', () => {
     }
   });
 
+  it('accepts the backend-supported root /ui mount', () => {
+    const result = toChatBootstrap({ ...bootstrapConfig, uiEndpoint: '/ui' });
+    expect(isOk(result) && result.value.uiEndpoint).toBe('/ui');
+  });
+
+  it('rejects malformed UI mounts', () => {
+    for (const uiEndpoint of ['//evil/ui', '/chat//ui', '/chat/other']) {
+      expect(isErr(toChatBootstrap({ ...bootstrapConfig, uiEndpoint }))).toBe(true);
+    }
+  });
+
   it('translates the snake_case model-catalog fields to camelCase, including nested group models', () => {
     const result = toChatBootstrap(bootstrapConfig);
 
