@@ -70,9 +70,13 @@ const VIEWS: readonly ViewCase[] = [
     name: 'settings',
     open: async (driver, origin) => {
       await driver.get(`${origin}/bedrock-chat/ui/`)
-      const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 15_000)
-      await driver.executeScript('arguments[0].click()', settings)
-      await waitForSheetOpen(driver)
+      const settings = await driver.wait(until.elementLocated(By.css('form [data-slot="dropdown-menu-trigger"]')), 15_000)
+      await settings.click()
+      await (await driver.wait(until.elementLocated(By.xpath("//*[@role='menuitem'][normalize-space()='Model settings…']")), 10_000)).click()
+      await driver.wait(
+        until.elementLocated(By.css('[data-slot="dialog-content"]:not([data-starting-style])')),
+        15_000,
+      )
     },
   },
 ]
