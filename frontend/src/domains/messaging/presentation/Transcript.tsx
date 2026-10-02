@@ -85,7 +85,7 @@ export function Transcript({ entries, welcome, presetArea, renderFeedback }: Tra
         </div>
       ) : null}
 
-      {stuck ? null : <JumpToLatestButton unread={unread} onJump={jumpToLatest} />}
+      <JumpToLatestButton visible={!stuck} unread={unread} onJump={jumpToLatest} />
     </section>
   )
 }

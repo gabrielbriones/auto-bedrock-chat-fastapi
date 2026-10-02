@@ -1,5 +1,6 @@
 import { ArrowUp } from 'lucide-react'
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -75,6 +76,27 @@ const useComposerField = (
   return field
 }
 
+// Exposed on the parent so siblings stuck above the composer (JumpToLatestButton) clear it whatever
+// its height — wrapped input, the hint line and narrow viewports all change it.
+const useComposerHeightVar = () =>
+  useCallback((form: HTMLFormElement | null) => {
+    const host = form?.parentElement
+
+    if (form == null || host == null || typeof ResizeObserver === 'undefined') {
+      return undefined
+    }
+
+    const observer = new ResizeObserver(() => {
+      host.style.setProperty('--composer-height', `${form.offsetHeight}px`)
+    })
+    observer.observe(form)
+
+    return () => {
+      observer.disconnect()
+      host.style.removeProperty('--composer-height')
+    }
+  }, [])
+
 type KeyDownDeps = {
   readonly locked: boolean
   readonly hasText: boolean
@@ -147,6 +169,7 @@ export function MessageComposer({
   const locked = !availability.enabled
   const hasText = value.trim() !== ''
   const field = useComposerField(value, locked)
+  const formRef = useComposerHeightVar()
   const hintId = useId()
   // Mid-turn the waiting placeholder already says why the composer is closed, so the footer would
   // only repeat it; it stays for assistive technology alone.
@@ -166,7 +189,7 @@ export function MessageComposer({
   return (
     // FR-SHELL-018: <main> is the only scroller, so the composer stays put by sticking to its bottom
     // edge rather than by owning a scroller of its own.
-    <form onSubmit={submit} className="sticky bottom-0 z-10 shrink-0 bg-background px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
+    <form ref={formRef} onSubmit={submit} className="sticky bottom-0 z-10 shrink-0 bg-background px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
       <div className="mx-auto flex max-w-4xl items-end gap-2 rounded-xl border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-offset-2 forced-colors:focus-within:outline-ring dark:bg-input/30">
         <Textarea
           ref={field}
