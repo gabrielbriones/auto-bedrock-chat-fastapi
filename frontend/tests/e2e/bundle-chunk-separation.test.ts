@@ -58,7 +58,7 @@ describe('Chat route bundle separation (production build)', function () {
     const manifestPath = path.resolve(process.cwd(), 'dist/.vite/manifest.json')
     const { forbiddenFiles } = await analyzeChatRouteBundle(manifestPath)
 
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
 
     const composer = await driver.wait(
       until.elementLocated(By.css('textarea[aria-label="Message"]:not([disabled])')),
@@ -81,7 +81,7 @@ describe('Chat route bundle separation (production build)', function () {
     const loadedPaths = await driver.executeScript<string[]>(
       'return performance.getEntriesByType("resource").map((entry) => new URL(entry.name).pathname)',
     )
-    const loadedFiles = new Set(loadedPaths.map((requestPath) => requestPath.replace(/^\/bedrock-chat\/ui\//, '')))
+    const loadedFiles = new Set(loadedPaths.map((requestPath) => requestPath.replace(/^\/chat\/ui\//, '')))
 
     // Sanity check: the analysis (and this assertion) is meaningless if the entry itself never
     // shows up as a loaded resource.

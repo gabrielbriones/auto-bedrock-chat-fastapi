@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from 'node:http'
 import path from 'node:path'
 
 import { WebSocketServer, type WebSocket } from 'ws'
+import { readSpaFile } from './spa-file.js'
 
 type ClientFrame = Record<string, unknown> & { readonly type: string }
 
@@ -82,11 +83,11 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
     const address = server.address()
     const port = address !== null && typeof address !== 'string' ? address.port : 0
 
-    if (requestPath === '/bedrock-chat/config') {
+    if (requestPath === '/chat/config') {
       sendJson(response, {
         ...(baseConfig as Record<string, unknown>),
         adminEnabled: true,
-        websocketUrl: `ws://127.0.0.1:${port}/bedrock-chat/ws`,
+        websocketUrl: `ws://127.0.0.1:${port}/chat/ws`,
         ssoEnabled: true,
         ssoAuthenticated: true,
         ssoUserDisplay: 'Accessibility tester',
@@ -94,13 +95,13 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
       return
     }
 
-    if (requestPath === '/bedrock-chat/admin/_capabilities') {
+    if (requestPath === '/chat/admin/_capabilities') {
       sendJson(response, { is_admin: true, anonymous: false, token_usage_enabled: true, kb_source_ingestion_enabled: true })
       return
     }
 
-    const adminPath = requestPath.startsWith('/bedrock-chat/admin')
-      ? requestPath.slice('/bedrock-chat/admin'.length)
+    const adminPath = requestPath.startsWith('/chat/admin')
+      ? requestPath.slice('/chat/admin'.length)
       : null
     if (adminPath !== null) adminRequests.push(`${request.method ?? 'GET'} ${adminPath}`)
 
@@ -122,12 +123,12 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
       return sendJson(response, kbSourceRun, 202)
     }
 
-    const relativePath = requestPath.startsWith('/bedrock-chat/ui/assets/')
-      ? requestPath.slice('/bedrock-chat/ui/'.length)
+    const relativePath = requestPath.startsWith('/chat/ui/assets/')
+      ? requestPath.slice('/chat/ui/'.length)
       : 'index.html'
 
     try {
-      const body = await readFile(path.join(dist, relativePath))
+      const body = await readSpaFile(dist, relativePath)
       response.writeHead(200, { 'content-type': contentType(relativePath) })
       response.end(body)
     } catch {
@@ -136,7 +137,7 @@ export async function startAccessibilityServer(): Promise<AccessibilityServer> {
     }
   })
 
-  const sockets = new WebSocketServer({ server, path: '/bedrock-chat/ws' })
+  const sockets = new WebSocketServer({ server, path: '/chat/ws' })
   sockets.on('connection', (connection) => {
     connections.add(connection)
     const send = (frame: unknown) => connection.send(JSON.stringify(frame))

@@ -4,20 +4,20 @@ import { resolveSocketUrl } from '@/domains/messaging/domain/socket-url'
 
 describe('resolveSocketUrl', () => {
   it('resolves a server-supplied path against the page origin', () => {
-    expect(resolveSocketUrl('/bedrock-chat/ws', 'http://localhost:3000/ui/')).toBe(
-      'ws://localhost:3000/bedrock-chat/ws',
+    expect(resolveSocketUrl('/chat/ws', 'http://localhost:3000/ui/')).toBe(
+      'ws://localhost:3000/chat/ws',
     )
   })
 
   it('resolves a relative path against the page, not the origin root', () => {
-    expect(resolveSocketUrl('ws', 'http://localhost:3000/bedrock-chat/')).toBe(
-      'ws://localhost:3000/bedrock-chat/ws',
+    expect(resolveSocketUrl('ws', 'http://localhost:3000/chat/')).toBe(
+      'ws://localhost:3000/chat/ws',
     )
   })
 
   it('uses wss on a secure page', () => {
-    expect(resolveSocketUrl('/bedrock-chat/ws', 'https://analyzer.intel.com/ui/')).toBe(
-      'wss://analyzer.intel.com/bedrock-chat/ws',
+    expect(resolveSocketUrl('/chat/ws', 'https://analyzer.intel.com/ui/')).toBe(
+      'wss://analyzer.intel.com/chat/ws',
     )
   })
 
@@ -40,6 +40,6 @@ describe('resolveSocketUrl', () => {
   })
 
   it('returns the raw value when there is no page to resolve against', () => {
-    expect(resolveSocketUrl('/bedrock-chat/ws', '')).toBe('/bedrock-chat/ws')
+    expect(resolveSocketUrl('/chat/ws', '')).toBe('/chat/ws')
   })
 })

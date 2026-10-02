@@ -211,7 +211,7 @@ describe('WsAuthGateway', () => {
     emit({
       type: 'auth_expired',
       timestamp: '2026-08-25T00:00:00Z',
-      redirect_url: `${ORIGIN}/bedrock-chat/auth/sso/login`,
+      redirect_url: `${ORIGIN}/chat/auth/sso/login`,
       message: 'Expired',
     })
     emit({
@@ -230,7 +230,7 @@ describe('WsAuthGateway', () => {
     expect(events[0]).toEqual({
       kind: 'expired',
       message: 'Expired',
-      redirectUrl: `${ORIGIN}/bedrock-chat/auth/sso/login`,
+      redirectUrl: `${ORIGIN}/chat/auth/sso/login`,
     })
     expect(logger.warn).toHaveBeenCalledTimes(1)
     expect(logger.warn.mock.calls[0]?.[0]).toBe('auth_redirect_rejected')

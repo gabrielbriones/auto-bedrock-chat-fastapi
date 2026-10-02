@@ -56,7 +56,7 @@ describe('E6 — bulk delete with a partial server result', function () {
   })
 
   it('reports the ids the server skipped and refetches instead of patching in place', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     await byText('GEMM tuning')
 
     // FR-CONV-006: the select-all control carries a real indeterminate state.

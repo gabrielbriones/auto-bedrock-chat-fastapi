@@ -10,7 +10,7 @@ import { HttpTelemetryGateway } from '@/domains/telemetry/infrastructure/http-te
 import { server } from '../../../msw/server'
 import { invalidDateRangeHandler } from '../../../msw/handlers/telemetry'
 
-const ADMIN = 'http://localhost/bedrock-chat/admin'
+const ADMIN = 'http://localhost/chat/admin'
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
 const gateway = new HttpTelemetryGateway(ADMIN, new HttpClient(), silentLogger)
 
@@ -99,7 +99,7 @@ describe('HttpTelemetryGateway', () => {
   })
 
   it('reports malformed payloads as invalid responses', async () => {
-    server.use(http.get('*/bedrock-chat/admin/tokens/summary', () => HttpResponse.json({ items: [{ model_id: 4 }] })))
+    server.use(http.get('*/chat/admin/tokens/summary', () => HttpResponse.json({ items: [{ model_id: 4 }] })))
 
     const result = await gateway.summary(AbortSignal.timeout(1_000))
 

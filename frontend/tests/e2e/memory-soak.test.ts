@@ -70,7 +70,7 @@ describeSoak('NFR-PERF-009 — 30-minute streaming memory soak', () => {
   })
 
   it('keeps heap growth under the stated ceiling across continuous streaming', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
 
     const hasHeapApi = await driver.executeScript<boolean>(
       'return typeof performance !== "undefined" && typeof performance.memory !== "undefined"',

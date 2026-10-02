@@ -21,7 +21,7 @@ import { RecordingNotificationPort } from '../../../shared/ports/recording-notif
 import { FakePollScheduler } from '../application/fake-poll-scheduler'
 
 const SOURCES = KNOWLEDGE_COPY.sources
-const PATH = '/bedrock-chat/dashboard/kb-sources'
+const PATH = '/chat/dashboard/kb-sources'
 
 const sources = [{ source: 'feedback', count: 4 }, { source: 'intel-docs', count: 12 }]
 

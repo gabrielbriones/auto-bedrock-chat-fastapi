@@ -22,7 +22,7 @@ describe('Live backend: chat login', () => {
     }
     origin = url.origin
 
-    const response = await fetch(`${origin}/bedrock-chat/config`)
+    const response = await fetch(`${origin}/chat/config`)
     if (!response.ok) throw new Error(`Live bootstrap returned HTTP ${response.status}`)
     const config = (await response.json()) as { requireAuth?: boolean; ssoEnabled?: boolean }
     requireAuth = config.requireAuth
@@ -70,7 +70,7 @@ describe('Live backend: chat login', () => {
   }
 
   it('loads the real bootstrap into the chat shell', async () => {
-    await driver.get(`${origin}/bedrock-chat/ui/`)
+    await driver.get(`${origin}/chat/ui/`)
     const composer = await driver.wait(
       until.elementLocated(By.css('textarea[aria-label="Message"]')),
       20_000,
@@ -81,7 +81,7 @@ describe('Live backend: chat login', () => {
   const idpPreflight = process.env.RUN_IDP_PREFLIGHT === '1' ? it : it.skip
   idpPreflight('reaches the SSO sign-in page through the browser proxy', async () => {
     if (!requireAuth || !ssoEnabled) return
-    await driver.get(`${origin}/bedrock-chat/ui/`)
+    await driver.get(`${origin}/chat/ui/`)
     await startSsoLogin()
     const page = await driver.wait(async () => {
       const current = await driver.getCurrentUrl()
@@ -101,7 +101,7 @@ describe('Live backend: chat login', () => {
   it('logs in with SSO, sends a prompt and renders the backend response', async () => {
     await driver.get('about:blank')
     await driver.wait(async () => (await driver.getCurrentUrl()) === 'about:blank', 10_000)
-    await driver.get(`${origin}/bedrock-chat/ui/`)
+    await driver.get(`${origin}/chat/ui/`)
     if (requireAuth) {
       const session = await driver.wait(async () => {
         const fields = await driver.findElements(By.css('textarea[aria-label="Message"]'))
@@ -117,7 +117,7 @@ describe('Live backend: chat login', () => {
         await startSsoLogin()
         process.stderr.write('Complete SSO sign-in in the visible Chrome window; waiting up to 5 minutes for chat to unlock.\n')
         await driver.wait(async () => {
-          if (!(await driver.getCurrentUrl()).startsWith(`${origin}/bedrock-chat/ui/`)) return false
+          if (!(await driver.getCurrentUrl()).startsWith(`${origin}/chat/ui/`)) return false
           const fields = await driver.findElements(By.css('textarea[aria-label="Message"]'))
           return fields.length > 0 && (await fields[0]!.isEnabled())
         }, 300_000, 'SSO did not return to the chat with an enabled composer within 5 minutes')

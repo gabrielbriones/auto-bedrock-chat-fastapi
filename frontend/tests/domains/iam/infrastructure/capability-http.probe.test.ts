@@ -29,7 +29,7 @@ describe('CapabilityHttpProbe', () => {
       token_usage_enabled: false,
       kb_source_ingestion_enabled: true,
     }))
-    const probe = new CapabilityHttpProbe('/bedrock-chat/admin', { request }, logger)
+    const probe = new CapabilityHttpProbe('/chat/admin', { request }, logger)
 
     await expect(probe.probe()).resolves.toEqual({
       isAdmin: true,
@@ -40,7 +40,7 @@ describe('CapabilityHttpProbe', () => {
     await probe.probe()
 
     expect(request).toHaveBeenCalledTimes(1)
-    expect(request).toHaveBeenCalledWith('/bedrock-chat/admin/_capabilities', {
+    expect(request).toHaveBeenCalledWith('/chat/admin/_capabilities', {
       credentials: 'include',
       logger,
     })

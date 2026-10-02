@@ -86,7 +86,8 @@ const aiResponseFrameSchema = serverFrame('ai_response')
     tool_calls: z.array(z.unknown()).optional(),
     tool_results: z.array(z.unknown()).optional(),
     metadata: metadataSchema.optional(),
-    conversation_id: z.string().optional(),
+    // Anonymous sessions have no persisted conversation; the backend includes the key as null.
+    conversation_id: z.string().nullable().optional(),
   })
   .superRefine((frame, context) => {
     if (frame.error === true) {

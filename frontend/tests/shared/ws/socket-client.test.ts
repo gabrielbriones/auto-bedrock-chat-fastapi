@@ -292,6 +292,29 @@ describe('SocketClient', () => {
       client.close()
     })
 
+    it('keeps an otherwise idle connection open across repeated ping/pong cycles', () => {
+      jest.useFakeTimers()
+      const socketFactory = createSocketFactory([
+        { type: 'open' },
+        ...Array.from({ length: 10 }, (): FakeChatSocketStep => ({ type: 'frame', data: PONG_FRAME })),
+      ])
+      const client = createClient({ socketFactory: socketFactory.factory })
+
+      client.connect()
+      const socket = socketFactory.sockets[0]
+      socket?.playNext()
+
+      for (let cycle = 0; cycle < 10; cycle += 1) {
+        jest.advanceTimersByTime(30_000)
+        socket?.playNext()
+      }
+
+      expect(socket?.sent).toEqual(Array.from({ length: 10 }, () => '{"type":"ping"}'))
+      expect(client.state.status).toBe('open')
+      expect(socketFactory.sockets).toHaveLength(1)
+      client.close()
+    })
+
     it('recycles a connection that receives no frame within the stale timeout', () => {
       jest.useFakeTimers()
       const socketFactory = createSocketFactory()
