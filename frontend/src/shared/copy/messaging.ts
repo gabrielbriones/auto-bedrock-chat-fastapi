@@ -6,7 +6,7 @@ export const MESSAGING_COPY = {
   connection: {
     label: 'Connection status',
     connected: 'Connected',
-    connecting: 'Connecting…',
+    connecting: 'Connecting...',
     disconnected: 'Disconnected',
   },
 
@@ -17,7 +17,7 @@ export const MESSAGING_COPY = {
     system: 'System',
     sending: 'Sending…',
     waiting: 'AI is typing...',
-    thinking: 'Thinking…',
+    thinking: 'Thinking...',
     truncated: 'Earlier context was truncated before this response.',
     sources: 'Sources',
     source: (position: number) => `Source ${position}`,
@@ -51,7 +51,7 @@ export const MESSAGING_COPY = {
 
   composer: {
     label: 'Message',
-    placeholder: 'Type your message...',
+    placeholder: 'Type your message',
     waitingPlaceholder: 'Waiting for response...',
     send: 'Send',
     hint: 'Enter to send, Shift+Enter for a new line',
