@@ -19,7 +19,7 @@ export const SHELL = {
     action: 'Back to chat',
   },
 
-  loading: 'Loading…',
+  loading: 'Loading...',
 
   offline: 'You are offline. Reconnection is paused until your connection returns.',
 
@@ -38,7 +38,7 @@ export const SHELL = {
     knowledge: 'Knowledge base',
     kbSources: 'KB sources',
     usage: 'Usage',
-    openDashboard: 'Admin dashboard',
+    openDashboard: 'Dashboard',
     backToChat: 'Back to chat',
     // One line under each section title, so a reviewer landing on a view knows what it is for.
     descriptions: {

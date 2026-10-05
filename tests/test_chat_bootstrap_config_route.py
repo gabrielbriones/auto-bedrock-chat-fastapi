@@ -66,6 +66,13 @@ def test_config_route_unauthenticated_returns_200_with_sso_false():
     body = resp.json()
     assert body["ssoAuthenticated"] is False
     assert body["ssoUserDisplay"] == ""
+    assert body["uiEndpoint"] == "/chat/ui"
+
+
+def test_config_route_reports_custom_ui_endpoint():
+    plugin = _make_bare_plugin(_make_config(ui_endpoint="/portal/ui"))
+
+    assert TestClient(plugin.app).get("/chat/config").json()["uiEndpoint"] == "/portal/ui"
 
 
 def test_config_route_sets_cache_control_no_store():
@@ -132,6 +139,7 @@ def test_config_route_never_leaks_credentials_or_secrets():
 def test_build_bootstrap_payload_maps_all_contract_001_keys():
     context = {
         "websocket_url": "/chat/ws",
+        "ui_endpoint": "/chat/ui",
         "auth_enabled": True,
         "require_tool_auth": False,
         "supported_auth_types": ["bearer_token"],
@@ -164,6 +172,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
     payload = _build_bootstrap_payload(context)
 
     assert payload["websocketUrl"] == "/chat/ws"
+    assert payload["uiEndpoint"] == "/chat/ui"
     assert payload["modelId"] == "us.anthropic.claude-sonnet-5"
     assert payload["uiTitle"] == "AI Assistant"
     assert payload["appTitle"] == "Test App"

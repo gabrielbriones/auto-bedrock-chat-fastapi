@@ -9,9 +9,10 @@ import { PendingTurnNotice } from '@/domains/conversation/presentation/PendingTu
 import { UnknownConversation } from '@/domains/conversation/presentation/UnknownConversation'
 import { ChatPanel } from '@/domains/messaging/presentation/ChatPanel'
 import { FeedbackControls } from '@/domains/feedback/presentation/FeedbackControls'
+import { ComposerModelPicker } from '@/domains/model-config/presentation/ComposerModelPicker'
 
 export type ConversationViewProps = {
-  /** Null at `/bedrock-chat/ui`, which is a new, unsaved conversation (FR-CONV-011). */
+  /** Null at `/chat/ui`, which is a new, unsaved conversation (FR-CONV-011). */
   readonly conversationId: ConversationId | null
 }
 
@@ -22,6 +23,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const { bootstrap, conversations, promptCatalog } = useContainer()
   const { inputEnabled } = useContainerStore('identity')
   const { pendingTurn, unknownId } = useContainerStore('conversations')
+  const { configuredModel } = useContainerStore('chatSession')
   const navigate = useNavigate()
 
   useConversationRoute(conversationId)
@@ -62,6 +64,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         inputEnabled={inputEnabled}
         onMessageSent={onMessageSent}
         presetArea={<PromptCatalogArea />}
+        composerToolbar={bootstrap.enableConfigSidebar ? <ComposerModelPicker configuredModel={configuredModel} /> : undefined}
         {...(renderFeedback === undefined ? {} : { renderFeedback })}
       />
     </div>

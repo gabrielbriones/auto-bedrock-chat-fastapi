@@ -11,7 +11,7 @@ import { HttpKnowledgeGateway } from '@/domains/knowledge/infrastructure/http-kn
 import kbDocument from '../../../msw/fixtures/knowledge/kb-document.json' with { type: 'json' }
 import { server } from '../../../msw/server'
 
-const ADMIN = 'http://localhost/bedrock-chat/admin'
+const ADMIN = 'http://localhost/chat/admin'
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
 const gateway = new HttpKnowledgeGateway(ADMIN, new HttpClient(), silentLogger)
 const requestUrls: string[] = []

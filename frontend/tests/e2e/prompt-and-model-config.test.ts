@@ -90,7 +90,7 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     })
     server.on('chat', () => undefined)
 
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     const jobId = await driver.wait(until.elementLocated(By.css('#prompt-var-JOB_ID')), 10_000)
     await jobId.sendKeys('job-42')
     await (await visibleElement(driver, By.xpath("//button[contains(normalize-space(), 'Workload Analysis')]"))).click()
@@ -102,7 +102,7 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     await matchScreenshot(driver, 'e4-preset-with-variables')
   })
 
-  it('E7 waits for model confirmation, clamps max_tokens, and updates the badge', async () => {
+  it('E7 waits for model confirmation, clamps max_tokens, and updates the picker', async () => {
     server = await startChatServer({ config: MODEL_CONFIG })
     server.on('config_update', (frame) => {
       const update = configUpdate(frame)
@@ -136,13 +136,11 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
       })
     })
 
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 10_000)
     expect(await settings.getText()).toContain(LARGE_MODEL.name)
-    await driver.executeScript('arguments[0].click()', settings)
+    await settings.click()
 
-    const picker = await visibleElement(driver, By.xpath("//*[@data-slot='sheet-content']//button[normalize-space()='Large Model']"))
-    await picker.click()
     const provider = await visibleElement(driver, By.xpath("//*[@role='menuitem'][normalize-space()='Provider B']"))
     await provider.click()
     const model = await visibleElement(driver, By.xpath("//*[@role='menuitemradio'][contains(normalize-space(), 'Small Model')]"))
@@ -151,8 +149,7 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     await driver.wait(() => server.sentOf('config_update').length === 1, 10_000)
     expect(configUpdate(server.sentOf('config_update')[0] ?? { type: '' })).toEqual({ model_id: SMALL_MODEL.id })
     expect(await settings.getText()).toContain(LARGE_MODEL.name)
-    expect(await settings.findElements(By.css('[data-slot="badge"]'))).toHaveLength(0)
-    expect(await driver.findElements(By.xpath("//*[@role='status']//*[normalize-space()='Waiting for server confirmation']"))).not.toHaveLength(0)
+    expect(await settings.findElements(By.css('.animate-spin'))).not.toHaveLength(0)
 
     server.send({
       type: 'config_updated',
@@ -164,13 +161,14 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     await driver.wait(() => server.sentOf('config_update').length === 2, 10_000)
     expect(configUpdate(server.sentOf('config_update')[1] ?? { type: '' })).toEqual({ max_tokens: 4096 })
     await driver.wait(async () => (await settings.getText()).includes(SMALL_MODEL.name), 10_000)
-    expect(await settings.getText()).toContain('2')
 
-    const maxTokens = await driver.findElement(By.css('[data-slot="sheet-content"] #override-max_tokens'))
+    await settings.click()
+    await (await visibleElement(driver, By.xpath("//*[@role='menuitem'][normalize-space()='Model settings…']"))).click()
+    const maxTokens = await visibleElement(driver, By.css('[data-slot="dialog-content"] #override-max_tokens'))
     expect(await maxTokens.getAttribute('max')).toBe('4096')
     expect(await maxTokens.getAttribute('value')).toBe('4096')
 
-    await assertNoAxeViolations(driver, { include: '[data-slot="sheet-content"]' })
+    await assertNoAxeViolations(driver, { include: '[data-slot="dialog-content"]' })
     await matchScreenshot(driver, 'e7-confirmed-model-clamp')
 
     await driver.actions().sendKeys(Key.ESCAPE).perform()
@@ -199,24 +197,24 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
       })
     })
 
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 10_000)
     await driver.executeScript('arguments[0].click()', settings)
 
-    const temperature = await driver.findElement(By.css('[data-slot="sheet-content"] input[aria-label="Temperature"]'))
+    const temperature = await visibleElement(driver, By.css('[data-slot="dialog-content"] input[aria-label="Temperature"]'))
     await temperature.sendKeys(Key.ARROW_LEFT)
 
     await driver.wait(() => server.sentOf('config_update').length === 1, 10_000, 'config_update was not sent')
-    await driver.wait(async () => (await settings.findElements(By.css('[data-slot="badge"]'))).length === 1, 10_000, 'override badge did not appear')
+    const overrideMarkers = By.css('[data-slot="dialog-content"] [data-slot="override-marker"]')
+    await driver.wait(async () => (await driver.findElements(overrideMarkers)).length === 1, 10_000, 'override marker did not appear')
     await (await visibleElement(driver, By.xpath("//button[normalize-space()='Reset to defaults']"))).click()
 
     await driver.wait(() => server.sentOf('config_reset').length === 1, 10_000, 'config_reset was not sent')
-    await driver.wait(async () => (await settings.findElements(By.css('[data-slot="badge"]'))).length === 0, 10_000, 'override badge did not clear')
-    const resetTemperature = await driver.findElement(By.css('[data-slot="sheet-content"] input[aria-label="Temperature"]'))
+    await driver.wait(async () => (await driver.findElements(overrideMarkers)).length === 0, 10_000, 'override marker did not clear')
+    const resetTemperature = await driver.findElement(By.css('[data-slot="dialog-content"] input[aria-label="Temperature"]'))
     expect(await resetTemperature.getAttribute('value')).toBe('0.7')
-    expect(await driver.findElements(By.css('[data-slot="sheet-content"] [data-slot="override-marker"]'))).toHaveLength(0)
 
-    await assertNoAxeViolations(driver, { include: '[data-slot="sheet-content"]' })
+    await assertNoAxeViolations(driver, { include: '[data-slot="dialog-content"]' })
     await matchScreenshot(driver, 'e8-reset-model-defaults')
   })
 })

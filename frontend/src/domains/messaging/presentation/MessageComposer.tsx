@@ -7,6 +7,7 @@ import {
   useRef,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   type RefObject,
 } from 'react'
 
@@ -31,6 +32,8 @@ export type MessageComposerProps = {
   readonly awaitingResponse: boolean
   readonly onChange: (text: string) => void
   readonly onSend: (text: string) => void
+  /** Controls shown beside the send button (e.g. the model picker), supplied from `src/app`. */
+  readonly toolbar?: ReactNode
 }
 
 const autosize = (field: HTMLTextAreaElement): void => {
@@ -148,7 +151,7 @@ function SendButton({ disabled }: { readonly disabled: boolean }) {
             size="icon"
             disabled={disabled}
             aria-label={COPY.send}
-            className="size-11 shrink-0 self-end rounded-lg shadow-sm disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+            className="size-9 shrink-0 rounded-lg shadow-sm disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
           />
         }
       >
@@ -165,6 +168,7 @@ export function MessageComposer({
   awaitingResponse,
   onChange,
   onSend,
+  toolbar,
 }: MessageComposerProps) {
   const locked = !availability.enabled
   const hasText = value.trim() !== ''
@@ -190,7 +194,7 @@ export function MessageComposer({
     // FR-SHELL-018: <main> is the only scroller, so the composer stays put by sticking to its bottom
     // edge rather than by owning a scroller of its own.
     <form ref={formRef} onSubmit={submit} className="sticky bottom-0 z-10 shrink-0 bg-background px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
-      <div className="mx-auto flex max-w-4xl items-end gap-2 rounded-xl border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-offset-2 forced-colors:focus-within:outline-ring dark:bg-input/30">
+      <div className="mx-auto flex max-w-4xl flex-col gap-1 rounded-xl border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-offset-2 forced-colors:focus-within:outline-ring dark:bg-input/30">
         <Textarea
           ref={field}
           rows={1}
@@ -201,9 +205,12 @@ export function MessageComposer({
           placeholder={awaitingResponse ? COPY.waitingPlaceholder : COPY.placeholder}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => handleKeyDown(event, { locked, hasText, onChange, submit })}
-          className="min-h-11 max-h-[150px] min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent px-2 py-3 text-sm leading-5 shadow-none focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent"
+          className="min-h-11 max-h-[150px] min-w-0 resize-none rounded-none border-0 bg-transparent px-2 py-3 text-sm leading-5 shadow-none focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent"
         />
-        <SendButton disabled={locked || !hasText} />
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1">{toolbar}</div>
+          <SendButton disabled={locked || !hasText} />
+        </div>
       </div>
       <p id={hintId} className={hintVisible ? 'mx-auto max-w-4xl px-2 pt-2 text-xs text-muted-foreground' : 'sr-only'}>
         {availability.reason ?? COPY.hint}

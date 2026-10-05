@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Loader2Icon } from 'lucide-react'
+import { CircleHelpIcon, Loader2Icon } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MODEL_CONFIG_COPY } from '@/shared/copy/model-config'
 
 import type { ModelCatalog } from '@/domains/model-config/domain/model-catalog'
@@ -26,6 +26,23 @@ const FIELD_HELP: Readonly<Partial<Record<OverrideKey, string>>> = MODEL_CONFIG_
 
 const helpTextFor = (key: OverrideKey): string | null => FIELD_HELP[key] ?? null
 
+// A popover rather than a tooltip so a click (or tap) opens it too, not only a hover.
+function HelpTooltip({ text }: { readonly text: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={150}
+        aria-label={MODEL_CONFIG_COPY.helpLabel}
+        render={<button type="button" className="inline-flex rounded-full p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" />}
+      >
+        <CircleHelpIcon aria-hidden className="size-3.5" />
+      </PopoverTrigger>
+      <PopoverContent side="top" className="w-64 text-xs">{text}</PopoverContent>
+    </Popover>
+  )
+}
+
 // FR-CFG-006a: an overridden field is visually marked, separate from its label text.
 function FieldLabel({ htmlFor, field, overridden, pending }: { readonly htmlFor: string; readonly field: OverrideFieldDef; readonly overridden: boolean; readonly pending: boolean }) {
   const help = field.hasHelp ? helpTextFor(field.key) : null
@@ -40,17 +57,7 @@ function FieldLabel({ htmlFor, field, overridden, pending }: { readonly htmlFor:
           <span className="sr-only">{MODEL_CONFIG_COPY.pending}</span>
         </span>
       ) : null}
-      {help === null ? null : (
-        <Tooltip>
-          {/* FR-CFG-011: a focusable trigger, not a bare `title` attribute — reachable by keyboard. */}
-          <TooltipTrigger
-            render={<button type="button" className="text-xs text-muted-foreground underline decoration-dotted" />}
-          >
-            ?
-          </TooltipTrigger>
-          <TooltipContent>{help}</TooltipContent>
-        </Tooltip>
-      )}
+      {help === null ? null : <HelpTooltip text={help} />}
     </div>
   )
 }

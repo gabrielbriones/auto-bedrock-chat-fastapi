@@ -91,7 +91,7 @@ describe('conversation URL binding', () => {
 
   // FR-CONV-011: a direct visit loads that conversation.
   it('loads the conversation named by the path', async () => {
-    const { gateway } = renderAt('/bedrock-chat/ui/c/conv-1')
+    const { gateway } = renderAt('/chat/ui/c/conv-1')
 
     await waitFor(() => {
       expect(gateway.calls).toContainEqual(['load', id('conv-1')])
@@ -101,7 +101,7 @@ describe('conversation URL binding', () => {
   // The regression this hook is most prone to: the URL effect reloading a stale id straight back
   // over the conversation the user just picked.
   it('does not reload the route id after the user selects another conversation', async () => {
-    const { container, gateway, emit, store, pathname } = renderAt('/bedrock-chat/ui/c/conv-1')
+    const { container, gateway, emit, store, pathname } = renderAt('/chat/ui/c/conv-1')
     await routeReady()
     await authenticate(container)
     await waitFor(() => expect(gateway.methods()).toContain('load'))
@@ -119,7 +119,7 @@ describe('conversation URL binding', () => {
   })
 
   it('does not toggle back after consecutive sidebar selections from the base route', async () => {
-    const { container, gateway, emit, store, pathname } = renderAt('/bedrock-chat/ui')
+    const { container, gateway, emit, store, pathname } = renderAt('/chat/ui')
     await routeReady()
     await authenticate(container)
     emit(anEvent.listed(ROSTER))
@@ -141,7 +141,7 @@ describe('conversation URL binding', () => {
   })
 
   it('loads a sidebar selection into the route and replaces the visible transcript', async () => {
-    const { container, gateway, emit, pathname } = renderAt('/bedrock-chat/ui/c/a')
+    const { container, gateway, emit, pathname } = renderAt('/chat/ui/c/a')
     await routeReady()
     await authenticate(container)
     emit(anEvent.loaded('a'))
@@ -221,7 +221,7 @@ describe('conversation URL binding', () => {
 
   // FR-CONV-002: a new, unsaved conversation lives at /ui.
   it('returns to the base path when a new conversation is started', async () => {
-    const { emit, store, pathname } = renderAt('/bedrock-chat/ui/c/conv-1')
+    const { emit, store, pathname } = renderAt('/chat/ui/c/conv-1')
     await routeReady()
     emit(anEvent.loaded('conv-1'))
     await waitFor(() => expect(pathname()).toBe('/ui/c/conv-1'))
@@ -235,7 +235,7 @@ describe('conversation URL binding', () => {
 
   // FR-MSG-008 / T-096: a recovery state, not an error boundary and not a blank transcript.
   it('offers a way out when the server has never heard of the id in the URL', async () => {
-    const { emit } = renderAt('/bedrock-chat/ui/c/ghost')
+    const { emit } = renderAt('/chat/ui/c/ghost')
     await routeReady()
 
     emit(anEvent.error('conversation_not_found', 'gone', 'ghost'))
@@ -247,7 +247,7 @@ describe('conversation URL binding', () => {
   })
 
   it('leaves an unrelated conversation alone when another id is not found', async () => {
-    const { emit } = renderAt('/bedrock-chat/ui/c/conv-1')
+    const { emit } = renderAt('/chat/ui/c/conv-1')
     await routeReady()
 
     emit(anEvent.error('conversation_not_found', 'gone', 'other'))
@@ -259,7 +259,7 @@ describe('conversation URL binding', () => {
 describe('pending-turn notice', () => {
   // FR-CONV-009 / FR-CONV-009c.
   it('shows the polling notice and offers a retry only once the attempts are exhausted', async () => {
-    const { container, emit, gateway, scheduler, store } = renderAt('/bedrock-chat/ui/c/conv-1')
+    const { container, emit, gateway, scheduler, store } = renderAt('/chat/ui/c/conv-1')
     await routeReady()
     gateway.calls.length = 0
     await authenticate(container)

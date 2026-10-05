@@ -10,6 +10,33 @@ This example demonstrates a FastAPI assistant powered by RAG (Retrieval-Augmente
 - 💬 Real-time chat interface
 - 🎯 Accurate, up-to-date answers based on official documentation
 
+## Plugin example with the Vite dev server
+
+To run the e-commerce plugin example instead of the RAG example below, start the backend
+from this directory:
+
+```bash
+cd examples/fastAPI
+poetry run python app_plugin.py
+```
+
+In another shell, start the frontend from the repository's `frontend/` directory:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open **http://localhost:3000/chat/ui/** for the chat UI. Vite serves the UI and
+proxies API and WebSocket requests to the backend at `http://localhost:8000` (configured
+by `VITE_API_URL` in `frontend/.env`). The API documentation is at
+**http://localhost:8000/docs** and the health endpoint is at
+**http://localhost:8000/chat/health**.
+
+`npm run dev` does not produce a production build. Until you run `npm run build` in
+`frontend/`, opening the UI on port 8000 returns a 503 placeholder and the backend logs
+"SPA build not found"; this does not prevent the port-3000 development UI from working.
+
 ## Quick Start
 
 ### 1. Install Dependencies

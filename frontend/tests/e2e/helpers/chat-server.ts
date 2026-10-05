@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 
 import { WebSocketServer, type WebSocket } from 'ws'
+import { readSpaFile } from './spa-file.js'
 
 export type ClientFrame = Record<string, unknown> & { readonly type: string }
 
@@ -51,13 +52,13 @@ export const startChatServer = async (options: ChatServerOptions = {}): Promise<
     const address = server.address()
     const port = address !== null && typeof address !== 'string' ? address.port : 0
 
-    if (requestPath === '/bedrock-chat/config') {
+    if (requestPath === '/chat/config') {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
         JSON.stringify({
           ...baseConfig,
           ...options.config,
-          websocketUrl: `ws://127.0.0.1:${port}/bedrock-chat/ws`,
+          websocketUrl: `ws://127.0.0.1:${port}/chat/ws`,
           // FR-CONV-001: the roster only renders for an authenticated principal.
           ssoEnabled: true,
           ssoAuthenticated: true,
@@ -67,12 +68,12 @@ export const startChatServer = async (options: ChatServerOptions = {}): Promise<
       return
     }
 
-    const relativePath = requestPath.startsWith('/bedrock-chat/ui/assets/')
-      ? requestPath.slice('/bedrock-chat/ui/'.length)
+    const relativePath = requestPath.startsWith('/chat/ui/assets/')
+      ? requestPath.slice('/chat/ui/'.length)
       : 'index.html'
 
     try {
-      const body = await readFile(path.join(dist, relativePath))
+      const body = await readSpaFile(dist, relativePath)
       response.writeHead(200, { 'content-type': contentType(relativePath) })
       response.end(body)
     } catch {
@@ -81,7 +82,7 @@ export const startChatServer = async (options: ChatServerOptions = {}): Promise<
     }
   })
 
-  const sockets = new WebSocketServer({ server, path: '/bedrock-chat/ws' })
+  const sockets = new WebSocketServer({ server, path: '/chat/ws' })
 
   sockets.on('connection', (connection) => {
     socket = connection

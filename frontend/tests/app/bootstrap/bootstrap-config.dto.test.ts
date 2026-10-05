@@ -12,9 +12,10 @@ describe('toChatBootstrap', () => {
     expect(isOk(result)).toBe(true);
     if (isOk(result)) {
       expect(result.value).toMatchObject({
-        websocketUrl: `${apiUrl.replace(/^http/, 'ws')}/bedrock-chat/ws`,
+        websocketUrl: `${apiUrl.replace(/^http/, 'ws')}/chat/ws`,
+        uiEndpoint: '/chat/ui',
         authEnabled: true,
-        adminPrefix: '/bedrock-chat/admin',
+        adminPrefix: '/chat/admin',
         uiTitle: 'Workload Analyzer',
       });
     }
@@ -26,6 +27,17 @@ describe('toChatBootstrap', () => {
     expect(isOk(result)).toBe(true);
     if (isOk(result)) {
       expect(result.value).not.toHaveProperty('unexpectedField');
+    }
+  });
+
+  it('accepts the backend-supported root /ui mount', () => {
+    const result = toChatBootstrap({ ...bootstrapConfig, uiEndpoint: '/ui' });
+    expect(isOk(result) && result.value.uiEndpoint).toBe('/ui');
+  });
+
+  it('rejects malformed UI mounts', () => {
+    for (const uiEndpoint of ['//evil/ui', '/chat//ui', '/chat/other']) {
+      expect(isErr(toChatBootstrap({ ...bootstrapConfig, uiEndpoint }))).toBe(true);
     }
   });
 

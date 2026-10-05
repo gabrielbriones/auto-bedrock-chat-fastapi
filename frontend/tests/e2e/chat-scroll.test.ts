@@ -38,7 +38,7 @@ describe('Chat welcome dismissal and scroll bounds', () => {
   for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
     it(`keeps a long conversation inside the viewport at ${viewport.width}px`, async () => {
       await driver.manage().window().setRect(viewport)
-      await driver.get(`${server.origin}/bedrock-chat/ui/`)
+      await driver.get(`${server.origin}/chat/ui/`)
       const field = await driver.wait(until.elementLocated(By.css('textarea[aria-label="Message"]')), 10_000)
       await driver.wait(until.elementIsEnabled(field), 10_000)
       expect(await driver.findElements(By.css('[aria-label="Welcome"]'))).toHaveLength(1)

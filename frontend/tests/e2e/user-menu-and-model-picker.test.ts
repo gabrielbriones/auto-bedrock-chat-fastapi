@@ -21,7 +21,7 @@ describe('User menu and model picker', () => {
   })
 
   it('changes and persists the theme from the user dropdown', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     await driver.wait(until.elementLocated(By.css('textarea[aria-label="Message"]:not([disabled])')), 15_000)
     const account = await driver.wait(until.elementLocated(By.css('[data-slot="dropdown-menu-trigger"][aria-label="Accessibility tester"]')), 15_000)
     await account.click()
@@ -44,7 +44,7 @@ describe('User menu and model picker', () => {
 
   it('separates the model submenu from its parent when there is room', async () => {
     await driver.manage().window().setRect({ width: 768, height: 900 })
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 15_000)
     await settings.click()
     const picker = await driver.wait(until.elementLocated(By.css('[data-slot="sheet-content"] [data-slot="dropdown-menu-trigger"]')), 10_000)

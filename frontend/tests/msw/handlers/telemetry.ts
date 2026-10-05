@@ -5,7 +5,7 @@ import byUser from '../fixtures/telemetry/token-by-user.json' with { type: 'json
 import summary from '../fixtures/telemetry/token-summary.json' with { type: 'json' }
 import topUsers from '../fixtures/telemetry/token-top-users.json' with { type: 'json' }
 
-const ADMIN = '*/bedrock-chat/admin'
+const ADMIN = '*/chat/admin'
 
 export const telemetryHandlers = [
   http.get(`${ADMIN}/tokens/summary`, () => HttpResponse.json(summary)),

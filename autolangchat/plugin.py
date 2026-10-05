@@ -188,6 +188,7 @@ def _build_bootstrap_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     """
     return {
         "websocketUrl": context["websocket_url"],
+        "uiEndpoint": context["ui_endpoint"],
         "authEnabled": context["auth_enabled"],
         "requireAuth": context["require_tool_auth"],
         "supportedAuthTypes": context["supported_auth_types"],
@@ -592,6 +593,7 @@ class AutoLangChatPlugin:
 
         context = {
             "websocket_url": self.config.websocket_endpoint,
+            "ui_endpoint": self.config.ui_endpoint,
             "auth_enabled": self.config.enable_tool_auth,
             "require_tool_auth": self.config.require_tool_auth,
             "supported_auth_types": supported_auth_types,

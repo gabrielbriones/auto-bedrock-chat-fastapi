@@ -72,7 +72,7 @@ const routeSearch = (router: ReturnType<typeof createAppRouter>): Record<string,
 describe('review queue URL binding', () => {
   it('restores every list filter and offset from a shareable URL', async () => {
     const { list } = renderAt(
-      '/bedrock-chat/dashboard/feedback?rating=negative&tags=emon%2Cipc&from=2026-09-01&to=2026-09-08&offset=50',
+      '/chat/dashboard/feedback?rating=negative&tags=emon%2Cipc&from=2026-09-01&to=2026-09-08&offset=50',
     )
 
     await waitFor(() => expect(list).toHaveBeenCalled())
@@ -88,7 +88,7 @@ describe('review queue URL binding', () => {
 
   it('applies a rating immediately and resets the offset', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/feedback?rating=negative&offset=50')
+    const { router } = renderAt('/chat/dashboard/feedback?rating=negative&offset=50')
 
     await user.selectOptions(await screen.findByRole('combobox', { name: REVIEW_COPY.filters.rating }), 'positive')
 
@@ -97,7 +97,7 @@ describe('review queue URL binding', () => {
 
   it('debounces a text filter into the URL and resets the offset', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/feedback?offset=50')
+    const { router } = renderAt('/chat/dashboard/feedback?offset=50')
 
     await user.type(await screen.findByRole('textbox', { name: REVIEW_COPY.filters.tags }), 'emon')
 
@@ -107,7 +107,7 @@ describe('review queue URL binding', () => {
   // The focus trap itself is admin-drawer.test's; this proves the row and the `entry` param agree.
   it('opens a row as a URL-addressable drawer', async () => {
     const user = userEvent.setup()
-    const { router } = renderAt('/bedrock-chat/dashboard/feedback')
+    const { router } = renderAt('/chat/dashboard/feedback')
 
     await user.click(await screen.findByRole('button', { name: /Open Rejected answer/ }))
 
@@ -118,7 +118,7 @@ describe('review queue URL binding', () => {
 
 describe('reviewed selection', () => {
   it('offers selection only for rejected entries', async () => {
-    renderAt('/bedrock-chat/dashboard/reviewed?decision=all')
+    renderAt('/chat/dashboard/reviewed?decision=all')
 
     expect(await screen.findByRole('checkbox', { name: REVIEW_COPY.table.selectEntry('Rejected answer') })).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: REVIEW_COPY.table.selectEntry('Approved answer') })).not.toBeInTheDocument()
@@ -127,8 +127,8 @@ describe('reviewed selection', () => {
 
 describe('review route accessibility', () => {
   it.each([
-    ['/bedrock-chat/dashboard/feedback', 'queue'],
-    ['/bedrock-chat/dashboard/reviewed?decision=all', 'reviewed'],
+    ['/chat/dashboard/feedback', 'queue'],
+    ['/chat/dashboard/reviewed?decision=all', 'reviewed'],
   ])('%s has no axe violations', async (path) => {
     const { dom } = renderAt(path)
 

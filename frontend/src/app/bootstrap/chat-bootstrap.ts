@@ -24,6 +24,7 @@ export type AvailableModelGroup = {
 
 export type ChatBootstrap = {
   readonly websocketUrl: string;
+  readonly uiEndpoint: string;
   readonly authEnabled: boolean;
   readonly requireAuth: boolean;
   readonly supportedAuthTypes: readonly string[];

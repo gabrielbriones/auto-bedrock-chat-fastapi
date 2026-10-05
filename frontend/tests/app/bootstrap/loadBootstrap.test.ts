@@ -13,18 +13,18 @@ afterAll(() => server.close())
 
 describe('loadBootstrap', () => {
   it('resolves ok(ChatBootstrap) for a valid response', async () => {
-    const result = await loadBootstrap(new HttpClient(), 'http://localhost/bedrock-chat')
+    const result = await loadBootstrap(new HttpClient(), 'http://localhost/chat')
 
     expect(isOk(result)).toBe(true)
     if (isOk(result)) {
-      expect(result.value.adminPrefix).toBe('/bedrock-chat/admin')
+      expect(result.value.adminPrefix).toBe('/chat/admin')
     }
   })
 
   it('returns err for a malformed/incomplete response', async () => {
     server.use(bootstrapMalformedHandler)
 
-    const result = await loadBootstrap(new HttpClient(), 'http://localhost/bedrock-chat')
+    const result = await loadBootstrap(new HttpClient(), 'http://localhost/chat')
 
     expect(isErr(result)).toBe(true)
     if (isErr(result)) {
@@ -35,7 +35,7 @@ describe('loadBootstrap', () => {
   it('returns a network-error Problem when the request fails outright', async () => {
     server.use(bootstrapNetworkErrorHandler)
 
-    const result = await loadBootstrap(new HttpClient(), 'http://localhost/bedrock-chat')
+    const result = await loadBootstrap(new HttpClient(), 'http://localhost/chat')
 
     expect(isErr(result)).toBe(true)
     if (isErr(result)) {
@@ -47,7 +47,7 @@ describe('loadBootstrap', () => {
     const result = await loadBootstrap(new HttpClient(), 'http://localhost/custom-base')
 
     // No handler is registered for /custom-base/config, so this must fail rather than
-    // silently hit the default /bedrock-chat/config handler.
+    // silently hit the default /chat/config handler.
     expect(isErr(result)).toBe(true)
   })
 })
@@ -64,9 +64,9 @@ describe('chatBase', () => {
     }
   })
 
-  it('defaults to /bedrock-chat when VITE_CHAT_BASE is unset', () => {
+  it('defaults to /chat when VITE_CHAT_BASE is unset', () => {
     process.env.VITE_CHAT_BASE = ''
-    expect(chatBase()).toBe('/bedrock-chat')
+    expect(chatBase()).toBe('/chat')
   })
 
   it('uses VITE_CHAT_BASE when it is set', () => {

@@ -1,4 +1,4 @@
-// FR-MSG-001. The bootstrap payload may carry a path (`/bedrock-chat/ws`), an origin-relative URL
+// FR-MSG-001. The bootstrap payload may carry a path (`/chat/ws`), an origin-relative URL
 // or an absolute one; all three resolve against the page, and the scheme always follows the page's
 // security context rather than whatever the server happened to serialise. No token is ever added.
 export const resolveSocketUrl = (websocketUrl: string, pageUrl: string): string => {

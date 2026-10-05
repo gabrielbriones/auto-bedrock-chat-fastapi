@@ -21,7 +21,7 @@ import { knowledgeSearchSchema } from '@/routes/dashboard/kb-browser'
 import { usageSearchSchema } from '@/routes/dashboard/token-usages'
 
 const router = () =>
-  createAppRouter(fakeContainer(), { history: createMemoryHistory({ initialEntries: ['/bedrock-chat/ui'] }) })
+  createAppRouter(fakeContainer(), { history: createMemoryHistory({ initialEntries: ['/chat/ui'] }) })
 
 describe('the application router', () => {
   it('resolves every route in the SPEC-021 §2 table', () => {
@@ -42,9 +42,20 @@ describe('the application router', () => {
   })
 
   it('serves the whole tree under the deployed /ui base path', () => {
-    expect(router().buildLocation(chatLink()).href).toBe('/bedrock-chat/ui')
-    expect(router().buildLocation(conversationLink('abc-123')).href).toBe('/bedrock-chat/ui/c/abc-123')
-    expect(router().buildLocation(kbSourcesLink()).href).toBe('/bedrock-chat/dashboard/kb-sources')
+    expect(router().buildLocation(chatLink()).href).toBe('/chat/ui')
+    expect(router().buildLocation(conversationLink('abc-123')).href).toBe('/chat/ui/c/abc-123')
+    expect(router().buildLocation(kbSourcesLink()).href).toBe('/chat/dashboard/kb-sources')
+  })
+
+  it('derives route links from a custom UI endpoint without rebuilding', () => {
+    const container = fakeContainer()
+    const custom = createAppRouter({
+      ...container,
+      bootstrap: { ...container.bootstrap, uiEndpoint: '/portal/assistant/ui' },
+    }, { history: createMemoryHistory({ initialEntries: ['/portal/assistant/ui'] }) })
+
+    expect(custom.buildLocation(chatLink()).href).toBe('/portal/assistant/ui')
+    expect(custom.buildLocation(kbSourcesLink()).href).toBe('/portal/assistant/dashboard/kb-sources')
   })
 })
 
@@ -53,7 +64,7 @@ describe('typed navigation', () => {
     const link = reviewQueueLink({ rating: 'negative', tags: 'latency', offset: 50 })
 
     expect(router().buildLocation(link).href).toBe(
-      '/bedrock-chat/dashboard/feedback?rating=negative&tags=latency&offset=50',
+      '/chat/dashboard/feedback?rating=negative&tags=latency&offset=50',
     )
   })
 

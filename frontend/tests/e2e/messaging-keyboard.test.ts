@@ -68,7 +68,7 @@ describe('E7 — messaging keyboard journey', function () {
       setTimeout(() => answer('IPC is 2.1', 'm-1'), 1_000)
     })
 
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     const field = await composer()
     await field.click()
 
@@ -95,7 +95,7 @@ describe('E7 — messaging keyboard journey', function () {
   })
 
   it('grows the composer with its content and stops at the cap (FR-MSG-011)', async () => {
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     const field = await composer()
     await field.click()
 
@@ -125,7 +125,7 @@ describe('E7 — messaging keyboard journey', function () {
       answer('A grounded answer', 'm-2')
     })
 
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     await (await composer()).click()
     await (await composer()).sendKeys('what is the bottleneck?', Key.ENTER)
 

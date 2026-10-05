@@ -6,7 +6,7 @@ import sourceRun from '../fixtures/knowledge/kb-source-run.json' with { type: 'j
 import sourceStatusIdle from '../fixtures/knowledge/kb-source-status-idle.json' with { type: 'json' }
 import sources from '../fixtures/knowledge/kb-sources.json' with { type: 'json' }
 
-const ADMIN = '*/bedrock-chat/admin'
+const ADMIN = '*/chat/admin'
 
 const accepted = () => HttpResponse.json(sourceRun, { status: 202 })
 
