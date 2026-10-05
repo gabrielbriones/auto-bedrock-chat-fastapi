@@ -57,6 +57,10 @@ from autolangchat.rag.kb_ingestion import ingest_uploaded_files  # noqa: E402
 _LONG_TEXT = "hello world " * 60
 
 
+def _source_url(name):
+    return f"/bedrock-chat/admin/kb/sources/~{name.encode('utf-8').hex()}"
+
+
 def _build_minimal_pdf(text: bytes) -> bytes:
     """Build a minimal single-page real PDF with a text-drawing content stream.
 
@@ -285,13 +289,13 @@ async def test_source_delete_reservation_blocks_same_source_run_and_duplicate_de
     assert await state.try_claim_deletion("target")
     assert not await state.try_claim_deletion("target")
     assert not await state.try_claim_run(run_id="blocked", source_name="target", source_type="web")
+    assert not await state.try_claim_run(run_id="blocked-other", source_name="other", source_type="web")
     assert await state.try_claim_deletion("other")
     await state.release_deletion("other")
     await state.release_deletion("target")
     assert await state.try_claim_run(run_id="allowed", source_name="target", source_type="web")
     assert not await state.try_claim_deletion("target")
-    assert await state.try_claim_deletion("other")
-    await state.release_deletion("other")
+    assert not await state.try_claim_deletion("other")
 
 
 @pytest.mark.asyncio
@@ -308,7 +312,7 @@ async def test_source_deletion_reservation_released_after_failure():
     assert await state.try_claim_run(run_id="retry", source_name="target", source_type="file")
 
 
-def test_delete_reservation_blocks_same_source_override_until_delete_finishes():
+def test_delete_reservation_blocks_any_source_override_until_delete_finishes():
     class BlockingStore(_FakeKBStore):
         def __init__(self):
             super().__init__()
@@ -325,7 +329,7 @@ def test_delete_reservation_blocks_same_source_override_until_delete_finishes():
     store.add_document(doc_id="one", content="old", source="target")
     app = _build_app(kb_store=store, embedding_client=_embedding_client())
     with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as pool:
-        delete = pool.submit(client.delete, "/bedrock-chat/admin/kb/sources/target")
+        delete = pool.submit(client.delete, _source_url("target"))
         try:
             assert store.entered.wait(5)
             same = client.put(
@@ -334,6 +338,12 @@ def test_delete_reservation_blocks_same_source_override_until_delete_finishes():
             )
             assert same.status_code == 409
             assert same.json()["code"] == "kb_source_run_already_in_progress"
+            other = client.put(
+                "/bedrock-chat/admin/kb/sources/web/other",
+                json={"urls": ["https://example.com"]},
+            )
+            assert other.status_code == 409
+            assert other.json()["code"] == "kb_source_run_already_in_progress"
         finally:
             store.resume.set()
         assert delete.result(timeout=5).status_code == 200
@@ -349,7 +359,7 @@ def test_delete_reservation_is_released_when_store_raises():
     app = _build_app(kb_store=store, embedding_client=_embedding_client())
     with TestClient(app) as client:
         with pytest.raises(RuntimeError, match="simulated delete failure"):
-            client.delete("/bedrock-chat/admin/kb/sources/target")
+            client.delete(_source_url("target"))
         response = client.put(
             "/bedrock-chat/admin/kb/sources/web/target",
             json={"urls": ["https://example.com"]},
@@ -357,7 +367,7 @@ def test_delete_reservation_is_released_when_store_raises():
         assert response.status_code == 202
 
 
-def test_source_delete_rejects_running_same_source_but_allows_other_source():
+def test_source_delete_rejects_any_running_ingestion_even_for_another_source():
     store = _FakeKBStore()
     store.add_document(doc_id="other-doc", content="old", source="other")
     app = _build_app(kb_store=store, embedding_client=_embedding_client())
@@ -380,15 +390,19 @@ def test_source_delete_rejects_running_same_source_but_allows_other_source():
             )
             assert started.status_code == 202
             assert entered.wait(5)
-            same = client.delete("/bedrock-chat/admin/kb/sources/target")
+            same = client.delete(_source_url("target"))
             assert same.status_code == 409
             assert same.json()["code"] == "kb_source_run_already_in_progress"
-            other = client.delete("/bedrock-chat/admin/kb/sources/other")
-            assert other.status_code == 200
-            assert other.json() == {"source": "other", "deleted": 1}
+            other = client.delete(_source_url("other"))
+            assert other.status_code == 409
+            assert other.json()["code"] == "kb_source_run_already_in_progress"
+            assert "other-doc" in store.documents
         finally:
             resume.set()
         assert _wait_until_not_running(client).json()["phase"] == "completed"
+        other = client.delete(_source_url("other"))
+        assert other.status_code == 200
+        assert other.json() == {"source": "other", "deleted": 1}
 
 
 @pytest.mark.asyncio
@@ -419,7 +433,7 @@ async def test_cancelled_delete_keeps_reservation_until_worker_finishes(caplog):
     endpoint = next(route.endpoint for route in source_routes if route.name == "delete_kb_source")
     state = inspect.getclosurevars(endpoint).nonlocals["_source_state"]
     with caplog.at_level(logging.INFO, logger="bedrock.audit"):
-        deletion = asyncio.create_task(endpoint("target", identity=_Identity()))
+        deletion = asyncio.create_task(endpoint("~746172676574", identity=_Identity()))
         try:
             assert await asyncio.to_thread(store.entered.wait, 5)
             deletion.cancel()

@@ -23,6 +23,12 @@ type KbSourcesHttpClient = Pick<HttpClient, 'request'>
 
 const JSON_HEADERS = { 'content-type': 'application/json' } as const
 
+// A UTF-8 hex segment cannot be normalized as "." or ".." by Fetch. Encode
+// every name the same way so percent signs and names resembling identifiers
+// cannot collide with an alternate spelling of another source.
+const sourceId = (name: string): string =>
+  `~${Array.from(new TextEncoder().encode(name), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
+
 // admin-api.md "KB Source Ingestion". Both `POST` and `PUT` answer `202` with the run status; the
 // multipart routes leave `content-type` to the browser so the boundary is set correctly.
 export class HttpKbSourcesGateway implements KbSourcesGateway {
@@ -82,7 +88,7 @@ export class HttpKbSourcesGateway implements KbSourcesGateway {
 
   async deleteSource(name: string): Promise<Result<KbSourceDeletion, Problem>> {
     const response = await this.httpClient.request<unknown>(
-      this.url(`/kb/sources/${encodeURIComponent(name)}`),
+      this.url(`/kb/sources/${sourceId(name)}`),
       { method: 'DELETE', credentials: 'include', logger: this.logger },
     )
 

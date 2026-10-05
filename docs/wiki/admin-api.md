@@ -310,7 +310,7 @@ on the same document.
 | PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
 | GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                             |
 | GET    | `/admin/kb/sources`             | List distinct KB document `source` names with their document counts.      |
-| DELETE | `/admin/kb/sources/{name}`      | Delete every document (and chunks) whose `source` matches `name`.         |
+| DELETE | `/admin/kb/sources/{source_id}` | Delete every document (and chunks) whose `source` matches the encoded ID. |
 
 Both `POST` routes return **`202 Accepted`** immediately with a
 `run_id` and `phase: "running"` — the crawl/ingest itself runs as a
@@ -451,13 +451,16 @@ excluded (e.g. a document whose `source` was cleared to `""` via
 ]
 ```
 
-`DELETE /admin/kb/sources/{name}` hard-deletes every document whose
-`source` exactly matches `name`, including its chunks, vector entries,
-and full-text-search entries. Pass the source name as a URL-encoded path
-segment (for example, `ISS%20docs%2F2026`); names containing slashes
-are supported. The old `DELETE /admin/kb/sources?name=...` endpoint was
-removed and has no compatibility alias. Sources are identified by name
-rather than by `run_id` — completed runs aren't tracked once
+`DELETE /admin/kb/sources/{source_id}` hard-deletes every document whose
+`source` exactly matches the decoded source name, including its chunks,
+vector entries, and full-text-search entries. Build `source_id` as `~`
+followed by the lowercase hexadecimal bytes of the UTF-8 source name;
+for example, `ISS docs/2026` becomes `~49535320646f63732f32303236`.
+Encode **all** names this way, including `.` and `..` (which browsers
+otherwise normalize as URL path segments). Empty, malformed, or non-UTF-8
+IDs return `422 invalid_source_id`. The old `DELETE /admin/kb/sources?name=...`
+endpoint was removed and has no compatibility alias. Sources are identified by
+name rather than by `run_id` — completed runs aren't tracked once
 `GET .../status` moves on, only the document rows they left behind are:
 
 ```json
@@ -468,11 +471,13 @@ rather than by `run_id` — completed runs aren't tracked once
 | ---- | ----------------------------------- | ------------------------------------------------------------------ |
 | 200  | —                                   | Deleted; JSON body contains `source` and `deleted` document count. |
 | 404  | `kb_source_not_found`               | No documents match `name`.                                         |
-| 409  | `kb_source_run_already_in_progress` | The same source has an in-flight ingestion/override or deletion.   |
+| 409  | `kb_source_run_already_in_progress` | Any ingestion/override is running or this source is being deleted. |
+| 422  | `invalid_source_id`                 | Missing, empty or malformed UTF-8 hex source ID.                   |
 
-Source deletion reserves its name against new ingestion/override claims
-until the delete finishes. It may proceed while a _different_ source
-is being ingested. These checks and the per-document mutation locks
+Source deletion blocks new ingestion/override claims for all sources
+until the delete finishes. It cannot proceed during _any_ ingestion,
+since ingestion writes do not use the per-document locks and different
+sources can share document IDs (web URL). These checks and the mutation locks
 are in-process only; multi-worker deployments have no cross-worker
 coordination guarantee. Successful deletes emit one `kb.source.delete`
 audit event with `actor_user_id`, `target_id` (source name),

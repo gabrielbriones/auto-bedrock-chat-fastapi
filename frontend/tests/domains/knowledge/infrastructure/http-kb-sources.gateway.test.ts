@@ -160,10 +160,22 @@ describe('HttpKbSourcesGateway file ingestion', () => {
 })
 
 describe('HttpKbSourcesGateway delete', () => {
-  it('encodes a source name with spaces and slashes in the path and maps the 200 deletion count', async () => {
+  it('encodes a source name with spaces and slashes in a path-safe identifier', async () => {
     const result = await gateway.deleteSource('intel docs/2026')
 
-    expect(last()).toEqual({ method: 'DELETE', url: `${ADMIN}/kb/sources/intel%20docs%2F2026` })
+    expect(last()).toEqual({ method: 'DELETE', url: `${ADMIN}/kb/sources/~696e74656c20646f63732f32303236` })
     expect(isOk(result) && result.value).toEqual({ source: 'intel docs/2026', deleted: 4 })
+  })
+
+  it.each([
+    ['.', '2e'],
+    ['..', '2e2e'],
+    ['%2E', '253245'],
+    ['été', 'c3a974c3a9'],
+  ])('addresses source %s without URL dot-segment normalization', async (name, hex) => {
+    const result = await gateway.deleteSource(name)
+
+    expect(last()).toEqual({ method: 'DELETE', url: `${ADMIN}/kb/sources/~${hex}` })
+    expect(isOk(result) && result.value.source).toBe(name)
   })
 })

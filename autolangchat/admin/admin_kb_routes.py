@@ -12,8 +12,8 @@ Endpoints
   change the route re-embeds the document and writes new chunks.
 * ``DELETE /admin/kb/documents/{id}``  — hard delete (document + chunks).
 * ``GET    /admin/kb/sources``         — list source names and document counts.
-* ``DELETE /admin/kb/sources/{name}``  — hard-delete every document/chunk
-    belonging to a source, returning a document count.
+* ``DELETE /admin/kb/sources/{source_id}`` — hard-delete every document/chunk
+    belonging to a source; ``source_id`` is ``~`` followed by UTF-8 hex.
 * ``POST   /admin/kb/sources/web``     — trigger a web-crawl ingestion run.
 * ``POST   /admin/kb/sources/file``    — trigger an ingestion run from
   uploaded file content (multipart form; admins don't have filesystem
@@ -37,8 +37,9 @@ concurrent edits are still possible; the KB store's transactional
 chunk-swap keeps the document in a consistent state even under
 contention, and a follow-up `409 conflict` HTTP envelope is open for
 v2 if it becomes a real problem. Source DELETE additionally reserves its
-name against ingestion/override claims within this process. A same-source
-run or delete returns 409; other-source ingestion is allowed during deletion.
+name against ingestion/override claims within this process. Any in-flight
+ingestion run blocks deletion, and any deletion blocks ingestion, because
+ingestion writes do not share the per-document mutation locks.
 
 Re-embedding
 ------------
@@ -67,6 +68,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -292,7 +294,7 @@ class _KBSourceRunState:
     polled via the :attr:`status` property (read without holding the lock —
     eventual consistency is acceptable for status checks). Source deletion
     reservations share the claim lock, so a run cannot claim the same source
-    while it is being deleted (within this process only).
+    while any source is being deleted (within this process only).
     """
 
     def __init__(self) -> None:
@@ -314,9 +316,9 @@ class _KBSourceRunState:
         return self._status.phase
 
     async def try_claim_run(self, *, run_id: str, source_name: str, source_type: str) -> bool:
-        """Atomically claim the global run, unless its source is being deleted."""
+        """Atomically claim the global run, unless a deletion is in progress."""
         async with self._lock:
-            if self._status.phase == KBSourcePhase.RUNNING or source_name in self._deleting_sources:
+            if self._status.phase == KBSourcePhase.RUNNING or self._deleting_sources:
                 return False
             self._status = KBSourceStatus(
                 run_id=run_id,
@@ -330,9 +332,9 @@ class _KBSourceRunState:
     async def try_claim_deletion(self, source_name: str) -> bool:
         """Reserve a source until bulk deletion completes (single process only)."""
         async with self._lock:
-            if source_name in self._deleting_sources or (
-                self._status.phase == KBSourcePhase.RUNNING and self._status.source_name == source_name
-            ):
+            # Ingestion writes do not use per-document locks. Different
+            # sources can share a URL/document id, so they cannot overlap.
+            if source_name in self._deleting_sources or self._status.phase == KBSourcePhase.RUNNING:
                 return False
             self._deleting_sources.add(source_name)
             return True
@@ -1546,27 +1548,37 @@ def register_admin_kb_routes(
         return documents_deleted, chunks_deleted, found_any
 
     @sources_router.delete(
-        "/{name:path}",
+        "/{source_id:path}",
         responses={
             **ADMIN_COMMON_RESPONSES,
             404: {"model": ErrorResponse, "description": "No documents found for this source name"},
-            409: {"model": ErrorResponse, "description": "This source is being ingested or deleted"},
+            409: {"model": ErrorResponse, "description": "An ingestion run or deletion is in progress"},
+            422: {"model": ErrorResponse, "description": "Invalid or empty encoded source name"},
         },
         summary="Delete every KB document ingested under a source name",
     )
-    async def delete_kb_source(name: str, identity=Depends(require_admin)):
+    async def delete_kb_source(source_id: str, identity=Depends(require_admin)):
         """Hard-delete every document (and its chunks) whose ``source``
         equals ``name`` exactly.
 
-        ``name`` is a path parameter and may contain encoded slashes.
+        ``source_id`` is a path-safe UTF-8 hexadecimal identifier prefixed
+        with ``~``. All names (including dots, slashes and literal percent
+        signs) use the same unambiguous encoding.
         Identifies the source by name rather than run id, since completed
         runs aren't tracked. Returns 200 with ``source`` and ``deleted``
         document count; 404 ``kb_source_not_found`` if none match, or 409
-        when that source has an in-flight run/deletion. The reservation is
-        single-worker best-effort, not a cross-worker guarantee. On success
-        emits ``kb.source.delete`` with actor, target name, document count,
+        when any source has an in-flight run or this source is being deleted.
+        The reservation is single-worker best-effort, not a cross-worker
+        guarantee. On success emits ``kb.source.delete`` with actor, target name, document count,
         and chunk count.
         """
+        if not re.fullmatch(r"~(?:[0-9a-f]{2})+", source_id):
+            return _error_json(422, "invalid_source_id", "source id must be ~ followed by non-empty UTF-8 hex")
+        try:
+            name = bytes.fromhex(source_id[1:]).decode("utf-8")
+        except UnicodeDecodeError:
+            return _error_json(422, "invalid_source_id", "source id must contain valid UTF-8")
+
         actor = identity.user_id
         if not await _source_state.try_claim_deletion(name):
             return _error_json(409, "kb_source_run_already_in_progress", f"source {name!r} is busy")

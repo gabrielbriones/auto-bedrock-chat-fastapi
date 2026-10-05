@@ -82,11 +82,12 @@ item's visibility rule.
 
 - **Ingested Sources**: a table of every distinct `source` name from
   `GET /admin/kb/sources`, with its document count and a **Delete**
-  button. Deleting a source (`DELETE /admin/kb/sources/{name}`) hard-
+  button. Deleting a source (`DELETE /admin/kb/sources/{source_id}`) hard-
   deletes every document — and their chunks — ingested under that name;
-  the name is URL-encoded (including slashes). Deletion returns a count,
-  or `404` when no documents match; a same-source in-flight run returns
-  `409`. This exclusion is in-process only, not cross-worker locking;
+  the ID is `~` plus the UTF-8 hex of the name (including slashes and dots).
+  Deletion returns a count, or `404` when no documents match; any in-flight
+  ingestion run returns `409`. This exclusion is in-process only, not
+  cross-worker locking;
   sources are identified by name, not by run id, since completed runs
   aren't tracked once `GET /admin/kb/sources/status` moves past them.
 - **Web Crawl** form (`POST /admin/kb/sources/web`): `name`, `urls`,
