@@ -125,6 +125,33 @@ describe('ServerFrameSchema', () => {
     ).toBe(true)
   })
 
+  it('delivers an anonymous ai response with no persisted conversation', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const frame = {
+      type: 'ai_response',
+      message_id: 'message-1',
+      message: 'Hello!',
+      tool_calls: [],
+      tool_results: [],
+      timestamp: '2026-10-01T12:18:23',
+      metadata: {
+        model_id: 'us.anthropic.claude-sonnet-5',
+        model_name: 'Claude Sonnet 5 (US)',
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+      },
+      conversation_id: null,
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.invalidFrameCount('ai_response')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
+  })
+
   it('accepts nullable identifiers and timestamps in loaded conversation history', () => {
     expect(
       ServerFrameSchema.safeParse({

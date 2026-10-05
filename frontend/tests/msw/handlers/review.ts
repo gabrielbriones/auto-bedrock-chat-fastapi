@@ -10,7 +10,7 @@ import synthesisStatus from '../fixtures/review/synthesis-status.json' with { ty
 // CT-2: every REST endpoint of SPEC-016 §3 has a handler here and a fixture beside it, and
 // `review.contract.test.ts` parses each fixture through the production schema. The base path
 // matches the deployed `ADMIN` prefix of CONTRACT-001 §1.
-const ADMIN = '*/bedrock-chat/admin'
+const ADMIN = '*/chat/admin'
 
 export const reviewHandlers = [
   http.get(`${ADMIN}/feedback/stats`, () => HttpResponse.json(feedbackStats)),

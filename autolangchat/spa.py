@@ -2,19 +2,22 @@
 
 The SPA under ``frontend/`` is built by Vite into ``frontend/dist`` (copied into
 ``autolangchat/_spa`` for the wheel by the release workflow) and mounted
-at ``config.ui_endpoint`` and its sibling ``/dashboard`` when the UI endpoint
-ends in ``/ui``. The API, SSO cookie, and chat WebSocket share one origin
+at ``config.ui_endpoint`` (``/chat/ui`` by default) and its sibling
+``/chat/dashboard`` when the UI endpoint ends in ``/ui``. The API, SSO cookie,
+and chat WebSocket share one origin
 (ADR-006). No standalone Vite server is involved in the served application.
 """
 
+import html
 import logging
 import os
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import HTMLResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -55,17 +58,21 @@ class SPAStaticFiles(StaticFiles):
     * Existing files are served as-is; hashed ``assets/*`` get an immutable
       cache header, ``index.html`` is ``no-store``.
     * Extension-less unmatched paths (client-side routes such as
-    ``/bedrock-chat/dashboard/kb-browser``) fall back to ``index.html`` so deep links
+    ``/chat/dashboard/kb-browser``) fall back to ``index.html`` so deep links
       survive a reload.
-    * Unmatched paths that look like files (``/bedrock-chat/ui/assets/missing.js``) stay
+    * Unmatched paths that look like files (``/chat/ui/assets/missing.js``) stay
       404 so a broken asset URL fails loudly instead of loading HTML as JS.
     """
 
-    def __init__(self, directory: os.PathLike) -> None:
+    def __init__(self, directory: os.PathLike, ui_endpoint: str, chat_endpoint: str) -> None:
         super().__init__(directory=str(directory), html=False, check_dir=True)
+        self.index_path = Path(directory) / "index.html"
+        base = html.escape(f"{ui_endpoint.rstrip('/')}/", quote=True)
+        chat = html.escape(chat_endpoint, quote=True)
+        self.head = f'<head><base href="{base}"><meta name="autochat-chat-endpoint" content="{chat}">'
 
     async def get_response(self, path: str, scope: Scope) -> Response:
-        if path in ("", "."):
+        if path in ("", ".", "index.html"):
             return await self._index(scope)
         try:
             response = await super().get_response(path, scope)
@@ -81,9 +88,15 @@ class SPAStaticFiles(StaticFiles):
         return response
 
     async def _index(self, scope: Scope) -> Response:
-        response = await super().get_response("index.html", scope)
-        response.headers["Cache-Control"] = NO_STORE
-        return response
+        if scope["method"] not in ("GET", "HEAD"):
+            raise HTTPException(status_code=405)
+        # The index is mutable across builds; unlike hashed assets it must not be held in memory.
+        # Read on a worker thread so a rebuild does not block the event loop.
+        try:
+            index = await run_in_threadpool(self.index_path.read_text, encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404) from exc
+        return HTMLResponse(index.replace("<head>", self.head, 1), headers={"Cache-Control": NO_STORE})
 
 
 def _looks_like_file(path: str) -> bool:
@@ -143,7 +156,7 @@ def mount_spa(app: FastAPI, config: ChatConfig) -> Optional[Path]:
         app.add_api_route(f"{admin_path}/{{path:path}}", spa_missing, methods=["GET"], include_in_schema=False)
         return None
 
-    static = SPAStaticFiles(directory=dist_dir)
+    static = SPAStaticFiles(directory=dist_dir, ui_endpoint=mount_path, chat_endpoint=config.chat_endpoint)
 
     # Serve the bare mount path directly rather than via Starlette's
     # trailing-slash redirect, so `GET {ui_endpoint}` is the SPA in one round trip.

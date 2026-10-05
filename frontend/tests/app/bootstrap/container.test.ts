@@ -26,7 +26,7 @@ describe('createContainer', () => {
 
     expect(container.httpClient).toBe(httpClient)
     expect(container.logger).toBe(fakeLogger)
-    expect(container.bootstrap.adminPrefix).toBe('/bedrock-chat/admin')
+    expect(container.bootstrap.adminPrefix).toBe('/chat/admin')
   })
 
   it('defaults to a real HttpClient and ConsoleLogger when no deps are supplied', () => {

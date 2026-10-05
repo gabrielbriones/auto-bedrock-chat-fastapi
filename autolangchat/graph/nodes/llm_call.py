@@ -373,7 +373,13 @@ def _build_llm(model_id: str, chat_config: Any):
         read_timeout=getattr(chat_config, "timeout", None) or DEFAULT_READ_TIMEOUT,
     )
 
-    logger.debug("Building ChatBedrockConverse: args=%s", kwargs)
+    # Never log the full kwargs: explicit AWS credentials may be present here.
+    logger.debug(
+        "Building ChatBedrockConverse: model=%s region=%s max_tokens=%s",
+        kwargs.get("model"),
+        kwargs.get("region_name"),
+        kwargs.get("max_tokens"),
+    )
 
     llm = ChatBedrockConverse(**kwargs)
 

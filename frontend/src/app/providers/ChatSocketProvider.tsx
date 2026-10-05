@@ -13,10 +13,23 @@ export function ChatSocketProvider({ children }: ChatSocketProviderProps) {
   const { socket } = useContainer()
 
   useEffect(() => {
-    socket.connect()
+    let cancelled = false
+    let connected = false
+
+    // StrictMode replays mount/cleanup in development. Defer opening until after that replay
+    // so its throwaway effect never creates a WebSocket the browser must immediately close.
+    queueMicrotask(() => {
+      if (!cancelled) {
+        connected = true
+        socket.connect()
+      }
+    })
 
     return () => {
-      socket.dispose()
+      cancelled = true
+      if (connected) {
+        socket.dispose()
+      }
     }
   }, [socket])
 

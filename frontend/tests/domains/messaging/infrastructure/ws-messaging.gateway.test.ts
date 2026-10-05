@@ -96,6 +96,14 @@ describe('WsMessagingGateway', () => {
     ])
   })
 
+  it('maps an anonymous ai_response to an answer without a conversation id', () => {
+    const { emit, events } = createHarness()
+
+    emit(answer({ conversation_id: null }))
+
+    expect(events[0]).toMatchObject({ kind: 'answered', conversationId: null, text: 'here you go' })
+  })
+
   it('maps final response provenance and context truncation metadata', () => {
     const { emit, events } = createHarness()
 

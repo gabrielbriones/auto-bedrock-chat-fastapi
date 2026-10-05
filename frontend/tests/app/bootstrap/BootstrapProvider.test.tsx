@@ -27,7 +27,7 @@ function ChildProbe() {
 describe('BootstrapProvider', () => {
   it('renders only the loading state until bootstrap resolves, then renders children', async () => {
     render(
-      <BootstrapProvider baseUrl="http://localhost/bedrock-chat" logger={fakeLogger()}>
+      <BootstrapProvider baseUrl="http://localhost/chat" logger={fakeLogger()}>
         <ChildProbe />
       </BootstrapProvider>,
     )
@@ -35,7 +35,7 @@ describe('BootstrapProvider', () => {
     expect(screen.getByRole('status')).toBeInTheDocument()
     expect(screen.queryByText(/Ready:/)).not.toBeInTheDocument()
 
-    await waitFor(() => expect(screen.getByText('Ready: /bedrock-chat/admin')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Ready: /chat/admin')).toBeInTheDocument())
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
@@ -43,7 +43,7 @@ describe('BootstrapProvider', () => {
     server.use(bootstrapMalformedHandler)
 
     render(
-      <BootstrapProvider baseUrl="http://localhost/bedrock-chat" logger={fakeLogger()}>
+      <BootstrapProvider baseUrl="http://localhost/chat" logger={fakeLogger()}>
         <ChildProbe />
       </BootstrapProvider>,
     )
@@ -58,7 +58,7 @@ describe('BootstrapProvider', () => {
     server.use(bootstrapHtml502Handler)
 
     render(
-      <BootstrapProvider baseUrl="http://localhost/bedrock-chat" httpClient={new HttpClient()} logger={fakeLogger()}>
+      <BootstrapProvider baseUrl="http://localhost/chat" httpClient={new HttpClient()} logger={fakeLogger()}>
         <ChildProbe />
       </BootstrapProvider>,
     )
@@ -68,6 +68,6 @@ describe('BootstrapProvider', () => {
     server.resetHandlers()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
-    await waitFor(() => expect(screen.getByText('Ready: /bedrock-chat/admin')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Ready: /chat/admin')).toBeInTheDocument())
   })
 })

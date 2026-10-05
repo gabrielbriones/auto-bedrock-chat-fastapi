@@ -90,7 +90,7 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
     })
     server.on('chat', () => undefined)
 
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
+    await driver.get(`${server.origin}/chat/ui`)
     const jobId = await driver.wait(until.elementLocated(By.css('#prompt-var-JOB_ID')), 10_000)
     await jobId.sendKeys('job-42')
     await (await visibleElement(driver, By.xpath("//button[contains(normalize-space(), 'Workload Analysis')]"))).click()
@@ -136,8 +136,8 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
       })
     })
 
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
-    const settings = await driver.wait(until.elementLocated(By.css('form [data-slot="dropdown-menu-trigger"]')), 10_000)
+    await driver.get(`${server.origin}/chat/ui`)
+    const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 10_000)
     expect(await settings.getText()).toContain(LARGE_MODEL.name)
     await settings.click()
 
@@ -197,10 +197,9 @@ describe('E4, E7 and E8 - prompt and model configuration', function () {
       })
     })
 
-    await driver.get(`${server.origin}/bedrock-chat/ui`)
-    const settings = await driver.wait(until.elementLocated(By.css('form [data-slot="dropdown-menu-trigger"]')), 10_000)
-    await settings.click()
-    await (await visibleElement(driver, By.xpath("//*[@role='menuitem'][normalize-space()='Model settings…']"))).click()
+    await driver.get(`${server.origin}/chat/ui`)
+    const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 10_000)
+    await driver.executeScript('arguments[0].click()', settings)
 
     const temperature = await visibleElement(driver, By.css('[data-slot="dialog-content"] input[aria-label="Temperature"]'))
     await temperature.sendKeys(Key.ARROW_LEFT)

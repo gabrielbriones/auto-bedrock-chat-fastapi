@@ -36,21 +36,21 @@ const VIEWS: readonly ViewCase[] = [
   {
     name: 'chat',
     open: async (driver, origin) => {
-      await driver.get(`${origin}/bedrock-chat/ui/`)
+      await driver.get(`${origin}/chat/ui/`)
       await driver.wait(until.elementLocated(By.css('textarea[aria-label="Message"]:not([disabled])')), 15_000)
     },
   },
   {
     name: 'admin-queue',
     open: async (driver, origin) => {
-      await driver.get(`${origin}/bedrock-chat/dashboard/feedback`)
+      await driver.get(`${origin}/chat/dashboard/feedback`)
       await driver.wait(until.elementLocated(By.css('main tbody button[aria-label^="Open "]')), 15_000)
     },
   },
   {
     name: 'review-drawer',
     open: async (driver, origin) => {
-      await driver.get(`${origin}/bedrock-chat/dashboard/feedback`)
+      await driver.get(`${origin}/chat/dashboard/feedback`)
       const rowAction = await driver.wait(until.elementLocated(By.css('main tbody button[aria-label^="Open "]')), 15_000)
       await rowAction.click()
       await waitForSheetOpen(driver)
@@ -60,7 +60,7 @@ const VIEWS: readonly ViewCase[] = [
   {
     name: 'kb-editor',
     open: async (driver, origin) => {
-      await driver.get(`${origin}/bedrock-chat/dashboard/kb-browser`)
+      await driver.get(`${origin}/chat/dashboard/kb-browser`)
       const rowAction = await driver.wait(until.elementLocated(By.css('main tbody button[aria-label^="Open "]')), 15_000)
       await rowAction.click()
       await waitForSheetOpen(driver)
@@ -69,20 +69,16 @@ const VIEWS: readonly ViewCase[] = [
   {
     name: 'settings',
     open: async (driver, origin) => {
-      await driver.get(`${origin}/bedrock-chat/ui/`)
-      const settings = await driver.wait(until.elementLocated(By.css('form [data-slot="dropdown-menu-trigger"]')), 15_000)
-      await settings.click()
-      await (await driver.wait(until.elementLocated(By.xpath("//*[@role='menuitem'][normalize-space()='Model settings…']")), 10_000)).click()
-      await driver.wait(
-        until.elementLocated(By.css('[data-slot="dialog-content"]:not([data-starting-style])')),
-        15_000,
-      )
+      await driver.get(`${origin}/chat/ui/`)
+      const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 15_000)
+      await driver.executeScript('arguments[0].click()', settings)
+      await waitForSheetOpen(driver)
     },
   },
 ]
 
 const setTheme = async (driver: WebDriver, origin: string, theme: Theme): Promise<void> => {
-  await driver.get(`${origin}/bedrock-chat/ui/`)
+  await driver.get(`${origin}/chat/ui/`)
   await driver.executeScript("localStorage.setItem('ui.theme', arguments[0])", theme)
 }
 

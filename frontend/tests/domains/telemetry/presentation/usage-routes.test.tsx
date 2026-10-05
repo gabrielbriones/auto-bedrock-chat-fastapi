@@ -143,7 +143,7 @@ describe('usage analytics route', () => {
 
   it('restores applied filters from the URL and fetches each selected section', async () => {
     const { gateway, router } = renderAt(
-      '/bedrock-chat/dashboard/token-usages?topLimit=20&from=2026-05-01&to=2026-05-31&user=alice%40example.com&offset=50',
+      '/chat/dashboard/token-usages?topLimit=20&from=2026-05-01&to=2026-05-31&user=alice%40example.com&offset=50',
     )
 
     expect(await screen.findByLabelText(TELEMETRY_COPY.byDay.start)).toHaveValue('2026-05-01')
@@ -175,7 +175,7 @@ describe('usage analytics route', () => {
 
   it('keeps local drafts unapplied until Apply and supports Enter for users', async () => {
     const user = userEvent.setup()
-    const { gateway, router } = renderAt('/bedrock-chat/dashboard/token-usages')
+    const { gateway, router } = renderAt('/chat/dashboard/token-usages')
     const byDayCard = await cardFor(TELEMETRY_COPY.byDay.title)
     const byUserCard = await cardFor(TELEMETRY_COPY.byUser.title)
 
@@ -202,7 +202,7 @@ describe('usage analytics route', () => {
 
   it('refuses an inverted date range without calling the gateway', async () => {
     const user = userEvent.setup()
-    const { gateway, router } = renderAt('/bedrock-chat/dashboard/token-usages')
+    const { gateway, router } = renderAt('/chat/dashboard/token-usages')
     const byDayCard = await cardFor(TELEMETRY_COPY.byDay.title)
 
     fireEvent.change(screen.getByLabelText(TELEMETRY_COPY.byDay.start), { target: { value: '2026-05-31' } })
@@ -223,7 +223,7 @@ describe('usage analytics route', () => {
       byUser: jest.fn(async () => err(problem())),
     })
 
-    renderAt('/bedrock-chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice', gateway)
+    renderAt('/chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice', gateway)
 
     expect(await screen.findByText(TELEMETRY_COPY.summary.loadError)).toBeInTheDocument()
     expect(await screen.findByText(TELEMETRY_COPY.byDay.loadError)).toBeInTheDocument()
@@ -234,7 +234,7 @@ describe('usage analytics route', () => {
   // That only Top Users refetches is telemetry.store.test's; this owns the URL binding of the limit.
   it('binds the Top Users limit to the URL and refetches with it', async () => {
     const user = userEvent.setup()
-    const { gateway, router } = renderAt('/bedrock-chat/dashboard/token-usages')
+    const { gateway, router } = renderAt('/chat/dashboard/token-usages')
     const topUsersCard = await cardFor(TELEMETRY_COPY.topUsers.title)
 
     await waitFor(() => expect(gateway.topUsers).toHaveBeenCalledWith(10, expect.any(AbortSignal)))
@@ -255,7 +255,7 @@ describe('usage analytics route', () => {
       byUser: jest.fn(async (query: ByUserUsageQuery) =>
         ok(query.page.offset === 0 ? firstPage : [sessionRow])),
     })
-    const { router } = renderAt('/bedrock-chat/dashboard/token-usages?user=alice', gateway)
+    const { router } = renderAt('/chat/dashboard/token-usages?user=alice', gateway)
 
     const next = await screen.findByRole('button', { name: TELEMETRY_COPY.pagination.next })
     expect(next).not.toBeDisabled()
@@ -272,7 +272,7 @@ describe('usage analytics route', () => {
     const gateway = createGateway({
       byUser: jest.fn(async () => ok([])),
     })
-    const { dom } = renderAt('/bedrock-chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice', gateway)
+    const { dom } = renderAt('/chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice', gateway)
 
     expect(await screen.findByText(TELEMETRY_COPY.byUser.empty)).toBeInTheDocument()
     const summaryTable = await screen.findByRole('table', { name: TELEMETRY_COPY.summary.table })

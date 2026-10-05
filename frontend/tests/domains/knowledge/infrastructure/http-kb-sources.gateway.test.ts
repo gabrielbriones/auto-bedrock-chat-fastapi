@@ -8,7 +8,7 @@ import { HttpKbSourcesGateway } from '@/domains/knowledge/infrastructure/http-kb
 
 import { server } from '../../../msw/server'
 
-const ADMIN = 'http://localhost/bedrock-chat/admin'
+const ADMIN = 'http://localhost/chat/admin'
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
 const gateway = new HttpKbSourcesGateway(ADMIN, new HttpClient(), silentLogger)
 const requests: { readonly method: string; readonly url: string }[] = []

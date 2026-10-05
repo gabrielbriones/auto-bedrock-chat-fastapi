@@ -30,9 +30,9 @@ describe('Phase 10 contrast audit', () => {
   for (const theme of ['light', 'dark'] as const satisfies readonly Theme[]) {
     describe(`${theme} theme`, () => {
       beforeAll(async () => {
-        await driver.get(`${server.origin}/bedrock-chat/ui/`)
+        await driver.get(`${server.origin}/chat/ui/`)
         await driver.executeScript("localStorage.setItem('ui.theme', arguments[0])", theme)
-        await driver.get(`${server.origin}/bedrock-chat/ui/`)
+        await driver.get(`${server.origin}/chat/ui/`)
         await driver.wait(
           async () => ((await driver.findElement(By.css('html')).getAttribute('class')) ?? '').split(/\s+/).includes(theme),
           10_000,

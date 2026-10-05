@@ -62,9 +62,9 @@ const openFirstRow = async (driver: WebDriver): Promise<void> => {
 }
 
 const navigateToKnowledge = async (driver: WebDriver): Promise<void> => {
-  const link = await tabTo(driver, 'a[href="/bedrock-chat/dashboard/kb-browser"]')
+  const link = await tabTo(driver, 'a[href="/chat/dashboard/kb-browser"]')
   await link.sendKeys(Key.ENTER)
-  await driver.wait(async () => new URL(await driver.getCurrentUrl()).pathname === '/bedrock-chat/dashboard/kb-browser', 10_000)
+  await driver.wait(async () => new URL(await driver.getCurrentUrl()).pathname === '/chat/dashboard/kb-browser', 10_000)
 }
 
 const startWebCrawl = async (driver: WebDriver, server: AccessibilityServer): Promise<void> => {
@@ -85,15 +85,15 @@ const filterUsageByUser = async (driver: WebDriver): Promise<void> => {
 }
 
 const ROUTES: readonly RouteCase[] = [
-  { name: 'new conversation', path: '/bedrock-chat/ui/', expectedPath: '/bedrock-chat/ui/', heading: 'Workload Analyzer', ready: 'textarea[aria-label="Message"]:not([disabled])', journey: chatJourney },
-  { name: 'loaded conversation', path: '/bedrock-chat/ui/c/conversation-1', expectedPath: '/bedrock-chat/ui/c/conversation-1', heading: 'Workload Analyzer', ready: 'textarea[aria-label="Message"]:not([disabled])', journey: chatJourney },
-  { name: 'admin redirect', path: '/bedrock-chat/dashboard', expectedPath: '/bedrock-chat/dashboard/feedback', heading: 'Feedback queue', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
-  { name: 'feedback queue', path: '/bedrock-chat/dashboard/feedback', expectedPath: '/bedrock-chat/dashboard/feedback', heading: 'Feedback queue', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
-  { name: 'reviewed feedback', path: '/bedrock-chat/dashboard/reviewed', expectedPath: '/bedrock-chat/dashboard/reviewed', heading: 'Reviewed', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
-  { name: 'feedback stats', path: '/bedrock-chat/dashboard/feedback/stats', expectedPath: '/bedrock-chat/dashboard/feedback/stats', heading: 'Feedback stats', ready: 'main table', journey: navigateToKnowledge },
-  { name: 'knowledge base', path: '/bedrock-chat/dashboard/kb-browser', expectedPath: '/bedrock-chat/dashboard/kb-browser', heading: 'Knowledge base', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
-  { name: 'kb sources', path: '/bedrock-chat/dashboard/kb-sources', expectedPath: '/bedrock-chat/dashboard/kb-sources', heading: 'KB sources', ready: 'main tbody button[aria-label^="Delete source "]', journey: startWebCrawl },
-  { name: 'usage analytics', path: '/bedrock-chat/dashboard/token-usages', expectedPath: '/bedrock-chat/dashboard/token-usages', heading: 'Usage', ready: 'input[type="search"]', journey: filterUsageByUser },
+  { name: 'new conversation', path: '/chat/ui/', expectedPath: '/chat/ui/', heading: 'Workload Analyzer', ready: 'textarea[aria-label="Message"]:not([disabled])', journey: chatJourney },
+  { name: 'loaded conversation', path: '/chat/ui/c/conversation-1', expectedPath: '/chat/ui/c/conversation-1', heading: 'Workload Analyzer', ready: 'textarea[aria-label="Message"]:not([disabled])', journey: chatJourney },
+  { name: 'admin redirect', path: '/chat/dashboard', expectedPath: '/chat/dashboard/feedback', heading: 'Feedback queue', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
+  { name: 'feedback queue', path: '/chat/dashboard/feedback', expectedPath: '/chat/dashboard/feedback', heading: 'Feedback queue', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
+  { name: 'reviewed feedback', path: '/chat/dashboard/reviewed', expectedPath: '/chat/dashboard/reviewed', heading: 'Reviewed', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
+  { name: 'feedback stats', path: '/chat/dashboard/feedback/stats', expectedPath: '/chat/dashboard/feedback/stats', heading: 'Feedback stats', ready: 'main table', journey: navigateToKnowledge },
+  { name: 'knowledge base', path: '/chat/dashboard/kb-browser', expectedPath: '/chat/dashboard/kb-browser', heading: 'Knowledge base', ready: 'main tbody button[aria-label^="Open "]', journey: openFirstRow },
+  { name: 'kb sources', path: '/chat/dashboard/kb-sources', expectedPath: '/chat/dashboard/kb-sources', heading: 'KB sources', ready: 'main tbody button[aria-label^="Delete source "]', journey: startWebCrawl },
+  { name: 'usage analytics', path: '/chat/dashboard/token-usages', expectedPath: '/chat/dashboard/token-usages', heading: 'Usage', ready: 'input[type="search"]', journey: filterUsageByUser },
 ]
 
 describe('Phase 10 accessibility route matrix', function () {
@@ -113,7 +113,7 @@ describe('Phase 10 accessibility route matrix', function () {
   })
 
   const openRoute = async (route: RouteCase, theme: Theme): Promise<void> => {
-    await driver.get(`${server.origin}/bedrock-chat/ui/`)
+    await driver.get(`${server.origin}/chat/ui/`)
     await driver.executeScript("localStorage.setItem('ui.theme', arguments[0])", theme)
     await driver.get(`${server.origin}${route.path}`)
 

@@ -16,11 +16,11 @@ const requestMock = () => jest.fn<ScriptedRequest>()
 describe('SsoHttpGateway', () => {
   it.each([
     [
-      '/bedrock-chat/auth/sso/login',
-      '/bedrock-chat/ui/?prompt=workload-analysis&JOB_ID=123',
-      '/bedrock-chat/auth/sso/login?next=%2Fbedrock-chat%2Fui%2F%3Fprompt%3Dworkload-analysis%26JOB_ID%3D123',
+      '/chat/auth/sso/login',
+      '/chat/ui/?prompt=workload-analysis&JOB_ID=123',
+      '/chat/auth/sso/login?next=%2Fchat%2Fui%2F%3Fprompt%3Dworkload-analysis%26JOB_ID%3D123',
     ],
-    ['/login?provider=corp', '/bedrock-chat/ui/', '/login?provider=corp&next=%2Fbedrock-chat%2Fui%2F'],
+    ['/login?provider=corp', '/chat/ui/', '/login?provider=corp&next=%2Fchat%2Fui%2F'],
   ])(
     'preserves the complete deep link in the login next parameter without replacing existing login parameters (%s)',
     (loginUrl, next, expected) => {
@@ -42,9 +42,9 @@ describe('SsoHttpGateway', () => {
       { assign },
     )
 
-    gateway.beginLogin('/bedrock-chat/ui/')
+    gateway.beginLogin('/chat/ui/')
 
-    expect(assign).toHaveBeenCalledExactlyOnceWith(`${loginUrl}next=%2Fbedrock-chat%2Fui%2F`)
+    expect(assign).toHaveBeenCalledExactlyOnceWith(`${loginUrl}next=%2Fchat%2Fui%2F`)
   })
 
   it('posts logout with cookies and returns the HTTP result', async () => {
@@ -52,13 +52,13 @@ describe('SsoHttpGateway', () => {
     const request = requestMock().mockResolvedValue(response)
     const gateway = new SsoHttpGateway(
       '/login',
-      '/bedrock-chat/auth/sso/logout',
+      '/chat/auth/sso/logout',
       { request },
       { assign: jest.fn() },
     )
 
     await expect(gateway.logout()).resolves.toBe(response)
-    expect(request).toHaveBeenCalledExactlyOnceWith('/bedrock-chat/auth/sso/logout', {
+    expect(request).toHaveBeenCalledExactlyOnceWith('/chat/auth/sso/logout', {
       method: 'POST',
       credentials: 'include',
     })

@@ -12,7 +12,7 @@ import { FeedbackControls } from '@/domains/feedback/presentation/FeedbackContro
 import { ComposerModelPicker } from '@/domains/model-config/presentation/ComposerModelPicker'
 
 export type ConversationViewProps = {
-  /** Null at `/bedrock-chat/ui`, which is a new, unsaved conversation (FR-CONV-011). */
+  /** Null at `/chat/ui`, which is a new, unsaved conversation (FR-CONV-011). */
   readonly conversationId: ConversationId | null
 }
 
