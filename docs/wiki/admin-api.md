@@ -310,7 +310,7 @@ on the same document.
 | PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
 | GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                             |
 | GET    | `/admin/kb/sources`             | List distinct KB document `source` names with their document counts.      |
-| DELETE | `/admin/kb/sources`             | Delete every document (and chunks) whose `source` matches `?name=`.       |
+| DELETE | `/admin/kb/sources/{name}`      | Delete every document (and chunks) whose `source` matches `name`.         |
 
 Both `POST` routes return **`202 Accepted`** immediately with a
 `run_id` and `phase: "running"` — the crawl/ingest itself runs as a
@@ -451,21 +451,32 @@ excluded (e.g. a document whose `source` was cleared to `""` via
 ]
 ```
 
-`DELETE /admin/kb/sources?name=<source>` hard-deletes every document
-(and its chunks) whose `source` exactly matches `name`. Sources are
-identified by name rather than by `run_id` — completed runs aren't
-tracked once `GET .../status` moves on, only the document rows they
-left behind are:
+`DELETE /admin/kb/sources/{name}` hard-deletes every document whose
+`source` exactly matches `name`, including its chunks, vector entries,
+and full-text-search entries. Pass the source name as a URL-encoded path
+segment (for example, `ISS%20docs%2F2026`); names containing slashes
+are supported. The old `DELETE /admin/kb/sources?name=...` endpoint was
+removed and has no compatibility alias. Sources are identified by name
+rather than by `run_id` — completed runs aren't tracked once
+`GET .../status` moves on, only the document rows they left behind are:
 
 ```json
 { "source": "ISS docs", "deleted": 42 }
 ```
 
-| HTTP | `code`                | When                                  |
-| ---- | --------------------- | ------------------------------------- |
-| 200  | —                     | Deleted (see body for count).         |
-| 404  | `kb_source_not_found` | No documents match `name`.            |
-| 422  | —                     | `name` query parameter missing/empty. |
+| HTTP | `code`                              | When                                                               |
+| ---- | ----------------------------------- | ------------------------------------------------------------------ |
+| 200  | —                                   | Deleted; JSON body contains `source` and `deleted` document count. |
+| 404  | `kb_source_not_found`               | No documents match `name`.                                         |
+| 409  | `kb_source_run_already_in_progress` | The same source has an in-flight ingestion/override or deletion.   |
+
+Source deletion reserves its name against new ingestion/override claims
+until the delete finishes. It may proceed while a _different_ source
+is being ingested. These checks and the per-document mutation locks
+are in-process only; multi-worker deployments have no cross-worker
+coordination guarantee. Successful deletes emit one `kb.source.delete`
+audit event with `actor_user_id`, `target_id` (source name),
+`deleted_count`, `chunks_deleted`, and `ts`.
 
 ### Token Usage Analytics
 
@@ -571,9 +582,9 @@ All admin errors share a single flat shape:
 | 400  | `invalid_filters`                                                  | Bad date window, malformed query value.                                                                                 |
 | 401  | `not_authenticated`                                                | No identity source resolved the caller.                                                                                 |
 | 403  | `not_admin`                                                        | Identity resolved but `AdminAuthorizer` rejected it.                                                                    |
-| 404  | `not_found`                                                        | Target id doesn't exist.                                                                                                |
+| 404  | `not_found` / `kb_source_not_found`                                | Target document id doesn't exist / no documents match a source name.                                                    |
 | 409  | `invalid_status_transition`                                        | Feedback PATCH attempts a forbidden review-status transition.                                                           |
-| 409  | `kb_source_run_already_in_progress`                                | Another KB source-ingestion run is already in flight.                                                                   |
+| 409  | `kb_source_run_already_in_progress`                                | Another KB source-ingestion run is already in flight, or the same source is being deleted.                              |
 | 422  | (validation error from FastAPI)                                    | Body / path / query failed Pydantic validation.                                                                         |
 | 422  | `no_files_uploaded` / `invalid_file_encoding` / `invalid_pdf_file` | KB source file upload has no files, one isn't UTF-8 text (and isn't a recognized PDF), or a PDF is corrupted/encrypted. |
 | 422  | `upload_too_large`                                                 | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                              |
@@ -593,6 +604,7 @@ persistence can attach a logging handler.
 | `feedback.review.update` | PATCH feedback | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`                           |
 | `kb.document.update`     | PATCH KB doc   | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts`                        |
 | `kb.document.delete`     | DELETE KB doc  | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`                          |
+| `kb.source.delete`       | DELETE source  | `actor_user_id`, `target_id` (source), `deleted_count`, `chunks_deleted`, `ts`                            |
 | `kb.source.populate`     | POST KB source | `actor_user_id`, `target_id` (`run_id`), `source_name`, `source_type`, `phase` (`start`/`complete`), `ts` |
 
 `content_hash` is SHA-256; full content is **not** logged so log lines

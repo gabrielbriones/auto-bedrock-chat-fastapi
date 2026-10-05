@@ -82,7 +82,7 @@ export class HttpKbSourcesGateway implements KbSourcesGateway {
 
   async deleteSource(name: string): Promise<Result<KbSourceDeletion, Problem>> {
     const response = await this.httpClient.request<unknown>(
-      this.url(`/kb/sources?name=${encodeURIComponent(name)}`),
+      this.url(`/kb/sources/${encodeURIComponent(name)}`),
       { method: 'DELETE', credentials: 'include', logger: this.logger },
     )
 

@@ -11,6 +11,9 @@ Endpoints
 * ``PATCH  /admin/kb/documents/{id}``  — partial update; on content
   change the route re-embeds the document and writes new chunks.
 * ``DELETE /admin/kb/documents/{id}``  — hard delete (document + chunks).
+* ``GET    /admin/kb/sources``         — list source names and document counts.
+* ``DELETE /admin/kb/sources/{name}``  — hard-delete every document/chunk
+    belonging to a source, returning a document count.
 * ``POST   /admin/kb/sources/web``     — trigger a web-crawl ingestion run.
 * ``POST   /admin/kb/sources/file``    — trigger an ingestion run from
   uploaded file content (multipart form; admins don't have filesystem
@@ -33,7 +36,9 @@ locking is explicitly out of scope (see plan §7). Cross-worker
 concurrent edits are still possible; the KB store's transactional
 chunk-swap keeps the document in a consistent state even under
 contention, and a follow-up `409 conflict` HTTP envelope is open for
-v2 if it becomes a real problem.
+v2 if it becomes a real problem. Source DELETE additionally reserves its
+name against ingestion/override claims within this process. A same-source
+run or delete returns 409; other-source ingestion is allowed during deletion.
 
 Re-embedding
 ------------
@@ -285,12 +290,15 @@ class _KBSourceRunState:
     Mirrors the ``_RunState`` pattern in ``admin_synthesis_routes.py``: a
     single in-flight run at a time, claimed via :meth:`try_claim_run` and
     polled via the :attr:`status` property (read without holding the lock —
-    eventual consistency is acceptable for status checks).
+    eventual consistency is acceptable for status checks). Source deletion
+    reservations share the claim lock, so a run cannot claim the same source
+    while it is being deleted (within this process only).
     """
 
     def __init__(self) -> None:
         self._status = KBSourceStatus()
         self._lock = asyncio.Lock()
+        self._deleting_sources: set[str] = set()
 
     @property
     def status(self) -> KBSourceStatus:
@@ -306,9 +314,9 @@ class _KBSourceRunState:
         return self._status.phase
 
     async def try_claim_run(self, *, run_id: str, source_name: str, source_type: str) -> bool:
-        """Atomically transition to RUNNING if not already in progress."""
+        """Atomically claim the global run, unless its source is being deleted."""
         async with self._lock:
-            if self._status.phase == KBSourcePhase.RUNNING:
+            if self._status.phase == KBSourcePhase.RUNNING or source_name in self._deleting_sources:
                 return False
             self._status = KBSourceStatus(
                 run_id=run_id,
@@ -318,6 +326,21 @@ class _KBSourceRunState:
                 started_at=datetime.now(timezone.utc),
             )
             return True
+
+    async def try_claim_deletion(self, source_name: str) -> bool:
+        """Reserve a source until bulk deletion completes (single process only)."""
+        async with self._lock:
+            if source_name in self._deleting_sources or (
+                self._status.phase == KBSourcePhase.RUNNING and self._status.source_name == source_name
+            ):
+                return False
+            self._deleting_sources.add(source_name)
+            return True
+
+    async def release_deletion(self, source_name: str) -> None:
+        """Release a successfully claimed deletion, including on failure."""
+        async with self._lock:
+            self._deleting_sources.remove(source_name)
 
     def record_progress(self, metric: str, amount: int = 1) -> None:
         """``progress_cb`` passed to ``ingest_web_source``/``ingest_uploaded_files``."""
@@ -1455,7 +1478,7 @@ def register_admin_kb_routes(
         only filters ``source IS NOT NULL``, but ``PATCH
         /admin/kb/documents/{id}`` allows clearing ``source`` to ``""``,
         and an empty name can't round-trip to ``DELETE
-        /admin/kb/sources?name=...`` (which requires a non-empty name).
+        /admin/kb/sources/{name}`` (which requires a non-empty name).
         """
         rows = await asyncio.to_thread(kb_store.list_sources)
         return [
@@ -1523,39 +1546,69 @@ def register_admin_kb_routes(
         return documents_deleted, chunks_deleted, found_any
 
     @sources_router.delete(
-        "",
+        "/{name:path}",
         responses={
             **ADMIN_COMMON_RESPONSES,
             404: {"model": ErrorResponse, "description": "No documents found for this source name"},
+            409: {"model": ErrorResponse, "description": "This source is being ingested or deleted"},
         },
         summary="Delete every KB document ingested under a source name",
     )
-    async def delete_kb_source(name: str = Query(..., min_length=1), identity=Depends(require_admin)):
+    async def delete_kb_source(name: str, identity=Depends(require_admin)):
         """Hard-delete every document (and its chunks) whose ``source``
         equals ``name`` exactly.
 
-        Identifies the source by name (matching the KB Sources UI, which
-        lists sources by name) rather than by run id — ingestion runs
-        aren't tracked once complete, only the document rows they left
-        behind are.
+        ``name`` is a path parameter and may contain encoded slashes.
+        Identifies the source by name rather than run id, since completed
+        runs aren't tracked. Returns 200 with ``source`` and ``deleted``
+        document count; 404 ``kb_source_not_found`` if none match, or 409
+        when that source has an in-flight run/deletion. The reservation is
+        single-worker best-effort, not a cross-worker guarantee. On success
+        emits ``kb.source.delete`` with actor, target name, document count,
+        and chunk count.
         """
         actor = identity.user_id
-        documents_deleted, chunks_deleted, found_any = await _delete_documents_for_source(name)
+        if not await _source_state.try_claim_deletion(name):
+            return _error_json(409, "kb_source_run_already_in_progress", f"source {name!r} is busy")
+
+        async def delete_reserved_source() -> Tuple[int, int, bool]:
+            # Keep the reservation owned by the deletion task. Cancelling the
+            # request must not release it while asyncio.to_thread is still
+            # deleting rows in a worker thread.
+            try:
+                documents_deleted, chunks_deleted, found_any = await _delete_documents_for_source(name)
+                if found_any:
+                    # Audit the completed mutation in the task that owns it:
+                    # the request may have been cancelled while deletion ran.
+                    audit_logger.info(
+                        "kb.source.delete",
+                        extra={
+                            "action": "kb.source.delete",
+                            "actor_user_id": actor,
+                            "target_id": name,
+                            "deleted_count": documents_deleted,
+                            "chunks_deleted": chunks_deleted,
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                return documents_deleted, chunks_deleted, found_any
+            finally:
+                await _source_state.release_deletion(name)
+
+        deletion = asyncio.create_task(delete_reserved_source())
+        try:
+            documents_deleted, chunks_deleted, found_any = await asyncio.shield(deletion)
+        except asyncio.CancelledError:
+            # The thread-backed deletion must finish before the reservation
+            # is released; retrieve its outcome to avoid an orphaned task.
+            try:
+                await deletion
+            finally:
+                raise
 
         if not found_any:
             return _error_json(404, "kb_source_not_found", f"no documents found for source {name!r}")
 
-        audit_logger.info(
-            "kb.source.delete",
-            extra={
-                "action": "kb.source.delete",
-                "actor_user_id": actor,
-                "target_id": name,
-                "deleted_count": documents_deleted,
-                "chunks_deleted": chunks_deleted,
-                "ts": datetime.now(timezone.utc).isoformat(),
-            },
-        )
         return {"source": name, "deleted": documents_deleted}
 
     app.include_router(sources_router)

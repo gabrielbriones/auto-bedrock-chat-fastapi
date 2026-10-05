@@ -23,7 +23,7 @@ export const knowledgeHandlers = [
   http.put(`${ADMIN}/kb/sources/web/:name`, accepted),
   http.post(`${ADMIN}/kb/sources/file`, accepted),
   http.put(`${ADMIN}/kb/sources/file/:name`, accepted),
-  http.delete(`${ADMIN}/kb/sources`, ({ request }) =>
-    HttpResponse.json({ source: new URL(request.url).searchParams.get('name'), deleted: 4 }),
+  http.delete(`${ADMIN}/kb/sources/:name`, ({ params }) =>
+    HttpResponse.json({ source: params.name, deleted: 4 }),
   ),
 ]

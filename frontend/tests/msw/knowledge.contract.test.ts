@@ -53,7 +53,7 @@ describe('knowledge REST contract', () => {
     expect(isOk(toKbSourceRun(body))).toBe(true)
   })
 
-  it('DELETE /kb/sources?name= parses into a deletion result', async () => {
-    expect(isOk(toKbSourceDeletion(await fetchJson('/kb/sources?name=feedback', { method: 'DELETE' })))).toBe(true)
+  it('DELETE /kb/sources/{name} parses the 200 response into a deletion result', async () => {
+    expect(isOk(toKbSourceDeletion(await fetchJson('/kb/sources/feedback', { method: 'DELETE' })))).toBe(true)
   })
 })

@@ -640,23 +640,15 @@ class SQLiteKBStore(BaseKBStore):
     def delete_document(self, doc_id: str) -> int:
         """Delete a document and all its chunks. Returns the chunk count deleted."""
         cursor = self.conn.cursor()
-
-        # Get chunk IDs to delete from vector table
-        cursor.execute("SELECT id FROM chunks WHERE document_id = ?", (doc_id,))
-        chunk_ids = [row[0] for row in cursor.fetchall()]
-
-        # Delete from vector table
-        for chunk_id in chunk_ids:
-            cursor.execute("DELETE FROM vec_chunks WHERE chunk_id = ?", (chunk_id,))
-
-        # Delete chunks
-        cursor.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
-
-        # Delete document
-        cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-
-        self.conn.commit()
-        return len(chunk_ids)
+        cursor.execute("BEGIN")
+        try:
+            chunks_deleted = self._delete_chunks_for(cursor, doc_id)
+            cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            self.conn.commit()
+            return chunks_deleted
+        except Exception:
+            self.conn.rollback()
+            raise
 
     # ------------------------------------------------------------------
     # Admin operations
@@ -787,9 +779,9 @@ class SQLiteKBStore(BaseKBStore):
         cursor.execute(sql, params + [int(limit), int(offset)])
         return [row[0] for row in cursor.fetchall()]
 
-    def _delete_chunks_for(self, cursor: sqlite3.Cursor, doc_id: str) -> None:
+    def _delete_chunks_for(self, cursor: sqlite3.Cursor, doc_id: str) -> int:
         """Remove all chunks for ``doc_id`` from chunks, vec_chunks, and
-        fts_chunks. Caller owns the transaction.
+        fts_chunks. Return the number removed; caller owns the transaction.
         """
         cursor.execute("SELECT id FROM chunks WHERE document_id = ?", (doc_id,))
         chunk_ids = [r[0] for r in cursor.fetchall()]
@@ -797,6 +789,7 @@ class SQLiteKBStore(BaseKBStore):
             cursor.execute("DELETE FROM vec_chunks WHERE chunk_id = ?", (chunk_id,))
             cursor.execute("DELETE FROM fts_chunks WHERE chunk_id = ?", (chunk_id,))
         cursor.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
+        return len(chunk_ids)
 
     @_locked
     def update_document(

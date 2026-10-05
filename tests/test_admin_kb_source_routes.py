@@ -1,8 +1,11 @@
 """Tests for the ``/admin/kb/sources/{web,file}`` ingestion routes and status endpoint."""
 
 import asyncio
+import inspect
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -274,6 +277,166 @@ def _wait_until_not_running(client, timeout=5.0):
             return resp
         time.sleep(0.05)
     return resp
+
+
+@pytest.mark.asyncio
+async def test_source_delete_reservation_blocks_same_source_run_and_duplicate_delete():
+    state = kb_routes_mod._KBSourceRunState()
+    assert await state.try_claim_deletion("target")
+    assert not await state.try_claim_deletion("target")
+    assert not await state.try_claim_run(run_id="blocked", source_name="target", source_type="web")
+    assert await state.try_claim_deletion("other")
+    await state.release_deletion("other")
+    await state.release_deletion("target")
+    assert await state.try_claim_run(run_id="allowed", source_name="target", source_type="web")
+    assert not await state.try_claim_deletion("target")
+    assert await state.try_claim_deletion("other")
+    await state.release_deletion("other")
+
+
+@pytest.mark.asyncio
+async def test_source_deletion_reservation_released_after_failure():
+    state = kb_routes_mod._KBSourceRunState()
+    try:
+        assert await state.try_claim_deletion("target")
+        raise RuntimeError("simulated delete failure")
+    except RuntimeError:
+        pass
+    finally:
+        await state.release_deletion("target")
+
+    assert await state.try_claim_run(run_id="retry", source_name="target", source_type="file")
+
+
+def test_delete_reservation_blocks_same_source_override_until_delete_finishes():
+    class BlockingStore(_FakeKBStore):
+        def __init__(self):
+            super().__init__()
+            self.entered = Event()
+            self.resume = Event()
+
+        def list_document_ids(self, filters, limit=200, offset=0):
+            if filters.source == "target" and not self.entered.is_set():
+                self.entered.set()
+                assert self.resume.wait(5)
+            return super().list_document_ids(filters, limit, offset)
+
+    store = BlockingStore()
+    store.add_document(doc_id="one", content="old", source="target")
+    app = _build_app(kb_store=store, embedding_client=_embedding_client())
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        delete = pool.submit(client.delete, "/bedrock-chat/admin/kb/sources/target")
+        try:
+            assert store.entered.wait(5)
+            same = client.put(
+                "/bedrock-chat/admin/kb/sources/web/target",
+                json={"urls": ["https://example.com"]},
+            )
+            assert same.status_code == 409
+            assert same.json()["code"] == "kb_source_run_already_in_progress"
+        finally:
+            store.resume.set()
+        assert delete.result(timeout=5).status_code == 200
+
+
+def test_delete_reservation_is_released_when_store_raises():
+    class FailingStore(_FakeKBStore):
+        def list_document_ids(self, filters, limit=200, offset=0):
+            raise RuntimeError("simulated delete failure")
+
+    store = FailingStore()
+    store.add_document(doc_id="one", content="old", source="target")
+    app = _build_app(kb_store=store, embedding_client=_embedding_client())
+    with TestClient(app) as client:
+        with pytest.raises(RuntimeError, match="simulated delete failure"):
+            client.delete("/bedrock-chat/admin/kb/sources/target")
+        response = client.put(
+            "/bedrock-chat/admin/kb/sources/web/target",
+            json={"urls": ["https://example.com"]},
+        )
+        assert response.status_code == 202
+
+
+def test_source_delete_rejects_running_same_source_but_allows_other_source():
+    store = _FakeKBStore()
+    store.add_document(doc_id="other-doc", content="old", source="other")
+    app = _build_app(kb_store=store, embedding_client=_embedding_client())
+    entered = Event()
+    resume = Event()
+
+    async def blocked_ingestion(**kwargs):
+        entered.set()
+        assert await asyncio.to_thread(resume.wait, 5)
+        return {"documents": 0, "chunks": 0, "errors": []}
+
+    with (
+        TestClient(app) as client,
+        patch.object(kb_ingestion_module, "ingest_web_source", side_effect=blocked_ingestion),
+    ):
+        try:
+            started = client.post(
+                "/bedrock-chat/admin/kb/sources/web",
+                json={"name": "target", "urls": ["https://example.com"]},
+            )
+            assert started.status_code == 202
+            assert entered.wait(5)
+            same = client.delete("/bedrock-chat/admin/kb/sources/target")
+            assert same.status_code == 409
+            assert same.json()["code"] == "kb_source_run_already_in_progress"
+            other = client.delete("/bedrock-chat/admin/kb/sources/other")
+            assert other.status_code == 200
+            assert other.json() == {"source": "other", "deleted": 1}
+        finally:
+            resume.set()
+        assert _wait_until_not_running(client).json()["phase"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_delete_keeps_reservation_until_worker_finishes(caplog):
+    class BlockingStore(_FakeKBStore):
+        def __init__(self):
+            super().__init__()
+            self.entered = Event()
+            self.resume = Event()
+
+        def list_document_ids(self, filters, limit=200, offset=0):
+            self.entered.set()
+            assert self.resume.wait(5)
+            return super().list_document_ids(filters, limit, offset)
+
+    store = BlockingStore()
+    store.add_document(doc_id="one", content="old", source="target")
+    store.add_chunk(chunk_id="one-chunk", document_id="one", content="old")
+    app = _build_app(kb_store=store, embedding_client=_embedding_client())
+    # FastAPI wraps included routers; use the source router's original routes
+    # to invoke the async handler directly on this test's event loop.
+    source_routes = next(
+        included.original_router.routes
+        for included in app.routes
+        if hasattr(included, "original_router")
+        and any(route.name == "delete_kb_source" for route in included.original_router.routes)
+    )
+    endpoint = next(route.endpoint for route in source_routes if route.name == "delete_kb_source")
+    state = inspect.getclosurevars(endpoint).nonlocals["_source_state"]
+    with caplog.at_level(logging.INFO, logger="bedrock.audit"):
+        deletion = asyncio.create_task(endpoint("target", identity=_Identity()))
+        try:
+            assert await asyncio.to_thread(store.entered.wait, 5)
+            deletion.cancel()
+            await asyncio.sleep(0)
+            assert not await state.try_claim_run(run_id="blocked", source_name="target", source_type="web")
+        finally:
+            store.resume.set()
+        with pytest.raises(asyncio.CancelledError):
+            await deletion
+    assert store.documents == {}
+    events = [record for record in caplog.records if record.msg == "kb.source.delete"]
+    assert len(events) == 1
+    assert events[0].actor_user_id == "admin"
+    assert events[0].target_id == "target"
+    assert events[0].deleted_count == 1
+    assert events[0].chunks_deleted == 1
+    assert await state.try_claim_run(run_id="allowed", source_name="target", source_type="web")
 
 
 # ---------------------------------------------------------------------------

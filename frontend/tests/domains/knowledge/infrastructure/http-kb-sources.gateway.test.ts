@@ -160,10 +160,10 @@ describe('HttpKbSourcesGateway file ingestion', () => {
 })
 
 describe('HttpKbSourcesGateway delete', () => {
-  it('encodes the source name as a query parameter and maps the deletion count', async () => {
+  it('encodes a source name with spaces and slashes in the path and maps the 200 deletion count', async () => {
     const result = await gateway.deleteSource('intel docs/2026')
 
-    expect(last()).toEqual({ method: 'DELETE', url: `${ADMIN}/kb/sources?name=intel%20docs%2F2026` })
+    expect(last()).toEqual({ method: 'DELETE', url: `${ADMIN}/kb/sources/intel%20docs%2F2026` })
     expect(isOk(result) && result.value).toEqual({ source: 'intel docs/2026', deleted: 4 })
   })
 })
