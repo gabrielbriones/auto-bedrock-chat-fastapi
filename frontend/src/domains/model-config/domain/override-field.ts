@@ -21,18 +21,18 @@ export type OverrideFieldDef = {
 // SPEC-014 §1 table — order and constraints are parity with `DYNAMIC_OVERRIDE_FIELDS`.
 export const OVERRIDE_FIELDS: readonly OverrideFieldDef[] = [
   { key: 'model_id', control: 'model-picker', hasHelp: false },
-  { key: 'temperature', control: 'slider', min: 0, max: 1, step: 0.1, hasHelp: false, requiresTemperatureSupport: true },
-  { key: 'top_p', control: 'slider', min: 0, max: 1, step: 0.1, hasHelp: false, requiresTemperatureSupport: true },
-  { key: 'max_tokens', control: 'number', min: 1, max: 100_000, step: 1, hasHelp: false },
+  { key: 'temperature', control: 'slider', min: 0, max: 1, step: 0.1, hasHelp: true, requiresTemperatureSupport: true },
+  { key: 'top_p', control: 'slider', min: 0, max: 1, step: 0.1, hasHelp: true, requiresTemperatureSupport: true },
+  { key: 'max_tokens', control: 'number', min: 1, max: 100_000, step: 1, hasHelp: true },
   { key: 'enable_ai_summarization', control: 'switch', hasHelp: true },
-  { key: 'enable_rag', control: 'switch', hasHelp: false },
+  { key: 'enable_rag', control: 'switch', hasHelp: true },
   {
     key: 'kb_top_k_results',
     control: 'number',
     min: 1,
     max: 20,
     step: 1,
-    hasHelp: false,
+    hasHelp: true,
     dependsOn: { key: 'enable_rag', requiredValue: true },
   },
   {
