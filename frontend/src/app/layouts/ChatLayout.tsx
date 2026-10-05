@@ -90,20 +90,20 @@ export function ChatLayout({ children }: ChatLayoutProps) {
         <div>
           <header className="flex h-14 items-center gap-2 border-b border-border px-4">
             {visible ? <ConversationDrawerTrigger onOpen={openDrawer} /> : null}
-            <h1 className="min-w-0 truncate font-medium text-foreground">{bootstrap.uiTitle}</h1>
+            <h1 className="min-w-0 truncate font-bold text-foreground">{bootstrap.uiTitle}</h1>
             <div className="ms-auto flex shrink-0 items-center gap-1 md:gap-2">
               {visible ? null : <NewChatButton />}
               <AdminDashboardLink />
-              {visible ? null : <UserMenu variant="header" />}
               <AuthStatusButton />
+              <UserMenu />
             </div>
           </header>
           <ConnectionBadge connection={connection} />
         </div>
       }
-      sidebar={visible ? <ConversationSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebarCollapsed} footer={<UserMenu variant={sidebarCollapsed ? 'rail' : 'sidebar'} />} /> : undefined}
+      sidebar={visible ? <ConversationSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebarCollapsed} /> : undefined}
       sidebarWidth={sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH}
-      overlays={<ConversationDrawer open={drawerOpen} onOpenChange={setDrawerOpen} onNavigate={closeDrawer} footer={<UserMenu />} />}
+      overlays={<ConversationDrawer open={drawerOpen} onOpenChange={setDrawerOpen} onNavigate={closeDrawer} />}
     >
       <RouteBoundary resetKey={pathname} onCatch={report}>
         {children}

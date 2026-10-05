@@ -12,14 +12,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { IAM_COPY } from '@/shared/copy/iam'
-
-export type UserMenuProps = {
-  /** `rail` is the collapsed sidebar: avatar only, but still at the foot of the roster. */
-  readonly variant?: 'sidebar' | 'rail' | 'header'
-}
 
 const initialsOf = (displayName: string): string => {
   const [first, second] = displayName.trim().split(/\s+/)
@@ -31,16 +27,16 @@ function ThemeOptions() {
 
   return (
     <DropdownMenuGroup>
-      <DropdownMenuLabel>{IAM_COPY.status.theme}</DropdownMenuLabel>
+      <DropdownMenuLabel className="px-2">{IAM_COPY.status.theme}</DropdownMenuLabel>
       <DropdownMenuRadioGroup
         value={preference}
         onValueChange={(value: unknown) => {
           if (value === 'light' || value === 'dark' || value === 'system') setPreference(value)
         }}
       >
-        <DropdownMenuRadioItem value="light"><SunIcon aria-hidden />{IAM_COPY.status.light}</DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="dark"><MoonIcon aria-hidden />{IAM_COPY.status.dark}</DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="system"><MonitorIcon aria-hidden />{IAM_COPY.status.system}</DropdownMenuRadioItem>
+        <DropdownMenuRadioItem value="light" className="py-1.5 ps-2"><SunIcon aria-hidden />{IAM_COPY.status.light}</DropdownMenuRadioItem>
+        <DropdownMenuRadioItem value="dark" className="py-1.5 ps-2"><MoonIcon aria-hidden />{IAM_COPY.status.dark}</DropdownMenuRadioItem>
+        <DropdownMenuRadioItem value="system" className="py-1.5 ps-2"><MonitorIcon aria-hidden />{IAM_COPY.status.system}</DropdownMenuRadioItem>
       </DropdownMenuRadioGroup>
     </DropdownMenuGroup>
   )
@@ -52,6 +48,7 @@ function LogoutItem() {
   return (
     <DropdownMenuItem
       variant="destructive"
+      className="px-2 py-1.5"
       onClick={() => {
         identity.logout().catch((error: unknown) => {
           logger.error('logout_failed', { name: String(error) })
@@ -65,7 +62,7 @@ function LogoutItem() {
 }
 
 // FR-IAM-016: absent when unauthenticated or when authentication is switched off.
-export function UserMenu({ variant = 'sidebar' }: UserMenuProps) {
+export function UserMenu() {
   const { authPolicy } = useContainer()
   const session = useContainerStore('identity')
 
@@ -74,44 +71,43 @@ export function UserMenu({ variant = 'sidebar' }: UserMenuProps) {
   }
 
   const { displayName } = session.principal
-  const iconOnly = variant !== 'sidebar'
-
-  const wrapperClassName = variant === 'sidebar'
-    ? 'border-t border-border p-2'
-    : variant === 'rail'
-      ? 'flex justify-center border-t border-border p-2'
-      : undefined
 
   return (
-    <div className={wrapperClassName}>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size={iconOnly ? 'icon' : 'default'}
-              aria-label={displayName ?? IAM_COPY.status.account}
-              className={iconOnly ? 'size-8 p-0' : 'w-full min-w-0 justify-start gap-2 px-2'}
-            />
-          }
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={displayName ?? IAM_COPY.status.account}
+            className="group/user size-10 rounded-full p-0 hover:bg-transparent aria-expanded:bg-transparent"
+          />
+        }
+      >
+        {/* The avatar covers the whole trigger, so the ghost button's own hover background never shows. */}
+        <Avatar
+          size="lg"
+          className="transition-shadow group-hover/user:ring-2 group-hover/user:ring-ring/50 group-aria-expanded/user:ring-2 group-aria-expanded/user:ring-ring/50"
         >
-          <Avatar size="sm">
-            <AvatarFallback>{displayName !== null ? initialsOf(displayName) : '?'}</AvatarFallback>
-          </Avatar>
-          {!iconOnly && displayName !== null ? (
-            <span className="min-w-0 flex-1 truncate text-start text-sm font-medium">
-              {displayName}
-            </span>
-          ) : null}
-        </DropdownMenuTrigger>
+          <AvatarFallback className="transition-colors group-hover/user:bg-accent group-hover/user:text-accent-foreground">
+            {displayName !== null ? initialsOf(displayName) : '?'}
+          </AvatarFallback>
+        </Avatar>
+      </DropdownMenuTrigger>
 
-        <DropdownMenuContent align={variant === 'header' ? 'end' : 'start'}>
-          <DropdownMenuLabel>{displayName ?? IAM_COPY.status.account}</DropdownMenuLabel>
-          <ThemeOptions />
-          <LogoutItem />
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+      {/* The 40px trigger sits 8px above the 56px header's bottom border; clear it. */}
+      <DropdownMenuContent align="end" sideOffset={14} className="w-auto min-w-60 p-1.5">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="truncate px-2 py-2 text-sm font-medium text-foreground">
+            {displayName ?? IAM_COPY.status.account}
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <ThemeOptions />
+        <DropdownMenuSeparator />
+        <LogoutItem />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
