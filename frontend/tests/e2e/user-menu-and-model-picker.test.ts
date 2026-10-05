@@ -45,9 +45,7 @@ describe('User menu and model picker', () => {
   it('separates the model submenu from its parent when there is room', async () => {
     await driver.manage().window().setRect({ width: 768, height: 900 })
     await driver.get(`${server.origin}/bedrock-chat/ui/`)
-    const settings = await driver.wait(until.elementLocated(By.css('[aria-label="Model settings"]')), 15_000)
-    await settings.click()
-    const picker = await driver.wait(until.elementLocated(By.css('[data-slot="sheet-content"] [data-slot="dropdown-menu-trigger"]')), 10_000)
+    const picker = await driver.wait(until.elementLocated(By.css('form [data-slot="dropdown-menu-trigger"]')), 15_000)
     await picker.click()
     const provider = await driver.wait(until.elementLocated(By.css('[data-slot="dropdown-menu-sub-trigger"]')), 10_000)
     if ((await driver.findElements(By.css('[data-slot="dropdown-menu-sub-content"]'))).length === 0) await provider.click()
