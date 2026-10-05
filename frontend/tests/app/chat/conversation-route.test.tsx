@@ -64,7 +64,7 @@ const authenticate = async (
 
 describe('conversation URL binding', () => {
   it('keeps New chat and a single UserMenu in the header when conversations are visible', async () => {
-    const { container, emit } = renderAt('/bedrock-chat/ui')
+    const { container, emit } = renderAt('/chat/ui')
     await routeReady()
     await authenticate(container)
     emit(anEvent.listed(ROSTER))
@@ -74,7 +74,7 @@ describe('conversation URL binding', () => {
   })
 
   it('keeps New chat and a single UserMenu in the header when conversations are disabled', async () => {
-    const { container, router } = renderAt('/bedrock-chat/ui/c/conv-1', {
+    const { container, router } = renderAt('/chat/ui/c/conv-1', {
       persistenceEnabled: false,
     })
     await routeReady()
