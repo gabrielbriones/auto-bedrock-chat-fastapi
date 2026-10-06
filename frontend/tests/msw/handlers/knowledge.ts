@@ -23,7 +23,9 @@ export const knowledgeHandlers = [
   http.put(`${ADMIN}/kb/sources/web/:name`, accepted),
   http.post(`${ADMIN}/kb/sources/file`, accepted),
   http.put(`${ADMIN}/kb/sources/file/:name`, accepted),
-  http.delete(`${ADMIN}/kb/sources`, ({ request }) =>
-    HttpResponse.json({ source: new URL(request.url).searchParams.get('name'), deleted: 4 }),
-  ),
+  http.delete(`${ADMIN}/kb/sources/:sourceId`, ({ params }) => {
+    const hex = String(params.sourceId).slice(1)
+    const bytes = Uint8Array.from(hex.match(/.{2}/g) ?? [], (part) => Number.parseInt(part, 16))
+    return HttpResponse.json({ source: new TextDecoder().decode(bytes), deleted: 4 })
+  }),
 ]

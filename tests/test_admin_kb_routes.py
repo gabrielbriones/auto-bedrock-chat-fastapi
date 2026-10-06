@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -121,6 +122,10 @@ def _build_app(store):
 
 def _seed(store, doc_id, **kwargs):
     store.add_document(doc_id=doc_id, content=kwargs.pop("content", "hello world"), **kwargs)
+
+
+def _source_url(name):
+    return f"/bedrock-chat/admin/kb/sources/~{name.encode('utf-8').hex()}"
 
 
 def test_list_kb_documents_empty_returns_zero_envelope():
@@ -278,7 +283,7 @@ def test_delete_kb_source_removes_all_matching_documents():
     _seed(store, "d2", source="blog")
     _seed(store, "d3", source="docs")
     client = _build_app(store)
-    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "blog"})
+    resp = client.delete(_source_url("blog"))
     assert resp.status_code == 200
     assert resp.json() == {"source": "blog", "deleted": 2}
     assert set(store.documents.keys()) == {"d3"}
@@ -294,7 +299,7 @@ def test_delete_kb_source_spans_multiple_batches():
         _seed(store, f"d{i}", source="big-source")
     _seed(store, "keep", source="other")
     client = _build_app(store)
-    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "big-source"})
+    resp = client.delete(_source_url("big-source"))
     assert resp.status_code == 200
     assert resp.json() == {"source": "big-source", "deleted": 250}
     assert set(store.documents.keys()) == {"keep"}
@@ -330,7 +335,7 @@ def test_delete_kb_source_skips_document_resourced_after_listing():
     _seed(store, "d1", source="blog")
     _seed(store, "d2", source="blog")
     client = _build_app(store)
-    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "blog"})
+    resp = client.delete(_source_url("blog"))
     assert resp.status_code == 200
     assert resp.json() == {"source": "blog", "deleted": 1}
     assert set(store.documents.keys()) == {"d2"}
@@ -339,12 +344,100 @@ def test_delete_kb_source_skips_document_resourced_after_listing():
 
 def test_delete_kb_source_missing_returns_404():
     client = _build_app(_FakeKBStore())
-    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "nope"})
+    resp = client.delete(_source_url("nope"))
     assert resp.status_code == 404
     assert resp.json()["code"] == "kb_source_not_found"
 
 
-def test_delete_kb_source_requires_name():
-    client = _build_app(_FakeKBStore())
-    resp = client.delete("/bedrock-chat/admin/kb/sources")
-    assert resp.status_code == 422
+def test_delete_kb_source_with_slashes_and_spaces_matches_exact_source():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="intel docs/2026")
+    _seed(store, "d2", source="intel docs")
+    client = _build_app(store)
+
+    resp = client.delete(_source_url("intel docs/2026"))
+    assert resp.status_code == 200
+    assert resp.json() == {"source": "intel docs/2026", "deleted": 1}
+    assert set(store.documents) == {"d2"}
+
+
+def test_delete_kb_source_dot_segments_percent_and_unicode_remain_distinct():
+    store = _FakeKBStore()
+    names = (".", "..", "%2E", "été", "~2e", "dot/../other")
+    for index, name in enumerate(names):
+        _seed(store, str(index), source=name)
+    client = _build_app(store)
+
+    for index, name in enumerate(names):
+        resp = client.delete(_source_url(name))
+        assert resp.status_code == 200
+        assert resp.json() == {"source": name, "deleted": 1}
+        assert str(index) not in store.documents
+
+
+def test_delete_kb_source_rejects_empty_and_invalid_ids_without_deleting():
+    store = _FakeKBStore()
+    _seed(store, "empty", source="")
+    _seed(store, "valid", source="blog")
+    client = _build_app(store)
+
+    for path in (
+        "/bedrock-chat/admin/kb/sources/",
+        _source_url(""),
+        "/bedrock-chat/admin/kb/sources/blog",
+        "/bedrock-chat/admin/kb/sources/~ff",
+    ):
+        resp = client.delete(path, follow_redirects=False)
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "invalid_source_id"
+    assert set(store.documents) == {"empty", "valid"}
+
+
+def test_delete_kb_source_does_not_accept_query_parameter_alias():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="blog")
+    client = _build_app(store)
+
+    resp = client.delete("/bedrock-chat/admin/kb/sources", params={"name": "blog"})
+    assert resp.status_code == 405
+    assert "d1" in store.documents
+
+
+def test_delete_kb_source_rejects_unauthenticated_user():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="blog")
+    app = FastAPI()
+    register_admin_error_handlers(app)
+
+    async def require_admin():
+        raise exceptions_mod.AdminAPIError(status_code=401, code="not_authenticated", detail="not authenticated")
+
+    register_admin_kb_routes(app, prefix="/bedrock-chat/admin", kb_store=store, require_admin=require_admin)
+    resp = TestClient(app).delete(_source_url("blog"))
+    assert resp.status_code == 401
+    assert "d1" in store.documents
+
+
+def test_delete_kb_source_audits_actor_and_exact_counts(caplog):
+    class CountingStore(_FakeKBStore):
+        def delete_document(self, doc_id):
+            super().delete_document(doc_id)
+            return 2
+
+    store = CountingStore()
+    _seed(store, "d1", source="blog")
+    _seed(store, "d2", source="blog")
+    client = _build_app(store)
+
+    with caplog.at_level(logging.INFO, logger="bedrock.audit"):
+        resp = client.delete(_source_url("blog"))
+
+    assert resp.status_code == 200
+    assert resp.json() == {"source": "blog", "deleted": 2}
+    events = [record for record in caplog.records if record.msg == "kb.source.delete"]
+    assert len(events) == 1
+    assert events[0].actor_user_id == "admin"
+    assert events[0].target_id == "blog"
+    assert events[0].deleted_count == 2
+    assert events[0].chunks_deleted == 4
+    assert events[0].ts
