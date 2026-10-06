@@ -107,7 +107,7 @@ describe('usage analytics route', () => {
         { modelId: 'unknown.model-x', tokens: createTokenCount(1, 1), turnCount: 1 },
       ])),
     })
-    renderAt('/bedrock-chat/dashboard/token-usages', gateway)
+    renderAt('/chat/dashboard/token-usages', gateway)
     const table = await screen.findByRole('table', { name: TELEMETRY_COPY.summary.table })
 
     expect(within(table).getByText('Claude Sonnet 5 (US)')).toBeInTheDocument()
@@ -124,7 +124,7 @@ describe('usage analytics route', () => {
         { modelId: 'c-model', tokens: createTokenCount(1, 0), turnCount: 1 },
       ])),
     })
-    renderAt('/bedrock-chat/dashboard/token-usages', gateway)
+    renderAt('/chat/dashboard/token-usages', gateway)
     const table = await screen.findByRole('table', { name: TELEMETRY_COPY.summary.table })
     const firstCells = () => within(table).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[0]?.textContent)
     const inputHeader = within(table).getByRole('columnheader', { name: TELEMETRY_COPY.summary.input })
