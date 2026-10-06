@@ -4,7 +4,7 @@ import { invalidResponseProblem, type Problem } from '@/shared/http/exception'
 import { issuesOf, nullableInstantSchema, nullableTextSchema } from '@/shared/http/wire'
 import { err, ok, type Result } from '@/shared/kernel/result'
 
-import type { KbSourceDeletion } from '@/domains/knowledge/application/ports'
+import type { KbSourceDeletion, Page } from '@/domains/knowledge/application/ports'
 import type {
   FileIngestRequest,
   KbSourceRun,
@@ -15,11 +15,19 @@ import type {
 const countSchema = z.number().int().min(0).nullish().transform((value) => value ?? 0)
 
 export const kbSourceSummaryDtoSchema = z.object({
-  source: z.string(),
-  count: z.number().int().min(0),
+  source: z.string().min(1),
+  source_type: z.enum(['web', 'file', 'feedback']).nullable(),
+  document_count: z.number().int().min(0),
+  chunk_count: z.number().int().min(0),
+  last_created_at: nullableInstantSchema,
 })
 
-export const kbSourceSummaryListDtoSchema = z.array(kbSourceSummaryDtoSchema)
+export const kbSourceSummaryListDtoSchema = z.object({
+  items: z.array(kbSourceSummaryDtoSchema),
+  total: z.number().int().min(0),
+  limit: z.number().int().min(1),
+  offset: z.number().int().min(0),
+})
 
 export const kbSourceRunDtoSchema = z.object({
   run_id: nullableTextSchema,
@@ -41,12 +49,25 @@ const kbSourceDeletionDtoSchema = z.object({
   deleted: z.number().int().min(0).nullish().transform((value) => value ?? null),
 })
 
-export const toKbSourceSummaries = (value: unknown): Result<readonly KbSourceSummary[], Problem> => {
+export const toKbSourceSummaries = (value: unknown): Result<Page<KbSourceSummary>, Problem> => {
   const parsed = kbSourceSummaryListDtoSchema.safeParse(value)
 
-  return parsed.success
-    ? ok(parsed.data)
-    : err(invalidResponseProblem('Invalid knowledge-base source list', issuesOf(parsed.error)))
+  if (!parsed.success) {
+    return err(invalidResponseProblem('Invalid knowledge-base source list', issuesOf(parsed.error)))
+  }
+
+  return ok({
+    items: parsed.data.items.map((row) => ({
+      source: row.source,
+      sourceType: row.source_type,
+      documentCount: row.document_count,
+      chunkCount: row.chunk_count,
+      lastCreatedAt: row.last_created_at,
+    })),
+    total: parsed.data.total,
+    limit: parsed.data.limit,
+    offset: parsed.data.offset,
+  })
 }
 
 export const toKbSourceRun = (value: unknown): Result<KbSourceRun, Problem> => {

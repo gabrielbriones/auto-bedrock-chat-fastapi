@@ -169,6 +169,15 @@ class TestOpenAPISuccessSchemas:
         assert "KBDocumentListResponse" in _schema_ref(
             schema["paths"]["/bedrock-chat/admin/kb/documents"]["get"]["responses"]["200"]
         )
+        sources = schema["paths"]["/bedrock-chat/admin/kb/sources"]["get"]
+        assert "KBSourceListResponse" in _schema_ref(sources["responses"]["200"])
+        assert {param["name"] for param in sources["parameters"]} == {"source_type", "limit", "offset"}
+        assert {"items", "total", "limit", "offset"}.issubset(
+            schema["components"]["schemas"]["KBSourceListResponse"]["properties"]
+        )
+        assert {"source", "source_type", "document_count", "chunk_count", "last_created_at"}.issubset(
+            schema["components"]["schemas"]["KBSourceSummary"]["properties"]
+        )
         assert "204" in schema["paths"]["/bedrock-chat/admin/kb/documents/{doc_id}"]["delete"]["responses"]
 
     def test_synthesis_success_schemas_present(self):

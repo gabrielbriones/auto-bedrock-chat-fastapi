@@ -3,10 +3,12 @@ import { useEffect, type ReactNode } from 'react'
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ErrorState } from '@/components/ui/composed/error-state'
+import { OffsetPagination } from '@/components/ui/composed/offset-pagination'
 import { Page, PageHeader } from '@/components/ui/composed/page-header'
 import { KNOWLEDGE_COPY } from '@/shared/copy/knowledge'
+import { offsetWindow } from '@/shared/kernel/pagination'
 
-import { isRunActive } from '@/domains/knowledge/domain/public'
+import { isRunActive, type KbSourceFilter } from '@/domains/knowledge/domain/public'
 import { FileIngestForm } from '@/domains/knowledge/presentation/FileIngestForm'
 import { KbSourceRunPanel } from '@/domains/knowledge/presentation/KbSourceRunPanel'
 import { KbSourcesTable } from '@/domains/knowledge/presentation/KbSourcesTable'
@@ -27,6 +29,25 @@ function SectionCard({ title, children }: { readonly title: string; readonly chi
       </CardHeader>
       <CardContent className="grid gap-4">{children}</CardContent>
     </Card>
+  )
+}
+
+function SourceTypeFilter({ value, onChange }: { readonly value: KbSourceFilter; readonly onChange: (value: KbSourceFilter) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      {SOURCES.list.sourceType}
+      <select
+        aria-label={SOURCES.list.sourceType}
+        value={value ?? ''}
+        onChange={(event) => { onChange(event.target.value === '' ? null : event.target.value as Exclude<KbSourceFilter, null>) }}
+        className="rounded-md border border-input bg-background px-3 py-2"
+      >
+        <option value="">{SOURCES.list.allTypes}</option>
+        <option value="web">{SOURCES.list.type.web}</option>
+        <option value="file">{SOURCES.list.type.file}</option>
+        <option value="feedback">{SOURCES.list.type.feedback}</option>
+      </select>
+    </label>
   )
 }
 
@@ -51,12 +72,18 @@ export function KbSourcesPage({ title, description }: KbSourcesPageProps) {
       <PageHeader title={title} {...(description === undefined ? {} : { description })} />
       <KbSourceRunPanel run={snapshot.run} problem={snapshot.runProblem} />
       <SectionCard title={SOURCES.list.title}>
+        <SourceTypeFilter value={snapshot.sourceType} onChange={(value) => { void kbSources.setSourceType(value) }} />
         <KbSourcesTable
           rows={snapshot.sources}
           loading={snapshot.sourcesStatus === 'loading'}
           {...(listError === undefined ? {} : { error: listError })}
           deleting={snapshot.deleting}
           onDelete={(row) => { void kbSources.deleteSource(row) }}
+        />
+        <OffsetPagination
+          range={offsetWindow(snapshot.sourcePage, snapshot.sourceTotal)}
+          onNavigate={(offset) => { void kbSources.setSourceOffset(offset) }}
+          label={SOURCES.list.caption}
         />
       </SectionCard>
       <SectionCard title={SOURCES.web.title}>

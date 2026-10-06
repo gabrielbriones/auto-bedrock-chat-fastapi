@@ -23,7 +23,10 @@ export type KbSourcesTableProps = {
 export function KbSourcesTable({ rows, loading, error, deleting, onDelete }: KbSourcesTableProps) {
   const columns: readonly DataTableColumn<KbSourceSummary>[] = [
     { id: 'source', header: LIST.source, cell: (row) => row.source, className: 'whitespace-normal font-medium' },
-    { id: 'count', header: LIST.documents, cell: (row) => row.count, className: 'tabular-nums' },
+    { id: 'sourceType', header: LIST.sourceType, cell: (row) => row.sourceType === null ? LIST.type.unknown : LIST.type[row.sourceType] },
+    { id: 'documentCount', header: LIST.documents, cell: (row) => row.documentCount, className: 'tabular-nums' },
+    { id: 'chunkCount', header: LIST.chunks, cell: (row) => row.chunkCount, className: 'tabular-nums' },
+    { id: 'lastCreatedAt', header: LIST.lastCreatedAt, cell: (row) => row.lastCreatedAt?.toIso() ?? LIST.notAvailable },
     {
       id: 'actions',
       header: <span className="sr-only">{LIST.actions}</span>,

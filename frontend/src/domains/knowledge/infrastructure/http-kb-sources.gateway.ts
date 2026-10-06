@@ -4,10 +4,11 @@ import type { HttpMethod } from '@/shared/http/retry-policy'
 import { andThen, type Result } from '@/shared/kernel/result'
 import type { Logger } from '@/shared/logging/logger'
 
-import type { KbSourceDeletion, KbSourcesGateway } from '@/domains/knowledge/application/ports'
+import type { KbSourceDeletion, KbSourcesGateway, Page } from '@/domains/knowledge/application/ports'
 import type {
   FileIngestRequest,
   KbSourceRun,
+  KbSourceFilter,
   KbSourceSummary,
   WebCrawlRequest,
 } from '@/domains/knowledge/domain/public'
@@ -42,8 +43,12 @@ export class HttpKbSourcesGateway implements KbSourcesGateway {
     this.logger = logger
   }
 
-  async listSources(signal: AbortSignal): Promise<Result<readonly KbSourceSummary[], Problem>> {
-    const response = await this.read('/kb/sources', signal)
+  async listSources(
+    query: { readonly sourceType: KbSourceFilter; readonly limit: number; readonly offset: number },
+    signal: AbortSignal,
+  ): Promise<Result<Page<KbSourceSummary>, Problem>> {
+    const typeParam = query.sourceType === null ? '' : `&source_type=${encodeURIComponent(query.sourceType)}`
+    const response = await this.read(`/kb/sources?limit=${query.limit}&offset=${query.offset}${typeParam}`, signal)
 
     return andThen(response, toKbSourceSummaries)
   }

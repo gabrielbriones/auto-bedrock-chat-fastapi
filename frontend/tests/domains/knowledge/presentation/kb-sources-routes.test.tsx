@@ -10,7 +10,7 @@ import { ConfirmationHost } from '@/app/providers/ConfirmationHost'
 import { createAppRouter } from '@/app/router'
 import type { KbSourcesGateway } from '@/domains/knowledge/application/ports'
 import { KbSourcesStore } from '@/domains/knowledge/application/kb-sources.store'
-import { IDLE_RUN, type KbSourceRun } from '@/domains/knowledge/domain/public'
+import { IDLE_RUN, type KbSourceRun, type KbSourceSummary } from '@/domains/knowledge/domain/public'
 import { KNOWLEDGE_COPY } from '@/shared/copy/knowledge'
 import { SHELL } from '@/shared/copy/shell'
 import type { Problem } from '@/shared/http/exception'
@@ -23,7 +23,10 @@ import { FakePollScheduler } from '../application/fake-poll-scheduler'
 const SOURCES = KNOWLEDGE_COPY.sources
 const PATH = '/chat/dashboard/kb-sources'
 
-const sources = [{ source: 'feedback', count: 4 }, { source: 'intel-docs', count: 12 }]
+const sources: readonly KbSourceSummary[] = [
+  { source: 'feedback', sourceType: 'feedback', documentCount: 4, chunkCount: 8, lastCreatedAt: null },
+  { source: 'intel-docs', sourceType: 'web', documentCount: 12, chunkCount: 25, lastCreatedAt: null },
+]
 
 const running: KbSourceRun = {
   ...IDLE_RUN,
@@ -44,7 +47,7 @@ const duplicate: Problem = {
 }
 
 const createGateway = (overrides: Partial<KbSourcesGateway> = {}): KbSourcesGateway => ({
-  listSources: jest.fn(async () => ok(sources)),
+  listSources: jest.fn(async () => ok({ items: sources, total: 2, limit: 50, offset: 0 })),
   status: jest.fn(async () => ok(IDLE_RUN)),
   startWebCrawl: jest.fn(async () => ok(running)),
   overrideWebCrawl: jest.fn(async () => ok<KbSourceRun>({ ...running, runId: 'run-2' })),
@@ -95,8 +98,30 @@ describe('KB sources page', () => {
     const row = (await screen.findByText('intel-docs')).closest('tr')
     expect(row).not.toBeNull()
     expect(within(row as HTMLElement).getByText('12')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText('25')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByText(SOURCES.list.type.web)).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: SOURCES.list.sourceType })).toBeInTheDocument()
     expect(within(row as HTMLElement).getByRole('button', { name: SOURCES.list.deleteLabel('intel-docs') })).toBeInTheDocument()
     expect(screen.queryByText(SOURCES.run.title)).not.toBeInTheDocument()
+  })
+
+  it('filters source type and navigates the grouped list', async () => {
+    const user = userEvent.setup()
+    const listSources = jest.fn<KbSourcesGateway['listSources']>().mockImplementation(async (query) => ok({
+      items: query.offset === 0 ? sources : [], total: 55, limit: query.limit, offset: query.offset,
+    }))
+    renderAt(createGateway({ listSources }))
+    await screen.findByText('intel-docs')
+    await user.selectOptions(screen.getByRole('combobox', { name: SOURCES.list.sourceType }), 'web')
+    await waitFor(() => expect(listSources).toHaveBeenLastCalledWith(
+      { sourceType: 'web', limit: 50, offset: 0 }, expect.any(AbortSignal),
+    ))
+    const nav = screen.getByRole('navigation', { name: SOURCES.list.caption })
+    await user.click(within(nav).getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(listSources).toHaveBeenLastCalledWith(
+      { sourceType: 'web', limit: 50, offset: 50 }, expect.any(AbortSignal),
+    ))
+    expect(within(nav).getByRole('button', { name: 'Previous' })).toBeEnabled()
   })
 
   it('shows a run already in progress and keeps both forms held while it runs', async () => {

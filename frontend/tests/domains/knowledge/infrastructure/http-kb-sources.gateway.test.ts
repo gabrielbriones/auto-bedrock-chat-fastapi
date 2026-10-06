@@ -50,9 +50,10 @@ const last = () => requests[requests.length - 1]
 
 describe('HttpKbSourcesGateway reads', () => {
   it('lists sources and reads the run status', async () => {
-    const list = await gateway.listSources(AbortSignal.timeout(1_000))
-    expect(isOk(list) && list.value).toEqual([{ source: 'feedback', count: 4 }, { source: 'intel-docs', count: 12 }])
-    expect(last()).toEqual({ method: 'GET', url: `${ADMIN}/kb/sources` })
+    const list = await gateway.listSources({ sourceType: null, limit: 50, offset: 0 }, AbortSignal.timeout(1_000))
+    expect(isOk(list) && list.value).toMatchObject({ total: 2, limit: 50, offset: 0 })
+    expect(isOk(list) && list.value.items.map((row) => row.source)).toEqual(['feedback', 'intel-docs'])
+    expect(last()).toEqual({ method: 'GET', url: `${ADMIN}/kb/sources?limit=50&offset=0` })
 
     const status = await gateway.status(AbortSignal.timeout(1_000))
     expect(isOk(status) && status.value.phase).toBe('idle')
@@ -61,12 +62,18 @@ describe('HttpKbSourcesGateway reads', () => {
 
   it('reports an aborted read with the dedicated Problem code', async () => {
     const controller = new AbortController()
-    const pending = gateway.listSources(controller.signal)
+    const pending = gateway.listSources({ sourceType: null, limit: 50, offset: 0 }, controller.signal)
     controller.abort()
 
     const result = await pending
 
     expect(isErr(result) && result.error.code).toBe('aborted')
+  })
+
+  it('sends the type filter and page query parameters', async () => {
+    const result = await gateway.listSources({ sourceType: 'file', limit: 10, offset: 20 }, AbortSignal.timeout(1_000))
+    expect(isOk(result)).toBe(true)
+    expect(last()).toEqual({ method: 'GET', url: `${ADMIN}/kb/sources?limit=10&offset=20&source_type=file` })
   })
 })
 

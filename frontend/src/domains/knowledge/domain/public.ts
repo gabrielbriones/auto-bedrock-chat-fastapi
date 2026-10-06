@@ -17,6 +17,7 @@ export {
   processedCount,
   type FileIngestRequest,
   type KbSourcePhase,
+  type KbSourceFilter,
   type KbSourceRun,
   type KbSourceSummary,
   type KbSourceType,

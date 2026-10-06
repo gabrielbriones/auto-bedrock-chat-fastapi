@@ -57,8 +57,21 @@ class BaseKBStore(ABC):
         """
 
     @abstractmethod
-    def list_sources(self) -> List[Dict[str, Any]]:
-        """Return unique sources with document counts."""
+    def list_sources(self, source_type: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Return nonblank source names sorted by name, with whole-source totals.
+
+        Each row has ``source``, nullable ``source_type``, ``document_count``,
+        ``chunk_count``, and nullable ``last_created_at`` (max document
+        creation time). A type filter selects names containing at least one
+        matching document; summary fields still cover every document of the
+        name. Mixed or unknown types produce a null ``source_type``.
+        """
+
+    @abstractmethod
+    def count_sources(self, source_type: Optional[str] = None) -> int:
+        """Count distinct nonblank source names matching the same filter as
+        :meth:`list_sources`, before pagination.
+        """
 
     @abstractmethod
     def list_topics(self) -> List[Dict[str, Any]]:
