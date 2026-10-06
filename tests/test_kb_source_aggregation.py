@@ -24,8 +24,8 @@ class _PostgresCursor:
 
     def execute(self, sql, params):
         self.statements.append((sql, params))
-        assert "d.metadata::jsonb ->> 'source_type'" in sql
-        assert "FROM source_groups" in sql
+        if "FROM source_groups" in sql:
+            assert "d.metadata::jsonb ->> 'source_type'" in sql
         translated = sql.replace("(d.metadata::jsonb ->> 'source_type')", "json_extract(d.metadata, '$.source_type')")
         translated = translated.replace("CHR(", "CHAR(")
         translated = translated.replace("%s", "?")
@@ -69,6 +69,8 @@ def _seed(store):
         ("x2", "   ", "web", "2026-10-02 00:00:00", 0),
         ("x3", None, "web", "2026-10-02 00:00:00", 0),
         ("x4", "\t\n ", "web", "2026-10-02 00:00:00", 0),
+        ("x5", "\u00a0", "web", "2026-10-02 00:00:00", 0),  # NBSP-only: Unicode whitespace, not ASCII
+        ("x6", "\u2003\u3000", "web", "2026-10-02 00:00:00", 0),  # EM SPACE + IDEOGRAPHIC SPACE
     ]
     for doc_id, source, kind, created_at, chunks in documents:
         metadata = {"source_type": kind} if kind is not None else None
@@ -99,11 +101,22 @@ def test_both_backends_group_full_counts_types_dates_and_blank_names(tmp_path):
             assert [r["source"] for r in rows] == ["alpha", "beta", "feedback", "mixed", "unknown"]
             assert [r["source_type"] for r in rows] == ["web", "file", "feedback", None, None]
             assert [(r["document_count"], r["chunk_count"]) for r in rows] == [(2, 2), (1, 1), (1, 1), (3, 3), (1, 0)]
-            assert str(rows[0]["last_created_at"]) == "2026-10-03 00:00:00"
-            assert str(rows[3]["last_created_at"]) == "2026-10-06 00:00:00"
+            assert str(rows[0]["last_created_at"]) == "2026-10-03 00:00:00+00:00"
+            assert str(rows[3]["last_created_at"]) == "2026-10-06 00:00:00+00:00"
             assert store.count_sources() == 5
-        assert "LEFT JOIN chunk_counts" in connection.cursors[0].statements[0][0]
-        assert "chunk_counts" not in connection.cursors[1].statements[0][0]
+
+        # list_sources() issues two statements: the lightweight source_groups
+        # page (no chunk aggregation at all) and a chunk-count query scoped to
+        # exactly that page's names, not the whole `chunks` table.
+        list_sql, _ = connection.cursors[0].statements[0]
+        chunk_sql, chunk_params = connection.cursors[0].statements[1]
+        assert "chunk" not in list_sql
+        assert "FROM chunks c" in chunk_sql
+        assert "WHERE d.source IN (%s, %s, %s, %s, %s)" in chunk_sql
+        assert chunk_params == ("alpha", "beta", "feedback", "mixed", "unknown")
+        # count_sources() never touches `chunks` at all.
+        assert len(connection.cursors[1].statements) == 1
+        assert "chunk" not in connection.cursors[1].statements[0][0]
     finally:
         sqlite.conn.close()
 
@@ -125,7 +138,7 @@ def test_both_backends_filter_names_but_retain_whole_source_counts(tmp_path):
                     assert rows[1]["source_type"] is None
                     assert rows[1]["document_count"] == 3
                     assert rows[1]["chunk_count"] == 3
-                    assert str(rows[1]["last_created_at"]) == "2026-10-06 00:00:00"
+                    assert str(rows[1]["last_created_at"]) == "2026-10-06 00:00:00+00:00"
         for cursor in connection.cursors:
             sql, params = cursor.statements[0]
             assert "%s IS NULL" not in sql
@@ -170,7 +183,7 @@ def test_http_route_returns_paginated_aggregates_from_sqlite(tmp_path):
                     "source_type": "file",
                     "document_count": 1,
                     "chunk_count": 1,
-                    "last_created_at": "2026-10-02T00:00:00",
+                    "last_created_at": "2026-10-02T00:00:00Z",
                 }
             ],
             "total": 2,
