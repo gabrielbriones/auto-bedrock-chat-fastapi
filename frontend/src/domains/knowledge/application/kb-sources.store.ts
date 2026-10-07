@@ -110,6 +110,12 @@ export class KbSourcesStore {
     await this.loadSources()
   }
 
+  // Route-driven: the URL is the authority, so this always reloads, even on the initial defaults.
+  async setSourceQuery(query: { readonly sourceType: KbSourceFilter; readonly offset: number }): Promise<void> {
+    this.#patch({ sourceType: query.sourceType, sourcePage: { ...this.#snapshot.sourcePage, offset: query.offset } })
+    await this.loadSources()
+  }
+
   async refreshStatus(): Promise<void> {
     this.#statusController?.abort()
     const controller = new AbortController()

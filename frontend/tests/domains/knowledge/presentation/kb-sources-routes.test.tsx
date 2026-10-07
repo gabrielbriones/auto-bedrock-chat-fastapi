@@ -57,7 +57,7 @@ const createGateway = (overrides: Partial<KbSourcesGateway> = {}): KbSourcesGate
   ...overrides,
 })
 
-const renderAt = (gateway = createGateway()) => {
+const renderAt = (gateway = createGateway(), path = PATH) => {
   const base = fakeContainer()
   const notifications = new RecordingNotificationPort()
   const scheduler = new FakePollScheduler()
@@ -69,7 +69,7 @@ const renderAt = (gateway = createGateway()) => {
     logger: base.logger,
   })
   const container: Container = { ...base, kbSourcesGateway: gateway, kbSources }
-  const router = createAppRouter(container, { history: createMemoryHistory({ initialEntries: [PATH] }) })
+  const router = createAppRouter(container, { history: createMemoryHistory({ initialEntries: [path] }) })
   const view = render(
     <ContainerContext.Provider value={container}>
       <RouterProvider router={router} />
@@ -77,8 +77,11 @@ const renderAt = (gateway = createGateway()) => {
     </ContainerContext.Provider>,
   )
 
-  return { gateway, notifications, scheduler, dom: view.container }
+  return { gateway, notifications, scheduler, router, dom: view.container }
 }
+
+const routeSearch = (router: ReturnType<typeof createAppRouter>): Record<string, unknown> =>
+  router.state.matches.at(-1)?.search ?? {}
 
 const webForm = async () => screen.findByRole('form', { name: SOURCES.web.title })
 const fileForm = async () => screen.findByRole('form', { name: SOURCES.file.title })
@@ -110,18 +113,32 @@ describe('KB sources page', () => {
     const listSources = jest.fn<KbSourcesGateway['listSources']>().mockImplementation(async (query) => ok({
       items: query.offset === 0 ? sources : [], total: 55, limit: query.limit, offset: query.offset,
     }))
-    renderAt(createGateway({ listSources }))
+    const { router } = renderAt(createGateway({ listSources }))
     await screen.findByText('intel-docs')
     await user.selectOptions(screen.getByRole('combobox', { name: SOURCES.list.sourceType }), 'web')
     await waitFor(() => expect(listSources).toHaveBeenLastCalledWith(
       { sourceType: 'web', limit: 50, offset: 0 }, expect.any(AbortSignal),
     ))
+    expect(routeSearch(router)).toMatchObject({ type: 'web', offset: 0 })
     const nav = screen.getByRole('navigation', { name: SOURCES.list.caption })
     await user.click(within(nav).getByRole('button', { name: 'Next' }))
     await waitFor(() => expect(listSources).toHaveBeenLastCalledWith(
       { sourceType: 'web', limit: 50, offset: 50 }, expect.any(AbortSignal),
     ))
+    expect(routeSearch(router)).toMatchObject({ type: 'web', offset: 50 })
     expect(within(nav).getByRole('button', { name: 'Previous' })).toBeEnabled()
+  })
+
+  it('restores the source-type filter and offset from a shareable URL', async () => {
+    const listSources = jest.fn<KbSourcesGateway['listSources']>().mockImplementation(async (query) => ok({
+      items: sources, total: 120, limit: query.limit, offset: query.offset,
+    }))
+    renderAt(createGateway({ listSources }), `${PATH}?type=file&offset=50`)
+
+    await waitFor(() => expect(listSources).toHaveBeenLastCalledWith(
+      { sourceType: 'file', limit: 50, offset: 50 }, expect.any(AbortSignal),
+    ))
+    expect(screen.getByRole('combobox', { name: SOURCES.list.sourceType })).toHaveValue('file')
   })
 
   it('shows a run already in progress and keeps both forms held while it runs', async () => {

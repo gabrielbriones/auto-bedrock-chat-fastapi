@@ -16,9 +16,18 @@ import { WebCrawlForm } from '@/domains/knowledge/presentation/WebCrawlForm'
 
 const SOURCES = KNOWLEDGE_COPY.sources
 
+export type KbSourcesSearch = {
+  readonly type?: Exclude<KbSourceFilter, null> | undefined
+  readonly offset: number
+}
+
+export type KbSourcesPatch = Partial<KbSourcesSearch>
+
 export type KbSourcesPageProps = {
   readonly title: string
   readonly description?: string
+  readonly search: KbSourcesSearch
+  readonly onSearchChange: (patch: KbSourcesPatch) => void
 }
 
 function SectionCard({ title, children }: { readonly title: string; readonly children: ReactNode }) {
@@ -54,14 +63,20 @@ function SourceTypeFilter({ value, onChange }: { readonly value: KbSourceFilter;
 // The legacy dashboard's KB Sources view: one run at a time, so the status panel is shared and
 // both forms are held while a run is in flight; the ingested-sources list refreshes itself when a
 // run finishes.
-export function KbSourcesPage({ title, description }: KbSourcesPageProps) {
+export function KbSourcesPage({ title, description, search, onSearchChange }: KbSourcesPageProps) {
   const { kbSources } = useContainer()
   const snapshot = useContainerStore('kbSources')
   const busy = snapshot.submitting !== null || isRunActive(snapshot.run)
+  const sourceType = search.type ?? null
+  const { offset } = search
 
   useEffect(() => {
-    void kbSources.load()
+    void kbSources.refreshStatus()
   }, [kbSources])
+
+  useEffect(() => {
+    void kbSources.setSourceQuery({ sourceType, offset })
+  }, [kbSources, sourceType, offset])
 
   const listError = snapshot.sourcesStatus === 'error' ? (
     <ErrorState description={SOURCES.list.loadError} onRetry={() => { void kbSources.loadSources() }} />
@@ -72,7 +87,7 @@ export function KbSourcesPage({ title, description }: KbSourcesPageProps) {
       <PageHeader title={title} {...(description === undefined ? {} : { description })} />
       <KbSourceRunPanel run={snapshot.run} problem={snapshot.runProblem} />
       <SectionCard title={SOURCES.list.title}>
-        <SourceTypeFilter value={snapshot.sourceType} onChange={(value) => { void kbSources.setSourceType(value) }} />
+        <SourceTypeFilter value={sourceType} onChange={(value) => { onSearchChange({ type: value ?? undefined, offset: 0 }) }} />
         <KbSourcesTable
           rows={snapshot.sources}
           loading={snapshot.sourcesStatus === 'loading'}
@@ -82,7 +97,7 @@ export function KbSourcesPage({ title, description }: KbSourcesPageProps) {
         />
         <OffsetPagination
           range={offsetWindow(snapshot.sourcePage, snapshot.sourceTotal)}
-          onNavigate={(offset) => { void kbSources.setSourceOffset(offset) }}
+          onNavigate={(next) => { onSearchChange({ offset: next }) }}
           label={SOURCES.list.caption}
         />
       </SectionCard>
