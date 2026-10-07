@@ -81,10 +81,28 @@ describe('KB source run DTO', () => {
 })
 
 describe('KB source list and deletion DTOs', () => {
-  it('maps the summary list and rejects malformed rows', () => {
-    expect(isOk(toKbSourceSummaries([{ source: 'feedback', count: 4 }]))).toBe(true)
-    expect(isErr(toKbSourceSummaries([{ source: 'feedback' }]))).toBe(true)
-    expect(isErr(toKbSourceSummaries({ items: [] }))).toBe(true)
+  it('maps the paginated summary list and nullable mixed type/date', () => {
+    const result = toKbSourceSummaries({
+      items: [
+        { source: 'feedback', source_type: 'feedback', document_count: 4, chunk_count: 9, last_created_at: '2026-09-27T09:00:00Z' },
+        { source: 'mixed', source_type: null, document_count: 2, chunk_count: 0, last_created_at: null },
+      ],
+      total: 3, limit: 2, offset: 1,
+    })
+    expect(isOk(result) && result.value).toMatchObject({ total: 3, limit: 2, offset: 1 })
+    if (!isOk(result)) throw new Error('Expected parsed source list')
+    expect(result.value.items[0]).toMatchObject({ source: 'feedback', sourceType: 'feedback', documentCount: 4, chunkCount: 9 })
+    expect(result.value.items[0]?.lastCreatedAt?.toIso()).toBe('2026-09-27T09:00:00.000Z')
+    expect(result.value.items[1]).toMatchObject({ source: 'mixed', sourceType: null, lastCreatedAt: null })
+  })
+
+  it.each([
+    [{ source: 'feedback', count: 4 }],
+    { items: [] },
+    { items: [{ source: 'feedback', source_type: 'local', document_count: 1, chunk_count: 0, last_created_at: null }], total: 1, limit: 50, offset: 0 },
+    { items: [{ source: 'feedback', source_type: null, document_count: 1, chunk_count: 0, last_created_at: 'invalid' }], total: 1, limit: 50, offset: 0 },
+  ])('rejects an invalid source list', (payload) => {
+    expect(isErr(toKbSourceSummaries(payload))).toBe(true)
   })
 
   it('maps a deletion result, with the count optional', () => {

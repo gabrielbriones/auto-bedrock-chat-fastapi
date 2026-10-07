@@ -5,8 +5,13 @@ import type { Instant } from '@/shared/kernel/instant'
 // their document counts; there is no per-run history — completed runs leave only documents behind.
 export type KbSourceSummary = {
   readonly source: string
-  readonly count: number
+  readonly sourceType: 'web' | 'file' | 'feedback' | null
+  readonly documentCount: number
+  readonly chunkCount: number
+  readonly lastCreatedAt: Instant | null
 }
+
+export type KbSourceFilter = KbSourceSummary['sourceType']
 
 export type KbSourcePhase = 'idle' | 'running' | 'completed' | 'failed'
 

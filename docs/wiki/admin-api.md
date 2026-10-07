@@ -302,15 +302,15 @@ on the same document.
 
 ### KB Source Ingestion
 
-| Method | Path                            | Description                                                               |
-| ------ | ------------------------------- | ------------------------------------------------------------------------- |
-| POST   | `/admin/kb/sources/web`         | Trigger a background web crawl; indexes the crawled pages into the KB.    |
-| POST   | `/admin/kb/sources/file`        | Trigger a background ingestion of uploaded file content into the KB.      |
-| PUT    | `/admin/kb/sources/web/{name}`  | Delete `name`'s existing documents/chunks, then re-run a web crawl.       |
-| PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files. |
-| GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                             |
-| GET    | `/admin/kb/sources`             | List distinct KB document `source` names with their document counts.      |
-| DELETE | `/admin/kb/sources/{source_id}` | Delete every document (and chunks) whose `source` matches the encoded ID. |
+| Method | Path                            | Description                                                                                            |
+| ------ | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| POST   | `/admin/kb/sources/web`         | Trigger a background web crawl; indexes the crawled pages into the KB.                                 |
+| POST   | `/admin/kb/sources/file`        | Trigger a background ingestion of uploaded file content into the KB.                                   |
+| PUT    | `/admin/kb/sources/web/{name}`  | Delete `name`'s existing documents/chunks, then re-run a web crawl.                                    |
+| PUT    | `/admin/kb/sources/file/{name}` | Delete `name`'s existing documents/chunks, then re-ingest uploaded files.                              |
+| GET    | `/admin/kb/sources/status`      | Poll the single global ingestion run's state.                                                          |
+| GET    | `/admin/kb/sources`             | Paginate distinct KB source names with type, document/chunk totals, and latest document creation time. |
+| DELETE | `/admin/kb/sources/{source_id}` | Delete every document (and chunks) whose `source` matches the encoded ID.                              |
 
 Both `POST` routes return **`202 Accepted`** immediately with a
 `run_id` and `phase: "running"` — the crawl/ingest itself runs as a
@@ -437,19 +437,47 @@ kb_source_run_already_in_progress`).
 | 422  | `upload_too_large`                  | An upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                      |
 | 503  | `kb_source_ingestion_unavailable`   | The host app didn't wire an embedding client/model at startup.                                      |
 
-`GET /admin/kb/sources` lists every distinct `source` value across KB
-documents — not just ones ingested via the two routes above; the
-offline `kb_populate()` CLI and any manually-created document share the
-same `source` column. Blank/whitespace-only `source` values are
-excluded (e.g. a document whose `source` was cleared to `""` via
-`PATCH /admin/kb/documents/{id}`) since they can't be deleted by name:
+`GET /admin/kb/sources` returns one row per distinct nonblank `source`
+name across all KB documents, including offline `kb_populate()` and
+feedback synthesis. Query parameters: `source_type=web|file|feedback`
+(optional), `limit` (default 50, 1–200), and `offset` (default 0, ≥0).
+Names sort by exact source name before pagination; `total` counts all
+matching names before pagination. A type filter selects names having at
+least one document of that type, but each returned row describes **all**
+documents under the name (the same set a name-based DELETE removes):
 
 ```json
-[
-  { "source": "ISS docs", "count": 42 },
-  { "source": "Runbook", "count": 3 }
-]
+{
+  "items": [
+    {
+      "source": "ISS docs",
+      "source_type": "web",
+      "document_count": 42,
+      "chunk_count": 126,
+      "last_created_at": "2026-10-06T11:00:00Z"
+    },
+    {
+      "source": "Runbook",
+      "source_type": "file",
+      "document_count": 3,
+      "chunk_count": 11,
+      "last_created_at": "2026-10-05T09:00:00Z"
+    }
+  ],
+  "total": 2,
+  "limit": 50,
+  "offset": 0
+}
 ```
+
+`source_type` is `null` when documents sharing a name have mixed or
+unknown types. Legacy `local` metadata counts as `file`; untyped
+synthesized documents whose source name is `feedback` count as
+`feedback`. Other missing/unrecognized types remain unknown. Names with
+only whitespace are excluded. `last_created_at` is the newest document
+**creation** timestamp (nullable), not an update or ingestion-run time.
+This response replaces the former bare array of `{source, count}` rows;
+clients must read `items` and `document_count` instead.
 
 `DELETE /admin/kb/sources/{source_id}` hard-deletes every document whose
 `source` exactly matches the decoded source name, including its chunks,

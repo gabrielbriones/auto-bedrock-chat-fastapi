@@ -6,7 +6,7 @@ import { err, ok } from '@/shared/kernel/result'
 
 import type { KbSourcesGateway } from '@/domains/knowledge/application/ports'
 import { KbSourcesStore } from '@/domains/knowledge/application/kb-sources.store'
-import { IDLE_RUN, type FileIngestRequest, type KbSourceRun, type WebCrawlRequest } from '@/domains/knowledge/domain/public'
+import { IDLE_RUN, type FileIngestRequest, type KbSourceRun, type KbSourceSummary, type WebCrawlRequest } from '@/domains/knowledge/domain/public'
 
 import { RecordingNotificationPort } from '../../../shared/ports/recording-notification-port'
 import { ScriptedConfirmationPort } from '../../../shared/ports/scripted-confirmation-port'
@@ -14,7 +14,13 @@ import { FakePollScheduler } from './fake-poll-scheduler'
 
 const SOURCES = KNOWLEDGE_COPY.sources
 
-const sources = [{ source: 'feedback', count: 4 }, { source: 'intel-docs', count: 12 }]
+const sources: readonly KbSourceSummary[] = [
+  { source: 'feedback', sourceType: 'feedback', documentCount: 4, chunkCount: 8, lastCreatedAt: null },
+  { source: 'intel-docs', sourceType: 'web', documentCount: 12, chunkCount: 25, lastCreatedAt: null },
+]
+const page = { items: sources, total: sources.length, limit: 50, offset: 0 }
+const feedback = sources[0]!
+const intelDocs = sources[1]!
 
 const run = (overrides: Partial<KbSourceRun> = {}): KbSourceRun => ({
   ...IDLE_RUN,
@@ -51,7 +57,7 @@ const duplicate = problem({ status: 409, serverCode: 'source_already_exists', de
 const inProgress = problem({ status: 409, serverCode: 'kb_source_run_already_in_progress' })
 
 const gatewayWith = (overrides: Partial<KbSourcesGateway> = {}): KbSourcesGateway => ({
-  listSources: jest.fn(async () => ok(sources)),
+  listSources: jest.fn(async () => ok(page)),
   status: jest.fn(async () => ok(IDLE_RUN)),
   startWebCrawl: jest.fn(async () => ok(run())),
   overrideWebCrawl: jest.fn(async () => ok(run({ runId: 'run-2' }))),
@@ -86,8 +92,39 @@ describe('KbSourcesStore load', () => {
     await store.load()
 
     expect(store.getSnapshot()).toMatchObject({ sources, sourcesStatus: 'ready', run: IDLE_RUN, runProblem: null })
+    expect(store.getSnapshot()).toMatchObject({ sourcePage: { limit: 50, offset: 0 }, sourceTotal: 2, sourceType: null })
     expect(scheduler.pendingCount).toBe(0)
     expect(listener).toHaveBeenCalled()
+  })
+
+  it('filters names and navigates pages while preserving the selected type', async () => {
+    const listSources = jest.fn<KbSourcesGateway['listSources']>().mockImplementation(async (query) => ok({
+      items: query.offset === 0 ? [feedback] : [], total: 2, limit: query.limit, offset: query.offset,
+    }))
+    const { store } = createStore(gatewayWith({ listSources }))
+    await store.loadSources()
+    await store.setSourceType('file')
+    await store.setSourceOffset(50)
+    expect(listSources).toHaveBeenNthCalledWith(2, { sourceType: 'file', limit: 50, offset: 0 }, expect.any(AbortSignal))
+    expect(listSources).toHaveBeenNthCalledWith(3, { sourceType: 'file', limit: 50, offset: 50 }, expect.any(AbortSignal))
+    // Empty page (because total is 2) returns to the last available page.
+    expect(store.getSnapshot()).toMatchObject({ sourcePage: { offset: 0 }, sourceType: 'file' })
+  })
+
+  it('returns to the preceding page after deletion empties the final page', async () => {
+    let total = 51
+    const listSources = jest.fn<KbSourcesGateway['listSources']>().mockImplementation(async (query) => ok({
+      items: query.offset === 50 && total === 51 ? [intelDocs] : query.offset === 0 ? [feedback] : [],
+      total, limit: query.limit, offset: query.offset,
+    }))
+    const gateway = gatewayWith({ listSources, deleteSource: jest.fn(async () => { total = 50; return ok({ source: 'intel-docs', deleted: 12 }) }) })
+    const { store } = createStore(gateway, [true])
+    await store.loadSources()
+    await store.setSourceOffset(50)
+    expect(store.getSnapshot().sourcePage.offset).toBe(50)
+    await store.deleteSource(intelDocs)
+    expect(store.getSnapshot()).toMatchObject({ sourcePage: { offset: 0 }, sourceTotal: 50, sources: [feedback] })
+    expect(listSources).toHaveBeenCalledTimes(4)
   })
 
   it('keeps the list problem and leaves the run readable when only the list fails', async () => {
@@ -104,7 +141,7 @@ describe('KbSourcesStore load', () => {
       .mockResolvedValueOnce(ok(run()))
       .mockResolvedValueOnce(ok(run({ pagesProcessed: 3 })))
       .mockResolvedValueOnce(ok(run({ phase: 'completed', chunksWritten: 41 })))
-    const listSources = jest.fn(async () => ok(sources))
+    const listSources = jest.fn(async () => ok(page))
     const { store, scheduler, notifications } = createStore(gatewayWith({ status, listSources }))
 
     await store.load()
@@ -297,7 +334,7 @@ describe('KbSourcesStore deleting a source', () => {
     const { store, confirmations, notifications } = createStore(gateway, [true])
     await store.loadSources()
 
-    const deleted = await store.deleteSource({ source: 'feedback', count: 4 })
+    const deleted = await store.deleteSource(feedback)
 
     expect(deleted).toBe(true)
     expect(confirmations.asked[0]).toMatchObject({
@@ -315,7 +352,7 @@ describe('KbSourcesStore deleting a source', () => {
     const gateway = gatewayWith({ deleteSource: jest.fn(async () => ok({ source: 'feedback', deleted: null })) })
     const { store, notifications } = createStore(gateway, [true])
 
-    await store.deleteSource({ source: 'feedback', count: 7 })
+    await store.deleteSource({ ...feedback, documentCount: 7 })
 
     expect(notifications.messages()).toEqual([SOURCES.list.deleteSuccess('feedback', 7)])
   })
@@ -324,7 +361,7 @@ describe('KbSourcesStore deleting a source', () => {
     const gateway = gatewayWith()
     const { store } = createStore(gateway, [false])
 
-    expect(await store.deleteSource({ source: 'feedback', count: 4 })).toBe(false)
+    expect(await store.deleteSource(feedback)).toBe(false)
     expect(gateway.deleteSource).not.toHaveBeenCalled()
   })
 
@@ -333,7 +370,7 @@ describe('KbSourcesStore deleting a source', () => {
     const gateway = gatewayWith({ deleteSource: jest.fn(async () => err(failure)) })
     const { store, notifications } = createStore(gateway, [true])
 
-    expect(await store.deleteSource({ source: 'feedback', count: 4 })).toBe(false)
+    expect(await store.deleteSource(feedback)).toBe(false)
     expect(notifications.notifications).toEqual([
       { kind: 'error', message: SOURCES.list.deleteFailure, options: { description: 'no documents found' } },
     ])
@@ -349,9 +386,9 @@ describe('KbSourcesStore deleting a source', () => {
     )
     const { store } = createStore(gatewayWith({ deleteSource }), [true])
 
-    const first = store.deleteSource({ source: 'feedback', count: 4 })
+    const first = store.deleteSource(feedback)
     await Promise.resolve()
-    expect(await store.deleteSource({ source: 'intel-docs', count: 12 })).toBe(false)
+    expect(await store.deleteSource(intelDocs)).toBe(false)
 
     release()
     expect(await first).toBe(true)

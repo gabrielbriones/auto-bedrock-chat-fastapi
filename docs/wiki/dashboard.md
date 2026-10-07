@@ -80,8 +80,13 @@ unless `GET /admin/_capabilities` reports `kb_source_ingestion_enabled:
 true` (i.e. a KB store is configured), mirroring the Token Usage nav
 item's visibility rule.
 
-- **Ingested Sources**: a table of every distinct `source` name from
-  `GET /admin/kb/sources`, with its document count and a **Delete**
+- **Ingested Sources**: a paginated table of distinct `source` names from
+  `GET /admin/kb/sources`, with type (web/file/feedback or mixed/unknown),
+  document and chunk counts, and the newest document creation time
+  (`last_created_at`, not last update). Filter by type or move between
+  pages with Previous/Next; changing the filter resets to the first page.
+  A mixed-name row retains full-source counts even when filtered by type.
+  Every row has a **Delete**
   button. Deleting a source (`DELETE /admin/kb/sources/{source_id}`) hard-
   deletes every document — and their chunks — ingested under that name;
   the ID is `~` plus the UTF-8 hex of the name (including slashes and dots).

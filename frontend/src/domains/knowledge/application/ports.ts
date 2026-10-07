@@ -10,6 +10,7 @@ import type {
   KbDocument,
   KbDocumentSummary,
   KbSourceRun,
+  KbSourceFilter,
   KbSourceSummary,
   SparsePatch,
   WebCrawlRequest,
@@ -49,7 +50,7 @@ export type KbSourceDeletion = {
 // duplicate name with `409 source_already_exists`; `override*` is the matching `PUT .../{name}`
 // that deletes the name's documents first and then runs the same ingestion.
 export interface KbSourcesGateway {
-  listSources(signal: AbortSignal): Promise<Result<readonly KbSourceSummary[], Problem>>
+  listSources(query: OffsetPage & { readonly sourceType: KbSourceFilter }, signal: AbortSignal): Promise<Result<Page<KbSourceSummary>, Problem>>
   status(signal: AbortSignal): Promise<Result<KbSourceRun, Problem>>
   startWebCrawl(request: WebCrawlRequest): Promise<Result<KbSourceRun, Problem>>
   overrideWebCrawl(request: WebCrawlRequest): Promise<Result<KbSourceRun, Problem>>

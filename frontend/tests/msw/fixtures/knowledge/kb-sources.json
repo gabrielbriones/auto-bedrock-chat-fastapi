@@ -1,4 +1,9 @@
-[
-  { "source": "feedback", "count": 4 },
-  { "source": "intel-docs", "count": 12 }
-]
+{
+  "items": [
+    { "source": "feedback", "source_type": "feedback", "document_count": 4, "chunk_count": 8, "last_created_at": "2026-09-27T09:00:00Z" },
+    { "source": "intel-docs", "source_type": "web", "document_count": 12, "chunk_count": 25, "last_created_at": "2026-09-28T10:00:00Z" }
+  ],
+  "total": 2,
+  "limit": 50,
+  "offset": 0
+}

@@ -71,7 +71,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Query, Request, UploadFile
@@ -274,16 +274,26 @@ class KBSourceStatus(BaseModel):
 
 
 class KBSourceSummary(BaseModel):
-    """One row of ``GET /admin/kb/sources`` — a distinct KB document
-    ``source`` value and how many documents currently carry it.
+    """One distinct nonblank source name, aggregated across all its documents.
 
-    Covers every document regardless of how it was ingested (web crawl,
-    file upload, or the offline populate pipeline) since they all share
-    the same ``source`` column.
+    ``source_type`` is null for mixed or unknown document types. Creation
+    time is the newest *document creation*, not a last-modified timestamp.
     """
 
     source: str
-    count: int
+    source_type: Optional[Literal["web", "file", "feedback"]]
+    document_count: int = Field(ge=0)
+    chunk_count: int = Field(ge=0)
+    last_created_at: Optional[datetime]
+
+
+class KBSourceListResponse(BaseModel):
+    """Paginated source summaries; ``total`` is before pagination."""
+
+    items: List[KBSourceSummary]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
 
 
 class _KBSourceRunState:
@@ -1464,30 +1474,34 @@ def register_admin_kb_routes(
 
     @sources_router.get(
         "",
-        response_model=List[KBSourceSummary],
+        response_model=KBSourceListResponse,
         responses={**ADMIN_COMMON_RESPONSES},
-        summary="List distinct KB source names and their document counts",
+        summary="List KB source summaries (paginated, filterable)",
     )
-    async def list_kb_sources(identity=Depends(require_admin)) -> List[KBSourceSummary]:
-        """Return every distinct ``source`` value across KB documents.
+    async def list_kb_sources(
+        identity=Depends(require_admin),
+        source_type: Optional[Literal["web", "file", "feedback"]] = Query(None),
+        limit: int = Query(_LIMIT_DEFAULT, ge=1, le=_LIMIT_MAX),
+        offset: int = Query(0, ge=0),
+    ) -> KBSourceListResponse:
+        """Return one paginated summary per nonblank KB ``source`` name.
 
         Covers documents from any ingestion path (web crawl, file upload,
         or the offline populate pipeline), not just runs tracked by
         ``KBSourceStatus`` — that state only ever holds the *most recent*
         run, so it can't answer "what sources exist" once a run completes.
 
-        Blank/whitespace-only ``source`` values are excluded: the store
-        only filters ``source IS NOT NULL``, but ``PATCH
-        /admin/kb/documents/{id}`` allows clearing ``source`` to ``""``,
-        and an empty name can't round-trip to ``DELETE
-        /admin/kb/sources/{name}`` (which requires a non-empty name).
+        Filtering selects names with at least one document of that type,
+        but counts and last_created_at describe all documents under the
+        selected name. Mixed or unknown types have a null source_type.
+        Blank names are excluded; results are ordered by name. The total
+        counts matching names before limit/offset are applied.
         """
-        rows = await asyncio.to_thread(kb_store.list_sources)
-        return [
-            KBSourceSummary(source=row["source"], count=row["count"])
-            for row in rows
-            if row.get("source") and row["source"].strip()
-        ]
+        rows = await asyncio.to_thread(kb_store.list_sources, source_type, limit, offset)
+        total = await asyncio.to_thread(kb_store.count_sources, source_type)
+        return KBSourceListResponse(
+            items=[KBSourceSummary(**row) for row in rows], total=total, limit=limit, offset=offset
+        )
 
     async def _delete_documents_for_source(
         name: str,

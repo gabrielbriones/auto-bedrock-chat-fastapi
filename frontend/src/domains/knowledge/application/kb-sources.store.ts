@@ -9,6 +9,7 @@ import {
   type FileIngestRequest,
   type KbSourceRun,
   type KbSourceSummary,
+  type KbSourceFilter,
   type KbSourceType,
   type WebCrawlRequest,
 } from '@/domains/knowledge/domain/public'
@@ -75,16 +76,44 @@ export class KbSourcesStore {
     this.#sourcesController = controller
     this.#patch({ sourcesStatus: 'loading', sourcesProblem: null })
 
-    const result = await this.#options.gateway.listSources(controller.signal)
+    const result = await this.#options.gateway.listSources(
+      { ...this.#snapshot.sourcePage, sourceType: this.#snapshot.sourceType }, controller.signal,
+    )
     if (sequence !== this.#sourcesSequence || controller.signal.aborted) {
       return
     }
 
-    this.#patch(
-      isErr(result)
-        ? { sourcesStatus: 'error', sourcesProblem: result.error }
-        : { sources: result.value, sourcesStatus: 'ready', sourcesProblem: null },
-    )
+    if (isErr(result)) {
+      this.#patch({ sourcesStatus: 'error', sourcesProblem: result.error })
+      return
+    }
+
+    const { items, total, limit, offset } = result.value
+    if (items.length === 0 && offset > 0 && total <= offset) {
+      // A delete/override may shrink the final page: navigate to the last nonempty page.
+      this.#patch({ sourcePage: { limit, offset: Math.max(0, Math.ceil(total / limit) - 1) * limit } })
+      await this.loadSources()
+      return
+    }
+    this.#patch({ sources: items, sourceTotal: total, sourcePage: { limit, offset }, sourcesStatus: 'ready', sourcesProblem: null })
+  }
+
+  async setSourceOffset(offset: number): Promise<void> {
+    if (offset === this.#snapshot.sourcePage.offset) return
+    this.#patch({ sourcePage: { ...this.#snapshot.sourcePage, offset } })
+    await this.loadSources()
+  }
+
+  async setSourceType(sourceType: KbSourceFilter): Promise<void> {
+    if (sourceType === this.#snapshot.sourceType) return
+    this.#patch({ sourceType, sourcePage: { ...this.#snapshot.sourcePage, offset: 0 } })
+    await this.loadSources()
+  }
+
+  // Route-driven: the URL is the authority, so this always reloads, even on the initial defaults.
+  async setSourceQuery(query: { readonly sourceType: KbSourceFilter; readonly offset: number }): Promise<void> {
+    this.#patch({ sourceType: query.sourceType, sourcePage: { ...this.#snapshot.sourcePage, offset: query.offset } })
+    await this.loadSources()
   }
 
   async refreshStatus(): Promise<void> {
@@ -129,7 +158,7 @@ export class KbSourcesStore {
 
     const confirmed = await this.#options.confirmations.confirm({
       title: SOURCES.list.deleteConfirmTitle,
-      message: SOURCES.list.deleteConfirmMessage(summary.source, summary.count),
+      message: SOURCES.list.deleteConfirmMessage(summary.source, summary.documentCount),
       confirmLabel: SOURCES.list.deleteConfirmLabel,
       tone: 'destructive',
     })
@@ -147,7 +176,7 @@ export class KbSourcesStore {
     }
 
     this.#options.notifications.success(
-      SOURCES.list.deleteSuccess(summary.source, result.value.deleted ?? summary.count),
+      SOURCES.list.deleteSuccess(summary.source, result.value.deleted ?? summary.documentCount),
     )
     await this.loadSources()
     return true

@@ -1,8 +1,10 @@
 import logging
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -26,6 +28,7 @@ kb_routes_mod = load_module(
 )
 
 KBDocument = models_mod.KBDocument
+AdminAPIError = exceptions_mod.AdminAPIError
 register_admin_error_handlers = admin_errors_mod.register_admin_error_handlers
 register_admin_kb_routes = kb_routes_mod.register_admin_kb_routes
 
@@ -72,12 +75,37 @@ class _FakeKBStore:
         self.documents.pop(doc_id, None)
         return 0
 
-    def list_sources(self):
-        counts = {}
+    def list_sources(self, source_type=None, limit=50, offset=0):
+        groups = {}
         for doc in self.documents.values():
-            if doc.source:
-                counts[doc.source] = counts.get(doc.source, 0) + 1
-        return [{"source": source, "count": count} for source, count in counts.items()]
+            if doc.source and doc.source.strip():
+                kind = doc.metadata.get("source_type")
+                kind = "file" if kind == "local" else kind
+                if kind is None and doc.source == "feedback":
+                    kind = "feedback"
+                if kind not in ("web", "file", "feedback"):
+                    kind = None
+                groups.setdefault(doc.source, []).append((doc, kind))
+        rows = []
+        for source in sorted(groups):
+            documents = groups[source]
+            if source_type is not None and not any(kind == source_type for _, kind in documents):
+                continue
+            types = {kind for _, kind in documents}
+            dates = [doc.created_at for doc, _ in documents if doc.created_at is not None]
+            rows.append(
+                {
+                    "source": source,
+                    "source_type": next(iter(types)) if len(types) == 1 else None,
+                    "document_count": len(documents),
+                    "chunk_count": sum(doc.chunk_count or 0 for doc, _ in documents),
+                    "last_created_at": max(dates) if dates else None,
+                }
+            )
+        return rows[offset : offset + limit]
+
+    def count_sources(self, source_type=None):
+        return len(self.list_sources(source_type, limit=max(len(self.documents), 1)))
 
     def add_document(
         self, doc_id, content, title=None, source=None, source_url=None, topic=None, date_published=None, metadata=None
@@ -99,11 +127,13 @@ class _FakeKBStore:
         self.stats["chunks"] += 1
 
 
-def _build_app(store):
+def _build_app(store, *, authenticated=True):
     app = FastAPI()
     register_admin_error_handlers(app)
 
     async def require_admin():
+        if not authenticated:
+            raise AdminAPIError(status_code=401, code="not_authenticated", detail="not authenticated")
         return _Identity(user_id="admin")
 
     async def re_embed_document(doc_id, content):
@@ -260,7 +290,8 @@ def test_list_kb_sources_groups_by_source_with_counts():
     client = _build_app(store)
     resp = client.get("/bedrock-chat/admin/kb/sources")
     assert resp.status_code == 200
-    assert {(row["source"], row["count"]) for row in resp.json()} == {("blog", 2), ("docs", 1)}
+    assert {(row["source"], row["document_count"]) for row in resp.json()["items"]} == {("blog", 2), ("docs", 1)}
+    assert resp.json()["total"] == 2
 
 
 def test_list_kb_sources_excludes_blank_and_whitespace_only_sources():
@@ -274,7 +305,97 @@ def test_list_kb_sources_excludes_blank_and_whitespace_only_sources():
     client = _build_app(store)
     resp = client.get("/bedrock-chat/admin/kb/sources")
     assert resp.status_code == 200
-    assert [row["source"] for row in resp.json()] == ["blog"]
+    assert [row["source"] for row in resp.json()["items"]] == ["blog"]
+
+
+def test_list_kb_sources_paginates_after_grouping():
+    store = _FakeKBStore()
+    for i in range(55):
+        _seed(store, f"d{i}", source=f"source-{i:02d}")
+    client = _build_app(store)
+
+    resp = client.get("/bedrock-chat/admin/kb/sources")
+    assert resp.status_code == 200
+    assert len(resp.json()["items"]) == 50
+    assert resp.json()["total"] == 55
+    assert resp.json()["items"][0]["source"] == "source-00"
+    page = client.get("/bedrock-chat/admin/kb/sources", params={"limit": 10, "offset": 50}).json()
+    assert page["total"] == 55
+    assert len(page["items"]) == 5
+    assert page["items"][0]["source"] == "source-50"
+
+
+def test_list_kb_sources_empty_and_beyond_last_page():
+    client = _build_app(_FakeKBStore())
+    assert client.get("/bedrock-chat/admin/kb/sources").json() == {
+        "items": [],
+        "total": 0,
+        "limit": 50,
+        "offset": 0,
+    }
+    store = _FakeKBStore()
+    _seed(store, "d1", source="runbook", metadata={"source_type": "file"})
+    body = _build_app(store).get("/bedrock-chat/admin/kb/sources", params={"offset": 3}).json()
+    assert body == {"items": [], "total": 1, "limit": 50, "offset": 3}
+
+
+def test_list_kb_sources_filter_selects_names_without_reducing_counts():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="shared", metadata={"source_type": "web"})
+    _seed(store, "d2", source="shared", metadata={"source_type": "local"})
+    _seed(store, "d3", source="feedback", metadata={"synthesized": True})
+    client = _build_app(store)
+    response = client.get("/bedrock-chat/admin/kb/sources", params={"source_type": "file"})
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["source"] == "shared"
+    assert response.json()["items"][0]["source_type"] is None
+    assert response.json()["items"][0]["document_count"] == 2
+    assert (
+        client.get("/bedrock-chat/admin/kb/sources", params={"source_type": "feedback"}).json()["items"][0]["source"]
+        == "feedback"
+    )
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"source_type": "local"},
+        {"source_type": "unknown"},
+        {"limit": 0},
+        {"limit": 201},
+        {"limit": "nope"},
+        {"offset": -1},
+        {"offset": "nope"},
+    ],
+)
+def test_list_kb_sources_rejects_invalid_filters_and_bounds(params):
+    response = _build_app(_FakeKBStore()).get("/bedrock-chat/admin/kb/sources", params=params)
+    assert response.status_code == 422
+
+
+def test_list_kb_sources_requires_admin_without_reading_store():
+    store = MagicMock()
+    response = _build_app(store, authenticated=False).get("/bedrock-chat/admin/kb/sources")
+    assert response.status_code == 401
+    assert response.json()["code"] == "not_authenticated"
+    store.list_sources.assert_not_called()
+    store.count_sources.assert_not_called()
+
+
+def test_list_kb_sources_does_not_shadow_other_source_routes():
+    store = _FakeKBStore()
+    _seed(store, "d1", source="runbook")
+    client = _build_app(store)
+    prefix = "/bedrock-chat/admin/kb/sources"
+
+    assert client.get(f"{prefix}/status").json()["phase"] == "idle"
+    assert client.post(f"{prefix}/web", json={"name": "x", "urls": ["https://example.com"]}).status_code == 503
+    assert client.post(f"{prefix}/file", data={"name": "x"}).status_code in (422, 503)
+    assert client.put(f"{prefix}/web/runbook", json={"urls": ["https://example.com"]}).status_code == 503
+    assert client.put(f"{prefix}/file/runbook", data={"name": "x"}).status_code in (422, 503)
+    assert client.delete(_source_url("runbook")).json() == {"source": "runbook", "deleted": 1}
+    assert client.get(prefix).json()["total"] == 0
 
 
 def test_delete_kb_source_removes_all_matching_documents():

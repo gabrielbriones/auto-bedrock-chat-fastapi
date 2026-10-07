@@ -2,14 +2,18 @@ import type { Problem } from '@/shared/http/exception'
 import type { ConfirmationPort } from '@/shared/ports/confirmation-port'
 import type { Logger } from '@/shared/logging/logger'
 import type { NotificationPort } from '@/shared/ports/notification-port'
+import { DEFAULT_PAGE_LIMIT, type OffsetPage } from '@/shared/kernel/pagination'
 
 import type { KbSourcesGateway, PollScheduler } from '@/domains/knowledge/application/ports'
-import { IDLE_RUN, type KbSourceRun, type KbSourceSummary, type KbSourceType } from '@/domains/knowledge/domain/public'
+import { IDLE_RUN, type KbSourceFilter, type KbSourceRun, type KbSourceSummary, type KbSourceType } from '@/domains/knowledge/domain/public'
 
 export type KbSourcesListStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export type KbSourcesSnapshot = {
   readonly sources: readonly KbSourceSummary[]
+  readonly sourcePage: OffsetPage
+  readonly sourceTotal: number
+  readonly sourceType: KbSourceFilter
   readonly sourcesStatus: KbSourcesListStatus
   readonly sourcesProblem: Problem | null
   /** The most recent run the server reported; `IDLE_RUN` until the first status read. */
@@ -35,6 +39,9 @@ export const DEFAULT_POLL_INTERVAL_MS = 1_500
 
 export const createInitialKbSourcesSnapshot = (): KbSourcesSnapshot => ({
   sources: [],
+  sourcePage: { limit: DEFAULT_PAGE_LIMIT, offset: 0 },
+  sourceTotal: 0,
+  sourceType: null,
   sourcesStatus: 'idle',
   sourcesProblem: null,
   run: IDLE_RUN,
