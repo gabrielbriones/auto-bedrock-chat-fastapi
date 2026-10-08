@@ -174,6 +174,33 @@ describe('ServerFrameSchema', () => {
     ).toBe(true)
   })
 
+  // XMGPLAT-11970: a brand-new conversation has a null title until auto-titling runs in the
+  // background. A non-nullable `title` here rejected the *entire* array for one untitled
+  // conversation, silently dropping the whole roster refresh (the deep-link auto-send flow hits
+  // this every time, since it re-fetches the list before the thread it just created is titled).
+  it('accepts a conversation list containing an untitled (null title) conversation', () => {
+    expect(
+      ServerFrameSchema.safeParse({
+        type: 'conversation_list',
+        timestamp: '2026-10-08T12:00:00Z',
+        conversations: [
+          {
+            id: 'conversation-new',
+            title: null,
+            updated_at: '2026-10-08T12:00:00Z',
+            message_count: 1,
+          },
+          {
+            id: 'conversation-old',
+            title: 'Existing titled conversation',
+            updated_at: '2026-10-07T12:00:00Z',
+            message_count: 4,
+          },
+        ],
+      }).success,
+    ).toBe(true)
+  })
+
   it('maps every contract frame type to its owning context', () => {
     expect(FRAME_OWNER).toEqual({
       connection_established: 'messaging',

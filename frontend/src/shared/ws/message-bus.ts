@@ -72,7 +72,8 @@ const messageSchema = z
 const conversationSummarySchema = z
   .object({
     id: z.string(),
-    title: z.string(),
+    // Untitled conversations carry a null title until auto-titling runs (FR-CONV-014).
+    title: z.string().nullable(),
     updated_at: z.string().min(1),
     message_count: z.number(),
   })
