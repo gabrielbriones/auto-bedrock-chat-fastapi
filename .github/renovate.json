@@ -13,6 +13,11 @@
     "enabled": true,
     "labels": ["dependencies", "security"]
   },
+  "npm": {
+    "lockFileMaintenance": {
+      "enabled": true
+    }
+  },
   "packageRules": [
     {
       "description": "Disable major updates for Python dependencies",
@@ -25,6 +30,18 @@
       "matchManagers": ["poetry"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "python-minor-patch"
+    },
+    {
+      "description": "Group all npm minor and patch updates into a single PR",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "npm-minor-patch"
+    },
+    {
+      "description": "Group all npm major updates into a single PR",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "npm-major"
     },
     {
       "description": "Group Docker base image updates",
