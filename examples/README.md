@@ -9,6 +9,13 @@ This directory contains examples showing how to integrate `autolangchat` with di
 - **`sso_okta_example.py`** - SSO authentication with Okta (OAuth2 Authorization Code + PKCE)
 - **`sso_azure_ad_example.py`** - SSO authentication with Microsoft Entra ID (Azure AD)
 
+> **Chat UI note:** The `fastAPI/` and `sso_*` examples below mount the autolangchat plugin,
+> but the chat UI itself is a separate React/Vite app — it is not served by the FastAPI
+> backend in development. After starting any of these example scripts, also run
+> `cd frontend && npm run dev` in another shell (dev server defaults to port 3000) and open
+> `http://localhost:3000/chat/ui/`. See [`fastAPI/README.md`](fastAPI/README.md#frontend-dev-server-required-for-the-chat-ui)
+> and [`frontend/README.md`](../frontend/README.md) for details.
+
 ## Quick Start Guide
 
 ### Express.js Integration (Recommended for Learning)
@@ -161,10 +168,13 @@ export AUTOCHAT_SSO_CLIENT_ID=<your-client-id>
 export AUTOCHAT_SSO_DISCOVERY_URL=<your-oidc-discovery-url>
 export AUTOCHAT_SSO_SESSION_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
-# 3. Run the example
+# 3. Run the example (backend, port 8000)
 python examples/sso_okta_example.py
 
-# 4. Open http://localhost:8000/chat — click "Login with SSO"
+# 4. In another shell, start the frontend dev server (defaults to port 3000)
+cd frontend && npm run dev
+
+# 5. Open http://localhost:3000/chat/ui/ — click "Login with SSO"
 ```
 
 For full SSO documentation, see the [SSO wiki page](../docs/wiki/sso.md).

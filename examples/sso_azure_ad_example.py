@@ -159,4 +159,8 @@ autolangchat_plugin = add_autolangchat(
 if __name__ == "__main__":
     import uvicorn
 
+    print("🚀 Starting SSO Example API (Azure AD)")
+    print("📖 API Documentation: http://localhost:8000/docs")
+    print("💬 AI Chat Interface (run `npm run dev` in frontend/ first): http://localhost:3000/chat/ui/")
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

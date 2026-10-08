@@ -10,14 +10,16 @@ This example demonstrates a FastAPI assistant powered by RAG (Retrieval-Augmente
 - 💬 Real-time chat interface
 - 🎯 Accurate, up-to-date answers based on official documentation
 
-## Plugin example with the Vite dev server
+## Frontend dev server (required for the chat UI)
 
-To run the e-commerce plugin example instead of the RAG example below, start the backend
-from this directory:
+The chat UI is a separate React/Vite app — it is no longer served from the FastAPI backend
+in development. This applies to every script in this directory (`app_plugin.py`,
+`app_standalone.py`, `app_auth.py`, `app_rag.py`, etc.), not just one example. Start the
+backend from this directory, e.g.:
 
 ```bash
 cd examples/fastAPI
-poetry run python app_plugin.py
+poetry run python app_plugin.py   # or app_standalone.py / app_auth.py / app_rag.py
 ```
 
 In another shell, start the frontend from the repository's `frontend/` directory:
@@ -27,10 +29,10 @@ cd frontend
 npm run dev
 ```
 
-Open **http://localhost:3000/chat/ui/** for the chat UI. Vite serves the UI and
-proxies API and WebSocket requests to the backend at `http://localhost:8000` (configured
-by `VITE_API_URL` in `frontend/.env`). The API documentation is at
-**http://localhost:8000/docs** and the health endpoint is at
+Open **http://localhost:3000/chat/ui/** for the chat UI (`PORT` in `frontend/.env`
+defaults to `3000`). Vite serves the UI and proxies API and WebSocket requests to the
+backend at `http://localhost:8000` (configured by `VITE_API_URL` in `frontend/.env`). The
+API documentation is at **http://localhost:8000/docs** and the health endpoint is at
 **http://localhost:8000/chat/health**.
 
 `npm run dev` does not produce a production build. Until you run `npm run build` in
@@ -71,10 +73,11 @@ poetry run python app_rag.py
 
 ### 4. Access the Chat Interface
 
-Open your browser to:
+`app_rag.py` only starts the backend (port 8000); start the frontend dev server too (see
+[Frontend dev server](#frontend-dev-server-required-for-the-chat-ui) above). Then open your browser to:
 
-- **Chat UI**: http://localhost:8001/chat
-- **API Docs**: http://localhost:8001/docs
+- **Chat UI**: http://localhost:3000/chat/ui/
+- **API Docs**: http://localhost:8000/docs
 
 ## Try These Example Queries
 
