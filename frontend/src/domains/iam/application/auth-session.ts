@@ -148,6 +148,15 @@ const onAuthEvent = (session: AuthSession, policy: AuthPolicy, event: AuthEvent)
   }
 }
 
+// XMGPLAT-11046: every tick is a real IdP refresh-token grant, so `none` never renews. A socket
+// reset keeps the SSO principal, so a reconnect does not restart (and re-fire) the renewal.
+export const shouldRenewSession = (policy: AuthPolicy, session: AuthSession): boolean =>
+  policy.ssoEnabled &&
+  policy.authExpirationBehaviour !== 'none' &&
+  session.principal.mode === 'sso' &&
+  session.status !== 'failed' &&
+  session.status !== 'expired'
+
 export const authSessionReducer = (
   session: AuthSession,
   policy: AuthPolicy,

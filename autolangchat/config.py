@@ -699,6 +699,18 @@ class ChatConfig(BaseSettings):
         description="SSO session duration in seconds before requiring re-authentication",
     )
 
+    sso_session_renewal_interval: int = Field(
+        default=3600,  # 1 hour
+        alias="AUTOCHAT_SSO_SESSION_RENEWAL_INTERVAL",
+        gt=0,
+        le=2_147_483,
+        description=(
+            "Seconds between the chat UI's background SSO session renewals (cookie + live socket "
+            "token). Only used when auth_expiration_behaviour is not 'none'; each renewal is a real "
+            "IdP refresh-token grant, so keep it well below sso_session_ttl."
+        ),
+    )
+
     sso_trust_external_idp_cookies: bool = Field(
         default=False,
         alias="AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES",

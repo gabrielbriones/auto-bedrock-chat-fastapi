@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals'
 
-import type { ServerFrame, ServerFrameSubscriber } from '@/shared/ws/message-bus'
+import { ClientFrameSchema, type ServerFrame, type ServerFrameSubscriber } from '@/shared/ws/message-bus'
+import type { SendResult } from '@/shared/ws/socket-client'
 
 import type { AuthEvent } from '@/domains/iam/application/ports'
 import type { Credential } from '@/domains/iam/domain/public'
@@ -92,6 +93,23 @@ describe('WsAuthGateway', () => {
     gateway.logout()
 
     expect(send).toHaveBeenCalledExactlyOnceWith('{"type":"logout"}')
+  })
+
+  it('sends a refresh_session_token frame that matches the client frame schema', () => {
+    const { gateway, send } = createHarness()
+
+    expect(gateway.refreshSessionToken()).toBe('sent')
+
+    const frame: unknown = JSON.parse(send.mock.calls[0]?.[0] ?? '')
+    expect(frame).toEqual({ type: 'refresh_session_token' })
+    expect(ClientFrameSchema.safeParse(frame).success).toBe(true)
+  })
+
+  it('reports a dropped refresh_session_token frame on a closed socket', () => {
+    const send = jest.fn<(frame: string) => SendResult>(() => 'dropped-closed')
+    const gateway = new WsAuthGateway({ send }, { subscribe: jest.fn(() => () => {}) }, createHarness().logger, ORIGIN)
+
+    expect(gateway.refreshSessionToken()).toBe('dropped-closed')
   })
 
   it('maps IAM server frames and ignores frames owned by other contexts', () => {

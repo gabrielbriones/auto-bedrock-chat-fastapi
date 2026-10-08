@@ -21,6 +21,7 @@ import type {
   SsoGateway,
 } from '@/domains/iam/application/ports'
 import { CapabilityHttpProbe } from '@/domains/iam/infrastructure/capability-http.probe'
+import { IntervalSessionRenewalScheduler } from '@/domains/iam/infrastructure/interval-session-renewal.scheduler'
 import { SsoHttpGateway, type LoginNavigation } from '@/domains/iam/infrastructure/sso-http.gateway'
 import { WsAuthGateway } from '@/domains/iam/infrastructure/ws-auth.gateway'
 import { ChatSessionStore } from '@/domains/messaging/application/chat-session.store'
@@ -51,6 +52,7 @@ import type { KnowledgeStore } from '@/domains/knowledge/application/knowledge.s
 import type { TelemetryGateway } from '@/domains/telemetry/application/ports'
 import type { TelemetryStore } from '@/domains/telemetry/application/telemetry.store'
 import { createAdminStores } from '@/app/bootstrap/admin-stores'
+import { notifyOnSessionExpiry } from '@/app/bootstrap/session-expiry-notice'
 
 // ADR-003 / DESIGN-002 §3: the single typed record of every adapter/port the app owns, built
 // once after bootstrap resolves and reached only through `useContainer` — never a service
@@ -162,6 +164,8 @@ const createIdentity = (
     authGateway,
     ssoGateway,
     connection: socket,
+    renewalScheduler: new IntervalSessionRenewalScheduler(),
+    renewalIntervalMs: bootstrap.ssoSessionRenewalIntervalSeconds * 1000,
     initial: {
       policy: authPolicy,
       ssoAuthenticated: bootstrap.ssoAuthenticated,
@@ -231,13 +235,15 @@ const createChatStores = (
   })
 
   // Neither context imports the other, so "New chat" reaches the transcript through this seam.
-  let awaitingId = conversations.getSnapshot().awaitingId
+  let { awaitingId, visible } = conversations.getSnapshot()
   conversations.subscribe(() => {
-    const next = conversations.getSnapshot().awaitingId
-    if (next && !awaitingId) {
+    const snapshot = conversations.getSnapshot()
+    // Losing auth (expiry/logout) must not leave the previous user's transcript on screen.
+    if ((snapshot.awaitingId && !awaitingId) || (visible && !snapshot.visible)) {
       chatSession.startNew()
     }
-    awaitingId = next
+    awaitingId = snapshot.awaitingId
+    visible = snapshot.visible
   })
 
   return { messagingGateway, conversationGateway, chatSession, conversations }
@@ -257,6 +263,7 @@ const createAuth = (
   const ssoGateway = new SsoHttpGateway(
     bootstrap.ssoLoginUrl,
     bootstrap.ssoLogoutUrl,
+    bootstrap.ssoRefreshUrl,
     httpClient,
     deps.navigation ?? browserNavigation,
   )
@@ -317,6 +324,8 @@ export const createContainer = (
   const modelConfig = createModelConfig(bootstrap, socket, messageBus, notifications)
   const feedback = createFeedback(socket, messageBus)
   const adminStores = createAdminStores(bootstrap, { httpClient, logger, confirmations, notifications })
+  const identity = createIdentity(bootstrap, authPolicy, authGateway, ssoGateway, socket)
+  notifyOnSessionExpiry(identity, notifications)
 
   return {
     httpClient,
@@ -331,7 +340,7 @@ export const createContainer = (
     authGateway,
     ssoGateway,
     authPolicy,
-    identity: createIdentity(bootstrap, authPolicy, authGateway, ssoGateway, socket),
+    identity,
     ...chatStores,
     promptCatalog: createPromptCatalog(bootstrap, chatStores.chatSession, deps.urlNavigator ?? browserUrlNavigator, logger),
     ...modelConfig,

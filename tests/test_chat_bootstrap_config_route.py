@@ -154,8 +154,11 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
         "sso_enabled": False,
         "sso_login_url": "/chat/auth/sso/login",
         "sso_logout_url": "/chat/auth/sso/logout",
+        "sso_refresh_url": "/chat/auth/sso/refresh",
         "sso_authenticated": False,
         "sso_user_display": "",
+        "auth_expiration_behaviour": "proactive",
+        "sso_session_renewal_interval": 900,
         "feedback_enabled": False,
         "lock_input_while_responding": True,
         "admin_enabled": False,
@@ -180,5 +183,8 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
     assert payload["uiWelcomeMessage"] == "Welcome"
     # Published rather than derived by the client from ssoLoginUrl (CONTRACT-002 BC-009).
     assert payload["ssoLogoutUrl"] == "/chat/auth/sso/logout"
+    assert payload["ssoRefreshUrl"] == "/chat/auth/sso/refresh"
+    assert payload["authExpirationBehaviour"] == "proactive"
+    assert payload["ssoSessionRenewalIntervalSeconds"] == 900
     # available_model_groups=None (matches chat.html's `default([], true)` filter)
     assert payload["availableModelGroups"] == []

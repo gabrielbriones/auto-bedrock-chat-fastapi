@@ -9,7 +9,14 @@ import type { ConnectionState, SendResult, Unsubscribe } from '@/shared/ws/socke
 
 import { toAuthPolicy, type AuthPolicySource } from '@/domains/iam/domain/auth-policy'
 import type { Credential } from '@/domains/iam/domain/credential'
-import type { AuthEvent, AuthGateway, SsoGateway } from '@/domains/iam/application/ports'
+import type {
+  AuthEvent,
+  AuthGateway,
+  Cancel,
+  SessionRenewalScheduler,
+  SsoGateway,
+  SsoRefreshOutcome,
+} from '@/domains/iam/application/ports'
 import { WsAuthGateway } from '@/domains/iam/infrastructure/ws-auth.gateway'
 import { IdentityStore, type ConnectionSource } from '@/domains/iam/application/identity.store'
 
@@ -19,26 +26,61 @@ const policySource = (overrides: Partial<AuthPolicySource> = {}): AuthPolicySour
   supportedAuthTypes: ['bearer_token', 'sso'],
   defaultAuthType: 'bearer_token',
   ssoEnabled: true,
+  authExpirationBehaviour: 'none',
   ssoLoginUrl: '/chat/auth/sso/login',
   ...overrides,
 })
 
 const bearer: Credential = { kind: 'bearer_token', token: 'jwt' }
 
+const RENEWAL_INTERVAL_MS = 15 * 60 * 1000
+
+const renewed = async (): Promise<SsoRefreshOutcome> => 'renewed'
+
+const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0))
+
 const openState: ConnectionState = { status: 'open', attempt: 0, nextRetryAt: null }
 const closedState: ConnectionState = { status: 'closed', attempt: 0, nextRetryAt: null }
+
+type FakeTimer = { readonly intervalMs: number; readonly tick: () => void; cancelled: boolean }
+
+class FakeRenewalScheduler implements SessionRenewalScheduler {
+  readonly timers: FakeTimer[] = []
+
+  every(intervalMs: number, tick: () => void): Cancel {
+    const timer: FakeTimer = { intervalMs, tick, cancelled: false }
+    this.timers.push(timer)
+
+    return () => {
+      timer.cancelled = true
+    }
+  }
+
+  get active(): readonly FakeTimer[] {
+    return this.timers.filter((timer) => !timer.cancelled)
+  }
+
+  elapse(): void {
+    for (const timer of this.active) {
+      timer.tick()
+    }
+  }
+}
 
 const setup = (
   source: Partial<AuthPolicySource> = {},
   initial: { ssoAuthenticated?: boolean; ssoUserDisplay?: string | null } = {},
 ) => {
   const authenticate = jest.fn<(credential: Credential) => SendResult>(() => 'sent')
+  const refreshSessionToken = jest.fn<() => SendResult>(() => 'sent')
+  const scheduler = new FakeRenewalScheduler()
   let emitAuthEvent: (event: AuthEvent) => void = () => {}
   let emitConnectionState: (state: ConnectionState) => void = () => {}
 
   const authGateway: AuthGateway = {
     authenticate,
     logout: jest.fn<() => SendResult>(() => 'sent'),
+    refreshSessionToken,
     onAuthEvent: (listener): Unsubscribe => {
       emitAuthEvent = listener
       return () => {}
@@ -48,6 +90,7 @@ const setup = (
   const ssoGateway: SsoGateway = {
     beginLogin: jest.fn(),
     logout: jest.fn(async () => ({ kind: 'ok', value: undefined }) as const),
+    refresh: jest.fn(renewed),
   }
 
   const connection: ConnectionSource = {
@@ -63,6 +106,8 @@ const setup = (
     authGateway,
     ssoGateway,
     connection,
+    renewalScheduler: scheduler,
+    renewalIntervalMs: RENEWAL_INTERVAL_MS,
     initial: {
       policy,
       ssoAuthenticated: initial.ssoAuthenticated ?? false,
@@ -73,6 +118,8 @@ const setup = (
   return {
     store,
     authenticate,
+    refreshSessionToken,
+    scheduler,
     ssoGateway,
     authEvent: (event: AuthEvent) => {
       emitAuthEvent(event)
@@ -262,6 +309,161 @@ describe('the identity store', () => {
   })
 })
 
+// hourly SSO cookie + live-socket token renewal.
+describe('SSO session renewal', () => {
+  const renewing = { authExpirationBehaviour: 'both' } as const
+  const ssoOnLoad = { ssoAuthenticated: true }
+  const ssoConfigured: AuthEvent = { kind: 'configured', authKind: 'sso', message: 'ok' }
+
+  it.each(['proactive', 'reactive', 'both'] as const)(
+    'renews on load and then every configured interval when the behaviour is %s',
+    (authExpirationBehaviour) => {
+      const { scheduler, ssoGateway, refreshSessionToken } = setup({ authExpirationBehaviour }, ssoOnLoad)
+
+      expect(scheduler.active).toHaveLength(1)
+      expect(scheduler.active[0]?.intervalMs).toBe(RENEWAL_INTERVAL_MS)
+      expect(ssoGateway.refresh).toHaveBeenCalledTimes(1)
+      expect(refreshSessionToken).toHaveBeenCalledTimes(1)
+
+      scheduler.elapse()
+
+      expect(ssoGateway.refresh).toHaveBeenCalledTimes(2)
+      expect(refreshSessionToken).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each([
+    ['the behaviour is none', { authExpirationBehaviour: 'none' }, ssoOnLoad],
+    ['the tab is not SSO-authenticated', renewing, { ssoAuthenticated: false }],
+    ['SSO is disabled', { ...renewing, ssoEnabled: false }, ssoOnLoad],
+  ] as const)('never renews when %s', (_, source, initial) => {
+    const { scheduler, ssoGateway, refreshSessionToken, authEvent } = setup(source, initial)
+
+    authEvent({ kind: 'configured', authKind: 'bearer_token', message: 'ok' })
+
+    expect(scheduler.timers).toHaveLength(0)
+    expect(ssoGateway.refresh).not.toHaveBeenCalled()
+    expect(refreshSessionToken).not.toHaveBeenCalled()
+  })
+
+  it('never renews in none mode, even after an SSO login over the socket', () => {
+    const { scheduler, authEvent } = setup({ authExpirationBehaviour: 'none' })
+
+    authEvent(ssoConfigured)
+
+    expect(scheduler.timers).toHaveLength(0)
+  })
+
+  it('starts once SSO authenticates over the socket', () => {
+    const { scheduler, ssoGateway, authEvent } = setup(renewing)
+    expect(scheduler.timers).toHaveLength(0)
+
+    authEvent(ssoConfigured)
+
+    expect(scheduler.active).toHaveLength(1)
+    expect(ssoGateway.refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a single timer, without re-firing, across reconnects', () => {
+    const { scheduler, ssoGateway, authEvent, connectionState } = setup(renewing, ssoOnLoad)
+
+    for (let i = 0; i < 3; i += 1) {
+      connectionState(openState)
+      authEvent(ssoConfigured)
+      connectionState(closedState)
+    }
+
+    expect(scheduler.timers).toHaveLength(1)
+    expect(scheduler.active).toHaveLength(1)
+    expect(ssoGateway.refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it.each<[string, AuthEvent]>([
+    ['auth_expired', { kind: 'expired', message: '' }],
+    ['auth_failed', { kind: 'failed', authKind: 'sso', message: 'nope' }],
+    ['logout_success', { kind: 'logged-out', message: 'bye' }],
+    ['a replacement non-SSO session', { kind: 'configured', authKind: 'bearer_token', message: 'ok' }],
+  ])('stops on %s', (_, event) => {
+    const { scheduler, ssoGateway, authEvent } = setup(renewing, ssoOnLoad)
+
+    authEvent(event)
+    scheduler.elapse()
+
+    expect(scheduler.active).toHaveLength(0)
+    expect(ssoGateway.refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('expires the session and stops renewing when the refresh is rejected', async () => {
+    const { scheduler, ssoGateway, store } = setup(renewing, ssoOnLoad)
+    jest.mocked(ssoGateway.refresh).mockResolvedValue('expired')
+
+    scheduler.elapse()
+    await flushPromises()
+    const session = store.getSnapshot()
+
+    expect(session.status).toBe('expired')
+    expect(session.principal.mode).toBe('anonymous')
+    expect(session.dialogOpen).toBe(true)
+    expect(session.inputEnabled).toBe(false)
+    expect(scheduler.active).toHaveLength(0)
+  })
+
+  it('stays authenticated when the refresh is only unavailable', async () => {
+    const { scheduler, ssoGateway, store } = setup(renewing, ssoOnLoad)
+    jest.mocked(ssoGateway.refresh).mockResolvedValue('unavailable')
+
+    scheduler.elapse()
+    await flushPromises()
+
+    expect(store.getSnapshot().status).toBe('authenticated')
+    expect(scheduler.active).toHaveLength(1)
+  })
+
+  it('ignores a rejected refresh that resolves after logout', async () => {
+    const { ssoGateway, store } = setup(renewing, ssoOnLoad)
+    let resolveRefresh: (outcome: SsoRefreshOutcome) => void = () => {}
+    jest.mocked(ssoGateway.refresh).mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve }))
+    store.openDialog()
+    store.dispose()
+    const before = store.getSnapshot()
+
+    resolveRefresh('expired')
+    await flushPromises()
+
+    expect(store.getSnapshot()).toBe(before)
+  })
+
+  it('stops on teardown', () => {
+    const { scheduler, store } = setup(renewing, ssoOnLoad)
+
+    store.dispose()
+
+    expect(scheduler.active).toHaveLength(0)
+  })
+
+  // With the socket closed no `logout_success` arrives, so logout itself must stop the timer.
+  it('stops on logout and stays stopped across a reconnect', async () => {
+    const { scheduler, store, connectionState } = setup(renewing, ssoOnLoad)
+
+    await store.logout()
+    connectionState(openState)
+
+    expect(scheduler.active).toHaveLength(0)
+  })
+
+  it('runs exactly one timer again after re-login', async () => {
+    const { scheduler, store, authEvent } = setup(renewing, ssoOnLoad)
+
+    authEvent({ kind: 'expired', message: '' })
+    authEvent(ssoConfigured)
+    await store.logout()
+    authEvent(ssoConfigured)
+
+    expect(scheduler.timers).toHaveLength(3)
+    expect(scheduler.active).toHaveLength(1)
+  })
+})
+
 // FR-IAM-010a. Wired to the real transport rather than a fake gateway, because the property under
 // test is exactly the one a fake would assume away: the legacy client opened a fresh socket per
 // attempt, so a rejected credential lost the session it was being checked against.
@@ -285,8 +487,14 @@ describe('retrying a rejected credential', () => {
     const store = new IdentityStore({
       policy,
       authGateway,
-      ssoGateway: { beginLogin: jest.fn(), logout: jest.fn(async () => ({ kind: 'ok', value: undefined }) as const) },
+      ssoGateway: {
+        beginLogin: jest.fn(),
+        logout: jest.fn(async () => ({ kind: 'ok', value: undefined }) as const),
+        refresh: jest.fn(renewed),
+      },
       connection: client,
+      renewalScheduler: new FakeRenewalScheduler(),
+      renewalIntervalMs: RENEWAL_INTERVAL_MS,
       initial: { policy, ssoAuthenticated: false, ssoUserDisplay: null },
     })
 

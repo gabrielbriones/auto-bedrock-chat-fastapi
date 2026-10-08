@@ -2,11 +2,17 @@ import type { ConnectionState, Unsubscribe } from '@/shared/ws/socket-client'
 
 import type { AuthPolicy } from '@/domains/iam/domain/auth-policy'
 import type { Credential } from '@/domains/iam/domain/credential'
-import type { AuthGateway, SsoGateway } from '@/domains/iam/application/ports'
+import type {
+  AuthGateway,
+  Cancel,
+  SessionRenewalScheduler,
+  SsoGateway,
+} from '@/domains/iam/application/ports'
 import { applyAuthMethodDeepLink } from '@/domains/iam/application/auth-deep-link'
 import {
   authSessionReducer,
   initialAuthSession,
+  shouldRenewSession,
   type AuthSession,
   type AuthSessionAction,
   type InitialSessionInput,
@@ -21,6 +27,8 @@ export type IdentityStoreOptions = {
   readonly authGateway: AuthGateway
   readonly ssoGateway: SsoGateway
   readonly connection: ConnectionSource
+  readonly renewalScheduler: SessionRenewalScheduler
+  readonly renewalIntervalMs: number
   readonly initial: InitialSessionInput
 }
 
@@ -31,6 +39,11 @@ export class IdentityStore {
   #credential: Credential | null = null
   readonly #listeners = new Set<() => void>()
   readonly #policy: AuthPolicy
+  #cancelRenewal: Cancel | null = null
+  // Set by logout: a closed socket never delivers `logout_success`, so the principal stays `sso`.
+  #renewalHeld = false
+  readonly #renewalIntervalMs: number
+  readonly #renewalScheduler: SessionRenewalScheduler
   #session: AuthSession
   readonly #ssoGateway: SsoGateway
   #subscriptions: readonly Unsubscribe[] = []
@@ -40,6 +53,8 @@ export class IdentityStore {
     this.#policy = options.policy
     this.#authGateway = options.authGateway
     this.#ssoGateway = options.ssoGateway
+    this.#renewalScheduler = options.renewalScheduler
+    this.#renewalIntervalMs = options.renewalIntervalMs
     this.#session = initialAuthSession(options.initial)
 
     this.#subscriptions = [
@@ -47,12 +62,17 @@ export class IdentityStore {
         if (event.kind === 'failed' || event.kind === 'expired' || event.kind === 'logged-out') {
           this.#credential = null
         }
+        if (event.kind === 'configured') {
+          this.#renewalHeld = false
+        }
         this.#dispatch({ type: 'auth-event', event })
       }),
       options.connection.onStateChange((state) => {
         this.#handleConnectionState(state)
       }),
     ]
+
+    this.#syncRenewal()
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -109,6 +129,8 @@ export class IdentityStore {
   // SSO additionally posts to the cookie logout endpoint and surfaces HTTP failures to the caller.
   async logout(): Promise<void> {
     this.#credential = null
+    this.#renewalHeld = true
+    this.#stopRenewal()
     this.#authGateway.logout()
 
     if (this.#session.principal.mode !== 'sso') {
@@ -122,6 +144,7 @@ export class IdentityStore {
   }
 
   dispose(): void {
+    this.#stopRenewal()
     for (const unsubscribe of this.#subscriptions) {
       unsubscribe()
     }
@@ -160,8 +183,41 @@ export class IdentityStore {
     }
 
     this.#session = next
+    this.#syncRenewal()
     for (const listener of this.#listeners) {
       listener()
     }
+  }
+
+  // Idempotent, so a repeated `auth_configured` (every reconnect) never stacks a second timer.
+  #syncRenewal(): void {
+    const shouldRun = !this.#renewalHeld && shouldRenewSession(this.#policy, this.#session)
+
+    if (shouldRun && this.#cancelRenewal === null) {
+      this.#cancelRenewal = this.#renewalScheduler.every(this.#renewalIntervalMs, () => {
+        this.#renew()
+      })
+      this.#renew()
+    } else if (!shouldRun) {
+      this.#stopRenewal()
+    }
+  }
+
+  #stopRenewal(): void {
+    this.#cancelRenewal?.()
+    this.#cancelRenewal = null
+  }
+
+  #renew(): void {
+    const renewal = this.#cancelRenewal
+    void this.#ssoGateway.refresh().then((outcome) => {
+      // Ignore a result from a renewal lifecycle that has since stopped or restarted.
+      if (outcome !== 'expired' || renewal === null || this.#cancelRenewal !== renewal) {
+        return
+      }
+      this.#credential = null
+      this.#dispatch({ type: 'auth-event', event: { kind: 'expired', message: '' } })
+    })
+    this.#authGateway.refreshSessionToken()
   }
 }

@@ -62,6 +62,11 @@ export const IAM_COPY = {
     notConnected: 'Not connected. Your credentials will be sent as soon as the connection returns.',
   },
 
+  sessionExpired: {
+    title: 'Your session has expired',
+    description: 'For your security you were signed out. Please log in again to continue and see your conversations.',
+  },
+
   validation: {
     required: 'This field is required.',
     invalidJson: 'Invalid JSON syntax.',

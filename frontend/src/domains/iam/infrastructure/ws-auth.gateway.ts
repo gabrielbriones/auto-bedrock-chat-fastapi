@@ -1,5 +1,5 @@
 import type { Logger } from '@/shared/logging/logger'
-import type { MessageBus, ServerFrame } from '@/shared/ws/message-bus'
+import type { ClientFrame, MessageBus, ServerFrame } from '@/shared/ws/message-bus'
 import type { SendResult, SocketClient } from '@/shared/ws/socket-client'
 
 import type { AuthEvent, AuthGateway } from '@/domains/iam/application/ports'
@@ -134,6 +134,11 @@ export class WsAuthGateway implements AuthGateway {
 
   logout(): SendResult {
     return this.#socket.send(JSON.stringify({ type: 'logout' }))
+  }
+
+  refreshSessionToken(): SendResult {
+    const frame: ClientFrame = { type: 'refresh_session_token' }
+    return this.#socket.send(JSON.stringify(frame))
   }
 
   onAuthEvent(listener: (event: AuthEvent) => void): () => void {

@@ -15,6 +15,8 @@ describe('toChatBootstrap', () => {
         websocketUrl: `${apiUrl.replace(/^http/, 'ws')}/chat/ws`,
         uiEndpoint: '/chat/ui',
         authEnabled: true,
+        authExpirationBehaviour: 'both',
+        ssoSessionRenewalIntervalSeconds: 900,
         adminPrefix: '/chat/admin',
         uiTitle: 'Workload Analyzer',
       });
@@ -90,6 +92,28 @@ describe('toChatBootstrap', () => {
       expect(result.error.code).toBe('invalid-response');
       expect(result.error.issues.some((issue) => issue.startsWith('websocketUrl'))).toBe(true);
     }
+  });
+
+  it('defaults auth expiration behaviour to none when an older bootstrap omits it', () => {
+    const legacyConfig = { ...bootstrapConfig };
+    delete legacyConfig.authExpirationBehaviour;
+    const result = toChatBootstrap(legacyConfig);
+
+    expect(isOk(result) && result.value.authExpirationBehaviour).toBe('none');
+  });
+
+  it('defaults the SSO session renewal interval to one hour when an older bootstrap omits it', () => {
+    const legacyConfig = { ...bootstrapConfig };
+    delete legacyConfig.ssoSessionRenewalIntervalSeconds;
+    const result = toChatBootstrap(legacyConfig);
+
+    expect(isOk(result) && result.value.ssoSessionRenewalIntervalSeconds).toBe(3600);
+  });
+
+  it.each([0, -5, 1.5, 2_147_484])('rejects an invalid SSO session renewal interval (%s)', (interval) => {
+    const result = toChatBootstrap({ ...bootstrapConfig, ssoSessionRenewalIntervalSeconds: interval });
+
+    expect(isErr(result)).toBe(true);
   });
 
   it('returns err (never throws) for a completely malformed payload', () => {

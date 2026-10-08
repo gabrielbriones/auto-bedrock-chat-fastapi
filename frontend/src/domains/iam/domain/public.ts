@@ -1,9 +1,11 @@
 export {
+  AUTH_EXPIRATION_BEHAVIOURS,
   initialCredentialKind,
   isKindSelectorHidden,
   toAuthPolicy,
   type AuthPolicy,
   type AuthPolicySource,
+  type AuthExpirationBehaviour,
   type SessionAuthState,
 } from '@/domains/iam/domain/auth-policy'
 export { NO_CAPABILITIES, type Capabilities } from '@/domains/iam/domain/capabilities'

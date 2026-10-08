@@ -1,6 +1,8 @@
 // Frontend-facing shape of BC-001's `GET {chat}/config` response (CONTRACT-001 §6). Splitting
 // this into `IamPolicy` / `PromptCatalog` / `ConfigurationProfile` / `FeatureFlags` (DESIGN-001 §8)
 // happens once those bounded contexts land; today's consumers (container, provider) need one type.
+import type { AuthExpirationBehaviour } from '@/domains/iam/domain/auth-policy'
+
 export type PresetPromptConfig = {
   readonly id: string;
   readonly label: string;
@@ -33,8 +35,11 @@ export type ChatBootstrap = {
   readonly presetPrompts: readonly PresetPromptConfig[];
   readonly variables: readonly Readonly<Record<string, unknown>>[];
   readonly ssoEnabled: boolean;
+  readonly authExpirationBehaviour: AuthExpirationBehaviour
+  readonly ssoSessionRenewalIntervalSeconds: number;
   readonly ssoLoginUrl: string;
   readonly ssoLogoutUrl: string;
+  readonly ssoRefreshUrl: string;
   readonly ssoAuthenticated: boolean;
   readonly ssoUserDisplay: string | null;
   readonly feedbackEnabled: boolean;
