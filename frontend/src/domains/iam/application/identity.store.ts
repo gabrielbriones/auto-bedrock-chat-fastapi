@@ -209,9 +209,10 @@ export class IdentityStore {
   }
 
   #renew(): void {
+    const renewal = this.#cancelRenewal
     void this.#ssoGateway.refresh().then((outcome) => {
-      // A logout or another expiry may have landed while the request was in flight.
-      if (outcome !== 'expired' || this.#cancelRenewal === null) {
+      // Ignore a result from a renewal lifecycle that has since stopped or restarted.
+      if (outcome !== 'expired' || renewal === null || this.#cancelRenewal !== renewal) {
         return
       }
       this.#credential = null
