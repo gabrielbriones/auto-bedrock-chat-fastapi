@@ -703,6 +703,7 @@ class ChatConfig(BaseSettings):
         default=3600,  # 1 hour
         alias="AUTOCHAT_SSO_SESSION_RENEWAL_INTERVAL",
         gt=0,
+        le=2_147_483,
         description=(
             "Seconds between the chat UI's background SSO session renewals (cookie + live socket "
             "token). Only used when auth_expiration_behaviour is not 'none'; each renewal is a real "
