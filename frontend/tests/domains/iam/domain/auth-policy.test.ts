@@ -13,11 +13,17 @@ const source = (overrides: Partial<AuthPolicySource> = {}): AuthPolicySource => 
   supportedAuthTypes: ['bearer_token', 'basic_auth', 'sso'],
   defaultAuthType: 'basic_auth',
   ssoEnabled: true,
+  authExpirationBehaviour: 'none',
   ssoLoginUrl: '/chat/auth/sso/login',
   ...overrides,
 })
 
 describe('the auth policy', () => {
+  it('carries the bootstrap auth expiration behaviour into IAM policy', () => {
+    expect(toAuthPolicy(source({ authExpirationBehaviour: 'proactive' })).authExpirationBehaviour)
+      .toBe('proactive');
+  });
+
   // FR-IAM-001
   it('drops sso from the supported kinds when sso is disabled', () => {
     const policy = toAuthPolicy(source({ ssoEnabled: false }))

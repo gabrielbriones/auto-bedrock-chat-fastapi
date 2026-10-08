@@ -33,12 +33,26 @@ export interface AuthGateway {
   // that was never requested.
   authenticate(credential: Credential): SendResult
   logout(): SendResult
+  // Best-effort: a closed socket just drops it, the next socket authenticates from the cookie.
+  refreshSessionToken(): SendResult
   onAuthEvent(listener: (event: AuthEvent) => void): () => void
 }
+
+// `unavailable` is transient (network, IdP hiccup) and waits for the next tick; `expired` is final.
+export type SsoRefreshOutcome = 'renewed' | 'expired' | 'unavailable'
 
 export interface SsoGateway {
   beginLogin(returnTo: string): void
   logout(): Promise<Result<void, Problem>>
+  // Never rejects.
+  refresh(): Promise<SsoRefreshOutcome>
+}
+
+export type Cancel = () => void
+
+// Injected, never a bare `setInterval`, so the hourly renewal can be driven in a test.
+export interface SessionRenewalScheduler {
+  every(intervalMs: number, tick: () => void): Cancel
 }
 
 export interface CapabilityProbe {

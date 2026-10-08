@@ -12,6 +12,8 @@ const serverFrame = <Type extends string>(type: Type) =>
     })
     .strict()
 
+const clientFrame = <Type extends string>(type: Type) => z.object({ type: z.literal(type) }).strict()
+
 const metadataSchema = z
   .object({
     // The backend copies the graph's own per-message metadata wholesale before adding the
@@ -174,8 +176,11 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   }),
 ])
 
+export const ClientFrameSchema = z.discriminatedUnion('type', [clientFrame('refresh_session_token')])
+
 export type ServerFrame = z.infer<typeof ServerFrameSchema>
 export type ServerFrameType = ServerFrame['type']
+export type ClientFrame = z.infer<typeof ClientFrameSchema>
 
 // CONTRACT-001 §2.4: `satisfies` makes a new server frame a compile error until it has an owner.
 export const FRAME_OWNER = {

@@ -11,12 +11,16 @@ export type SessionAuthState =
   | 'failed'
   | 'expired'
 
+export const AUTH_EXPIRATION_BEHAVIOURS = ['none', 'proactive', 'reactive', 'both'] as const
+export type AuthExpirationBehaviour = (typeof AUTH_EXPIRATION_BEHAVIOURS)[number]
+
 export type AuthPolicy = {
   readonly enabled: boolean
   readonly required: boolean
   readonly supportedKinds: readonly CredentialKind[]
   readonly defaultKind: CredentialKind | null
   readonly ssoEnabled: boolean
+  readonly authExpirationBehaviour: AuthExpirationBehaviour
   readonly ssoLoginUrl: string
 }
 
@@ -27,6 +31,7 @@ export type AuthPolicySource = {
   readonly supportedAuthTypes: readonly string[]
   readonly defaultAuthType: string
   readonly ssoEnabled: boolean
+  readonly authExpirationBehaviour: AuthExpirationBehaviour
   readonly ssoLoginUrl: string
 }
 
@@ -53,6 +58,7 @@ export const toAuthPolicy = (source: AuthPolicySource): AuthPolicy => {
     supportedKinds,
     defaultKind: defaultKind !== null && supportedKinds.includes(defaultKind) ? defaultKind : null,
     ssoEnabled: source.ssoEnabled,
+    authExpirationBehaviour: source.authExpirationBehaviour,
     ssoLoginUrl: source.ssoLoginUrl,
   }
 }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { err, ok, type Result } from '@/shared/kernel/result';
 
 import type { ChatBootstrap } from '@/app/bootstrap/chat-bootstrap';
+import { AUTH_EXPIRATION_BEHAVIOURS } from '@/domains/iam/domain/auth-policy';
 
 // Wire shape for BC-001's `GET {chat}/config` (CONTRACT-001 §6), already camelCased by the
 // backend mapper. Unknown keys are ignored by default `z.object` (not `.strict()`/`.passthrough()`).
@@ -46,8 +47,13 @@ const bootstrapConfigSchema = z.object({
   presetPrompts: z.array(presetPromptSchema),
   variables: z.array(z.record(z.string(), z.unknown())),
   ssoEnabled: z.boolean(),
+  authExpirationBehaviour: z.enum(AUTH_EXPIRATION_BEHAVIOURS).default('none'),
+  // Capped so `setInterval` (max 2^31-1 ms) never overflows into a tight renewal loop.
+  ssoSessionRenewalIntervalSeconds: z.number().int().positive().max(2_147_483).default(3600),
   ssoLoginUrl: z.string(),
   ssoLogoutUrl: z.string(),
+  // Older backends omit it; they also omit `authExpirationBehaviour`, so renewal never calls it.
+  ssoRefreshUrl: z.string().default(''),
   ssoAuthenticated: z.boolean(),
   ssoUserDisplay: z.string().nullable(),
   feedbackEnabled: z.boolean(),

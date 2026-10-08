@@ -22,6 +22,7 @@ const policySource = (overrides: Partial<AuthPolicySource> = {}): AuthPolicySour
   ],
   defaultAuthType: 'bearer_token',
   ssoEnabled: true,
+  authExpirationBehaviour: 'none',
   ssoLoginUrl: '/chat/auth/sso/login',
   ...overrides,
 })

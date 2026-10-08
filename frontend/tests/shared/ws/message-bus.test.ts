@@ -1,9 +1,19 @@
 import { describe, expect, it, jest } from '@jest/globals'
 
 import type { Logger } from '@/shared/logging/logger'
-import { FRAME_OWNER, MessageBus, ServerFrameSchema } from '@/shared/ws/message-bus'
+import { ClientFrameSchema, FRAME_OWNER, MessageBus, ServerFrameSchema } from '@/shared/ws/message-bus'
 
 const logger = (): Logger => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() })
+
+describe('ClientFrameSchema', () => {
+  it('parses the refresh-session-token frame without a server timestamp', () => {
+    expect(ClientFrameSchema.safeParse({ type: 'refresh_session_token' })).toMatchObject({ success: true })
+  })
+
+  it('rejects unexpected fields on the refresh-session-token frame', () => {
+    expect(ClientFrameSchema.safeParse({ type: 'refresh_session_token', timestamp: '2026-10-07T12:00:00Z' }).success).toBe(false)
+  })
+})
 
 describe('ServerFrameSchema', () => {
   it('parses contract frames with their required envelope and payload fields', () => {
