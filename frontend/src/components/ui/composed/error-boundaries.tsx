@@ -3,6 +3,7 @@ import { CatchBoundary, type ErrorComponentProps } from '@tanstack/react-router'
 
 import { ErrorState } from '@/components/ui/composed/error-state'
 import { SHELL } from '@/shared/copy/shell'
+import { toError } from '@/shared/kernel/errors'
 
 export type BoundaryProps = {
   // Resetting on this key is what makes navigating away from a broken view recover it.
@@ -16,7 +17,9 @@ const boundary = (description: string) =>
     return (
       <CatchBoundary
         getResetKey={() => resetKey}
-        {...(onCatch !== undefined ? { onCatch } : {})}
+        {...(onCatch !== undefined
+          ? { onCatch: (error: unknown) => { onCatch(toError(error)) } }
+          : {})}
         errorComponent={({ reset }: ErrorComponentProps) => (
           <ErrorState description={description} onRetry={reset} />
         )}
