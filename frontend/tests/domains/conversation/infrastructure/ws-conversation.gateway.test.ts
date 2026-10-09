@@ -89,13 +89,13 @@ describe('WsConversationGateway frame mapping', () => {
     })
   })
 
-  it('normalises an empty server title to null so FR-CONV-014 can supply the fallback', () => {
+  it.each(['  ', null])('normalises a %j server title to null so FR-CONV-014 can supply the fallback', (title) => {
     const harness = createHarness()
 
     harness.emit({
       type: 'conversation_list',
       timestamp: '2026-08-25T12:00:00Z',
-      conversations: [{ id: 'c-1', title: '  ', updated_at: '2026-08-25T12:00:00Z', message_count: 0 }],
+      conversations: [{ id: 'c-1', title, updated_at: '2026-08-25T12:00:00Z', message_count: 0 }],
     })
 
     expect(harness.events[0]).toMatchObject({ kind: 'listed', items: [{ title: null }] })

@@ -1543,7 +1543,8 @@ class WebSocketChatHandler:
         projected = [
             {
                 "id": c["id"],
-                "title": c.get("title"),
+                # The SPA schema requires a string; one null title would reject the whole list frame.
+                "title": c.get("title") or "",
                 "updated_at": c.get("updated_at"),
                 "message_count": c.get("message_count", 0),
             }

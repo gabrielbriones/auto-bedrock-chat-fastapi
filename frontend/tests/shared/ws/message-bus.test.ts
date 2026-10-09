@@ -211,6 +211,26 @@ describe('ServerFrameSchema', () => {
     ).toBe(true)
   })
 
+  // XMGPLAT-11976: one untitled row used to reject the whole roster, emptying the sidebar.
+  it('delivers a conversation list containing a null title', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const frame = {
+      type: 'conversation_list',
+      timestamp: '2026-10-09T12:00:00Z',
+      conversations: [
+        { id: 'c-1', title: null, updated_at: '2026-10-09T12:00:00Z', message_count: 2 },
+        { id: 'c-2', title: 'Job 42', updated_at: '2026-10-09T11:00:00Z', message_count: 4 },
+      ],
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.invalidFrameCount('conversation_list')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
+  })
+
   it('maps every contract frame type to its owning context', () => {
     expect(FRAME_OWNER).toEqual({
       connection_established: 'messaging',

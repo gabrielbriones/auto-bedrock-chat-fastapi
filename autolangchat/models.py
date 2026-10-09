@@ -620,6 +620,16 @@ class ConversationUpdateRequest(BaseModel):
     title: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v or v == "":
+            raise ValueError("Title cannot be a null value")
+        return v
+
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> "ConversationUpdateRequest":
         if self.title is None and self.metadata is None:

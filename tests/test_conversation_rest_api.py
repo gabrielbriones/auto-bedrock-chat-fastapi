@@ -169,6 +169,24 @@ def test_patch_updates_title(client):
     assert r.json()["title"] == "Renamed"
 
 
+def test_patch_trims_title(client):
+    created = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice")).json()
+    r = client.patch(f"/chat/conversations/{created['id']}", json={"title": "  Job 42  "}, headers=_auth("alice"))
+    assert r.status_code == 200
+    assert r.json()["title"] == "Job 42"
+
+
+@pytest.mark.parametrize("body", [{"title": ""}, {"title": "   "}, {"title": None}])
+def test_patch_rejects_blank_or_null_title_and_keeps_previous(client, body):
+    created = client.post(
+        "/chat/conversations", json={"user_id": "alice", "title": "Original"}, headers=_auth("alice")
+    ).json()
+    r = client.patch(f"/chat/conversations/{created['id']}", json=body, headers=_auth("alice"))
+    assert r.status_code == 422
+    current = client.get(f"/chat/conversations/{created['id']}", headers=_auth("alice")).json()
+    assert current["title"] == "Original"
+
+
 def test_patch_requires_at_least_one_field(client):
     created = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice")).json()
     r = client.patch(f"/chat/conversations/{created['id']}", json={}, headers=_auth("alice"))
@@ -231,6 +249,17 @@ def test_list_only_returns_own_conversations(client):
     body = r.json()
     assert body["total"] == 1
     assert all(item["user_id"] == "alice" for item in body["items"])
+
+
+def test_list_tolerates_untitled_conversation(client):
+    client.post("/chat/conversations", json={"user_id": "alice", "title": "Named"}, headers=_auth("alice"))
+    client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice"))
+
+    r = client.get("/chat/conversations", params={"user_id": "alice"}, headers=_auth("alice"))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    assert {item["title"] for item in body["items"]} == {"Named", None}
 
 
 # ---------------------------------------------------------------------------
