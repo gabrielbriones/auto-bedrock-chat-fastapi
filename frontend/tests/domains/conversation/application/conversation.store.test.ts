@@ -112,8 +112,8 @@ describe('ConversationStore mutations', () => {
     expect(gateway.methods()).not.toContain(method)
   })
 
-  it('rejects a blank rename with a field error and makes no request', async () => {
-    const { store, gateway, notifications } = createHarness({ answers: ['   '] })
+  it.each(['', '   '])('rejects a blank rename %j with a field error and makes no request', async (answer) => {
+    const { store, gateway, notifications } = createHarness({ answers: [answer] })
     gateway.emit(anEvent.listed([aConversation('a')]))
 
     await store.rename(id('a'))

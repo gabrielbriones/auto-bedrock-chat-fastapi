@@ -43,6 +43,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from autolangchat import websocket_handler
 from autolangchat.websocket_handler import WebSocketChatHandler
 
@@ -234,6 +236,21 @@ async def test_conversation_list_projects_to_documented_shape_only():
         assert set(item.keys()) == {"id", "title", "updated_at", "message_count"}
         assert item["id"] == "conv-1"
         assert item["title"] == "Hello"
+    finally:
+        await store.close()
+
+
+async def test_conversation_list_sends_empty_string_for_untitled_conversation():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+        await store.create_conversation("conv-1", "alice")
+
+        ws = _new_ws()
+        await handler._handle_conversation_list(ws, {})
+
+        assert _sent(ws)[0]["conversations"][0]["title"] == ""
     finally:
         await store.close()
 
@@ -531,6 +548,41 @@ async def test_conversation_rename_of_other_users_conversation_is_not_found():
         assert sent[0]["code"] == "conversation_not_found"
         row = await store.get_conversation("bobs-conv")
         assert row["title"] == "Original"
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("payload", [{"title": None}, {"title": ""}, {"title": "   "}, {"title": 42}, {}])
+async def test_conversation_rename_rejects_blank_or_null_title_and_keeps_previous(payload):
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice", title="Original")
+        handler = _make_handler(_make_session(), conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_rename(ws, {"conversation_id": "conv-1", **payload})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_error"
+        assert sent[0]["code"] == "invalid_conversation_request"
+        assert (await store.get_conversation("conv-1"))["title"] == "Original"
+    finally:
+        await store.close()
+
+
+async def test_conversation_rename_trims_and_persists_title():
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice", title="Original")
+        handler = _make_handler(_make_session(), conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_rename(ws, {"conversation_id": "conv-1", "title": "  Job 42  "})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_renamed"
+        assert sent[0]["title"] == "Job 42"
+        assert (await store.get_conversation("conv-1"))["title"] == "Job 42"
     finally:
         await store.close()
 

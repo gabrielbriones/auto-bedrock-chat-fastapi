@@ -1543,7 +1543,8 @@ class WebSocketChatHandler:
         projected = [
             {
                 "id": c["id"],
-                "title": c.get("title"),
+                # Normalize a missing title to an empty string in the WebSocket list response.
+                "title": c.get("title") or "",
                 "updated_at": c.get("updated_at"),
                 "message_count": c.get("message_count", 0),
             }
