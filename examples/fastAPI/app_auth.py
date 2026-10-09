@@ -1015,7 +1015,7 @@ if __name__ == "__main__":
 
     print("🚀 Starting E-commerce API with Multiple Authentication Methods and AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")
-    print("💬 AI Chat Interface: http://localhost:8000/chat")
+    print("💬 AI Chat Interface (run `npm run dev` in frontend/ first): http://localhost:3000/chat/ui/")
     print("")
     print("🔐 Test Credentials for Multiple Auth Methods:")
     print("")

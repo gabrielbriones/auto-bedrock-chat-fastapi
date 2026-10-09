@@ -58,17 +58,25 @@ AUTOCHAT_MODEL_ID=us.anthropic.claude-sonnet-5
 
 ### Run
 
+The chat UI is a React SPA under [`frontend/`](frontend/README.md). Build it once before
+running the backend (the `Dockerfile` does this for you for a container build):
+
 ```bash
+cd frontend && npm ci && npm run build && cd ..
 uvicorn app:app --reload
 ```
 
-Open `http://localhost:8000/chat/ui` and start chatting with your API.
+Open `http://localhost:8000/chat/ui` and start chatting with your API. Skipping the build
+step leaves `/chat/ui` returning a 503 placeholder ("SPA build not found") — the rest of the
+plugin (WebSocket, tool calls) still works without it.
 
-The UI is a React SPA under [`frontend/`](frontend/README.md), served by FastAPI from
-`frontend/dist`. Build it once with `cd frontend && npm ci && npm run build` (the `Dockerfile`
-does this for you); point `AUTOCHAT_UI_DIST_DIR` at the build if it lives elsewhere. Released
-wheels (`.github/workflows/release.yml`) ship the built SPA inside the package, so installing from a
-release wheel needs no Node toolchain.
+Point `AUTOCHAT_UI_DIST_DIR` at the build if it lives elsewhere. Released wheels
+(`.github/workflows/release.yml`) ship the built SPA inside the package, so installing from a
+release wheel needs no Node toolchain and no build step.
+
+Iterating on the frontend's own source instead of just using the built-in UI? Run
+`npm run dev` in `frontend/` (defaults to port 3000) alongside the backend instead of
+building — see [`frontend/README.md`](frontend/README.md#develop) for the dev-server workflow.
 
 ### Using a Custom `lifespan`
 

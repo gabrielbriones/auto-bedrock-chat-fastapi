@@ -577,7 +577,7 @@ if __name__ == "__main__":
 
     print("🚀 Starting Example E-commerce API with AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")
-    print("💬 AI Chat Interface (Vite dev server): http://localhost:3000/chat/ui/")
+    print("💬 AI Chat Interface (run `npm run dev` in frontend/ first): http://localhost:3000/chat/ui/")
     print("🔗 WebSocket Chat: ws://localhost:8000/chat/ws")
     print("📊 Chat Health: http://localhost:8000/chat/health")
 
