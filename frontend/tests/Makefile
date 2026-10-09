@@ -1,7 +1,7 @@
 FRONTEND := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
 # Browser-visible Vite origin; change this once for a different test host.
-TEST_ORIGIN ?= http://localhost:3001
+TEST_ORIGIN ?= http://localhost:3000
 export TEST_ORIGIN
 
 .PHONY: help list test project bootstrap login-page login

@@ -73,11 +73,12 @@ login page (including any MFA). It cannot complete login unattended.
 available it sends a real message and may incur model costs. Run it only against a disposable
 backend; use disposable data and never point it at production.
 
-Start the backend and the Vite proxy (for example, `make dev` from the workspace root), then run:
+Start a backend (e.g. `poetry run python examples/fastAPI/app_plugin.py`) and the Vite dev
+server (`npm run dev` in `frontend/`), then run:
 
 ```bash
-TEST_ORIGIN=http://localhost:3001 npm run test:e2e:live:bootstrap
-TEST_ORIGIN=http://localhost:3001 npm run test:e2e:live
+TEST_ORIGIN=http://localhost:3000 npm run test:e2e:live:bootstrap
+TEST_ORIGIN=http://localhost:3000 npm run test:e2e:live
 ```
 
 `TEST_ORIGIN` is the browser-visible Vite origin, not the backend port. The bootstrap-only
@@ -93,9 +94,9 @@ fixture responses are supplied by this suite. It is not included in the default 
 To watch the live journey, run from a terminal in the same graphical desktop session as Chrome:
 
 ```bash
-TEST_ORIGIN=http://localhost:3001 npm run test:e2e:live:headed -- -t 'loads the real bootstrap'
-TEST_ORIGIN=http://localhost:3001 E2E_SLOWMO=1500 npm run test:e2e:live:headed
-TEST_ORIGIN=http://localhost:3001 npm run test:e2e:live:login-page
+TEST_ORIGIN=http://localhost:3000 npm run test:e2e:live:headed -- -t 'loads the real bootstrap'
+TEST_ORIGIN=http://localhost:3000 E2E_SLOWMO=1500 npm run test:e2e:live:headed
+TEST_ORIGIN=http://localhost:3000 npm run test:e2e:live:login-page
 ```
 
 Chrome stays visible, outlines the target and shows the current step in a banner and on stderr.
