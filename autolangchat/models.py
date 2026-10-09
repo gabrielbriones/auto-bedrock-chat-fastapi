@@ -627,7 +627,7 @@ class ConversationUpdateRequest(BaseModel):
             return None
         v = v.strip()
         if not v or v == "":
-            raise ValueError("Title cannot be a null value")
+            raise ValueError("Title must not be blank")
         return v
 
     @model_validator(mode="after")
