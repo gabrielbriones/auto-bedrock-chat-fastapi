@@ -28,9 +28,9 @@ const instantOf = (iso: string): Instant => {
   return isOk(parsed) ? parsed.value : Instant.EPOCH
 }
 
-// FR-CONV-014 is a presentation concern, so an empty server title is normalised to null here rather
-// than to the fallback copy.
-const titleOf = (title: string): string | null => (title.trim() === '' ? null : title)
+// FR-CONV-014 is a presentation concern, so an empty or absent server title is normalised to null
+// here rather than to the fallback copy.
+const titleOf = (title: string | null): string | null => (title === null || title.trim() === '' ? null : title)
 
 const toSummary = (summary: SummaryFrame): ConversationSummary => ({
   id: conversationId(summary.id),

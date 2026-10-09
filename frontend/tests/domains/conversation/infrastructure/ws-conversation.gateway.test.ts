@@ -101,6 +101,27 @@ describe('WsConversationGateway frame mapping', () => {
     expect(harness.events[0]).toMatchObject({ kind: 'listed', items: [{ title: null }] })
   })
 
+  // XMGPLAT-11970: a conversation with no title yet arrives with `title: null` (not an empty
+  // string) — a brand-new, not-yet-auto-titled thread. Reconciling one of these alongside an
+  // already-titled thread in the same list is the exact shape that reproduced the bug.
+  it('reconciles a conversation list containing an untitled (null title) conversation', () => {
+    const harness = createHarness()
+
+    harness.emit({
+      type: 'conversation_list',
+      timestamp: '2026-10-08T12:00:00Z',
+      conversations: [
+        { id: 'c-new', title: null, updated_at: '2026-10-08T12:00:00Z', message_count: 1 },
+        { id: 'c-old', title: 'Existing titled conversation', updated_at: '2026-10-07T12:00:00Z', message_count: 4 },
+      ],
+    })
+
+    expect(harness.events[0]).toMatchObject({
+      kind: 'listed',
+      items: [{ title: null }, { title: 'Existing titled conversation' }],
+    })
+  })
+
   // An unparseable timestamp must not sort the thread to an arbitrary place in the list.
   it('floors an unparseable updated_at at the epoch', () => {
     const harness = createHarness()

@@ -281,7 +281,7 @@ as `null`) when Bedrock doesn't return one.
 
 ```json
 { "type": "conversation_created", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
-{ "type": "conversation_list", "conversations": [ { "id": "...", "title": "...", "updated_at": "...", "message_count": 3 } ], "timestamp": "..." }
+{ "type": "conversation_list", "conversations": [ { "id": "...", "title": "...", "updated_at": "...", "message_count": 3 }, { "id": "...", "title": null, "updated_at": "...", "message_count": 1 } ], "timestamp": "..." }
 { "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "timestamp": "..." }
 { "type": "conversation_deleted", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 { "type": "conversation_all_deleted", "deleted_count": 3, "timestamp": "..." }
@@ -294,6 +294,10 @@ Note that `ai_response` also gains a `conversation_id` field (nullable) once
 this feature is enabled — see [Conversation Persistence](conversation-persistence)
 for the full lifecycle (lazy creation on first message, auto-titling, and the
 `conversation_error` codes).
+
+`conversation_list`'s `title` is `string|null`: a conversation is listed with a
+`null` title from creation until the background auto-titling turn completes
+(see `conversation_titled` above).
 
 **Typing indicator:**
 
