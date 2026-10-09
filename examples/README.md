@@ -167,6 +167,9 @@ export AUTOCHAT_SSO_ENABLED=true
 export AUTOCHAT_SSO_CLIENT_ID=<your-client-id>
 export AUTOCHAT_SSO_DISCOVERY_URL=<your-oidc-discovery-url>
 export AUTOCHAT_SSO_SESSION_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+# Must match the Vite UI's origin (port 3000), not the backend's port 8000 — the IdP
+# callback must also be registered as http://localhost:3000/chat/auth/callback
+export AUTOCHAT_SSO_PUBLIC_BASE_URL=http://localhost:3000
 
 # 3. Run the example (backend, port 8000)
 python examples/sso_okta_example.py

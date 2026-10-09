@@ -9,12 +9,12 @@ This example demonstrates:
 Prerequisites:
 - An Okta developer account (https://developer.okta.com)
 - An Okta application configured as a "Web" app with Authorization Code + PKCE
-- Redirect URI set to: http://localhost:8000/chat/auth/callback
+- Redirect URI set to: http://localhost:3000/chat/auth/callback
 
 Okta Setup:
 1. Go to Applications → Create App Integration → OIDC → Web Application
 2. Grant type: Authorization Code
-3. Sign-in redirect URI: http://localhost:8000/chat/auth/callback
+3. Sign-in redirect URI: http://localhost:3000/chat/auth/callback
 4. Assignments: Allow everyone in your org (or specific groups)
 5. Copy Client ID and Okta domain
 
@@ -26,6 +26,11 @@ Environment variables (.env):
     AUTOCHAT_SSO_SESSION_SECRET=<random-secret-at-least-32-chars>
     AUTOCHAT_SSO_SCOPES=openid profile email
     AWS_REGION=us-east-1
+
+    # The redirect URI above must match the Vite UI's own origin (port 3000), not the
+    # backend's port 8000 — the callback's own redirect back to the UI is relative, so it
+    # stays on whichever origin received it:
+    AUTOCHAT_SSO_PUBLIC_BASE_URL=http://localhost:3000
 """
 
 from datetime import datetime, timezone

@@ -69,7 +69,9 @@ const chatBase = (env.VITE_CHAT_BASE || '/chat').replace(/\/$/, '');
 // The IdP may still redirect to a legacy callback outside the chat API prefix.
 // Forward only that endpoint; the UI itself remains served by Vite at uiEndpoint.
 const ssoCallbackPath = env.VITE_SSO_CALLBACK_PATH || '/chat/auth/callback';
-const port = env.PORT === undefined || env.PORT.length === 0 ? undefined : Number(env.PORT);
+// Falls back to 3000 (not Vite's own 5173 default) so a clean checkout without a copied
+// .env still matches every "localhost:3000" URL this repo's docs and examples print.
+const port = env.PORT === undefined || env.PORT.length === 0 ? 3000 : Number(env.PORT);
 // Deployed builds set SOURCEMAP=hidden so bundles don't reference their maps (FR-TOOL-004).
 const sourcemap = env.SOURCEMAP === 'hidden' ? 'hidden' : true;
 
