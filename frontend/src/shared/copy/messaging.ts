@@ -33,6 +33,8 @@ export const MESSAGING_COPY = {
     toolResult: (position: number) => `Tool result ${position}`,
     copyCode: 'Copy code',
     interrupted: 'The connection dropped before this answer finished. Send the message again to retry.',
+    interruptedExecution:
+      'This request was interrupted in the middle of its execution and did not finish. Send the message again to retry.',
     responding: 'Assistant is responding',
     jumpToLatest: 'Jump to latest',
     jumpToLatestUnread: (count: number) => `Jump to latest, ${count} unread`,

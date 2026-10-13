@@ -39,10 +39,15 @@ export const anEvent = {
     title,
   }),
   listed: (items: readonly Conversation[]): ConversationEvent => ({ kind: 'listed', items }),
-  loaded: (name: string, roles: readonly string[] = []): ConversationEvent => ({
+  loaded: (
+    name: string,
+    roles: readonly string[] = [],
+    inProgress: boolean | null = null,
+  ): ConversationEvent => ({
     kind: 'loaded',
     id: id(name),
     messages: roles.map((role) => ({ role, toolCallCount: 0 })),
+    inProgress,
   }),
   renamed: (name: string, title: string): ConversationEvent => ({
     kind: 'renamed',

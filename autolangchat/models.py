@@ -670,3 +670,4 @@ class ConversationMessagesResponse(BaseModel):
 
     conversation_id: str
     messages: List[ConversationMessageItem]
+    in_progress: bool = False

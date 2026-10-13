@@ -36,6 +36,8 @@ export type ConversationEvent =
       readonly kind: 'loaded'
       readonly id: ConversationId
       readonly messages: readonly LoadedMessage[]
+      /** Whether the server is running a turn for this thread; null when it did not say. */
+      readonly inProgress: boolean | null
     }
   | { readonly kind: 'renamed'; readonly id: ConversationId; readonly title: string }
   | { readonly kind: 'deleted'; readonly id: ConversationId }

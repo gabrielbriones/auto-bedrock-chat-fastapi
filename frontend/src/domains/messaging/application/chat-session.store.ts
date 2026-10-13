@@ -173,6 +173,7 @@ export class ChatSessionStore {
             message.id === null ? null : messageId(message.id),
           ),
           activity: message.activity,
+          interrupted: message.interrupted === true,
           conversationId: event.conversationId,
         }))
         this.#seq = this.#history.length

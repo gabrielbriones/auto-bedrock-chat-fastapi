@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import uuid
+import weakref
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -36,7 +37,7 @@ from .exceptions import (
     WebSocketError,
 )
 from .graph.tools.manager import AuthInfo
-from .history import format_history_messages
+from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
@@ -57,6 +58,45 @@ _CONVERSATION_LIST_MAX_LIMIT = 200
 # (SQLITE_MAX_VARIABLE_NUMBER, 999 on older builds). Matches the largest
 # list a client could have selected from (_CONVERSATION_LIST_MAX_LIMIT).
 _CONVERSATION_DELETE_BULK_MAX_IDS = _CONVERSATION_LIST_MAX_LIMIT
+
+# Closing assistant message persisted when a turn dies mid tool-loop.
+_INTERRUPTED_TURN_MESSAGE = (
+    "This request was interrupted in the middle of its execution and did not finish. " "Please send your message again."
+)
+
+
+def _close_dangling_tool_loop(messages: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """Return ``messages`` plus a closing assistant message if they end mid tool-loop, else ``None``."""
+    if not ends_mid_tool_loop(messages):
+        return None
+    last = messages[-1]
+    closed = list(messages)
+    now = datetime.now().isoformat()
+    if last.get("role") == "assistant" and last.get("tool_calls"):
+        # Bedrock rejects a toolUse block without a matching toolResult on the
+        # next turn, so answer each dangling call first.
+        tool_results = [
+            {"tool_call_id": tc.get("id", ""), "name": tc.get("name", ""), "error": _INTERRUPTED_TURN_MESSAGE}
+            for tc in last["tool_calls"]
+        ]
+        closed.append(
+            {
+                "role": "tool",
+                "content": json.dumps([r["error"] for r in tool_results]),
+                "tool_results": tool_results,
+                "metadata": {"timestamp": now},
+            }
+        )
+    closed.append(
+        {
+            "role": "assistant",
+            "content": _INTERRUPTED_TURN_MESSAGE,
+            "tool_calls": [],
+            "tool_results": [],
+            "metadata": {"message_id": str(uuid.uuid4()), "timestamp": now, "interrupted": True},
+        }
+    )
+    return closed
 
 
 def _get_sso_session_store_class():
@@ -124,6 +164,11 @@ class WebSocketChatHandler:
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
         self._background_tasks: set = set()
+        # thread_id -> number of chat_graph.ainvoke calls currently running
+        # for it. Per-process: another uvicorn worker won't see these.
+        self._in_flight_threads: Dict[str, int] = {}
+        # Serialises turn start against checkpoint repair for the same thread.
+        self._thread_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
@@ -389,6 +434,7 @@ class WebSocketChatHandler:
 
         self._total_messages_handled += 1
 
+        thread_id: Optional[str] = None
         try:
             # Check if authentication is required before sending messages to LLM
             if self.config.require_tool_auth:
@@ -542,23 +588,32 @@ class WebSocketChatHandler:
             # it forward from the checkpoint automatically (total=False
             # TypedDict pass-through), so no manual aget_state is needed.
             # ------------------------------------------------------------------
-            graph_state = await self.chat_graph.ainvoke(
-                {"user_message": user_message},
-                config={
-                    "configurable": {
-                        "thread_id": thread_id,
-                        "on_progress": _on_progress,
-                        "auth_info": auth_info,
-                        "kb_store": self.kb_store,
-                        "embedding_client": self.embedding_client,
-                        "auth_context_text": auth_context_text,
-                        "chat_config": effective_config,
-                        "token_usage_store": self.token_usage_store,
-                        "session_id": session.session_id,
-                        "user_id": session.user_id,
-                    }
-                },
-            )
+            async with self._thread_lock(thread_id):
+                self._in_flight_threads[thread_id] = self._in_flight_threads.get(thread_id, 0) + 1
+            try:
+                graph_state = await self.chat_graph.ainvoke(
+                    {"user_message": user_message},
+                    config={
+                        "configurable": {
+                            "thread_id": thread_id,
+                            "on_progress": _on_progress,
+                            "auth_info": auth_info,
+                            "kb_store": self.kb_store,
+                            "embedding_client": self.embedding_client,
+                            "auth_context_text": auth_context_text,
+                            "chat_config": effective_config,
+                            "token_usage_store": self.token_usage_store,
+                            "session_id": session.session_id,
+                            "user_id": session.user_id,
+                        }
+                    },
+                )
+            finally:
+                remaining = self._in_flight_threads.get(thread_id, 1) - 1
+                if remaining > 0:
+                    self._in_flight_threads[thread_id] = remaining
+                else:
+                    self._in_flight_threads.pop(thread_id, None)
 
             # Extract the final assistant message from graph state
             graph_messages = graph_state.get("messages", [])
@@ -700,9 +755,18 @@ class WebSocketChatHandler:
             # this handler) — see token_usage_store in the ainvoke() config
             # above. Nothing to do here.
 
+        except asyncio.CancelledError:
+            # WS teardown / server shutdown: still close out a half-finished
+            # tool loop so the conversation doesn't look pending forever.
+            if thread_id is not None:
+                await self._close_interrupted_turn(thread_id)
+            raise
         except Exception as e:
             logger.error(f"Error processing chat message: {str(e)}")
             self._total_errors += 1
+
+            if thread_id is not None:
+                await self._close_interrupted_turn(thread_id)
 
             # Send error to user. ModelInvocationError (raised by
             # graph/nodes/llm_call.py when Bedrock rejects a specific model's
@@ -725,6 +789,37 @@ class WebSocketChatHandler:
                     "timestamp": datetime.now().isoformat(),
                 },
             )
+
+    def in_progress(self, thread_id: str) -> bool:
+        """Whether a chat turn is currently running for ``thread_id`` in this process."""
+        return self._in_flight_threads.get(thread_id, 0) > 0
+
+    def _thread_lock(self, thread_id: str) -> asyncio.Lock:
+        lock = self._thread_locks.get(thread_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._thread_locks[thread_id] = lock
+        return lock
+
+    async def _close_interrupted_turn(self, thread_id: str) -> None:
+        """Persist a closing assistant message if the checkpoint ends mid tool-loop.
+
+        A turn that fails or is cancelled between tool calls leaves its tool
+        messages checkpointed with no final assistant reply, which clients
+        read as "still working". Best-effort: failures are logged, not raised.
+        """
+        cfg: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        try:
+            async with self._thread_lock(thread_id):
+                if self.in_progress(thread_id):
+                    return
+                checkpoint_state = await self.chat_graph.aget_state(cfg)
+                messages = ((checkpoint_state.values or {}).get("messages") or []) if checkpoint_state else []
+                closed = _close_dangling_tool_loop(messages)
+                if closed is not None:
+                    await self.chat_graph.aupdate_state(cfg, {"messages": closed})
+        except Exception:
+            logger.exception("Failed to persist closing message for interrupted turn (thread_id=%s)", thread_id)
 
     async def _handle_ping(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle ping message"""
@@ -1623,6 +1718,21 @@ class WebSocketChatHandler:
         else:
             raw_messages = checkpoint_values.get("messages", [])
 
+        # Repairs conversations left mid tool-loop by a turn that never got
+        # to close itself (process killed, or interrupted before this fix).
+        # A recent tail may belong to a turn running on another worker.
+        async with self._thread_lock(conversation_id):
+            if not self.in_progress(conversation_id) and not has_recent_tool_loop(raw_messages):
+                closed = _close_dangling_tool_loop(raw_messages)
+                if closed is not None:
+                    try:
+                        await self.chat_graph.aupdate_state(cfg, {"messages": closed})
+                        raw_messages = closed
+                    except Exception:
+                        logger.exception(
+                            "Failed to close interrupted turn on load (conversation_id=%s)", conversation_id
+                        )
+
         history = self._format_history_messages(raw_messages)
 
         session.metadata["conversation_id"] = conversation_id
@@ -1637,6 +1747,7 @@ class WebSocketChatHandler:
                 "conversation_id": conversation_id,
                 "conversation": conversation,
                 "messages": history,
+                "in_progress": self.in_progress(conversation_id) or has_recent_tool_loop(raw_messages),
                 "timestamp": datetime.now().isoformat(),
             },
         )

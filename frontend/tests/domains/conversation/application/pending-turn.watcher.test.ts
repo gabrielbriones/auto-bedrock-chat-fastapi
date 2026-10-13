@@ -52,6 +52,36 @@ describe('pending-turn recovery', () => {
     expect(harness.scheduler.running()).toBe(false)
   })
 
+  // XMGPLAT-11977: a turn cut off mid tool-loop ends on a tool result forever.
+  it('starts no watch for a tool-terminated history when the server reports nothing running', () => {
+    const harness = createHarness()
+
+    harness.gateway.emit(anEvent.loaded('a', pendingHistory, false))
+
+    expect(harness.store.getSnapshot().pendingTurn).toBeNull()
+    expect(harness.scheduler.running()).toBe(false)
+  })
+
+  it('watches a settled-looking history while the server reports a running turn', () => {
+    const harness = createHarness()
+
+    harness.gateway.emit(anEvent.loaded('a', ['user', 'assistant'], true))
+
+    expect(harness.scheduler.running()).toBe(true)
+    expect(harness.store.getSnapshot().pendingTurn).toMatchObject({ conversationId: id('a'), exhausted: false })
+  })
+
+  it('stops watching once a poll reports the turn finished', () => {
+    const harness = createHarness()
+    harness.gateway.emit(anEvent.loaded('a', pendingHistory, true))
+
+    harness.scheduler.advance()
+    harness.gateway.emit(anEvent.loaded('a', pendingHistory, false))
+
+    expect(harness.store.getSnapshot().pendingTurn).toBeNull()
+    expect(harness.scheduler.running()).toBe(false)
+  })
+
   // FR-CONV-009a / Q18. The unrelated frames are the point: a counter that resets on any reply
   // never reaches its bound, which is how the legacy client polled forever.
   it('reaches the bound and stops, with unrelated frames arriving throughout', () => {

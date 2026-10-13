@@ -159,6 +159,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
     conversation_id: z.string(),
     conversation: z.record(z.string(), z.unknown()),
     messages: z.array(messageSchema),
+    // XMGPLAT-11977: optional so an older server without the flag still parses.
+    in_progress: z.boolean().optional(),
   }),
   serverFrame('conversation_renamed').extend({
     conversation_id: z.string(),

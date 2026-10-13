@@ -10,6 +10,8 @@ export type LoadedHistoryMessage = {
   readonly at: Instant
   /** Tool rounds that produced this answer, already folded by the gateway; null for user messages. */
   readonly activity: TurnActivity | null
+  /** The server closed this turn because it was cut off mid execution (`metadata.interrupted`). */
+  readonly interrupted?: boolean
 }
 
 // SPEC-012 §3. The gateway hands the application layer protocol-free facts: no frame types, no

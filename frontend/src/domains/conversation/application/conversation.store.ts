@@ -4,7 +4,7 @@ import { isOk } from '@/shared/kernel/result'
 import type { ConnectionState, Unsubscribe } from '@/shared/ws/socket-client'
 
 import type { ConversationEvent } from '@/domains/conversation/domain/events'
-import { isPendingTurn } from '@/domains/conversation/domain/pending-turn'
+import { isTurnInProgress } from '@/domains/conversation/domain/pending-turn'
 import { reconcileRoster } from '@/domains/conversation/domain/reconcile-roster'
 import {
   awaitFirstTurnId,
@@ -295,11 +295,11 @@ export class ConversationStore {
       )
     }
 
-    // FR-CONV-009 / P8: whether the server is still working is decided from the history it just
-    // returned, on every load — including the ones this watch itself issued.
+    // FR-CONV-009 / P8: whether the server is still working is decided on every load — including
+    // the ones this watch itself issued.
     if (event.kind === 'loaded') {
       this.#unknownId = null
-      this.#pendingTurn.observe(event.id, isPendingTurn(event.messages))
+      this.#pendingTurn.observe(event.id, isTurnInProgress(event.inProgress, event.messages))
     }
 
     this.#roster = reconcileRoster(this.#roster, event, this.#options.clock.now())

@@ -5,7 +5,7 @@ import type { MessageId } from '@/shared/kernel/branded'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
 
 import type { MessageRole } from '@/domains/messaging/domain/message'
-import type { TranscriptEntry } from '@/domains/messaging/domain/transcript'
+import type { InterruptionReason, TranscriptEntry } from '@/domains/messaging/domain/transcript'
 import { KbCitations } from '@/domains/messaging/presentation/KbCitations'
 import { MarkdownView } from '@/domains/messaging/presentation/MarkdownView'
 import { stripReasoningBlocks } from '@/domains/messaging/presentation/redaction'
@@ -23,6 +23,12 @@ const BUBBLE_CLASS: Record<MessageRole, string> = {
   user: 'ms-auto bg-message-user-bg text-message-user-fg',
   assistant: 'bg-message-assistant-bg text-message-assistant-fg',
   system: 'bg-muted text-muted-foreground',
+}
+
+// A dropped socket is a soft notice; a turn the server cut off mid execution is an error.
+const INTERRUPTION_NOTICE: Record<InterruptionReason, { readonly text: string; readonly className: string }> = {
+  'connection-lost': { text: COPY.interrupted, className: 'text-muted-foreground' },
+  execution: { text: COPY.interruptedExecution, className: 'text-destructive' },
 }
 
 export type MessageBubbleProps = {
@@ -84,9 +90,9 @@ export const MessageBubble = memo(function MessageBubble({ entry, renderFeedback
       )}
     >
       {plainText ? message.raw : <MarkdownView content={body} />}
-      {entry.interrupted ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          {COPY.interrupted}
+      {entry.interrupted !== null ? (
+        <p className={cn('text-sm', INTERRUPTION_NOTICE[entry.interrupted].className)} role="status">
+          {INTERRUPTION_NOTICE[entry.interrupted].text}
         </p>
       ) : null}
       {entry.activity?.truncated ? (

@@ -34,7 +34,7 @@ const answered: TranscriptEntry = {
   streaming: false,
   transient: false,
   progress: false,
-  interrupted: false,
+  interrupted: null,
   activity: null,
 }
 
@@ -45,7 +45,7 @@ const streaming = (raw: string): TranscriptEntry => ({
   streaming: true,
   transient: false,
   progress: false,
-  interrupted: false,
+  interrupted: null,
   activity: null,
 })
 

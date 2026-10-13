@@ -59,6 +59,7 @@ const toConversationEvent = (frame: ServerFrame): ConversationEvent | null => {
         kind: 'loaded',
         id: conversationId(frame.conversation_id),
         messages: frame.messages.map(toLoadedMessage),
+        inProgress: frame.in_progress ?? null,
       }
     case 'conversation_renamed':
       return { kind: 'renamed', id: conversationId(frame.conversation_id), title: frame.title }

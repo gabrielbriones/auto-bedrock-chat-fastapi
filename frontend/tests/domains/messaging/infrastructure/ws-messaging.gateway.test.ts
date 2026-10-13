@@ -323,6 +323,63 @@ describe('WsMessagingGateway', () => {
     })
   })
 
+  // XMGPLAT-11977: the server closes an interrupted tool loop with an assistant message; it becomes an
+  // interruption notice and the cut-off tool round behind it is dropped.
+  it('maps an interrupted tool round to an interruption notice without its tool activity', () => {
+    const { emit, events } = createHarness()
+
+    emit({
+      type: 'conversation_loaded',
+      timestamp: TIMESTAMP,
+      conversation_id: 'c-5',
+      conversation: {},
+      messages: [
+        { message_id: null, role: 'user', content: 'Validate it', timestamp: null, tool_calls: [], tool_results: [], metadata: {} },
+        {
+          message_id: 'm-call',
+          role: 'assistant',
+          content: '',
+          timestamp: TIMESTAMP,
+          tool_calls: [{ id: 'call-1', name: 'get_job', args: {} }],
+          tool_results: [],
+          metadata: {},
+        },
+        {
+          message_id: null,
+          role: 'tool',
+          content: '',
+          timestamp: TIMESTAMP,
+          tool_calls: [],
+          tool_results: [{ tool_call_id: 'call-1', name: 'get_job', error: 'Request interrupted' }],
+          metadata: {},
+        },
+        {
+          message_id: 'm-closing',
+          role: 'assistant',
+          content: 'Request interrupted',
+          timestamp: TIMESTAMP,
+          tool_calls: [],
+          tool_results: [],
+          metadata: { interrupted: true },
+        },
+      ],
+      in_progress: false,
+    })
+
+    expect(events[0]).toMatchObject({
+      kind: 'history-loaded',
+      messages: [
+        { role: 'user', text: 'Validate it' },
+        { id: 'm-closing', role: 'assistant', text: '', activity: null, interrupted: true },
+      ],
+    })
+    const loaded = events[0]
+    if (loaded?.kind !== 'history-loaded') {
+      throw new Error('expected history-loaded')
+    }
+    expect(loaded.messages).toHaveLength(2)
+  })
+
   it('drops history rejected by the conversation selection coordinator', () => {
     const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
     let subscriber: ServerFrameSubscriber | undefined
