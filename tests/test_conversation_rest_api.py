@@ -17,6 +17,7 @@ Covers ``register_conversation_routes`` end-to-end through a real FastAPI
 """
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -319,6 +320,18 @@ def test_messages_reports_in_progress_only_while_turn_is_in_flight(client, chat_
 
     assert client.get(url, headers=_auth("alice")).json()["in_progress"] is False
     in_flight.add(created["id"])
+    assert client.get(url, headers=_auth("alice")).json()["in_progress"] is True
+
+
+def test_messages_reports_recent_tool_loop_as_in_progress(client, chat_graph):
+    """The turn may be running on another worker, which this one can't see."""
+    created = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice")).json()
+    chat_graph.checkpoints[created["id"]] = [
+        {"role": "user", "content": "hi", "metadata": {"message_id": "m1"}},
+        {"role": "tool", "content": "[]", "tool_results": [], "metadata": {"timestamp": datetime.now().isoformat()}},
+    ]
+    url = f"/chat/conversations/{created['id']}/messages"
+
     assert client.get(url, headers=_auth("alice")).json()["in_progress"] is True
 
 

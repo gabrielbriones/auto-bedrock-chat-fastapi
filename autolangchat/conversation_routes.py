@@ -44,7 +44,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from .admin.admin_auth import AdminIdentity
 from .db.conversation_base import BaseConversationStore
 from .exceptions import ConversationNotFoundError
-from .history import format_history_messages
+from .history import format_history_messages, has_recent_tool_loop
 from .models import (
     ConversationCreateRequest,
     ConversationDeleteAllResponse,
@@ -251,7 +251,7 @@ def register_conversation_routes(
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=page,
-            in_progress=bool(in_progress and in_progress(conversation_id)),
+            in_progress=bool(in_progress and in_progress(conversation_id)) or has_recent_tool_loop(raw_messages),
         )
 
     app.include_router(router)

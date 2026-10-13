@@ -107,8 +107,10 @@ full message shapes; a summary:
 
 `conversation_loaded` (and `GET .../messages`) carry `in_progress: bool` —
 `true` while a chat turn for that conversation is running in this server
-process. Clients should show a "still working" state and re-poll only while
-it is `true`.
+process, or while the history ends mid tool-loop and its last message is
+less than 10 minutes old (the turn may be running on another worker).
+Clients should show a "still working" state and re-poll only while it is
+`true`.
 
 If a turn fails or is cancelled (WebSocket teardown, shutdown) after the
 model started calling tools, the server appends a closing assistant message
@@ -123,9 +125,13 @@ conversation got stuck before this behavior existed), persisting the closing
 message before returning the history. The bundled UI shows such a message as
 an error notice in place of the cut-off tool calls.
 
-Caveats: the running-turn registry is per process, so with several uvicorn
-workers a load served by a different worker reports `false` — and may close
-a turn that is still running there.
+Checkpoints are shared across workers but the running-turn registry is per
+process, so the load-time repair only touches a tool-loop tail older than
+10 minutes (`TOOL_LOOP_LEASE` in `history.py`) — longer than any gap between
+checkpoint writes in a live turn. Within a process, the repair and the start
+of a turn take a per-conversation lock, so a new turn never races the write.
+The trade-off: after a crash, a conversation keeps reporting `in_progress`
+until that lease expires.
 
 ### Connection identity vs. conversation identity
 

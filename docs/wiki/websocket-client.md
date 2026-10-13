@@ -301,7 +301,8 @@ for the full lifecycle (lazy creation on first message, auto-titling, and the
 
 `conversation_loaded.in_progress` is `true` while a chat turn for that
 conversation is still running on the server (e.g. you reconnected mid
-tool-loop). Use it, not the shape of `messages`, to decide whether to show a
+tool-loop), including on another worker if its last checkpoint is recent.
+Use it, not the shape of `messages`, to decide whether to show a
 "still working" state and re-poll with `conversation_load` — see
 [Interrupted turns](conversation-persistence#in-progress-and-interrupted-turns).
 

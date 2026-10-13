@@ -40,12 +40,14 @@ Covers ``WebSocketChatHandler``:
 """
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from autolangchat import websocket_handler
+from autolangchat.history import TOOL_LOOP_LEASE
 from autolangchat.websocket_handler import WebSocketChatHandler
 
 
@@ -451,6 +453,99 @@ async def test_conversation_load_reports_in_progress_while_turn_is_running():
         assert not handler.in_progress("conv-1")
         # A completed turn is left untouched — no closing message.
         assert chat_graph._checkpoints["conv-1"][-1]["content"] == "done"
+    finally:
+        await store.close()
+
+
+def _tool_loop_messages_at(ts: datetime):
+    msgs = _tool_loop_messages()
+    msgs[-1]["metadata"] = {"timestamp": ts.isoformat()}
+    return msgs
+
+
+async def test_conversation_load_leaves_recent_tool_loop_from_another_worker_alone():
+    """Checkpoints are shared across workers: a recent tool-loop tail may be a
+    turn running elsewhere, so it is reported in progress and not overwritten."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages_at(datetime.now())
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        assert _sent(ws)[0]["in_progress"] is True
+        assert _sent(ws)[0]["messages"][-1]["role"] == "tool"
+        chat_graph.aupdate_state.assert_not_awaited()
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_repairs_tool_loop_once_its_lease_expires():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        stale = datetime.now() - TOOL_LOOP_LEASE - TOOL_LOOP_LEASE / 10
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages_at(stale)
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        assert _sent(ws)[0]["in_progress"] is False
+        assert chat_graph._checkpoints["conv-1"][-1]["metadata"]["interrupted"] is True
+    finally:
+        await store.close()
+
+
+async def test_turn_start_waits_for_an_in_progress_load_repair():
+    """A turn starting while a load is repairing the checkpoint must read the
+    repaired history, not race the write."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        session.metadata["conversation_id"] = "conv-1"
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+
+        writing = asyncio.Event()
+        release = asyncio.Event()
+        real_aupdate = chat_graph.aupdate_state.side_effect
+
+        async def slow_aupdate(cfg, values):
+            writing.set()
+            await release.wait()
+            await real_aupdate(cfg, values)
+
+        chat_graph.aupdate_state.side_effect = slow_aupdate
+        seen_at_start = []
+        real_ainvoke = chat_graph.ainvoke.side_effect
+
+        async def recording_ainvoke(inputs, config):
+            seen_at_start.append([m["role"] for m in chat_graph._checkpoints["conv-1"]])
+            return await real_ainvoke(inputs, config)
+
+        chat_graph.ainvoke.side_effect = recording_ainvoke
+
+        load = asyncio.create_task(handler._handle_conversation_load(_new_ws(), {"conversation_id": "conv-1"}))
+        await writing.wait()
+        turn = asyncio.create_task(handler._handle_chat_message(_new_ws(), {"message": "again"}))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        chat_graph.ainvoke.assert_not_awaited()
+
+        release.set()
+        await load
+        await turn
+
+        assert seen_at_start == [["user", "assistant", "tool", "assistant"]]
     finally:
         await store.close()
 

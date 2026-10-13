@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import uuid
+import weakref
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -36,7 +37,7 @@ from .exceptions import (
     WebSocketError,
 )
 from .graph.tools.manager import AuthInfo
-from .history import format_history_messages
+from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
@@ -66,7 +67,7 @@ _INTERRUPTED_TURN_MESSAGE = (
 
 def _close_dangling_tool_loop(messages: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
     """Return ``messages`` plus a closing assistant message if they end mid tool-loop, else ``None``."""
-    if not messages:
+    if not ends_mid_tool_loop(messages):
         return None
     last = messages[-1]
     closed = list(messages)
@@ -86,8 +87,6 @@ def _close_dangling_tool_loop(messages: List[Dict[str, Any]]) -> Optional[List[D
                 "metadata": {"timestamp": now},
             }
         )
-    elif last.get("role") != "tool":
-        return None
     closed.append(
         {
             "role": "assistant",
@@ -168,6 +167,8 @@ class WebSocketChatHandler:
         # thread_id -> number of chat_graph.ainvoke calls currently running
         # for it. Per-process: another uvicorn worker won't see these.
         self._in_flight_threads: Dict[str, int] = {}
+        # Serialises turn start against checkpoint repair for the same thread.
+        self._thread_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
@@ -587,7 +588,8 @@ class WebSocketChatHandler:
             # it forward from the checkpoint automatically (total=False
             # TypedDict pass-through), so no manual aget_state is needed.
             # ------------------------------------------------------------------
-            self._in_flight_threads[thread_id] = self._in_flight_threads.get(thread_id, 0) + 1
+            async with self._thread_lock(thread_id):
+                self._in_flight_threads[thread_id] = self._in_flight_threads.get(thread_id, 0) + 1
             try:
                 graph_state = await self.chat_graph.ainvoke(
                     {"user_message": user_message},
@@ -792,6 +794,13 @@ class WebSocketChatHandler:
         """Whether a chat turn is currently running for ``thread_id`` in this process."""
         return self._in_flight_threads.get(thread_id, 0) > 0
 
+    def _thread_lock(self, thread_id: str) -> asyncio.Lock:
+        lock = self._thread_locks.get(thread_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._thread_locks[thread_id] = lock
+        return lock
+
     async def _close_interrupted_turn(self, thread_id: str) -> None:
         """Persist a closing assistant message if the checkpoint ends mid tool-loop.
 
@@ -799,15 +808,16 @@ class WebSocketChatHandler:
         messages checkpointed with no final assistant reply, which clients
         read as "still working". Best-effort: failures are logged, not raised.
         """
-        if self.in_progress(thread_id):
-            return
         cfg: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
         try:
-            checkpoint_state = await self.chat_graph.aget_state(cfg)
-            messages = ((checkpoint_state.values or {}).get("messages") or []) if checkpoint_state else []
-            closed = _close_dangling_tool_loop(messages)
-            if closed is not None and not self.in_progress(thread_id):
-                await self.chat_graph.aupdate_state(cfg, {"messages": closed})
+            async with self._thread_lock(thread_id):
+                if self.in_progress(thread_id):
+                    return
+                checkpoint_state = await self.chat_graph.aget_state(cfg)
+                messages = ((checkpoint_state.values or {}).get("messages") or []) if checkpoint_state else []
+                closed = _close_dangling_tool_loop(messages)
+                if closed is not None:
+                    await self.chat_graph.aupdate_state(cfg, {"messages": closed})
         except Exception:
             logger.exception("Failed to persist closing message for interrupted turn (thread_id=%s)", thread_id)
 
@@ -1710,14 +1720,18 @@ class WebSocketChatHandler:
 
         # Repairs conversations left mid tool-loop by a turn that never got
         # to close itself (process killed, or interrupted before this fix).
-        if not self.in_progress(conversation_id):
-            closed = _close_dangling_tool_loop(raw_messages)
-            if closed is not None:
-                try:
-                    await self.chat_graph.aupdate_state(cfg, {"messages": closed})
-                    raw_messages = closed
-                except Exception:
-                    logger.exception("Failed to close interrupted turn on load (conversation_id=%s)", conversation_id)
+        # A recent tail may belong to a turn running on another worker.
+        async with self._thread_lock(conversation_id):
+            if not self.in_progress(conversation_id) and not has_recent_tool_loop(raw_messages):
+                closed = _close_dangling_tool_loop(raw_messages)
+                if closed is not None:
+                    try:
+                        await self.chat_graph.aupdate_state(cfg, {"messages": closed})
+                        raw_messages = closed
+                    except Exception:
+                        logger.exception(
+                            "Failed to close interrupted turn on load (conversation_id=%s)", conversation_id
+                        )
 
         history = self._format_history_messages(raw_messages)
 
@@ -1733,7 +1747,7 @@ class WebSocketChatHandler:
                 "conversation_id": conversation_id,
                 "conversation": conversation,
                 "messages": history,
-                "in_progress": self.in_progress(conversation_id),
+                "in_progress": self.in_progress(conversation_id) or has_recent_tool_loop(raw_messages),
                 "timestamp": datetime.now().isoformat(),
             },
         )
