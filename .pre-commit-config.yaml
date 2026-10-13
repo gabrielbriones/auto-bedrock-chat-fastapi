@@ -49,6 +49,7 @@ repos:
     hooks:
       - id: markdownlint
         args: [--config=.markdownlint.json]
+        exclude: ^frontend/
 
   # Prettier - Code formatting (Markdown, JSON, YAML)
   - repo: https://github.com/pre-commit/mirrors-prettier
@@ -57,6 +58,7 @@ repos:
       - id: prettier
         types_or: [markdown, json, yaml]
         args: [--print-width=120]
+        exclude: ^frontend/
 
   # YAML lint
   - repo: https://github.com/adrienverge/yamllint
@@ -91,6 +93,17 @@ repos:
       - id: shellcheck
         args: [--severity=warning]
 
+  # Frontend (React SPA under frontend/) - ESLint + tsc, run via the SPA's own scripts
+  - repo: local
+    hooks:
+      - id: frontend-lint
+        name: frontend lint + typecheck
+        language: system
+        entry: bash -c 'cd frontend && npm run lint && npm run typecheck'
+        files: ^frontend/
+        exclude: ^frontend/(specs|docs)/
+        pass_filenames: false
+
 ci:
   autofix_commit_msg: |
     [pre-commit.ci] auto fixes from pre-commit.com hooks
@@ -100,5 +113,5 @@ ci:
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
   autoupdate_schedule: weekly
-  skip: []
+  skip: [frontend-lint]
   submodules: false

@@ -14,8 +14,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/autolangchat/_spa/
+/lib64/
 parts/
 sdist/
 var/

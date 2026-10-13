@@ -1,0 +1,18 @@
+export {
+  cancelCorrectionForm,
+  createFeedbackSubmission,
+  markFeedbackSubmitted,
+  openCorrectionForm,
+  revertFeedback,
+  startNegativeSubmission,
+  startPositiveSubmission,
+  submittedFeedbackSubmission,
+  toFeedbackPayload,
+  type FeedbackDraft,
+  type FeedbackFailure,
+  type FeedbackPayload,
+  type FeedbackRating,
+  type FeedbackResult,
+  type FeedbackStatus,
+  type FeedbackSubmission,
+} from '@/domains/feedback/domain/feedback-submission'

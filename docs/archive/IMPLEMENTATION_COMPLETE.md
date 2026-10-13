@@ -1,5 +1,10 @@
 # Authentication Feature - Implementation Complete ✅
 
+> **Archived.** Written before the chat UI's React/Vite rewrite (ADR-006) — the
+> `http://localhost:8000/chat` link below predates the current `/chat/ui` UI and its
+> separate frontend dev server. See [`examples/fastAPI/README.md`](../../examples/fastAPI/README.md)
+> for the current setup.
+
 ## Summary
 
 The tool call authentication system for auto-bedrock-chat-fastapi has been fully implemented, documented, and tested. This document summarizes the complete feature delivery.

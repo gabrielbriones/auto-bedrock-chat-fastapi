@@ -1,0 +1,7 @@
+{
+  "type": "conversation_error",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "code": "conversation_not_found",
+  "message": "Conversation was not found",
+  "conversation_id": "conversation-1"
+}

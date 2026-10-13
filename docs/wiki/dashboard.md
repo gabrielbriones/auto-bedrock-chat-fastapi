@@ -1,16 +1,17 @@
 # Admin Dashboard UI
 
 The Admin Dashboard is a browser-based control surface for expert
-reviewers and KB administrators. It is served at
-`{chat_endpoint}/dashboard` (default: `/chat/dashboard`) when
-both `admin_enabled=True` and `enable_ui=True` are set.
+reviewers and KB administrators. It is the admin area of the React SPA,
+served at `{ui_endpoint}/admin` (default: `/chat/ui/admin`) when
+both `admin_enabled=True` and `enable_ui=True` are set. The bootstrap
+payload's `dashboardUrl` field points at it.
 
-The dashboard is a pure client-side application: the HTML shell is
-server-rendered by FastAPI at `GET {chat_endpoint}/dashboard`, but all
-data is loaded via XHR calls to the existing [Admin API](admin-api.md).
-The only new Admin API endpoint introduced is the capability probe
-(`GET /admin/_capabilities`) used to show or hide the Dashboard button
-in the Chat UI header.
+The dashboard is a pure client-side application: FastAPI serves the SPA
+build, and all data is loaded via XHR calls to the existing
+[Admin API](admin-api.md).
+The only Admin API endpoint introduced for it is the capability probe
+(`GET /admin/_capabilities`) used to show or hide the Dashboard entry
+in the Chat UI.
 
 ---
 
@@ -26,10 +27,10 @@ AUTOCHAT_ADMIN_REQUIRED_GROUPS=kb-admins
 The Chat UI automatically displays a **Dashboard** button in the header
 when both conditions are met:
 
-1. `admin_enabled=True` (the button element is rendered in the HTML).
+1. `admin_enabled=True` (the entry is included in the bootstrap payload).
 2. `GET /admin/_capabilities` returns `{"is_admin": true, ...}`.
 
-Non-admin users never see the button. Visiting `/chat/dashboard`
+Non-admin users never see the button. Visiting `/chat/ui/admin`
 directly without admin access renders an "Access Denied" empty state —
 the page itself loads no data until capability is confirmed.
 
@@ -79,10 +80,19 @@ unless `GET /admin/_capabilities` reports `kb_source_ingestion_enabled:
 true` (i.e. a KB store is configured), mirroring the Token Usage nav
 item's visibility rule.
 
-- **Ingested Sources**: a table of every distinct `source` name from
-  `GET /admin/kb/sources`, with its document count and a **Delete**
-  button. Deleting a source (`DELETE /admin/kb/sources?name=...`) hard-
+- **Ingested Sources**: a paginated table of distinct `source` names from
+  `GET /admin/kb/sources`, with type (web/file/feedback or mixed/unknown),
+  document and chunk counts, and the newest document creation time
+  (`last_created_at`, not last update). Filter by type or move between
+  pages with Previous/Next; changing the filter resets to the first page.
+  A mixed-name row retains full-source counts even when filtered by type.
+  Every row has a **Delete**
+  button. Deleting a source (`DELETE /admin/kb/sources/{source_id}`) hard-
   deletes every document — and their chunks — ingested under that name;
+  the ID is `~` plus the UTF-8 hex of the name (including slashes and dots).
+  Deletion returns a count, or `404` when no documents match; any in-flight
+  ingestion run returns `409`. This exclusion is in-process only, not
+  cross-worker locking;
   sources are identified by name, not by run id, since completed runs
   aren't tracked once `GET /admin/kb/sources/status` moves past them.
 - **Web Crawl** form (`POST /admin/kb/sources/web`): `name`, `urls`,
@@ -311,7 +321,7 @@ the Chat UI grants admin access.
 - The Dashboard button is **hidden** (not disabled) for non-admins and
   for unauthenticated users. Hiding is a UX courtesy only; server-side
   authorization is the enforced boundary.
-- Manually visiting `/chat/dashboard` without admin access
+- Manually visiting `/chat/ui/admin` without admin access
   renders the "Access Denied" empty state. No data is leaked because
   every XHR call is gated by `require_admin`.
 - All user-supplied strings (feedback content, KB content, user IDs) are

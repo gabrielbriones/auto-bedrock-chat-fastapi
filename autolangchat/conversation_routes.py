@@ -44,6 +44,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from .admin.admin_auth import AdminIdentity
 from .db.conversation_base import BaseConversationStore
 from .exceptions import ConversationNotFoundError
+from .history import format_history_messages, has_recent_tool_loop
 from .models import (
     ConversationCreateRequest,
     ConversationDeleteAllResponse,
@@ -58,25 +59,8 @@ logger = logging.getLogger(__name__)
 
 
 def _format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[ConversationMessageItem]:
-    """Convert LangGraph checkpoint message dicts to the API response shape.
-
-    Mirrors ``WebSocketChatHandler._format_history_messages`` (kept as a
-    separate copy rather than importing from ``websocket_handler`` to avoid
-    a REST-routes -> WebSocket-handler import dependency for what is a
-    small, stable mapping).
-    """
-    return [
-        ConversationMessageItem(
-            message_id=m.get("metadata", {}).get("message_id"),
-            role=m.get("role"),
-            content=m.get("content", ""),
-            timestamp=m.get("metadata", {}).get("timestamp"),
-            tool_calls=m.get("tool_calls", []),
-            tool_results=m.get("tool_results", []),
-            metadata=m.get("metadata", {}),
-        )
-        for m in raw_messages
-    ]
+    """Convert LangGraph checkpoint message dicts to the API response shape."""
+    return [ConversationMessageItem(**m) for m in format_history_messages(raw_messages)]
 
 
 def _ensure_self(user_id: str, identity: AdminIdentity) -> None:
@@ -104,6 +88,7 @@ def register_conversation_routes(
     conversation_store: BaseConversationStore,
     chat_graph: Any,
     require_conversation_user: Callable,
+    in_progress: Optional[Callable[[str], bool]] = None,
 ) -> APIRouter:
     """Register the ``{prefix}/conversations*`` routes on ``app``.
 
@@ -125,6 +110,10 @@ def register_conversation_routes(
         :class:`AdminIdentity`, reused here purely as a generic identity
         carrier — no admin-authorization semantics apply). Raises 401 if
         no identity can be resolved.
+    in_progress:
+        Optional ``thread_id -> bool`` lookup (e.g.
+        ``WebSocketChatHandler.in_progress``) reported as the
+        ``in_progress`` flag of the ``/messages`` response.
 
     Returns
     -------
@@ -259,7 +248,11 @@ def register_conversation_routes(
             window = formatted
 
         page = window[-limit:] if limit else window
-        return ConversationMessagesResponse(conversation_id=conversation_id, messages=page)
+        return ConversationMessagesResponse(
+            conversation_id=conversation_id,
+            messages=page,
+            in_progress=bool(in_progress and in_progress(conversation_id)) or has_recent_tool_loop(raw_messages),
+        )
 
     app.include_router(router)
     logger.info("Conversation REST routes registered at %s/conversations", prefix)

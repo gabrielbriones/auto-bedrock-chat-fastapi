@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from ..exceptions import KBDocumentNotFoundError
 from ..models import KBDocument, KBDocumentListFilters
 from .kb_base import BaseKBStore
+from .kb_source_types import chunk_counts_sql, coerce_utc_datetime, source_groups_cte_sql
 
 logger = logging.getLogger(__name__)
 
@@ -207,19 +208,44 @@ class PgVectorKBStore(BaseKBStore):
             conn.commit()
             return chunks_deleted
 
-    def list_sources(self) -> List[Dict[str, Any]]:
+    def list_sources(self, source_type: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
+                filter_clause = "WHERE matches_filter = 1 " if source_type is not None else ""
                 cur.execute(
-                    """
-                    SELECT source, COUNT(*) AS count
-                    FROM documents
-                    WHERE source IS NOT NULL
-                    GROUP BY source
-                    ORDER BY count DESC
-                    """
+                    source_groups_cte_sql("postgres")
+                    + "SELECT source, source_type, document_count, last_created_at "
+                    + "FROM source_groups "
+                    + filter_clause
+                    + "ORDER BY source LIMIT %s OFFSET %s",
+                    (source_type, limit, offset),
                 )
-                return [{"source": row[0], "count": row[1]} for row in cur.fetchall()]
+                page = cur.fetchall()
+                sources = [row[0] for row in page]
+                chunk_counts: Dict[str, int] = {}
+                if sources:
+                    cur.execute(chunk_counts_sql("postgres", name_count=len(sources)), tuple(sources))
+                    chunk_counts = {row[0]: row[1] for row in cur.fetchall()}
+                return [
+                    {
+                        "source": row[0],
+                        "source_type": row[1],
+                        "document_count": row[2],
+                        "chunk_count": chunk_counts.get(row[0], 0),
+                        "last_created_at": coerce_utc_datetime(row[3]),
+                    }
+                    for row in page
+                ]
+
+    def count_sources(self, source_type: Optional[str] = None) -> int:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                filter_clause = " WHERE matches_filter = 1" if source_type is not None else ""
+                cur.execute(
+                    source_groups_cte_sql("postgres") + "SELECT COUNT(*) FROM source_groups" + filter_clause,
+                    (source_type,),
+                )
+                return int(cur.fetchone()[0])
 
     def list_topics(self) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:

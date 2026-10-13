@@ -65,7 +65,7 @@ if __name__ == "__main__":
 
     print("🚀 Starting FastAPI Assistant with RAG")
     print("📚 Knowledge Base: FastAPI Documentation")
-    print("🌐 Chat UI: http://localhost:8000/chat/ui")
+    print("🌐 Chat UI (run `npm run dev` in frontend/ first): http://localhost:3000/chat/ui/")
     print("📖 API Docs: http://localhost:8000/docs")
     print("\n⚠️  First run will auto-populate KB from FastAPI docs (2-3 minutes)")
     print("   Subsequent runs will be instant (KB cached in fastapi_kb.db)")

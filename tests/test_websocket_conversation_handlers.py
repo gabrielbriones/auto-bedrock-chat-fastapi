@@ -40,10 +40,14 @@ Covers ``WebSocketChatHandler``:
 """
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from autolangchat import websocket_handler
+from autolangchat.history import TOOL_LOOP_LEASE
 from autolangchat.websocket_handler import WebSocketChatHandler
 
 
@@ -238,6 +242,21 @@ async def test_conversation_list_projects_to_documented_shape_only():
         await store.close()
 
 
+async def test_conversation_list_sends_empty_string_for_untitled_conversation():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        handler = _make_handler(session, conversation_store=store)
+        await store.create_conversation("conv-1", "alice")
+
+        ws = _new_ws()
+        await handler._handle_conversation_list(ws, {})
+
+        assert _sent(ws)[0]["conversations"][0]["title"] == ""
+    finally:
+        await store.close()
+
+
 # ---------------------------------------------------------------------------
 # conversation_load reads history via aget_state only
 # ---------------------------------------------------------------------------
@@ -320,6 +339,307 @@ async def test_conversation_load_returns_history_unavailable_when_turns_recorded
         assert session.metadata.get("conversation_id") is None
     finally:
         await store.close()
+
+
+# ---------------------------------------------------------------------------
+# In-flight turns (XMGPLAT-11977): conversation_loaded.in_progress and
+# closing messages for interrupted turns
+# ---------------------------------------------------------------------------
+
+_TOOL_CALL = {"id": "tc-1", "name": "get_job", "args": {"job_id": "j1"}}
+
+
+def _tool_loop_messages():
+    return [
+        {"role": "user", "content": "validate job", "metadata": {"message_id": "m1"}},
+        {"role": "assistant", "content": "", "tool_calls": [_TOOL_CALL], "metadata": {"message_id": "m2"}},
+        {
+            "role": "tool",
+            "content": "[]",
+            "tool_results": [{"tool_call_id": "tc-1", "name": "get_job", "result": "{}"}],
+            "metadata": {},
+        },
+    ]
+
+
+async def test_conversation_load_reports_not_in_progress_for_tool_terminated_history():
+    """History ending on a tool message with nothing running must not be
+    reported as pending — that was the stuck-banner bug."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_loaded"
+        assert sent[0]["in_progress"] is False
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_closes_and_persists_a_stuck_tool_loop():
+    """A conversation left mid tool-loop by a turn that never closed itself
+    (process killed, or stuck before this fix) is repaired on load."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        closing = _sent(ws)[0]["messages"][-1]
+        assert closing["role"] == "assistant"
+        assert closing["content"] == websocket_handler._INTERRUPTED_TURN_MESSAGE
+        assert closing["metadata"]["interrupted"] is True
+        assert chat_graph._checkpoints["conv-1"][-1]["metadata"]["interrupted"] is True
+
+        # Loading again does not stack a second closing message.
+        await handler._handle_conversation_load(_new_ws(), {"conversation_id": "conv-1"})
+        assert [m["role"] for m in chat_graph._checkpoints["conv-1"]] == ["user", "assistant", "tool", "assistant"]
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_reports_in_progress_while_turn_is_running():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        session.metadata["conversation_id"] = "conv-1"
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_ainvoke(inputs, config):
+            chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+            started.set()
+            await release.wait()
+            msgs = chat_graph._checkpoints["conv-1"]
+            msgs.append({"role": "assistant", "content": "done", "metadata": {"message_id": "m4"}})
+            return {"messages": msgs, "metadata": {}, "kb_results": []}
+
+        chat_graph.ainvoke = AsyncMock(side_effect=blocking_ainvoke)
+
+        turn = asyncio.create_task(handler._handle_chat_message(_new_ws(), {"message": "validate job"}))
+        await started.wait()
+
+        # A second connection (e.g. the user reopened the tab) loads the conversation mid-turn.
+        ws_during = _new_ws()
+        await handler._handle_conversation_load(ws_during, {"conversation_id": "conv-1"})
+        assert _sent(ws_during)[0]["in_progress"] is True
+        assert handler.in_progress("conv-1")
+        # A running turn's tool loop is not mistaken for a stuck one.
+        assert _sent(ws_during)[0]["messages"][-1]["role"] == "tool"
+        chat_graph.aupdate_state.assert_not_awaited()
+
+        release.set()
+        await turn
+
+        ws_after = _new_ws()
+        await handler._handle_conversation_load(ws_after, {"conversation_id": "conv-1"})
+        assert _sent(ws_after)[0]["in_progress"] is False
+        assert not handler.in_progress("conv-1")
+        # A completed turn is left untouched — no closing message.
+        assert chat_graph._checkpoints["conv-1"][-1]["content"] == "done"
+    finally:
+        await store.close()
+
+
+def _tool_loop_messages_at(ts: datetime):
+    msgs = _tool_loop_messages()
+    msgs[-1]["metadata"] = {"timestamp": ts.isoformat()}
+    return msgs
+
+
+async def test_conversation_load_leaves_recent_tool_loop_from_another_worker_alone():
+    """Checkpoints are shared across workers: a recent tool-loop tail may be a
+    turn running elsewhere, so it is reported in progress and not overwritten."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages_at(datetime.now())
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        assert _sent(ws)[0]["in_progress"] is True
+        assert _sent(ws)[0]["messages"][-1]["role"] == "tool"
+        chat_graph.aupdate_state.assert_not_awaited()
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_repairs_tool_loop_once_its_lease_expires():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        stale = datetime.now() - TOOL_LOOP_LEASE - TOOL_LOOP_LEASE / 10
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages_at(stale)
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        assert _sent(ws)[0]["in_progress"] is False
+        assert chat_graph._checkpoints["conv-1"][-1]["metadata"]["interrupted"] is True
+    finally:
+        await store.close()
+
+
+async def test_turn_start_waits_for_an_in_progress_load_repair():
+    """A turn starting while a load is repairing the checkpoint must read the
+    repaired history, not race the write."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        session.metadata["conversation_id"] = "conv-1"
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+
+        writing = asyncio.Event()
+        release = asyncio.Event()
+        real_aupdate = chat_graph.aupdate_state.side_effect
+
+        async def slow_aupdate(cfg, values):
+            writing.set()
+            await release.wait()
+            await real_aupdate(cfg, values)
+
+        chat_graph.aupdate_state.side_effect = slow_aupdate
+        seen_at_start = []
+        real_ainvoke = chat_graph.ainvoke.side_effect
+
+        async def recording_ainvoke(inputs, config):
+            seen_at_start.append([m["role"] for m in chat_graph._checkpoints["conv-1"]])
+            return await real_ainvoke(inputs, config)
+
+        chat_graph.ainvoke.side_effect = recording_ainvoke
+
+        load = asyncio.create_task(handler._handle_conversation_load(_new_ws(), {"conversation_id": "conv-1"}))
+        await writing.wait()
+        turn = asyncio.create_task(handler._handle_chat_message(_new_ws(), {"message": "again"}))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        chat_graph.ainvoke.assert_not_awaited()
+
+        release.set()
+        await load
+        await turn
+
+        assert seen_at_start == [["user", "assistant", "tool", "assistant"]]
+    finally:
+        await store.close()
+
+
+async def test_failed_turn_mid_tool_loop_persists_closing_assistant_message():
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    store = MagicMock()
+    store.record_turn = AsyncMock()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=store)
+
+    async def failing_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+        raise RuntimeError("bedrock exploded")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=failing_ainvoke)
+
+    ws = _new_ws()
+    await handler._handle_chat_message(ws, {"message": "validate job"})
+
+    assert any(m["type"] == "ai_response" and m.get("error") for m in _sent(ws))
+    msgs = chat_graph._checkpoints["conv-1"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
+    closing = msgs[-1]
+    assert closing["content"] == websocket_handler._INTERRUPTED_TURN_MESSAGE
+    assert closing["tool_calls"] == []
+    assert closing["metadata"]["interrupted"] is True
+    assert closing["metadata"]["message_id"]
+    assert not handler.in_progress("conv-1")
+
+
+async def test_cancelled_turn_mid_tool_loop_persists_closing_message_and_reraises():
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=MagicMock())
+
+    async def cancelled_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+        raise asyncio.CancelledError()
+
+    chat_graph.ainvoke = AsyncMock(side_effect=cancelled_ainvoke)
+
+    with pytest.raises(asyncio.CancelledError):
+        await handler._handle_chat_message(_new_ws(), {"message": "validate job"})
+
+    msgs = chat_graph._checkpoints["conv-1"]
+    assert msgs[-1]["role"] == "assistant"
+    assert msgs[-1]["metadata"]["interrupted"] is True
+    assert not handler.in_progress("conv-1")
+
+
+async def test_interrupted_turn_answers_dangling_tool_calls_before_closing():
+    """A turn cut off after the model requested tools but before any result
+    was saved gets a synthetic tool result, so the next Bedrock call isn't
+    rejected for a toolUse without a toolResult."""
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=MagicMock())
+
+    async def failing_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()[:2]
+        raise RuntimeError("tool crashed")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=failing_ainvoke)
+
+    await handler._handle_chat_message(_new_ws(), {"message": "validate job"})
+
+    msgs = chat_graph._checkpoints["conv-1"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
+    assert msgs[2]["tool_results"] == [
+        {"tool_call_id": "tc-1", "name": "get_job", "error": websocket_handler._INTERRUPTED_TURN_MESSAGE}
+    ]
+    assert msgs[-1]["metadata"]["interrupted"] is True
+
+
+async def test_failed_turn_not_ending_mid_tool_loop_leaves_history_untouched():
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=MagicMock())
+
+    async def failing_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = [{"role": "user", "content": "hi", "metadata": {}}]
+        raise RuntimeError("model rejected request")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=failing_ainvoke)
+
+    await handler._handle_chat_message(_new_ws(), {"message": "hi"})
+
+    chat_graph.aupdate_state.assert_not_awaited()
+    assert chat_graph._checkpoints["conv-1"] == [{"role": "user", "content": "hi", "metadata": {}}]
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +851,41 @@ async def test_conversation_rename_of_other_users_conversation_is_not_found():
         assert sent[0]["code"] == "conversation_not_found"
         row = await store.get_conversation("bobs-conv")
         assert row["title"] == "Original"
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("payload", [{"title": None}, {"title": ""}, {"title": "   "}, {"title": 42}, {}])
+async def test_conversation_rename_rejects_blank_or_null_title_and_keeps_previous(payload):
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice", title="Original")
+        handler = _make_handler(_make_session(), conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_rename(ws, {"conversation_id": "conv-1", **payload})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_error"
+        assert sent[0]["code"] == "invalid_conversation_request"
+        assert (await store.get_conversation("conv-1"))["title"] == "Original"
+    finally:
+        await store.close()
+
+
+async def test_conversation_rename_trims_and_persists_title():
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice", title="Original")
+        handler = _make_handler(_make_session(), conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_rename(ws, {"conversation_id": "conv-1", "title": "  Job 42  "})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_renamed"
+        assert sent[0]["title"] == "Job 42"
+        assert (await store.get_conversation("conv-1"))["title"] == "Job 42"
     finally:
         await store.close()
 

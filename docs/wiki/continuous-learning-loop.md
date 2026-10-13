@@ -134,7 +134,7 @@ and can be set in `.env` or as environment variables.
 
 ### Accessing the review queue
 
-1. Open the Dashboard at `/chat/dashboard` (the Dashboard button appears
+1. Open the Dashboard at `/chat/ui/admin` (the Dashboard button appears
    in the header when you are logged in as an admin).
 2. Navigate to the **Feedback** tab. Entries in `pending_review` status
    are shown first.

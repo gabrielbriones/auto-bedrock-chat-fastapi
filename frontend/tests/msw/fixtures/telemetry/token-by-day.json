@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "date": "2026-05-15",
+      "input_tokens": 80,
+      "output_tokens": 20,
+      "turn_count": 3
+    }
+  ]
+}

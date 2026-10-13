@@ -18,6 +18,7 @@ import sqlite_vec
 from ..exceptions import KBDocumentNotFoundError
 from ..models import KBDocument, KBDocumentListFilters
 from .kb_base import BaseKBStore
+from .kb_source_types import chunk_counts_sql, coerce_utc_datetime, source_groups_cte_sql
 
 
 def _locked(func):
@@ -605,20 +606,47 @@ class SQLiteKBStore(BaseKBStore):
         }
 
     @_locked
-    def list_sources(self) -> List[Dict[str, Any]]:
-        """Get list of all unique sources with document counts."""
+    def list_sources(self, source_type: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """List names matching a type, returning whole-source summaries."""
         cursor = self.conn.cursor()
+        filter_clause = "WHERE matches_filter = 1 " if source_type is not None else ""
         cursor.execute(
-            """
-            SELECT source, COUNT(*) as count
-            FROM documents
-            WHERE source IS NOT NULL
-            GROUP BY source
-            ORDER BY count DESC
-        """
+            source_groups_cte_sql("sqlite")
+            + "SELECT source, source_type, document_count, last_created_at "
+            + "FROM source_groups "
+            + filter_clause
+            + "ORDER BY source LIMIT ? OFFSET ?",
+            (source_type, limit, offset),
         )
+        page = cursor.fetchall()
+        chunk_counts = self._chunk_counts_for([row[0] for row in page])
+        return [
+            {
+                "source": row[0],
+                "source_type": row[1],
+                "document_count": row[2],
+                "chunk_count": chunk_counts.get(row[0], 0),
+                "last_created_at": coerce_utc_datetime(row[3]),
+            }
+            for row in page
+        ]
 
-        return [{"source": row[0], "count": row[1]} for row in cursor.fetchall()]
+    def _chunk_counts_for(self, sources: List[str]) -> Dict[str, int]:
+        """Chunk totals for exactly this page of names (not the whole KB)."""
+        if not sources:
+            return {}
+        rows = self.conn.execute(chunk_counts_sql("sqlite", name_count=len(sources)), tuple(sources)).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    @_locked
+    def count_sources(self, source_type: Optional[str] = None) -> int:
+        """Count visible source names before applying page boundaries."""
+        filter_clause = " WHERE matches_filter = 1" if source_type is not None else ""
+        row = self.conn.execute(
+            source_groups_cte_sql("sqlite") + "SELECT COUNT(*) FROM source_groups" + filter_clause,
+            (source_type,),
+        ).fetchone()
+        return int(row[0])
 
     @_locked
     def list_topics(self) -> List[Dict[str, Any]]:
@@ -640,23 +668,15 @@ class SQLiteKBStore(BaseKBStore):
     def delete_document(self, doc_id: str) -> int:
         """Delete a document and all its chunks. Returns the chunk count deleted."""
         cursor = self.conn.cursor()
-
-        # Get chunk IDs to delete from vector table
-        cursor.execute("SELECT id FROM chunks WHERE document_id = ?", (doc_id,))
-        chunk_ids = [row[0] for row in cursor.fetchall()]
-
-        # Delete from vector table
-        for chunk_id in chunk_ids:
-            cursor.execute("DELETE FROM vec_chunks WHERE chunk_id = ?", (chunk_id,))
-
-        # Delete chunks
-        cursor.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
-
-        # Delete document
-        cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-
-        self.conn.commit()
-        return len(chunk_ids)
+        cursor.execute("BEGIN")
+        try:
+            chunks_deleted = self._delete_chunks_for(cursor, doc_id)
+            cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            self.conn.commit()
+            return chunks_deleted
+        except Exception:
+            self.conn.rollback()
+            raise
 
     # ------------------------------------------------------------------
     # Admin operations
@@ -787,9 +807,9 @@ class SQLiteKBStore(BaseKBStore):
         cursor.execute(sql, params + [int(limit), int(offset)])
         return [row[0] for row in cursor.fetchall()]
 
-    def _delete_chunks_for(self, cursor: sqlite3.Cursor, doc_id: str) -> None:
+    def _delete_chunks_for(self, cursor: sqlite3.Cursor, doc_id: str) -> int:
         """Remove all chunks for ``doc_id`` from chunks, vec_chunks, and
-        fts_chunks. Caller owns the transaction.
+        fts_chunks. Return the number removed; caller owns the transaction.
         """
         cursor.execute("SELECT id FROM chunks WHERE document_id = ?", (doc_id,))
         chunk_ids = [r[0] for r in cursor.fetchall()]
@@ -797,6 +817,7 @@ class SQLiteKBStore(BaseKBStore):
             cursor.execute("DELETE FROM vec_chunks WHERE chunk_id = ?", (chunk_id,))
             cursor.execute("DELETE FROM fts_chunks WHERE chunk_id = ?", (chunk_id,))
         cursor.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
+        return len(chunk_ids)
 
     @_locked
     def update_document(

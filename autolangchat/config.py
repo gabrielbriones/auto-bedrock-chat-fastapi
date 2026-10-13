@@ -2,10 +2,10 @@
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
@@ -453,7 +453,24 @@ class ChatConfig(BaseSettings):
     ui_endpoint: str = Field(
         default="/chat/ui",
         alias="AUTOCHAT_UI_ENDPOINT",
-        description="Web UI endpoint",
+        description="Site-root mount path for the React SPA; must end in /ui (chat and dashboard are sibling routes)",
+    )
+
+    ui_dist_dir: Optional[str] = Field(
+        default=None,
+        alias="AUTOCHAT_UI_DIST_DIR",
+        description=(
+            "Directory containing the built SPA (Vite ``dist/`` with ``index.html``). "
+            "Defaults to ``<repo>/frontend/dist`` in a source checkout, else the build bundled "
+            "into the wheel (``autolangchat/_spa``)."
+        ),
+    )
+
+    sso_allowed_return_prefixes: Annotated[List[str], NoDecode] = Field(
+        default_factory=list,
+        alias="AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES",
+        description="Same-site path prefixes allowed as post-SSO redirect targets",
+        validate_default=True,
     )
 
     enable_ui: bool = Field(default=True, alias="AUTOCHAT_ENABLE_UI", description="Enable built-in chat UI")
@@ -680,6 +697,18 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_SSO_SESSION_TTL",
         gt=0,
         description="SSO session duration in seconds before requiring re-authentication",
+    )
+
+    sso_session_renewal_interval: int = Field(
+        default=3600,  # 1 hour
+        alias="AUTOCHAT_SSO_SESSION_RENEWAL_INTERVAL",
+        gt=0,
+        le=2_147_483,
+        description=(
+            "Seconds between the chat UI's background SSO session renewals (cookie + live socket "
+            "token). Only used when auth_expiration_behaviour is not 'none'; each renewal is a real "
+            "IdP refresh-token grant, so keep it well below sso_session_ttl."
+        ),
     )
 
     sso_trust_external_idp_cookies: bool = Field(
@@ -1369,6 +1398,7 @@ class ChatConfig(BaseSettings):
         "excluded_paths",
         "admin_required_groups",
         "feedback_authorized_users",
+        "sso_allowed_return_prefixes",
         "allowed_dynamic_overrides",
         "available_models",
         "providers",
@@ -1380,6 +1410,20 @@ class ChatConfig(BaseSettings):
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @field_validator("sso_allowed_return_prefixes")
+    @classmethod
+    def default_sso_allowed_return_prefixes(cls, v, info):
+        # If ui_endpoint failed validation, let Pydantic report that error
+        # instead of masking it with a KeyError from this dependent default.
+        return v or ([info.data["ui_endpoint"]] if "ui_endpoint" in info.data else [])
+
+    @field_validator("ui_endpoint")
+    @classmethod
+    def validate_ui_endpoint(cls, v: str) -> str:
+        if not v.startswith("/") or not v.rstrip("/").endswith("/ui") or "//" in v:
+            raise ValueError("ui_endpoint must be an absolute path ending in /ui (e.g. /portal/ui)")
+        return v.rstrip("/")
 
     @field_validator("temperature")
     @classmethod

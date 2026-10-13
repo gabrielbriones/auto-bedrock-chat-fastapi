@@ -1,0 +1,7 @@
+{
+  "type": "feedback_error",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "code": "feedback_unavailable",
+  "message": "Feedback is unavailable",
+  "message_id": "message-1"
+}

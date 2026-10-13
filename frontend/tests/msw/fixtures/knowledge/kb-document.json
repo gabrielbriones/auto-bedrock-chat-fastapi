@@ -1,0 +1,14 @@
+{
+  "id": "kb/2026/perf-guide",
+  "title": "Performance guide",
+  "source": "feedback",
+  "source_url": null,
+  "topic": "compute",
+  "date_published": "2026-09-01",
+  "metadata": { "owner": "perf" },
+  "tags": ["ipc", "vector"],
+  "chunk_count": null,
+  "created_at": "2026-09-01T12:00:00Z",
+  "credibility_score": 0.8,
+  "removal_flagged": false
+}

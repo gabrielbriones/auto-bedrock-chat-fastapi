@@ -49,7 +49,7 @@ That's it. The plugin registers:
 | `GET /chat/stats`             | Chat statistics                               |
 | `GET /chat/tools`             | Exposed tool metadata                         |
 | `WS /chat/ws`                 | WebSocket chat                                |
-| `GET /chat/ui`                | Built-in Chat UI (if enabled)                 |
+| `GET /chat/ui`                | Built-in React chat UI (if enabled)           |
 | `POST /chat/knowledge/search` | Hybrid knowledge-base search (if RAG enabled) |
 | `GET /chat/auth/sso/login`    | SSO login redirect (if SSO enabled)           |
 
@@ -89,7 +89,7 @@ autolangchat_plugin = add_autolangchat(
     # Endpoints
     chat_endpoint="/chat",
     websocket_endpoint="/chat/ws",
-    ui_endpoint="/chat/ui",
+    ui_endpoint="/chat/ui",     # where the React SPA is served
     enable_ui=True,
 
     # Tool access control

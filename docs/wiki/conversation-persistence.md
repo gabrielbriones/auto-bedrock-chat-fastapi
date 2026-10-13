@@ -103,6 +103,36 @@ full message shapes; a summary:
 | `conversation_history_unavailable`  | The conversation has recorded turns (`message_count > 0`) but the checkpoint has no values (process restarted with a non-persistent checkpointer) |
 | `invalid_conversation_request`      | Malformed payload (missing/invalid `conversation_id`, `title`, `limit`, `offset`)                                                                 |
 
+### In-progress and interrupted turns
+
+`conversation_loaded` (and `GET .../messages`) carry `in_progress: bool` —
+`true` while a chat turn for that conversation is running in this server
+process, or while the history ends mid tool-loop and its last message is
+less than 10 minutes old (the turn may be running on another worker).
+Clients should show a "still working" state and re-poll only while it is
+`true`.
+
+If a turn fails or is cancelled (WebSocket teardown, shutdown) after the
+model started calling tools, the server appends a closing assistant message
+to the checkpoint so the history no longer ends mid tool-loop. It has
+`metadata.interrupted: true`, and any tool call left without a result first
+gets a synthetic error result (Bedrock rejects a `toolUse` with no matching
+`toolResult` on the next turn).
+
+`conversation_load` applies the same repair to a conversation that still
+ends mid tool-loop with no turn running (e.g. the process was killed, or the
+conversation got stuck before this behavior existed), persisting the closing
+message before returning the history. The bundled UI shows such a message as
+an error notice in place of the cut-off tool calls.
+
+Checkpoints are shared across workers but the running-turn registry is per
+process, so the load-time repair only touches a tool-loop tail older than
+10 minutes (`TOOL_LOOP_LEASE` in `history.py`) — longer than any gap between
+checkpoint writes in a live turn. Within a process, the repair and the start
+of a turn take a per-conversation lock, so a new turn never races the write.
+The trade-off: after a crash, a conversation keeps reporting `in_progress`
+until that lease expires.
+
 ### Connection identity vs. conversation identity
 
 The WebSocket connection's `session_id` (from `connection_established`,
@@ -146,15 +176,15 @@ whenever `conversation_persistence_enabled=true` and the store is
 configured. Independent of `admin_enabled` — this is a regular user-facing
 feature, not part of the [Admin API](admin-api.md).
 
-| Method   | Path                                                       | Description                                                                      |
-| -------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `GET`    | `/conversations?user_id=&limit=&offset=`                   | List a user's conversations (paginated)                                          |
-| `POST`   | `/conversations`                                           | Create a conversation — body `{user_id, title?}`                                 |
-| `DELETE` | `/conversations?user_id=`                                  | Delete all of a user's conversations                                             |
-| `GET`    | `/conversations/{conversation_id}`                         | Get one conversation's metadata                                                  |
-| `PATCH`  | `/conversations/{conversation_id}`                         | Update `title` and/or `metadata` (at least one required)                         |
-| `DELETE` | `/conversations/{conversation_id}`                         | Delete one conversation                                                          |
-| `GET`    | `/conversations/{conversation_id}/messages?limit=&before=` | Read history via `aget_state` — `before` is a `message_id` cursor for pagination |
+| Method   | Path                                                       | Description                                                                                                       |
+| -------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/conversations?user_id=&limit=&offset=`                   | List a user's conversations (paginated)                                                                           |
+| `POST`   | `/conversations`                                           | Create a conversation — body `{user_id, title?}`                                                                  |
+| `DELETE` | `/conversations?user_id=`                                  | Delete all of a user's conversations                                                                              |
+| `GET`    | `/conversations/{conversation_id}`                         | Get one conversation's metadata                                                                                   |
+| `PATCH`  | `/conversations/{conversation_id}`                         | Update `title` and/or `metadata` (at least one required)                                                          |
+| `DELETE` | `/conversations/{conversation_id}`                         | Delete one conversation                                                                                           |
+| `GET`    | `/conversations/{conversation_id}/messages?limit=&before=` | Read history via `aget_state` — `before` is a `message_id` cursor for pagination; response includes `in_progress` |
 
 ### Authentication
 
@@ -235,7 +265,8 @@ drawer. The sidebar is populated purely from the WebSocket messages above
 — it re-requests the list and re-loads the last-active conversation
 automatically on every reconnect.
 
-The gate is `window.CONFIG.conversationPersistenceEnabled && authenticated`
+The gate is `conversationPersistenceEnabled && authenticated`, read from the
+`GET {chat_endpoint}/config` bootstrap payload the SPA fetches at start-up
 — hiding the UI is not a security boundary; the same auth/ownership checks
 described above apply regardless of what the client renders.
 

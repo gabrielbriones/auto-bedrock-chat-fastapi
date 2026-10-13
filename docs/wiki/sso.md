@@ -110,6 +110,7 @@ Provide **either** a discovery URL (recommended) **or** individual endpoint URLs
 | `sso_callback_path` / `AUTOCHAT_SSO_CALLBACK_PATH`                           | `"/chat/auth/callback"`  | Path on this server for the IdP callback                                                                                                                                               |
 | `sso_public_base_url` / `AUTOCHAT_SSO_PUBLIC_BASE_URL`                       | auto-detected            | Public-facing base URL for redirect URI (see [Public Base URL](#public-base-url-sso_public_base_url))                                                                                  |
 | `sso_session_ttl` / `AUTOCHAT_SSO_SESSION_TTL`                               | `86400` (24h)            | SSO session lifetime in seconds — should be set comfortably longer than the IdP access token's own lifetime; see [Session expired](#session-expired-vs-auth-expiration-handling) below |
+| `sso_session_renewal_interval` / `AUTOCHAT_SSO_SESSION_RENEWAL_INTERVAL`     | `3600` (1h)              | Seconds between the chat UI's background SSO session renewals; only active when `auth_expiration_behaviour` is not `none`. Keep it well below `sso_session_ttl`                        |
 | `sso_trust_external_idp_cookies` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES` | `False`                  | Opt-in silent-SSO shortcut — see [Silent SSO from an External IdP Cookie](#silent-sso-from-an-external-idp-cookie) below                                                               |
 
 ---
@@ -158,7 +159,7 @@ The SSO session stores:
 
 **Off by default** (`sso_trust_external_idp_cookies=False` / `AUTOCHAT_SSO_TRUST_EXTERNAL_IDP_COOKIES`). This is a UX shortcut for a specific deployment shape: another internal app, on a related subdomain, deliberately shares an active Cognito session with this app via cookies (not the Cognito JS SDK's localStorage default) scoped to a shared parent domain, and registers the **exact same** Cognito App Client ID as this app's own `sso_client_id`.
 
-When enabled, `GET /chat/ui` looks for:
+When enabled, `GET /chat/config` looks for:
 
 ```
 CognitoIdentityServiceProvider.<sso_client_id>.LastAuthUser

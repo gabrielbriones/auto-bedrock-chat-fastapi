@@ -1,0 +1,55 @@
+{
+  "websocketUrl": "ws://localhost:3000/chat/ws",
+  "uiEndpoint": "/chat/ui",
+  "authEnabled": true,
+  "requireAuth": false,
+  "supportedAuthTypes": ["bearer", "basic", "api_key", "oauth2", "custom", "sso"],
+  "defaultAuthType": "bearer",
+  "modelId": "claude-3-5-sonnet",
+  "presetPrompts": [],
+  "variables": [],
+  "ssoEnabled": false,
+  "authExpirationBehaviour": "both",
+  "ssoSessionRenewalIntervalSeconds": 900,
+  "ssoLoginUrl": "/chat/auth/sso/login",
+  "ssoLogoutUrl": "/chat/auth/sso/logout",
+  "ssoRefreshUrl": "/chat/auth/sso/refresh",
+  "ssoAuthenticated": false,
+  "ssoUserDisplay": null,
+  "feedbackEnabled": true,
+  "lockInputWhileResponding": true,
+  "adminEnabled": false,
+  "adminPrefix": "/chat/admin",
+  "dashboardUrl": "/chat/dashboard",
+  "conversationPersistenceEnabled": true,
+  "enableConfigSidebar": true,
+  "allowedDynamicOverrides": null,
+  "availableModels": [
+    {
+      "id": "us.anthropic.claude-sonnet-5",
+      "name": "Claude Sonnet 5 (US)",
+      "provider": "Anthropic",
+      "supports_temperature": false,
+      "max_output_tokens": 128000
+    }
+  ],
+  "availableModelGroups": [
+    {
+      "provider": "Anthropic",
+      "models": [
+        {
+          "id": "us.anthropic.claude-sonnet-5",
+          "name": "Claude Sonnet 5 (US)",
+          "provider": "Anthropic",
+          "supports_temperature": false,
+          "max_output_tokens": 128000
+        }
+      ]
+    }
+  ],
+  "overrideDefaults": {},
+  "uiTitle": "Workload Analyzer",
+  "appTitle": "Workload Analyzer",
+  "modelDisplayName": "Claude 3.5 Sonnet",
+  "uiWelcomeMessage": "How can I help you analyze your workload today?"
+}

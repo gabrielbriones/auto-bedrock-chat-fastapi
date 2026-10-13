@@ -562,9 +562,9 @@ if __name__ == "__main__":
 
     print("🚀 Starting Example E-commerce API with AI Chat")
     print("📖 API Documentation: http://localhost:8000/docs")
-    print("💬 AI Chat Interface: http://localhost:8000/chat")
+    print("💬 AI Chat Interface (run `npm run dev` in frontend/ first): http://localhost:3000/chat/ui/")
     print("🔗 WebSocket Chat: ws://localhost:8000/chat/ws")
     print("📊 Chat Health: http://localhost:8000/chat/health")
 
     # Pass app object directly (not as string) to avoid re-importing the module
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False, log_level="info")

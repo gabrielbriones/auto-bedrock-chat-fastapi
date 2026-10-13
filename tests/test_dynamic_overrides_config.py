@@ -205,7 +205,7 @@ class TestModelProfileRestriction:
             "name": "gpt-oss-120b",
             "provider": "OpenAI",
             "supports_temperature": True,
-            "max_output_tokens": 16384,
+            "max_output_tokens": 128000,
         } in ui_models
 
     def test_get_available_models_for_ui_max_output_tokens_varies_per_model(self):

@@ -1,5 +1,10 @@
 # 🔐 Authentication Feature - Complete & Ready
 
+> **Archived.** Written before the chat UI's React/Vite rewrite (ADR-006) — the
+> `http://localhost:8000/chat` link below predates the current `/chat/ui` UI and its
+> separate frontend dev server. See [`examples/fastAPI/README.md`](../../examples/fastAPI/README.md)
+> for the current setup.
+
 ## Status: ✅ PRODUCTION READY
 
 **49/49 tests passing** | **85% code coverage** | **1,600+ lines of documentation**

@@ -1,0 +1,14 @@
+{
+  "run_id": "run-2026-09-27-001",
+  "phase": "running",
+  "source_name": "intel-docs",
+  "source_type": "web",
+  "started_at": "2026-09-27T09:00:00Z",
+  "finished_at": null,
+  "pages_crawled": 12,
+  "pages_processed": 9,
+  "files_processed": 0,
+  "chunks_written": 41,
+  "error": null,
+  "errors": ["https://example.com/broken: HTTP 404"]
+}

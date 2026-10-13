@@ -398,7 +398,7 @@ async def ingest_local_source(
                 topic=topic,
                 date_published=None,
                 metadata={
-                    "source_type": "local",
+                    "source_type": "file",
                     "source_path": doc_id,
                     "filename": os.path.basename(file_path),
                 },

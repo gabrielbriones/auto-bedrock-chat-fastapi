@@ -1,0 +1,14 @@
+{
+  "total": 128,
+  "by_status": { "pending_review": 41, "approved": 66, "rejected": 21 },
+  "by_rating": { "positive": 88, "negative": 40 },
+  "with_correction": 17,
+  "top_tags": [
+    { "tag": "emon", "count": 24 },
+    { "tag": "vectorization", "count": 19 },
+    { "tag": "ipc", "count": 12 },
+    { "tag": "branch-prediction", "count": 5 }
+  ],
+  "oldest_pending_hours": 73.5,
+  "integrated_count": 52
+}

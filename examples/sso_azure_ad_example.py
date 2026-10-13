@@ -14,7 +14,7 @@ Azure AD Setup:
 1. Azure Portal → Entra ID → App registrations → New registration
 2. Name: "My Chat App"
 3. Supported account types: "Accounts in this organizational directory only" (single tenant)
-4. Redirect URI (Web): http://localhost:8000/chat/auth/callback
+4. Redirect URI (Web): http://localhost:3000/chat/auth/callback
 5. Under "Certificates & secrets" → New client secret → copy the value
 6. Under "API permissions" → Add: Microsoft Graph → openid, profile, email
 7. Copy Application (client) ID and Directory (tenant) ID
@@ -28,6 +28,11 @@ Environment variables (.env):
     AUTOCHAT_SSO_SESSION_SECRET=<random-secret-at-least-32-chars>
     AUTOCHAT_SSO_SCOPES=openid profile email
     AWS_REGION=us-east-1
+
+    # The redirect URI above must match the Vite UI's own origin (port 3000), not the
+    # backend's port 8000 — the callback's own redirect back to the UI is relative, so it
+    # stays on whichever origin received it:
+    AUTOCHAT_SSO_PUBLIC_BASE_URL=http://localhost:3000
 """
 
 from datetime import datetime, timezone
@@ -158,5 +163,9 @@ autolangchat_plugin = add_autolangchat(
 
 if __name__ == "__main__":
     import uvicorn
+
+    print("🚀 Starting SSO Example API (Azure AD)")
+    print("📖 API Documentation: http://localhost:8000/docs")
+    print("💬 AI Chat Interface (run `npm run dev` in frontend/ first): http://localhost:3000/chat/ui/")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
