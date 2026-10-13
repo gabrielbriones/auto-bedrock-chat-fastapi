@@ -3,6 +3,7 @@ import type { RouterHistory } from '@tanstack/react-router'
 
 import type { Container } from '@/app/bootstrap/container'
 import { RoutePending } from '@/app/route-pending'
+import { toError } from '@/shared/kernel/errors'
 import { routeTree } from '@/routeTree.gen'
 
 export type CreateAppRouterOptions = {
@@ -29,8 +30,9 @@ export const createAppRouter = (container: Container, options: CreateAppRouterOp
     scrollRestoration: ({ location }) => !/\/ui(\/|$)/.test(location.pathname),
     // FR-SHELL-023: every caught render error is reported once, with the route and nothing the
     // user typed. The boundaries themselves only decide what to draw.
-    defaultOnCatch: (error) => {
-      container.logger.error('render_error', { name: error.name, message: error.message })
+    defaultOnCatch: (error: unknown) => {
+      const normalized = toError(error)
+      container.logger.error('render_error', { name: normalized.name, message: normalized.message })
     },
     ...(options.history !== undefined ? { history: options.history } : {}),
   })
