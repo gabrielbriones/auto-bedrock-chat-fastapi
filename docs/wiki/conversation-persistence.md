@@ -150,6 +150,22 @@ This lets a single connection switch between conversations via
 `conversation_load` behind a message-level ownership check rather than
 trusting a client-supplied id at connect time.
 
+**Reconnect takeover rules.** A second connection can present a
+`?session_id=` that's already bound to a live connection (e.g. a browser
+tab reopening before its old socket's disconnect has been noticed). The
+server resolves this by comparing the live session's `user_id` against the
+new connection's:
+
+- **Same user (or both anonymous):** the stale connection is evicted —
+  its WebSocket is closed server-side and its bookkeeping removed — then
+  the new connection registers cleanly under the same `session_id`.
+- **Different user:** the takeover is refused. The new connection receives
+  an `error` frame and is closed by the server; the original connection
+  and its session are left untouched.
+
+A disconnect of the superseded socket arriving after the takeover is a
+no-op: it cannot remove the replacement connection's session.
+
 ### Auth model
 
 Every `conversation_*` message requires `session.user_id` to be set

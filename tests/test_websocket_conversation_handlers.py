@@ -40,6 +40,7 @@ Covers ``WebSocketChatHandler``:
 """
 
 import asyncio
+import uuid
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -48,6 +49,7 @@ import pytest
 
 from autolangchat import websocket_handler
 from autolangchat.history import TOOL_LOOP_LEASE
+from autolangchat.session_manager import ChatSessionManager
 from autolangchat.websocket_handler import WebSocketChatHandler
 
 
@@ -1178,3 +1180,104 @@ async def test_active_thread_id_matches_chat_message_gate_directly():
             assert handler._active_thread_id(session) == "some-conv-id"
         else:
             assert handler._active_thread_id(session) == session.session_id
+
+
+# ---------------------------------------------------------------------------
+# XMGPLAT-11842: reconnect with an in-use preferred_session_id through the
+# real handle_connection entry point (not just ChatSessionManager directly)
+# ---------------------------------------------------------------------------
+
+
+def _live_ws():
+    """A WebSocket double that stays "open": receive_text() blocks forever
+    (an unset asyncio.Event), matching a connection whose message loop is
+    actually running, rather than one that disconnects immediately."""
+
+    async def _never_resolves():
+        await asyncio.Event().wait()
+
+    ws = MagicMock()
+    ws.accept = AsyncMock()
+    ws.send_json = AsyncMock()
+    ws.close = AsyncMock()
+    ws.headers = {}
+    ws.cookies = {}
+    ws.receive_text = AsyncMock(side_effect=_never_resolves)
+    return ws
+
+
+async def test_handle_connection_reconnect_while_open_evicts_stale_connection():
+    """A second connection presenting the same session_id as an already-live
+    connection must evict the stale one (closing its socket) instead of
+    leaving the old connection's mapping dangling to later pop the
+    replacement session (XMGPLAT-11842)."""
+    cfg = _make_config(max_sessions=100, session_timeout=3600, sso_session_secret=None)
+    session_manager = ChatSessionManager(cfg)
+    handler = WebSocketChatHandler(session_manager=session_manager, config=cfg, chat_graph=_make_chat_graph())
+
+    preferred = str(uuid.uuid4())
+    old_ws = _live_ws()
+    new_ws = _live_ws()
+
+    old_task = asyncio.create_task(handler.handle_connection(old_ws, user_id="alice", preferred_session_id=preferred))
+    await asyncio.wait_for(asyncio.sleep(0.05), timeout=2)
+
+    session = await session_manager.get_session_by_id(preferred)
+    assert session is not None and session.websocket is old_ws
+
+    new_task = asyncio.create_task(handler.handle_connection(new_ws, user_id="alice", preferred_session_id=preferred))
+    await asyncio.wait_for(asyncio.sleep(0.05), timeout=2)
+
+    try:
+        session = await session_manager.get_session_by_id(preferred)
+        assert session is not None and session.websocket is new_ws
+
+        old_ws.close.assert_awaited_once()
+
+        new_established = [m for m in _sent(new_ws) if m["type"] == "connection_established"]
+        assert new_established and new_established[0]["session_id"] == preferred
+    finally:
+        for task in (old_task, new_task):
+            task.cancel()
+        for task in (old_task, new_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+async def test_handle_connection_reconnect_different_user_sends_error_and_closes():
+    """A takeover attempt by a different user must surface as an ``error``
+    frame and an explicit server-side close on the *new* connection, while
+    the original connection is left completely untouched (XMGPLAT-11842)."""
+    cfg = _make_config(max_sessions=100, session_timeout=3600, sso_session_secret=None)
+    session_manager = ChatSessionManager(cfg)
+    handler = WebSocketChatHandler(session_manager=session_manager, config=cfg, chat_graph=_make_chat_graph())
+
+    preferred = str(uuid.uuid4())
+    old_ws = _live_ws()
+    new_ws = _live_ws()
+
+    old_task = asyncio.create_task(handler.handle_connection(old_ws, user_id="alice", preferred_session_id=preferred))
+    await asyncio.wait_for(asyncio.sleep(0.05), timeout=2)
+
+    try:
+        await asyncio.wait_for(
+            handler.handle_connection(new_ws, user_id="bob", preferred_session_id=preferred), timeout=2
+        )
+
+        session = await session_manager.get_session_by_id(preferred)
+        assert session is not None and session.websocket is old_ws and session.user_id == "alice"
+
+        errors = [m for m in _sent(new_ws) if m["type"] == "error"]
+        assert errors and "different user" in errors[0]["message"]
+        new_ws.close.assert_awaited_once()
+        assert new_ws.close.await_args.kwargs.get("code") == 1008
+
+        old_ws.close.assert_not_called()
+    finally:
+        old_task.cancel()
+        try:
+            await old_task
+        except asyncio.CancelledError:
+            pass

@@ -33,6 +33,7 @@ from .exceptions import (
     FeedbackError,
     InvalidStatusTransitionError,
     ModelInvocationError,
+    SessionError,
     UnauthorizedFeedbackError,
     WebSocketError,
 )
@@ -280,6 +281,21 @@ class WebSocketChatHandler:
             # Main message handling loop
             await self._message_loop(websocket)
 
+        except SessionError as e:
+            # e.g. a rejected session_id takeover by a different user — send
+            # the reason and close explicitly rather than leaving the socket
+            # open and unread (no session was registered for it to clean up).
+            logger.warning(f"Session creation rejected: {str(e)}")
+            self._total_errors += 1
+
+            try:
+                await self._send_error(websocket, str(e))
+            except BaseException:
+                pass  # Connection already closed
+            try:
+                await websocket.close(code=1008, reason="Session rejected")
+            except Exception:
+                pass  # Connection already closed
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected normally")
         except Exception as e:
