@@ -2,6 +2,206 @@
 
 <!-- version list -->
 
+## v4.0.0 (2026-10-13)
+
+### Bug Fixes
+
+- Address PR review mount and E2E asset issues
+  ([`ec2fb61`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/ec2fb61d156348aebf4abdc6f973a6c650a1323c))
+
+- Correct SSO callback origin and Vite's default dev port
+  ([`c860a80`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c860a8099e755e6aa5f7a93c017ec6a3dc933286))
+
+- Reject unicode-whitespace source names, scope chunk counts to page, preserve UTC offset
+  ([`21964d1`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/21964d1f6717824866f6494863265d7f6b860679))
+
+- Serialize KB source deletion with ingestion and safely encode names
+  ([`f6ee133`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f6ee1333b053e3c3c670db5284dd1f30392433e0))
+
+- **conversation**: Accept null title in conversation_list frames
+  ([`fb3a0a5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/fb3a0a584b8831f2efa0c7f4d66a17129220923d))
+
+- **conversation**: Avoid closing tool loops running on other workers
+  ([`cee9b30`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/cee9b3096c783deaf72305b39b01a66210057e55))
+
+- **conversation**: Fix title slide distance and add end-of-scroll pause
+  ([`9f4de71`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/9f4de71bff046660431b5a5a100de9e9965c9f5b))
+
+- **conversation**: Keep chat state in sync across thread changes
+  ([`d895e60`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d895e6084785b9cb260323a6edb81675dd5fd95e))
+
+- **conversation**: Keep list loading when a conversation has no title
+  ([`4cda18b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/4cda18b67e927021070ffc15221c9ab5d2c58905))
+
+- **conversation**: Keep sidebar title scroll speed constant
+  ([`ba001b5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/ba001b5836ccee5b6d64dc08561d51976abba73c))
+
+- **conversation**: Report in-flight turns and close interrupted ones
+  ([`5fc44c3`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5fc44c3f8d41f1e2abdaacbce2ef826284ee4003))
+
+- **frontend**: Improve loading and control layouts
+  ([`7a96307`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7a9630709d84ef16e42c53c91926e00b5c9ef268))
+
+- **frontend**: Normalize unknown error in CatchBoundary onCatch handlers
+  ([`8bb1cd8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8bb1cd8d7e019ce1086c043dd2165fa3ef1f55b3))
+
+- **frontend**: Proxy chat websocket upgrades in vite dev server
+  ([`465608d`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/465608d16b5089edf49ba6752d91144131659c90))
+
+- **frontend**: Raise --destructive contrast on dark surfaces
+  ([`aab5f46`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/aab5f46379beef623a79bc9c61388df4329eaf43))
+
+- **frontend**: Serve the bare spa base path in development
+  ([`99a732c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/99a732c2d8bd861dbe9fb49077bd3c69b43b9362))
+
+- **frontend**: Show progress while loading split routes
+  ([`dc79d48`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/dc79d480d77108ca7e546d9db3930ebddf8d0c07))
+
+- **messaging**: Follow transcript growth at a steady scroll position
+  ([`538426d`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/538426dab5a19b24a9731bb71e8c6f7ecf01cb78))
+
+- **model-picker**: Stop submenu jumping on open
+  ([`f1b4bce`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f1b4bce20acb8d507222ec5a00741a9debce26fe))
+
+- **renovate**: Scope npm rules to frontend/ only
+  ([`d592be8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d592be8d8f756e21fedf6980dd2212763ef21569))
+
+- **telemetry**: Show model display names in usage chart and table
+  ([`2a3b354`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2a3b354b1351cb46112b31fc50e3ba7dcc94a195))
+
+### Chores
+
+- Remove duplicated screenshots used for debugging
+  ([`0615a52`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0615a527d9ab67b4c424cb106d9f81e4a0436d39))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`eb1ad9d`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/eb1ad9db128219302825716bda6d3ac0a49a48ef))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`1410271`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1410271d19894bfb1d7ee18877f1bc6037aa89e3))
+
+- **deps**: Update dependency pypdf to v6.19.0
+  ([`13a654d`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/13a654d4ca6ad831c7f820959222542c133343a5))
+
+- **deps**: Update frontend-minor-patch
+  ([`9963dcd`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/9963dcd91154e0a8120d720f5a4f73ab2b7c3f14))
+
+- **deps**: Update python-minor-patch
+  ([`8313079`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8313079de2ea7a9ba37a99460ae5f35de2068c09))
+
+### Code Style
+
+- Apply black/isort formatting after main merge
+  ([`b0b06ce`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b0b06cea871ab5761f36f53bd3958339821d8d8c))
+
+### Continuous Integration
+
+- **renovate**: Track frontend npm dependencies
+  ([`40f4839`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/40f48394984518381866917892f7b0c52ab9b77c))
+
+### Documentation
+
+- Fix root README quickstart and flag stale archived auth docs
+  ([`c06a6c9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c06a6c9338e113b7b0b611d68c766930a01222b1))
+
+- **examples**: Document the separate frontend dev server requirement
+  ([`faa3095`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/faa3095341e94f1c2ada3861a609c0c378dd3f5c))
+
+- **frontend**: Reconcile dev server default port to 3000
+  ([`c8734a5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c8734a57bbd15e13b5d0ef7c5aaea4d5c0f4857e))
+
+### Features
+
+- **admin**: Restyle dashboard with blue theme and nav icons
+  ([`c9ddf05`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c9ddf050e85cb43602145d2967274e6290e4525f))
+
+- **admin-kb**: Migrate source deletion to path-based endpoint
+  ([`af9a262`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/af9a2621011c4ac82f1dfa12c207f33bcfae4bf5))
+
+- **chat**: Publish ssoLogoutUrl in the bootstrap payload
+  ([`b0528c4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b0528c4f0b6ff477bc332d1b5c92ce82d2238e92))
+
+- **chat**: Support configurable UI paths and stabilize WebSocket chat
+  ([`d9ebccb`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d9ebccbb4a14e6e91547b589e44f4e796206d71c))
+
+- **chat-ui**: Add collapsible sidebar rail and date-grouped roster
+  ([`2a516fb`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2a516fb781e0d8218b86307d4818016de2587ea8))
+
+- **chat-ui**: Animated jump-to-latest button that clears the composer
+  ([`f396bac`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f396bacc7f995f6afb3a38bd7c3cc23c57181d32))
+
+- **chat-ui**: Move model picker into the composer and settings into a dialog
+  ([`aad418f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/aad418f84013fca21758af813dc51e591f60c58f))
+
+- **chat-ui**: Move the user menu to a header avatar and polish copy
+  ([`62abf23`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/62abf23ab48369e83b3500aed9c7dca92220d9c0))
+
+- **chat-ui**: Widen layout and restyle preset bar and welcome state
+  ([`ce90c8e`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/ce90c8e4dc8adfb9cb4e89765d803f1dd90cb1dd))
+
+- **frontend**: Add account theme options and constrain model menu
+  ([`0061ab2`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/0061ab2ce950f3d47fefa6472ce5f7b66f3716af))
+
+- **frontend**: Port KB Sources admin view with override and linked-PDF support
+  ([`7b0ae98`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7b0ae98107b0b7a5c521f5204b1121f02289e2e0))
+
+- **history**: Stamp user messages and share history formatting
+  ([`91de55b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/91de55ba960ce4bf586a05aa2e9c80d3538e081f))
+
+- **kb**: Add paginated source summaries and dashboard filtering
+  ([`c06a410`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c06a410a8b26d023286da899da10b2c62b04987e))
+
+- **kb search params**: Search params for kb sources
+  ([`a691a3a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a691a3a387100fc0f5005ea6d69f3816c6e7ab3a))
+
+- **knowledge**: Add AI synthesis opt-in to web crawl and file ingest
+  ([`be533ee`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/be533ee925a51d16f8d21fd4ce16a0de828aed57))
+
+- **messaging**: Show thinking state while awaiting assistant output
+  ([`8f81c45`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8f81c45b46a89cebbe14f09889acc1b8b3d22d47))
+
+- **release**: Bundle the built SPA into the autolangchat wheel
+  ([`4540e51`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/4540e51cabcdd6114530c69d920ac3e9e281feea))
+
+- **review**: Prioritize decisions in the feedback drawer
+  ([`5c4d8bb`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5c4d8bba90b25646f60d789196f2ad3b0d5f7175))
+
+- **sso**: Renew sso session periodically and notify on expiry
+  ([`76fb77a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/76fb77a0281dbfb1ee2c34654a260b6e191a10ad))
+
+- **ui**: Replace Jinja chat UI with React SPA frontend
+  ([`3052bfd`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/3052bfd89efabc3d9cbabb72218579607d7f00a8))
+
+### Testing
+
+- Isolate example plugin import from AWS initialization
+  ([`d0b43d0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d0b43d086e0647e0e890398076878001594fab08))
+
+- **chat-ui**: Use /chat mount path in header and usage route tests
+  ([`b2085b0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b2085b0ad31233d405b2a1285c5e6ec5760c04cd))
+
+- **config**: Update gpt-oss-120b max_output_tokens expectation
+  ([`60d8ae4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/60d8ae4564e32edc6e9de5959bcc6a9e13cec23d))
+
+- **frontend**: Add opt-in live e2e smoke against a running backend
+  ([`5083e3c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5083e3c713ffeb9baf22f15c4c714e5f9218e046))
+
+- **frontend**: Apply test-audit DROP and MERGE proposals
+  ([`550ebad`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/550ebad70c6f92e411516b3870f261454e2a38e7))
+
+- **frontend**: Apply test-audit-2 DROP/MERGE proposals
+  ([`48df305`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/48df305676141bfdda4d77b14fd0fe51e06d47a0))
+
+- **frontend**: Close test-audit-2 review items and add e2e watch mode
+  ([`aab5f46`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/aab5f46379beef623a79bc9c61388df4329eaf43))
+
+- **frontend**: Migrate test suite from vitest to jest
+  ([`e5ad318`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e5ad3182b65006955b4d09b9ec341e1a6971104f))
+
+- **frontend**: Prune redundant unit and component cases
+  ([`c61a053`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c61a053858145d71c0a05475548cfdeb26f3c7a3))
+
+
 ## v3.2.0 (2026-09-28)
 
 ### Bug Fixes
