@@ -1191,9 +1191,17 @@ async def test_active_thread_id_matches_chat_message_gate_directly():
 def _live_ws():
     """A WebSocket double that stays "open": receive_text() blocks forever
     (an unset asyncio.Event), matching a connection whose message loop is
-    actually running, rather than one that disconnects immediately."""
+    actually running, rather than one that disconnects immediately.
+
+    Sets ``reached_message_loop`` the moment ``receive_text()`` is first
+    called, so callers can deterministically wait for ``handle_connection``
+    to have finished session setup instead of a fixed sleep (which can be
+    too short on a loaded CI worker and race the following assertions).
+    """
+    reached_message_loop = asyncio.Event()
 
     async def _never_resolves():
+        reached_message_loop.set()
         await asyncio.Event().wait()
 
     ws = MagicMock()
@@ -1203,7 +1211,21 @@ def _live_ws():
     ws.headers = {}
     ws.cookies = {}
     ws.receive_text = AsyncMock(side_effect=_never_resolves)
+    ws.reached_message_loop = reached_message_loop
     return ws
+
+
+def _sso_user_info(user_id):
+    """A verified-SSO ``_validate_sso_token_and_extract_user`` return value."""
+    from autolangchat.auth_handler import AuthType, Credentials
+
+    return {
+        "user_id": user_id,
+        "credentials": Credentials(auth_type=AuthType.SSO),
+        "auth_handler": MagicMock(),
+        "metadata": {},
+        "display_name": user_id,
+    }
 
 
 async def test_handle_connection_reconnect_while_open_evicts_stale_connection():
@@ -1220,13 +1242,13 @@ async def test_handle_connection_reconnect_while_open_evicts_stale_connection():
     new_ws = _live_ws()
 
     old_task = asyncio.create_task(handler.handle_connection(old_ws, user_id="alice", preferred_session_id=preferred))
-    await asyncio.wait_for(asyncio.sleep(0.05), timeout=2)
+    await asyncio.wait_for(old_ws.reached_message_loop.wait(), timeout=2)
 
     session = await session_manager.get_session_by_id(preferred)
     assert session is not None and session.websocket is old_ws
 
     new_task = asyncio.create_task(handler.handle_connection(new_ws, user_id="alice", preferred_session_id=preferred))
-    await asyncio.wait_for(asyncio.sleep(0.05), timeout=2)
+    await asyncio.wait_for(new_ws.reached_message_loop.wait(), timeout=2)
 
     try:
         session = await session_manager.get_session_by_id(preferred)
@@ -1246,24 +1268,37 @@ async def test_handle_connection_reconnect_while_open_evicts_stale_connection():
                 pass
 
 
-async def test_handle_connection_reconnect_different_user_sends_error_and_closes():
-    """A takeover attempt by a different user must surface as an ``error``
-    frame and an explicit server-side close on the *new* connection, while
-    the original connection is left completely untouched (XMGPLAT-11842)."""
-    cfg = _make_config(max_sessions=100, session_timeout=3600, sso_session_secret=None)
+async def test_handle_connection_reconnect_unauthenticated_claim_cannot_take_over_sso_session():
+    """XMGPLAT-11842 security regression: the ownership check must compare
+    *verified* identities, not raw client-supplied ones. The ``user_id``
+    query parameter is fully client-controlled (see
+    ``autolangchat/plugin.py``'s ``websocket_chat`` route), so an attacker
+    who merely knows (or guesses) a victim's user_id and active session_id
+    must not be able to evict that live, SSO-authenticated connection by
+    claiming the same ``user_id`` without presenting a valid SSO session."""
+    cfg = _make_config(max_sessions=100, session_timeout=3600, sso_session_secret="s3cr3t-session-secret")
     session_manager = ChatSessionManager(cfg)
-    handler = WebSocketChatHandler(session_manager=session_manager, config=cfg, chat_graph=_make_chat_graph())
+    handler = WebSocketChatHandler(
+        session_manager=session_manager,
+        config=cfg,
+        chat_graph=_make_chat_graph(),
+        sso_session_store=MagicMock(),
+    )
+    handler._validate_sso_token_and_extract_user = AsyncMock(return_value=_sso_user_info("alice"))
 
     preferred = str(uuid.uuid4())
     old_ws = _live_ws()
+    old_ws.cookies = {"sso_session_token": "valid-token"}
     new_ws = _live_ws()
+    # No SSO cookie on the new connection: an unauthenticated claim.
+    new_ws.cookies = {}
 
-    old_task = asyncio.create_task(handler.handle_connection(old_ws, user_id="alice", preferred_session_id=preferred))
-    await asyncio.wait_for(asyncio.sleep(0.05), timeout=2)
+    old_task = asyncio.create_task(handler.handle_connection(old_ws, preferred_session_id=preferred))
+    await asyncio.wait_for(old_ws.reached_message_loop.wait(), timeout=2)
 
     try:
         await asyncio.wait_for(
-            handler.handle_connection(new_ws, user_id="bob", preferred_session_id=preferred), timeout=2
+            handler.handle_connection(new_ws, user_id="alice", preferred_session_id=preferred), timeout=2
         )
 
         session = await session_manager.get_session_by_id(preferred)

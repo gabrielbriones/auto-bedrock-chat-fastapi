@@ -140,7 +140,13 @@ reusable via `?session_id=` to resume the same connection across a
 reconnect) is **not** the same thing as a conversation's id once this
 feature is enabled:
 
-- `session_id` identifies the live **connection**.
+- `session_id` is the connection's checkpoint/thread identity. It's
+  reusable across a reconnect by design (that's the point of `?session_id=`),
+  so it does not uniquely identify one specific live socket — the server
+  also tracks a private, server-generated `connection_id` per live socket
+  internally (never sent to clients) to distinguish "this instance of the
+  connection" from the `session_id` carried across a reconnect; see
+  "Reconnect takeover rules" below for why that distinction matters.
 - The active conversation is tracked separately per connection
   (`session.metadata["conversation_id"]` server-side); it's `null` until
   the client sends a chat message (lazy creation) or a `conversation_load`.
@@ -153,15 +159,21 @@ trusting a client-supplied id at connect time.
 **Reconnect takeover rules.** A second connection can present a
 `?session_id=` that's already bound to a live connection (e.g. a browser
 tab reopening before its old socket's disconnect has been noticed). The
-server resolves this by comparing the live session's `user_id` against the
-new connection's:
+server resolves this by comparing the live session's verified identity
+against the new connection's:
 
-- **Same user (or both anonymous):** the stale connection is evicted —
-  its WebSocket is closed server-side and its bookkeeping removed — then
-  the new connection registers cleanly under the same `session_id`.
-- **Different user:** the takeover is refused. The new connection receives
-  an `error` frame and is closed by the server; the original connection
-  and its session are left untouched.
+- **Same verified user (or both unauthenticated):** the stale connection
+  is evicted — its WebSocket is closed server-side and its bookkeeping
+  removed — then the new connection registers cleanly under the same
+  `session_id`.
+- **Different verified user:** the takeover is refused. The new connection
+  receives an `error` frame and is closed by the server; the original
+  connection and its session are left untouched.
+
+Only a server-verified identity (an authenticated SSO session) counts as
+"the same principal" here — the `user_id` the WebSocket route also accepts
+as a plain query parameter is client-supplied and is never by itself
+sufficient to claim or evict someone else's live, authenticated connection.
 
 A disconnect of the superseded socket arriving after the takeover is a
 no-op: it cannot remove the replacement connection's session.

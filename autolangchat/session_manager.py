@@ -32,6 +32,11 @@ class ChatSession:
     created_at: datetime = field(default_factory=datetime.now)
     last_activity: datetime = field(default_factory=datetime.now)
     user_id: Optional[str] = None
+    # True only when user_id came from a server-verified identity (e.g. SSO)
+    # rather than a raw, client-supplied value -- gates the reconnect-takeover
+    # ownership check in create_session(), since credentials/auth_type isn't
+    # necessarily populated yet at the point a session is first created.
+    is_authenticated: bool = False
     user_agent: Optional[str] = None
     ip_address: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -107,17 +112,16 @@ class ChatSessionManager:
         user_agent: Optional[str] = None,
         ip_address: Optional[str] = None,
         preferred_session_id: Optional[str] = None,
+        is_authenticated: bool = False,
         **metadata,
     ) -> str:
-        """Create a new chat session for the WebSocket connection"""
+        """Create a new chat session for the WebSocket connection.
 
-        # Check if we're at capacity
-        if len(self._sessions) >= self.config.max_sessions:
-            # Remove 10 oldest sessions
-            await self._cleanup_oldest_sessions(10)
-
-            if len(self._sessions) >= self.config.max_sessions:
-                raise SessionError(f"Maximum session limit reached: {self.config.max_sessions}")
+        ``is_authenticated`` must only be ``True`` when ``user_id`` comes
+        from a server-verified identity (e.g. a validated SSO session), not
+        a raw client-supplied value such as the ``?user_id=`` query
+        parameter — it gates the reconnect-takeover ownership check below.
+        """
 
         # Use the caller-supplied session_id if it looks like a valid UUID,
         # otherwise generate a fresh one. This allows clients to reconnect
@@ -144,13 +148,25 @@ class ChatSessionManager:
             session_id = str(uuid.uuid4())
 
         # Reconnect collision: preferred_session_id already belongs to a
-        # live connection. Reject takeover by a different principal; for the
-        # same user (or both anonymous) evict the stale connection first so
-        # its _websocket_to_session entry can't later pop the replacement.
+        # live connection. This must be resolved before any capacity sweep
+        # below — a replacement doesn't grow the session count, and the
+        # sweep itself must never be able to evict the very session whose
+        # ownership is being checked (that would let a capacity-sized flood
+        # silently bypass the rejection branch below).
+        #
+        # Only a server-verified identity counts as "the same principal":
+        # an unauthenticated claim (e.g. a client-supplied ?user_id= query
+        # parameter with no verified SSO session) must never be trusted as
+        # proof of owning someone else's live connection, or an attacker
+        # who merely knows an active session_id could evict it by guessing/
+        # claiming the victim's user_id without any real credentials.
         stale_websocket = None
         existing_session = self._sessions.get(session_id)
         if existing_session is not None:
-            if existing_session.user_id != user_id:
+            existing_effective_user_id = existing_session.user_id if existing_session.is_authenticated else None
+            new_effective_user_id = user_id if is_authenticated else None
+
+            if existing_effective_user_id != new_effective_user_id:
                 logger.warning(
                     "Rejected session takeover: session_id=%s is active for user=%s; " "refusing takeover by user=%s",
                     session_id,
@@ -166,12 +182,22 @@ class ChatSessionManager:
             )
             await self.remove_session_by_id(session_id, expected_connection_id=existing_session.connection_id)
             stale_websocket = existing_session.websocket
+        else:
+            # Only a genuinely new session_id can grow the session count —
+            # a same-id replacement above is a net-zero swap.
+            if len(self._sessions) >= self.config.max_sessions:
+                # Remove 10 oldest sessions
+                await self._cleanup_oldest_sessions(10)
+
+                if len(self._sessions) >= self.config.max_sessions:
+                    raise SessionError(f"Maximum session limit reached: {self.config.max_sessions}")
 
         # Create session
         session = ChatSession(
             session_id=session_id,
             websocket=websocket,
             user_id=user_id,
+            is_authenticated=is_authenticated,
             user_agent=user_agent,
             ip_address=ip_address,
             metadata=metadata,
@@ -230,7 +256,7 @@ class ChatSessionManager:
         """Get session by ID"""
         return self._sessions.get(session_id)
 
-    async def update_session_user_id(self, session_id: str, user_id: str) -> bool:
+    async def update_session_user_id(self, session_id: str, user_id: str, is_authenticated: bool = True) -> bool:
         """Update the user_id for an existing session.
 
         This is useful when a session is created without authentication
@@ -239,6 +265,11 @@ class ChatSessionManager:
         Args:
             session_id: The session ID to update
             user_id: The new user_id to set
+            is_authenticated: Whether ``user_id`` came from a server-verified
+                identity. Defaults to ``True`` since every current caller
+                only invokes this after a successful auth verification; it
+                gates the reconnect-takeover ownership check in
+                ``create_session()``.
 
         Returns:
             True if the session was updated, False if session not found
@@ -260,6 +291,7 @@ class ChatSessionManager:
 
         # Update session user_id
         session.user_id = user_id
+        session.is_authenticated = is_authenticated
 
         # Add to new user's session list
         if user_id:

@@ -15,7 +15,16 @@ replacement session" bug).
       no-op for the (already-replaced) live session;
   (d) idle-expired and capacity-evicted sessions have their sockets closed;
   (e) ``_user_sessions``/``get_statistics()`` never accumulate duplicate
-      session ids for the same user across a reconnect collision.
+      session ids for the same user across a reconnect collision;
+  (f) the ownership check only trusts a server-verified (``is_authenticated``)
+      identity: an unauthenticated claim never triggers a rejection, and an
+      unauthenticated claim of a real, SSO-authenticated user's user_id
+      cannot take over that live session (the ``user_id`` the WebSocket
+      route accepts is a plain, client-controlled query parameter);
+  (g) the collision check runs before the capacity sweep, so a full session
+      table can neither bypass a rejection (by evicting the contested
+      session out from under the check) nor cause a same-user reconnect to
+      needlessly evict unrelated sessions.
 """
 
 import asyncio
@@ -80,10 +89,14 @@ async def test_collision_different_user_takeover_rejected(session_manager):
     old_ws = _websocket()
     new_ws = _websocket()
 
-    await session_manager.create_session(websocket=old_ws, user_id="alice", preferred_session_id=preferred)
+    await session_manager.create_session(
+        websocket=old_ws, user_id="alice", preferred_session_id=preferred, is_authenticated=True
+    )
 
     with pytest.raises(SessionError):
-        await session_manager.create_session(websocket=new_ws, user_id="bob", preferred_session_id=preferred)
+        await session_manager.create_session(
+            websocket=new_ws, user_id="bob", preferred_session_id=preferred, is_authenticated=True
+        )
 
     # Original session is completely untouched.
     session = await session_manager.get_session_by_id(preferred)
@@ -92,6 +105,99 @@ async def test_collision_different_user_takeover_rejected(session_manager):
     old_ws.close.assert_not_called()
     new_ws.close.assert_not_called()
     assert await session_manager.peek_session(new_ws) is None
+
+
+async def test_collision_unauthenticated_claims_are_not_trusted_for_rejection(session_manager):
+    """Neither side's user_id is server-verified, so there is no real
+    identity to protect — the collision proceeds as a plain replacement
+    rather than being (wrongly) rejected based on two unverified, differing
+    claimed usernames."""
+    preferred = str(uuid.uuid4())
+    old_ws = _websocket()
+    new_ws = _websocket()
+
+    await session_manager.create_session(websocket=old_ws, user_id="alice", preferred_session_id=preferred)
+    await session_manager.create_session(websocket=new_ws, user_id="bob", preferred_session_id=preferred)
+
+    session = await session_manager.get_session_by_id(preferred)
+    assert session.websocket is new_ws
+    assert session.user_id == "bob"
+    old_ws.close.assert_awaited_once()
+
+
+async def test_collision_authenticated_session_cannot_be_taken_over_by_unauthenticated_claim(session_manager):
+    """Security regression: the ``user_id`` the WebSocket route accepts is a
+    plain, client-controlled query parameter (see ``plugin.py``'s
+    ``websocket_chat`` route). An attacker who merely knows a victim's
+    user_id and active session_id must not be able to evict that live,
+    *authenticated* session by claiming the same user_id without ever
+    presenting real credentials."""
+    preferred = str(uuid.uuid4())
+    old_ws = _websocket()
+    new_ws = _websocket()
+
+    await session_manager.create_session(
+        websocket=old_ws, user_id="alice", preferred_session_id=preferred, is_authenticated=True
+    )
+
+    with pytest.raises(SessionError):
+        await session_manager.create_session(
+            websocket=new_ws, user_id="alice", preferred_session_id=preferred, is_authenticated=False
+        )
+
+    session = await session_manager.get_session_by_id(preferred)
+    assert session.websocket is old_ws
+    old_ws.close.assert_not_called()
+    new_ws.close.assert_not_called()
+
+
+async def test_collision_check_runs_before_capacity_sweep_for_rejected_takeover(session_manager):
+    """A full session table must not let a different-user takeover bypass
+    rejection by evicting the very session being checked out from under it."""
+    session_manager.config.max_sessions = 1
+    preferred = str(uuid.uuid4())
+    old_ws = _websocket()
+    new_ws = _websocket()
+
+    await session_manager.create_session(
+        websocket=old_ws, user_id="alice", preferred_session_id=preferred, is_authenticated=True
+    )
+    assert await session_manager.get_session_count() == 1
+
+    with pytest.raises(SessionError):
+        await session_manager.create_session(
+            websocket=new_ws, user_id="bob", preferred_session_id=preferred, is_authenticated=True
+        )
+
+    # The contested session must survive — capacity pressure alone must
+    # never have been able to evict it ahead of the ownership check.
+    session = await session_manager.get_session_by_id(preferred)
+    assert session is not None and session.websocket is old_ws
+
+
+async def test_collision_check_runs_before_capacity_sweep_for_same_user_reconnect(session_manager):
+    """A same-user reconnect at a full session table is a net-zero swap and
+    must not trigger the capacity sweep (which would evict unrelated
+    sessions it has no business touching)."""
+    session_manager.config.max_sessions = 1
+    preferred = str(uuid.uuid4())
+    old_ws = _websocket()
+    new_ws = _websocket()
+
+    await session_manager.create_session(
+        websocket=old_ws, user_id="alice", preferred_session_id=preferred, is_authenticated=True
+    )
+    assert await session_manager.get_session_count() == 1
+
+    # Would raise "Maximum session limit reached" if this were (wrongly)
+    # treated as capacity-constrained growth instead of a 1-for-1 swap.
+    await session_manager.create_session(
+        websocket=new_ws, user_id="alice", preferred_session_id=preferred, is_authenticated=True
+    )
+
+    assert await session_manager.get_session_count() == 1
+    session = await session_manager.get_session_by_id(preferred)
+    assert session.websocket is new_ws
 
 
 async def test_remove_session_is_noop_for_superseded_websocket(session_manager):

@@ -227,13 +227,18 @@ class WebSocketChatHandler:
                         "SSO pre-auth successful: user_id=%s, display_name=%s", extracted_user_id, sso_display_name
                     )
 
-            # Create chat session with actual user_id (from SSO, passed parameter, or None)
+            # Create chat session with actual user_id (from SSO, passed parameter, or None).
+            # is_authenticated=True only when SSO pre-auth actually verified
+            # this identity — never for a raw, unverified ?user_id= query
+            # param, which must not be trusted as proof of ownership for the
+            # reconnect-takeover check in create_session().
             session_id = await self.session_manager.create_session(
                 websocket=websocket,
                 user_id=extracted_user_id,
                 user_agent=user_agent,
                 ip_address=ip_address,
                 preferred_session_id=preferred_session_id,
+                is_authenticated=bool(sso_credentials),
             )
 
             logger.info(f"WebSocket connected: session={session_id}, user={extracted_user_id}, ip={ip_address}")
