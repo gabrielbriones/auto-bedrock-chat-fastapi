@@ -17,6 +17,13 @@ export const isPendingTurn = (messages: readonly LoadedMessage[]): boolean => {
   return last.role === 'tool' || (last.role === 'assistant' && last.toolCallCount > 0)
 }
 
+// XMGPLAT-11977: the server's own flag wins. The history shape is only a guess, and a turn cut off
+// mid tool-loop leaves that guess saying "pending" forever.
+export const isTurnInProgress = (
+  inProgress: boolean | null,
+  messages: readonly LoadedMessage[],
+): boolean => inProgress ?? isPendingTurn(messages)
+
 // DESIGN-001 §4.2. `attempts` is the whole point of this being a value object: the legacy client
 // reset its counter on every reply, which made the 20-attempt ceiling unreachable (Q18).
 export type PendingTurnWatch = {

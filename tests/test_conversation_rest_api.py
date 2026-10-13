@@ -60,7 +60,12 @@ def chat_graph():
 
 
 @pytest.fixture
-def client(store, chat_graph):
+def in_flight():
+    return set()
+
+
+@pytest.fixture
+def client(store, chat_graph, in_flight):
     app = FastAPI()
 
     async def require_conversation_user(request: Request):
@@ -75,6 +80,7 @@ def client(store, chat_graph):
         conversation_store=store,
         chat_graph=chat_graph,
         require_conversation_user=require_conversation_user,
+        in_progress=in_flight.__contains__,
     )
     return TestClient(app)
 
@@ -301,6 +307,19 @@ def test_messages_returns_history_once_checkpoint_exists(client, chat_graph):
     body = r.json()
     assert body["conversation_id"] == created["id"]
     assert [m["message_id"] for m in body["messages"]] == ["m1", "m2"]
+
+
+def test_messages_reports_in_progress_only_while_turn_is_in_flight(client, chat_graph, in_flight):
+    created = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice")).json()
+    chat_graph.checkpoints[created["id"]] = [
+        {"role": "user", "content": "hi", "metadata": {"message_id": "m1"}},
+        {"role": "tool", "content": "[]", "tool_results": [], "metadata": {}},
+    ]
+    url = f"/chat/conversations/{created['id']}/messages"
+
+    assert client.get(url, headers=_auth("alice")).json()["in_progress"] is False
+    in_flight.add(created["id"])
+    assert client.get(url, headers=_auth("alice")).json()["in_progress"] is True
 
 
 def test_messages_before_cursor_pagination(client, chat_graph):

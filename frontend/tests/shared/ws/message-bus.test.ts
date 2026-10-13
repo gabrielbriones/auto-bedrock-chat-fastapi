@@ -184,6 +184,21 @@ describe('ServerFrameSchema', () => {
     ).toBe(true)
   })
 
+  // XMGPLAT-11977.
+  it('accepts conversation_loaded with or without the in_progress flag', () => {
+    const frame = {
+      type: 'conversation_loaded',
+      timestamp: '2026-10-13T12:00:00Z',
+      conversation_id: 'conversation-1',
+      conversation: {},
+      messages: [],
+    }
+
+    expect(ServerFrameSchema.safeParse(frame).success).toBe(true)
+    expect(ServerFrameSchema.safeParse({ ...frame, in_progress: true }).success).toBe(true)
+    expect(ServerFrameSchema.safeParse({ ...frame, in_progress: 'yes' }).success).toBe(false)
+  })
+
   // XMGPLAT-11970: a brand-new conversation has a null title until auto-titling runs in the
   // background. A non-nullable `title` here rejected the *entire* array for one untitled
   // conversation, silently dropping the whole roster refresh (the deep-link auto-send flow hits

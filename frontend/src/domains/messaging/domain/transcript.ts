@@ -12,9 +12,13 @@ export type TransientMessage = {
 export type HistoryMessage = {
   readonly message: ChatMessage
   readonly activity: TurnActivity | null
+  readonly interrupted?: boolean
   /** Keeps keys distinct between conversations whose messages carry no server id. */
   readonly conversationId?: string
 }
+
+/** Why an answer is incomplete: the socket dropped mid-stream, or the server cut the turn off. */
+export type InterruptionReason = 'connection-lost' | 'execution'
 
 export type TranscriptEntry = {
   readonly key: string
@@ -25,8 +29,8 @@ export type TranscriptEntry = {
   readonly transient: boolean
   /** ADR-008: a tool-progress notice, not assistant content — never markdown, never persisted. */
   readonly progress: boolean
-  /** The turn was recycled by a drop or staleness; whatever streamed is kept and marked as partial. */
-  readonly interrupted: boolean
+  /** The turn was recycled by a drop or staleness, or cut off server-side; null when complete. */
+  readonly interrupted: InterruptionReason | null
   /** Final response provenance and context-loss metadata, shown with that response only. */
   readonly activity: TurnActivity | null
 }
@@ -53,7 +57,7 @@ const activityEntry = (turn: Turn): TranscriptEntry => ({
   streaming: turn.streamText !== null,
   transient: false,
   progress: turn.toolProgress !== null,
-  interrupted: false,
+  interrupted: null,
   activity: null,
 })
 
@@ -67,7 +71,7 @@ const turnEntries = (turn: Turn): TranscriptEntry[] => {
       streaming,
       transient: false,
       progress: false,
-      interrupted: false,
+      interrupted: null,
       activity: null,
     },
   ]
@@ -91,7 +95,7 @@ const turnEntries = (turn: Turn): TranscriptEntry[] => {
       streaming: false,
       transient: false,
       progress: false,
-      interrupted: true,
+      interrupted: 'connection-lost',
       activity: null,
     })
   }
@@ -104,7 +108,7 @@ const turnEntries = (turn: Turn): TranscriptEntry[] => {
       streaming: false,
       transient: false,
       progress: false,
-      interrupted: false,
+      interrupted: null,
       activity: turn.activity,
     })
   }
@@ -112,14 +116,14 @@ const turnEntries = (turn: Turn): TranscriptEntry[] => {
   return entries
 }
 
-const historyEntry = ({ message, activity, conversationId }: HistoryMessage): TranscriptEntry => ({
+const historyEntry = ({ message, activity, interrupted, conversationId }: HistoryMessage): TranscriptEntry => ({
   key: `history:${conversationId ?? ''}:${message.id ?? message.seq}`,
   message,
   pending: false,
   streaming: false,
   transient: false,
   progress: false,
-  interrupted: false,
+  interrupted: interrupted === true ? 'execution' : null,
   activity,
 })
 
@@ -142,7 +146,7 @@ export const renderTranscript = (
       streaming: false,
       transient: true,
       progress: false,
-      interrupted: false,
+      interrupted: null,
       activity: null,
     })
   }

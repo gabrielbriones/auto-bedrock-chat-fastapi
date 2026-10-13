@@ -88,6 +88,7 @@ def register_conversation_routes(
     conversation_store: BaseConversationStore,
     chat_graph: Any,
     require_conversation_user: Callable,
+    in_progress: Optional[Callable[[str], bool]] = None,
 ) -> APIRouter:
     """Register the ``{prefix}/conversations*`` routes on ``app``.
 
@@ -109,6 +110,10 @@ def register_conversation_routes(
         :class:`AdminIdentity`, reused here purely as a generic identity
         carrier — no admin-authorization semantics apply). Raises 401 if
         no identity can be resolved.
+    in_progress:
+        Optional ``thread_id -> bool`` lookup (e.g.
+        ``WebSocketChatHandler.in_progress``) reported as the
+        ``in_progress`` flag of the ``/messages`` response.
 
     Returns
     -------
@@ -243,7 +248,11 @@ def register_conversation_routes(
             window = formatted
 
         page = window[-limit:] if limit else window
-        return ConversationMessagesResponse(conversation_id=conversation_id, messages=page)
+        return ConversationMessagesResponse(
+            conversation_id=conversation_id,
+            messages=page,
+            in_progress=bool(in_progress and in_progress(conversation_id)),
+        )
 
     app.include_router(router)
     logger.info("Conversation REST routes registered at %s/conversations", prefix)

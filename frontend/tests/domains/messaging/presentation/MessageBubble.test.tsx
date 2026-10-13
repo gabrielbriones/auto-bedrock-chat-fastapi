@@ -22,12 +22,29 @@ const entry = (overrides: Partial<TranscriptEntry> = {}): TranscriptEntry => ({
   streaming: false,
   transient: false,
   progress: false,
-  interrupted: false,
+  interrupted: null,
   activity: null,
   ...overrides,
 })
 
 describe('MessageBubble', () => {
+  // XMGPLAT-11977.
+  it('shows a turn cut off mid execution as an error notice with no tool activity', () => {
+    render(
+      <MessageBubble
+        entry={entry({
+          message: { id: null, role: 'assistant', raw: '', at, seq: 1 },
+          interrupted: 'execution',
+        })}
+      />,
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'This request was interrupted in the middle of its execution and did not finish.',
+    )
+    expect(screen.queryByText(/Tool activity/)).not.toBeInTheDocument()
+  })
+
   it('sanitizes assistant Markdown and removes reasoning blocks', () => {
     const { container } = render(<MessageBubble entry={entry()} />)
 

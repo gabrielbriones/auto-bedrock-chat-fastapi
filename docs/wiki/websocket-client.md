@@ -282,7 +282,7 @@ as `null`) when Bedrock doesn't return one.
 ```json
 { "type": "conversation_created", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 { "type": "conversation_list", "conversations": [ { "id": "...", "title": "...", "updated_at": "...", "message_count": 3 }, { "id": "...", "title": null, "updated_at": "...", "message_count": 1 } ], "timestamp": "..." }
-{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "timestamp": "..." }
+{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "in_progress": false, "timestamp": "..." }
 { "type": "conversation_deleted", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 { "type": "conversation_all_deleted", "deleted_count": 3, "timestamp": "..." }
 { "type": "conversation_titled", "conversation_id": "b16d7f4e-…", "title": "Configuring Okta SSO", "timestamp": "..." }
@@ -298,6 +298,12 @@ for the full lifecycle (lazy creation on first message, auto-titling, and the
 `conversation_list`'s `title` is `string|null`: a conversation is listed with a
 `null` title from creation until the background auto-titling turn completes
 (see `conversation_titled` above).
+
+`conversation_loaded.in_progress` is `true` while a chat turn for that
+conversation is still running on the server (e.g. you reconnected mid
+tool-loop). Use it, not the shape of `messages`, to decide whether to show a
+"still working" state and re-poll with `conversation_load` — see
+[Interrupted turns](conversation-persistence#in-progress-and-interrupted-turns).
 
 **Typing indicator:**
 

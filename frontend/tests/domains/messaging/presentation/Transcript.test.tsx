@@ -26,7 +26,7 @@ const entry = (key: string, raw: string, overrides: Partial<TranscriptEntry> = {
   streaming: false,
   transient: false,
   progress: false,
-  interrupted: false,
+  interrupted: null,
   activity: null,
   ...overrides,
 })

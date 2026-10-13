@@ -86,7 +86,23 @@ describe('WsConversationGateway frame mapping', () => {
       kind: 'loaded',
       id: conversationId('c-1'),
       messages: [{ role: 'assistant', toolCallCount: 2 }],
+      inProgress: null,
     })
+  })
+
+  it.each([true, false])('carries the server in_progress=%s flag onto the loaded event', (inProgress) => {
+    const harness = createHarness()
+
+    harness.emit({
+      type: 'conversation_loaded',
+      timestamp: '2026-08-25T12:00:00Z',
+      conversation_id: 'c-1',
+      conversation: {},
+      messages: [],
+      in_progress: inProgress,
+    })
+
+    expect(harness.events[0]).toMatchObject({ kind: 'loaded', inProgress })
   })
 
   it.each(['  ', null])('normalises a %j server title to null so FR-CONV-014 can supply the fallback', (title) => {

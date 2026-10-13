@@ -280,4 +280,19 @@ describe('pending-turn notice', () => {
     expect(await screen.findByText(CONVERSATION_COPY.pending.exhausted)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: CONVERSATION_COPY.pending.retry })).toBeVisible()
   })
+
+  // XMGPLAT-11977: an interrupted turn ends on a tool result, but the server says nothing is running.
+  it('shows no notice when the server reports no running turn for a tool-terminated history', async () => {
+    const { container, emit, gateway, scheduler, store } = renderAt('/chat/ui/c/conv-1')
+    await routeReady()
+    gateway.calls.length = 0
+    await authenticate(container)
+    expect(store.getSnapshot().visible).toBe(true)
+    await waitFor(() => expect(gateway.calls).toContainEqual(['load', id('conv-1')]))
+
+    emit(anEvent.loaded('conv-1', ['user', 'assistant', 'tool'], false))
+
+    expect(scheduler.running()).toBe(false)
+    expect(screen.queryByText(CONVERSATION_COPY.pending.notice)).not.toBeInTheDocument()
+  })
 })

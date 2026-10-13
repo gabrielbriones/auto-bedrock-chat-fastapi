@@ -103,6 +103,30 @@ full message shapes; a summary:
 | `conversation_history_unavailable`  | The conversation has recorded turns (`message_count > 0`) but the checkpoint has no values (process restarted with a non-persistent checkpointer) |
 | `invalid_conversation_request`      | Malformed payload (missing/invalid `conversation_id`, `title`, `limit`, `offset`)                                                                 |
 
+### In-progress and interrupted turns
+
+`conversation_loaded` (and `GET .../messages`) carry `in_progress: bool` —
+`true` while a chat turn for that conversation is running in this server
+process. Clients should show a "still working" state and re-poll only while
+it is `true`.
+
+If a turn fails or is cancelled (WebSocket teardown, shutdown) after the
+model started calling tools, the server appends a closing assistant message
+to the checkpoint so the history no longer ends mid tool-loop. It has
+`metadata.interrupted: true`, and any tool call left without a result first
+gets a synthetic error result (Bedrock rejects a `toolUse` with no matching
+`toolResult` on the next turn).
+
+`conversation_load` applies the same repair to a conversation that still
+ends mid tool-loop with no turn running (e.g. the process was killed, or the
+conversation got stuck before this behavior existed), persisting the closing
+message before returning the history. The bundled UI shows such a message as
+an error notice in place of the cut-off tool calls.
+
+Caveats: the running-turn registry is per process, so with several uvicorn
+workers a load served by a different worker reports `false` — and may close
+a turn that is still running there.
+
 ### Connection identity vs. conversation identity
 
 The WebSocket connection's `session_id` (from `connection_established`,
@@ -146,15 +170,15 @@ whenever `conversation_persistence_enabled=true` and the store is
 configured. Independent of `admin_enabled` — this is a regular user-facing
 feature, not part of the [Admin API](admin-api.md).
 
-| Method   | Path                                                       | Description                                                                      |
-| -------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `GET`    | `/conversations?user_id=&limit=&offset=`                   | List a user's conversations (paginated)                                          |
-| `POST`   | `/conversations`                                           | Create a conversation — body `{user_id, title?}`                                 |
-| `DELETE` | `/conversations?user_id=`                                  | Delete all of a user's conversations                                             |
-| `GET`    | `/conversations/{conversation_id}`                         | Get one conversation's metadata                                                  |
-| `PATCH`  | `/conversations/{conversation_id}`                         | Update `title` and/or `metadata` (at least one required)                         |
-| `DELETE` | `/conversations/{conversation_id}`                         | Delete one conversation                                                          |
-| `GET`    | `/conversations/{conversation_id}/messages?limit=&before=` | Read history via `aget_state` — `before` is a `message_id` cursor for pagination |
+| Method   | Path                                                       | Description                                                                                                       |
+| -------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/conversations?user_id=&limit=&offset=`                   | List a user's conversations (paginated)                                                                           |
+| `POST`   | `/conversations`                                           | Create a conversation — body `{user_id, title?}`                                                                  |
+| `DELETE` | `/conversations?user_id=`                                  | Delete all of a user's conversations                                                                              |
+| `GET`    | `/conversations/{conversation_id}`                         | Get one conversation's metadata                                                                                   |
+| `PATCH`  | `/conversations/{conversation_id}`                         | Update `title` and/or `metadata` (at least one required)                                                          |
+| `DELETE` | `/conversations/{conversation_id}`                         | Delete one conversation                                                                                           |
+| `GET`    | `/conversations/{conversation_id}/messages?limit=&before=` | Read history via `aget_state` — `before` is a `message_id` cursor for pagination; response includes `in_progress` |
 
 ### Authentication
 

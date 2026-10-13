@@ -95,12 +95,15 @@ const historyMessages = (
           return
         }
 
+        // XMGPLAT-11977: a turn the server closed as interrupted shows as a notice, not its tool round.
+        const interrupted = message.metadata.interrupted === true
         loaded.push({
           id: message.message_id ?? null,
           role: 'assistant',
-          text: message.content,
+          text: interrupted ? '' : message.content,
           at,
-          activity: hasActivity(pending) ? pending : null,
+          activity: hasActivity(pending) && !interrupted ? pending : null,
+          ...(interrupted ? { interrupted } : {}),
         })
         pending = emptyActivity()
         return

@@ -270,6 +270,7 @@ describe('ChatSessionStore', () => {
             text: 'Show the Stream triad results',
             at: fixedInstant(),
             activity: null,
+            interrupted: false,
           },
           {
             id: 'm-3',
@@ -277,6 +278,7 @@ describe('ChatSessionStore', () => {
             text: 'The measured bandwidth was 118 GB/s.',
             at: fixedInstant(),
             activity: null,
+            interrupted: false,
           },
         ],
       })
@@ -302,10 +304,23 @@ describe('ChatSessionStore', () => {
       emit({
         kind: 'history-loaded',
         conversationId: 'c-2',
-        messages: [{ id: 'm-3', role: 'assistant', text: 'Done.', at: fixedInstant(), activity }],
+        messages: [{ id: 'm-3', role: 'assistant', text: 'Done.', at: fixedInstant(), activity, interrupted: false }],
       })
 
       expect(store.getSnapshot().transcript[0]?.activity).toBe(activity)
+    })
+
+    // XMGPLAT-11977.
+    it('marks a turn the server closed as interrupted mid execution', () => {
+      const { store, emit } = createHarness()
+
+      emit({
+        kind: 'history-loaded',
+        conversationId: 'c-2',
+        messages: [{ id: 'm-4', role: 'assistant', text: '', at: fixedInstant(), activity: null, interrupted: true }],
+      })
+
+      expect(store.getSnapshot().transcript[0]?.interrupted).toBe('execution')
     })
   })
 
@@ -325,7 +340,7 @@ describe('ChatSessionStore', () => {
     emit({
       kind: 'history-loaded',
       conversationId: 'c-1',
-      messages: [{ id: 'm-1', role: 'user', text: 'old', at: fixedInstant(), activity: null }],
+      messages: [{ id: 'm-1', role: 'user', text: 'old', at: fixedInstant(), activity: null, interrupted: false }],
     })
     store.send('follow-up')
     emit(answered('reply'))
@@ -347,7 +362,7 @@ describe('ChatSessionStore', () => {
     changeConnection(state('reconnecting', 1))
 
     const transcript = store.getSnapshot().transcript
-    expect(transcript.map((entry) => entry.interrupted)).toEqual([false, true])
+    expect(transcript.map((entry) => entry.interrupted)).toEqual([null, 'connection-lost'])
     expect(transcript[1]?.message.raw).toBe('IPC is')
     expect(store.getSnapshot().awaitingResponse).toBe(false)
 

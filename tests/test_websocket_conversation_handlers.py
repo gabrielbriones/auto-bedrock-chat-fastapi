@@ -340,6 +340,214 @@ async def test_conversation_load_returns_history_unavailable_when_turns_recorded
 
 
 # ---------------------------------------------------------------------------
+# In-flight turns (XMGPLAT-11977): conversation_loaded.in_progress and
+# closing messages for interrupted turns
+# ---------------------------------------------------------------------------
+
+_TOOL_CALL = {"id": "tc-1", "name": "get_job", "args": {"job_id": "j1"}}
+
+
+def _tool_loop_messages():
+    return [
+        {"role": "user", "content": "validate job", "metadata": {"message_id": "m1"}},
+        {"role": "assistant", "content": "", "tool_calls": [_TOOL_CALL], "metadata": {"message_id": "m2"}},
+        {
+            "role": "tool",
+            "content": "[]",
+            "tool_results": [{"tool_call_id": "tc-1", "name": "get_job", "result": "{}"}],
+            "metadata": {},
+        },
+    ]
+
+
+async def test_conversation_load_reports_not_in_progress_for_tool_terminated_history():
+    """History ending on a tool message with nothing running must not be
+    reported as pending — that was the stuck-banner bug."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        sent = _sent(ws)
+        assert sent[0]["type"] == "conversation_loaded"
+        assert sent[0]["in_progress"] is False
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_closes_and_persists_a_stuck_tool_loop():
+    """A conversation left mid tool-loop by a turn that never closed itself
+    (process killed, or stuck before this fix) is repaired on load."""
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+
+        ws = _new_ws()
+        await handler._handle_conversation_load(ws, {"conversation_id": "conv-1"})
+
+        closing = _sent(ws)[0]["messages"][-1]
+        assert closing["role"] == "assistant"
+        assert closing["content"] == websocket_handler._INTERRUPTED_TURN_MESSAGE
+        assert closing["metadata"]["interrupted"] is True
+        assert chat_graph._checkpoints["conv-1"][-1]["metadata"]["interrupted"] is True
+
+        # Loading again does not stack a second closing message.
+        await handler._handle_conversation_load(_new_ws(), {"conversation_id": "conv-1"})
+        assert [m["role"] for m in chat_graph._checkpoints["conv-1"]] == ["user", "assistant", "tool", "assistant"]
+    finally:
+        await store.close()
+
+
+async def test_conversation_load_reports_in_progress_while_turn_is_running():
+    store = await _make_store()
+    try:
+        session = _make_session()
+        chat_graph = _make_chat_graph()
+        handler = _make_handler(session, conversation_store=store, chat_graph=chat_graph)
+        await store.create_conversation("conv-1", "alice")
+        session.metadata["conversation_id"] = "conv-1"
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_ainvoke(inputs, config):
+            chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+            started.set()
+            await release.wait()
+            msgs = chat_graph._checkpoints["conv-1"]
+            msgs.append({"role": "assistant", "content": "done", "metadata": {"message_id": "m4"}})
+            return {"messages": msgs, "metadata": {}, "kb_results": []}
+
+        chat_graph.ainvoke = AsyncMock(side_effect=blocking_ainvoke)
+
+        turn = asyncio.create_task(handler._handle_chat_message(_new_ws(), {"message": "validate job"}))
+        await started.wait()
+
+        # A second connection (e.g. the user reopened the tab) loads the conversation mid-turn.
+        ws_during = _new_ws()
+        await handler._handle_conversation_load(ws_during, {"conversation_id": "conv-1"})
+        assert _sent(ws_during)[0]["in_progress"] is True
+        assert handler.in_progress("conv-1")
+        # A running turn's tool loop is not mistaken for a stuck one.
+        assert _sent(ws_during)[0]["messages"][-1]["role"] == "tool"
+        chat_graph.aupdate_state.assert_not_awaited()
+
+        release.set()
+        await turn
+
+        ws_after = _new_ws()
+        await handler._handle_conversation_load(ws_after, {"conversation_id": "conv-1"})
+        assert _sent(ws_after)[0]["in_progress"] is False
+        assert not handler.in_progress("conv-1")
+        # A completed turn is left untouched — no closing message.
+        assert chat_graph._checkpoints["conv-1"][-1]["content"] == "done"
+    finally:
+        await store.close()
+
+
+async def test_failed_turn_mid_tool_loop_persists_closing_assistant_message():
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    store = MagicMock()
+    store.record_turn = AsyncMock()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=store)
+
+    async def failing_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+        raise RuntimeError("bedrock exploded")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=failing_ainvoke)
+
+    ws = _new_ws()
+    await handler._handle_chat_message(ws, {"message": "validate job"})
+
+    assert any(m["type"] == "ai_response" and m.get("error") for m in _sent(ws))
+    msgs = chat_graph._checkpoints["conv-1"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
+    closing = msgs[-1]
+    assert closing["content"] == websocket_handler._INTERRUPTED_TURN_MESSAGE
+    assert closing["tool_calls"] == []
+    assert closing["metadata"]["interrupted"] is True
+    assert closing["metadata"]["message_id"]
+    assert not handler.in_progress("conv-1")
+
+
+async def test_cancelled_turn_mid_tool_loop_persists_closing_message_and_reraises():
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=MagicMock())
+
+    async def cancelled_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+        raise asyncio.CancelledError()
+
+    chat_graph.ainvoke = AsyncMock(side_effect=cancelled_ainvoke)
+
+    with pytest.raises(asyncio.CancelledError):
+        await handler._handle_chat_message(_new_ws(), {"message": "validate job"})
+
+    msgs = chat_graph._checkpoints["conv-1"]
+    assert msgs[-1]["role"] == "assistant"
+    assert msgs[-1]["metadata"]["interrupted"] is True
+    assert not handler.in_progress("conv-1")
+
+
+async def test_interrupted_turn_answers_dangling_tool_calls_before_closing():
+    """A turn cut off after the model requested tools but before any result
+    was saved gets a synthetic tool result, so the next Bedrock call isn't
+    rejected for a toolUse without a toolResult."""
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=MagicMock())
+
+    async def failing_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = _tool_loop_messages()[:2]
+        raise RuntimeError("tool crashed")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=failing_ainvoke)
+
+    await handler._handle_chat_message(_new_ws(), {"message": "validate job"})
+
+    msgs = chat_graph._checkpoints["conv-1"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
+    assert msgs[2]["tool_results"] == [
+        {"tool_call_id": "tc-1", "name": "get_job", "error": websocket_handler._INTERRUPTED_TURN_MESSAGE}
+    ]
+    assert msgs[-1]["metadata"]["interrupted"] is True
+
+
+async def test_failed_turn_not_ending_mid_tool_loop_leaves_history_untouched():
+    session = _make_session()
+    session.metadata["conversation_id"] = "conv-1"
+    chat_graph = _make_chat_graph()
+    handler = _make_handler(session, chat_graph=chat_graph, conversation_store=MagicMock())
+
+    async def failing_ainvoke(inputs, config):
+        chat_graph._checkpoints["conv-1"] = [{"role": "user", "content": "hi", "metadata": {}}]
+        raise RuntimeError("model rejected request")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=failing_ainvoke)
+
+    await handler._handle_chat_message(_new_ws(), {"message": "hi"})
+
+    chat_graph.aupdate_state.assert_not_awaited()
+    assert chat_graph._checkpoints["conv-1"] == [{"role": "user", "content": "hi", "metadata": {}}]
+
+
+# ---------------------------------------------------------------------------
 # Auth gating
 # ---------------------------------------------------------------------------
 

@@ -6,6 +6,7 @@ import {
   PENDING_TURN_MAX_ATTEMPTS,
   isPendingTurn,
   isPolling,
+  isTurnInProgress,
   recordAttempt,
   startWatch,
   watchFor,
@@ -30,6 +31,25 @@ describe('isPendingTurn', () => {
         { role: 'assistant', toolCallCount: 0 },
       ]),
     ).toBe(false)
+  })
+})
+
+describe('isTurnInProgress', () => {
+  const toolLast = [{ role: 'tool', toolCallCount: 0 }] as const
+  const answered = [{ role: 'assistant', toolCallCount: 0 }] as const
+
+  // XMGPLAT-11977: an interrupted turn ends on a tool result but nothing is running.
+  it('trusts the server over a tool-terminated history', () => {
+    expect(isTurnInProgress(false, toolLast)).toBe(false)
+  })
+
+  it('trusts the server over an answered history', () => {
+    expect(isTurnInProgress(true, answered)).toBe(true)
+  })
+
+  it('falls back to the history shape when the server did not say', () => {
+    expect(isTurnInProgress(null, toolLast)).toBe(true)
+    expect(isTurnInProgress(null, answered)).toBe(false)
   })
 })
 
