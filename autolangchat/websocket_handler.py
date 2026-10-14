@@ -33,6 +33,7 @@ from .exceptions import (
     FeedbackError,
     InvalidStatusTransitionError,
     ModelInvocationError,
+    SessionError,
     UnauthorizedFeedbackError,
     WebSocketError,
 )
@@ -226,13 +227,18 @@ class WebSocketChatHandler:
                         "SSO pre-auth successful: user_id=%s, display_name=%s", extracted_user_id, sso_display_name
                     )
 
-            # Create chat session with actual user_id (from SSO, passed parameter, or None)
+            # Create chat session with actual user_id (from SSO, passed parameter, or None).
+            # is_authenticated=True only when SSO pre-auth actually verified
+            # this identity — never for a raw, unverified ?user_id= query
+            # param, which must not be trusted as proof of ownership for the
+            # reconnect-takeover check in create_session().
             session_id = await self.session_manager.create_session(
                 websocket=websocket,
                 user_id=extracted_user_id,
                 user_agent=user_agent,
                 ip_address=ip_address,
                 preferred_session_id=preferred_session_id,
+                is_authenticated=bool(sso_credentials),
             )
 
             logger.info(f"WebSocket connected: session={session_id}, user={extracted_user_id}, ip={ip_address}")
@@ -280,6 +286,21 @@ class WebSocketChatHandler:
             # Main message handling loop
             await self._message_loop(websocket)
 
+        except SessionError as e:
+            # e.g. a rejected session_id takeover by a different user — send
+            # the reason and close explicitly rather than leaving the socket
+            # open and unread (no session was registered for it to clean up).
+            logger.warning(f"Session creation rejected: {str(e)}")
+            self._total_errors += 1
+
+            try:
+                await self._send_error(websocket, str(e))
+            except BaseException:
+                pass  # Connection already closed
+            try:
+                await websocket.close(code=1008, reason="Session rejected")
+            except Exception:
+                pass  # Connection already closed
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected normally")
         except Exception as e:
