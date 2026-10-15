@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
+    DEFAULT_CONTEXT_BUDGET_SAFETY_FRACTION,
     DEFAULT_ENABLE_AI_SUMMARIZATION,
     DEFAULT_MAX_CONVERSATION_MESSAGES,
     DEFAULT_MAX_SESSIONS,
@@ -399,6 +400,18 @@ class ChatConfig(BaseSettings):
             "Maximum recursion depth for history truncation safety-net halving. "
             "If history still exceeds threshold after all 3 truncation steps, the process "
             "re-runs with halved thresholds, up to this many times. Default: 3."
+        ),
+    )
+
+    context_budget_safety_fraction: float = Field(
+        default=DEFAULT_CONTEXT_BUDGET_SAFETY_FRACTION,
+        alias="AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION",
+        ge=0.0,
+        le=0.5,
+        description=(
+            "Fraction of the effective model's max_input_tokens held back as a safety "
+            "margin by the ContextBudget estimator, absorbing chars/token estimation "
+            "error. Must be between 0.0 and 0.5. Default: 0.10."
         ),
     )
 
