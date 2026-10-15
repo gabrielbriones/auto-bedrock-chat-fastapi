@@ -117,6 +117,36 @@ class TestClassifyContent:
         assert len(text) > CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS
         assert classify_content(text) == CONTEXT_BUDGET_KIND_JSON
 
+    @pytest.mark.parametrize("value", ["123", "-4.5", "1e3", "0"])
+    def test_large_json_array_of_numbers_beyond_prefix(self, value):
+        text = "[" + ", ".join([value] * (CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS // len(value) + 1)) + "]"
+        assert len(text) > CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS
+        assert classify_content(text) == CONTEXT_BUDGET_KIND_JSON
+
+    def test_numeric_json_array_at_prefix_limit(self):
+        values = []
+        while len(json.dumps(values)) <= CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS:
+            values.append(123)
+        below = json.dumps(values[:-1])
+        above = json.dumps(values)
+        assert len(below) <= CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS < len(above)
+        assert classify_content(below) == CONTEXT_BUDGET_KIND_JSON
+        assert classify_content(above) == CONTEXT_BUDGET_KIND_JSON
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "[2026-10-15 12:00:01] worker 3 served request in 12ms\n",
+            "[12:00:01] worker 3 served request in 12ms\n",
+            "[    0.123456] kernel: usb 1-1: new device found\n",
+            "[123] worker 3 served request in 12ms\n",
+        ],
+    )
+    def test_large_bracketed_log_starting_with_number_is_not_json(self, line):
+        text = line * (CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS // len(line) + 10)
+        assert len(text) > CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS
+        assert classify_content(text) == CONTEXT_BUDGET_KIND_LOG_TABULAR
+
     def test_large_bracketed_log_starting_with_n_is_not_json(self):
         text = "[notice] background sync completed\n" * 3000
         assert len(text) > CONTEXT_BUDGET_CLASSIFIER_PREFIX_CHARS
@@ -254,6 +284,24 @@ class TestEstimateTokens:
         plain = estimate_message_tokens({"role": "assistant", "content": "ok"}, "anthropic")
         with_calls = estimate_message_tokens({"role": "assistant", "content": "ok", "tool_calls": calls}, "anthropic")
         assert with_calls == plain + estimate_tokens(calls, kind=CONTEXT_BUDGET_KIND_JSON, provider="anthropic")
+
+    def test_tool_use_block_mirrored_in_tool_calls_counted_once(self):
+        args = {"query": "x" * 5000}
+        calls = [{"id": "t1", "name": "search", "args": args, "type": "tool_call"}]
+        text_block = {"type": "text", "text": "Searching"}
+        tool_use = {"type": "tool_use", "id": "t1", "name": "search", "input": args}
+        dual = AIMessage(content=[text_block, tool_use], tool_calls=calls)
+        calls_only = AIMessage(content=[text_block], tool_calls=calls)
+        assert estimate_message_tokens(dual, "anthropic") == estimate_message_tokens(calls_only, "anthropic")
+
+    def test_unmatched_tool_use_block_still_counted(self):
+        calls = [{"id": "t1", "name": "search", "args": {"q": "a"}, "type": "tool_call"}]
+        orphan = {"type": "tool_use", "id": "t2", "name": "search", "input": {"q": "b" * 2000}}
+        with_orphan = AIMessage(content=[orphan], tool_calls=calls)
+        without = AIMessage(content=[], tool_calls=calls)
+        assert estimate_message_tokens(with_orphan, "anthropic") == estimate_message_tokens(
+            without, "anthropic"
+        ) + estimate_tokens(orphan, kind=CONTEXT_BUDGET_KIND_JSON, provider="anthropic")
 
     def test_tool_message_expands_per_result(self):
         results = [

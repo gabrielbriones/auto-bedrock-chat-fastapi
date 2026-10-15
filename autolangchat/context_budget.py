@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import string
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -75,6 +76,10 @@ _BINARY_NONPRINTABLE_THRESHOLD = 0.10
 # Characters that can begin structured JSON array values after "[". Log-like
 # alphabetic values are checked against complete JSON literals separately.
 _JSON_ARRAY_SECOND_CHARS = frozenset('{["]')
+# A numeric first array element must be followed by "," and another JSON
+# value, so bracketed log prefixes like "[2026-10-15 ...", "[12:00:01]" or
+# dmesg-style "[0.123] ..." are not mistaken for JSON.
+_JSON_NUMERIC_ARRAY_START = re.compile(r'-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\s*,\s*[-\d{\["tfn]')
 
 _PRINTABLE = frozenset(string.printable)
 _SYMBOLS = frozenset(string.digits + string.punctuation)
@@ -137,7 +142,7 @@ def _looks_like_json(text: str, prefix: str) -> bool:
     for literal in ("true", "false", "null"):
         if rest.startswith(literal) and (len(rest) == len(literal) or rest[len(literal)] in ",] \t\r\n"):
             return True
-    return False
+    return _JSON_NUMERIC_ARRAY_START.match(rest) is not None
 
 
 def classify_content(text: Any) -> str:
@@ -188,12 +193,27 @@ def estimate_tokens(text: Any, kind: Optional[str] = None, provider: Optional[st
     return math.ceil(len(text) / chars_per_token(kind, provider))
 
 
-def _content_tokens(content: Any, provider: Optional[str]) -> int:
+def _tool_call_ids(tool_calls: Any) -> Set[str]:
+    if not isinstance(tool_calls, list):
+        return set()
+    return {tc["id"] for tc in tool_calls if isinstance(tc, dict) and isinstance(tc.get("id"), str)}
+
+
+def _content_tokens(content: Any, provider: Optional[str], skip_tool_use_ids: Optional[Set[str]] = None) -> int:
     if content is None or content == "":
         return 0
     if isinstance(content, list):
         total = 0
         for block in content:
+            if (
+                skip_tool_use_ids
+                and isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and block.get("id") in skip_tool_use_ids
+            ):
+                # Bedrock merges tool_use blocks with tool_calls by id, so the
+                # call is sent once and is already charged via tool_calls.
+                continue
             if isinstance(block, str):
                 total += estimate_tokens(block, provider=provider)
             elif isinstance(block, dict) and isinstance(block.get("text"), str) and len(block) <= 3:
@@ -236,7 +256,7 @@ def estimate_message_tokens(message: Any, provider: Optional[str] = None) -> int
         content = getattr(message, "content", message)
         tool_calls = getattr(message, "tool_calls", None)
 
-    total = overhead + _content_tokens(content, provider)
+    total = overhead + _content_tokens(content, provider, _tool_call_ids(tool_calls))
     if tool_calls:
         total += estimate_tokens(tool_calls, kind=CONTEXT_BUDGET_KIND_JSON, provider=provider)
     return total
