@@ -213,7 +213,7 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
         }
         for r in tool_results
     ]
-    logger.info("Tool result sizes: %s", tool_result_sizes)
+    logger.info("Tool result sizes: %s", [{"name": r["name"], "bytes": r["bytes"]} for r in tool_result_sizes])
     metadata["tool_result_sizes"] = metadata.get("tool_result_sizes", []) + tool_result_sizes
 
     logger.debug(
