@@ -153,6 +153,13 @@ client = WebSocketChatClient(
 { "type": "chat", "message": "Your question here" }
 ```
 
+While a turn is running, the server keeps reading the socket: `ping` and the
+`conversation_*` frames are answered straight away, so a long tool-calling turn
+does not starve a client heartbeat. Only one turn runs per connection; a second
+`chat` sent before the first finishes is refused with an `error` frame. If the
+client disconnects mid-turn, the turn still finishes and is checkpointed — reload
+the conversation to see the answer.
+
 **Authenticate session:**
 
 ```json

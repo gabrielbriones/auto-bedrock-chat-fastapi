@@ -135,6 +135,35 @@ describe('ServerFrameSchema', () => {
     ).toBe(true)
   })
 
+  // XMGPLAT-11999: a strict schema dropped every tool-using answer once the backend added a key.
+  it('delivers an ai response whose metadata carries keys the client does not know, without them', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const metadata = {
+      model_id: 'model-1',
+      model_name: 'Test model',
+      tool_call_rounds: 1,
+      total_tool_calls: 2,
+      preprocessing_applied: false,
+    }
+    const frame = {
+      type: 'ai_response',
+      message_id: 'message-1',
+      message: 'answer',
+      tool_calls: [],
+      tool_results: [],
+      timestamp: '2026-10-14T17:49:59.968042',
+      metadata: { ...metadata, tool_result_sizes: [{ name: 'list_job_files', args: {}, bytes: 512 }] },
+      conversation_id: 'conversation-1',
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.invalidFrameCount('ai_response')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith({ ...frame, metadata })
+  })
+
   it('delivers an anonymous ai response with no persisted conversation', () => {
     const bus = new MessageBus(logger())
     const subscriber = jest.fn()

@@ -17,12 +17,15 @@ export type ConversationActions = {
 export type ConversationActionOptions = {
   /** FR-CONV-003: the below-breakpoint drawer closes after anything that changes what is shown. */
   readonly onNavigate?: () => void
+  /** Replaces `store.open`; the composition root routes a pick through the URL instead. */
+  readonly onOpen?: (id: ConversationId) => void
 }
 
 // The store's use cases as event handlers: the async ones are deliberately voided here, in one
 // place, rather than in every JSX callback that invokes them.
 export const useConversationActions = ({
   onNavigate,
+  onOpen,
 }: ConversationActionOptions = {}): ConversationActions => {
   const { conversations } = useContainer()
 
@@ -33,7 +36,11 @@ export const useConversationActions = ({
         onNavigate?.()
       },
       open: (id: ConversationId) => {
-        conversations.open(id)
+        if (onOpen === undefined) {
+          conversations.open(id)
+        } else {
+          onOpen(id)
+        }
         onNavigate?.()
       },
       rename: (id: ConversationId) => {
@@ -55,6 +62,6 @@ export const useConversationActions = ({
         conversations.clearSelected()
       },
     }),
-    [conversations, onNavigate],
+    [conversations, onNavigate, onOpen],
   )
 }

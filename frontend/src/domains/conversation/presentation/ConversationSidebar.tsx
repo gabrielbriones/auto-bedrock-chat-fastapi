@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { useContainer, useContainerStore, type ContainerSnapshot } from '@/app/bootstrap/container-context'
+import type { ConversationId } from '@/shared/kernel/branded'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 
 import { BulkDeleteBar } from '@/domains/conversation/presentation/BulkDeleteBar'
@@ -16,15 +17,20 @@ export type ConversationSidebarProps = {
   readonly onToggleCollapsed?: () => void
   /** Closes the below-breakpoint drawer after an action that changes what is shown (FR-CONV-003). */
   readonly onNavigate?: () => void
+  /** Supplied by the composition root so a pick goes through the URL (FR-CONV-011). */
+  readonly onOpen?: (id: ConversationId) => void
   /** FR-IAM-016: supplied by the composition root (FR-TOOL-011 bars importing the iam context here). */
   readonly footer?: ReactNode
 }
 
 // SPEC-011 §5. Renders nothing at all when the roster is not available (FR-CONV-001) rather than an
 // empty shell, so the chat view reclaims the space.
-export function ConversationSidebar({ collapsed = false, onToggleCollapsed, onNavigate, footer }: ConversationSidebarProps) {
+export function ConversationSidebar({ collapsed = false, onToggleCollapsed, onNavigate, onOpen, footer }: ConversationSidebarProps) {
   const snapshot = useContainerStore('conversations')
-  const actions = useConversationActions(onNavigate === undefined ? {} : { onNavigate })
+  const actions = useConversationActions({
+    ...(onNavigate === undefined ? {} : { onNavigate }),
+    ...(onOpen === undefined ? {} : { onOpen }),
+  })
   const [selectionMode, setSelectionMode] = useState(false)
 
   if (!snapshot.visible) {

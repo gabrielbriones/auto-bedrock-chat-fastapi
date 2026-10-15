@@ -57,7 +57,9 @@ const metadataSchema = z
       )
       .optional(),
   })
-  .strict()
+  // Not `.strict()`: the backend adds metadata keys freely (XMGPLAT-11999), and one unknown key
+  // would drop the whole answer. Unknown keys are stripped instead.
+  .strip()
 
 const messageSchema = z
   .object({

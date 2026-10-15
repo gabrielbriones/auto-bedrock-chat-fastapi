@@ -316,69 +316,131 @@ class WebSocketChatHandler:
             await self.session_manager.remove_session(websocket)
 
     async def _message_loop(self, websocket: WebSocket):
-        """Main message handling loop"""
+        """Main message handling loop.
 
-        while True:
-            try:
-                # Receive message from client
-                data = await websocket.receive_text()
+        A chat turn runs as a task once its thread is resolved, so pings and
+        conversation frames are still answered while the model works. Run
+        inline, a long turn starved the client's heartbeat (it closed the
+        socket mid-turn) and every other frame waited until the turn ended.
+        """
 
-                # Parse JSON
+        turn: Optional[asyncio.Task] = None
+        try:
+            while True:
                 try:
-                    message_data = json.loads(data)
-                except json.JSONDecodeError as e:
-                    await self._send_error(websocket, f"Invalid JSON: {str(e)}")
-                    continue
+                    data = await websocket.receive_text()
 
-                # Handle different message types
-                message_type = message_data.get("type", "chat")
+                    try:
+                        message_data = json.loads(data)
+                    except json.JSONDecodeError as e:
+                        await self._send_error(websocket, f"Invalid JSON: {str(e)}")
+                        continue
 
-                if message_type == "chat":
-                    await self._handle_chat_message(websocket, message_data)
-                elif message_type == "ping":
-                    await self._handle_ping(websocket, message_data)
-                elif message_type == "history":
-                    await self._handle_history_request(websocket, message_data)
-                elif message_type == "clear":
-                    await self._handle_clear_history(websocket, message_data)
-                elif message_type == "auth":
-                    await self._handle_auth_message(websocket, message_data)
-                elif message_type == "logout":
-                    await self._handle_logout(websocket, message_data)
-                elif message_type == "feedback":
-                    await self._handle_feedback_message(websocket, message_data)
-                elif message_type == "conversation_list":
-                    await self._handle_conversation_list(websocket, message_data)
-                elif message_type == "conversation_new":
-                    await self._handle_conversation_new(websocket, message_data)
-                elif message_type == "conversation_load":
-                    await self._handle_conversation_load(websocket, message_data)
-                elif message_type == "conversation_delete":
-                    await self._handle_conversation_delete(websocket, message_data)
-                elif message_type == "conversation_delete_bulk":
-                    await self._handle_conversation_delete_bulk(websocket, message_data)
-                elif message_type == "conversation_delete_all":
-                    await self._handle_conversation_delete_all(websocket, message_data)
-                elif message_type == "conversation_rename":
-                    await self._handle_conversation_rename(websocket, message_data)
-                elif message_type == "config_update":
-                    await self._handle_config_update(websocket, message_data)
-                elif message_type == "config_reset":
-                    await self._handle_config_reset(websocket, message_data)
-                elif message_type == "refresh_session_token":
-                    await self._handle_refresh_session_token(websocket, message_data)
-                else:
-                    await self._send_error(websocket, f"Unknown message type: {message_type}")
+                    message_type = message_data.get("type", "chat")
 
-            except WebSocketDisconnect:
-                break
-            except Exception as e:
-                logger.error(f"Error in message loop: {str(e)}")
-                self._total_errors += 1
+                    if message_type != "chat":
+                        await self._dispatch(websocket, message_type, message_data)
+                    elif turn is not None and not turn.done():
+                        await self._send_error(
+                            websocket, "Still working on your previous request. Please wait for it to finish."
+                        )
+                    else:
+                        turn = await self._start_chat_turn(websocket, message_data)
+
+                except WebSocketDisconnect:
+                    break
+                except Exception as e:
+                    logger.error(f"Error in message loop: {str(e)}")
+                    self._total_errors += 1
+                    await self._send_error(websocket, f"Message processing error: {str(e)}")
+        except asyncio.CancelledError:
+            if turn is not None:
+                turn.cancel()
+            raise
+
+        # A dropped client does not abandon its turn: the answer is still
+        # checkpointed and shown when the conversation is reloaded.
+        if turn is not None:
+            await turn
+
+    async def _start_chat_turn(self, websocket: WebSocket, data: Dict[str, Any]) -> asyncio.Task:
+        """Start a chat turn and return once it has resolved its thread.
+
+        Until then the loop stays blocked, so a frame such as
+        ``conversation_load`` cannot change which conversation the turn uses.
+        """
+
+        started = asyncio.Event()
+        turn = asyncio.create_task(self._run_chat_turn(websocket, data, started))
+        waiter = asyncio.create_task(started.wait())
+        try:
+            await asyncio.wait({turn, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            turn.cancel()
+            raise
+        finally:
+            waiter.cancel()
+        return turn
+
+    async def _run_chat_turn(self, websocket: WebSocket, data: Dict[str, Any], started: asyncio.Event) -> None:
+        try:
+            await self._handle_chat_message(websocket, data, started=started)
+        except Exception as e:
+            logger.error(f"Error in message loop: {str(e)}")
+            self._total_errors += 1
+            try:
                 await self._send_error(websocket, f"Message processing error: {str(e)}")
+            except WebSocketError:
+                pass
+        finally:
+            started.set()
 
-    async def _handle_chat_message(self, websocket: WebSocket, data: Dict[str, Any]):
-        """Handle incoming chat message"""
+    async def _dispatch(self, websocket: WebSocket, message_type: str, message_data: Dict[str, Any]) -> None:
+        """Route a non-chat client frame to its handler."""
+
+        if message_type == "ping":
+            await self._handle_ping(websocket, message_data)
+        elif message_type == "history":
+            await self._handle_history_request(websocket, message_data)
+        elif message_type == "clear":
+            await self._handle_clear_history(websocket, message_data)
+        elif message_type == "auth":
+            await self._handle_auth_message(websocket, message_data)
+        elif message_type == "logout":
+            await self._handle_logout(websocket, message_data)
+        elif message_type == "feedback":
+            await self._handle_feedback_message(websocket, message_data)
+        elif message_type == "conversation_list":
+            await self._handle_conversation_list(websocket, message_data)
+        elif message_type == "conversation_new":
+            await self._handle_conversation_new(websocket, message_data)
+        elif message_type == "conversation_load":
+            await self._handle_conversation_load(websocket, message_data)
+        elif message_type == "conversation_delete":
+            await self._handle_conversation_delete(websocket, message_data)
+        elif message_type == "conversation_delete_bulk":
+            await self._handle_conversation_delete_bulk(websocket, message_data)
+        elif message_type == "conversation_delete_all":
+            await self._handle_conversation_delete_all(websocket, message_data)
+        elif message_type == "conversation_rename":
+            await self._handle_conversation_rename(websocket, message_data)
+        elif message_type == "config_update":
+            await self._handle_config_update(websocket, message_data)
+        elif message_type == "config_reset":
+            await self._handle_config_reset(websocket, message_data)
+        elif message_type == "refresh_session_token":
+            await self._handle_refresh_session_token(websocket, message_data)
+        else:
+            await self._send_error(websocket, f"Unknown message type: {message_type}")
+
+    async def _handle_chat_message(
+        self, websocket: WebSocket, data: Dict[str, Any], started: Optional[asyncio.Event] = None
+    ):
+        """Handle incoming chat message.
+
+        ``started`` is set once the turn's thread is resolved, right before the
+        graph runs; the message loop resumes reading from that point.
+        """
 
         session = await self.session_manager.get_session(websocket)
         if not session:
@@ -611,6 +673,8 @@ class WebSocketChatHandler:
             # ------------------------------------------------------------------
             async with self._thread_lock(thread_id):
                 self._in_flight_threads[thread_id] = self._in_flight_threads.get(thread_id, 0) + 1
+            if started is not None:
+                started.set()
             try:
                 graph_state = await self.chat_graph.ainvoke(
                     {"user_message": user_message},
@@ -657,6 +721,8 @@ class WebSocketChatHandler:
             response_metadata["tool_call_rounds"] = graph_metadata.get("tool_call_rounds", 0)
             response_metadata["total_tool_calls"] = graph_metadata.get("total_tool_calls", 0)
             response_metadata["preprocessing_applied"] = graph_metadata.get("preprocessing_applied", False)
+            if graph_metadata.get("tool_result_sizes"):
+                response_metadata["tool_result_sizes"] = graph_metadata["tool_result_sizes"]
             if override_rejections:
                 response_metadata["rejected_overrides"] = override_rejections
             # Surface token counts at the top level (bubbled by llm_call into graph_metadata)
@@ -2424,6 +2490,9 @@ class WebSocketChatHandler:
         """
 
         try:
+            # Mirrors Starlette's send_json serialization so the logged size matches the frame size.
+            payload_bytes = len(json.dumps(message, separators=(",", ":"), ensure_ascii=False, default=str).encode())
+            logger.info(f"WS send: type={message.get('type')} size={payload_bytes} bytes")
             await websocket.send_json(message)
         except Exception as e:
             if log_errors:

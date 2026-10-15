@@ -202,6 +202,40 @@ describe('the identity store', () => {
     expect(store.getSnapshot().status).toBe('unauthenticated')
   })
 
+  // XMGPLAT-11999: dropping to `unauthenticated` hid the conversations and wiped the transcript.
+  it('keeps an SSO principal pending, not signed out, while a reconnect re-reads the cookie', () => {
+    const { store, authEvent, connectionState } = setup({}, { ssoAuthenticated: true, ssoUserDisplay: 'Ada' })
+
+    connectionState(openState)
+    expect(store.getSnapshot().status).toBe('authenticating')
+    expect(store.getSnapshot().principal.mode).toBe('sso')
+
+    authEvent({ kind: 'configured', authKind: 'sso', displayName: 'Ada', message: 'ok' })
+    authEvent({ kind: 'handshake-complete' })
+
+    expect(store.getSnapshot().status).toBe('authenticated')
+  })
+
+  it('signs an SSO principal out when the handshake ends without auth_configured', () => {
+    const { store, authEvent, connectionState } = setup({}, { ssoAuthenticated: true, ssoUserDisplay: 'Ada' })
+
+    connectionState(openState)
+    authEvent({ kind: 'handshake-complete' })
+
+    expect(store.getSnapshot().status).toBe('unauthenticated')
+  })
+
+  it('leaves a replayed credential pending when the handshake completes before its reply', () => {
+    const { store, authEvent, connectionState } = setup()
+
+    store.submit(bearer)
+    authEvent({ kind: 'configured', authKind: 'bearer_token', message: 'ok' })
+    connectionState(openState)
+    authEvent({ kind: 'handshake-complete' })
+
+    expect(store.getSnapshot().status).toBe('authenticating')
+  })
+
   // FR-IAM-015: a rejected credential must not be replayed on the next socket.
   it('discards the credential after a failure, so a reconnect does not replay it', () => {
     const { store, authenticate, authEvent, connectionState } = setup()

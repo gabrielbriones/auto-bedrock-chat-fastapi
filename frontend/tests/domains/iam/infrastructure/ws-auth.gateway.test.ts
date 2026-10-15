@@ -146,6 +146,22 @@ describe('WsAuthGateway', () => {
     ])
   })
 
+  // XMGPLAT-11999: the end of the handshake settles a pending SSO re-verification.
+  it('reports connection_established as the end of the handshake', () => {
+    const { emit, gateway } = createHarness()
+    const events: AuthEvent[] = []
+    gateway.onAuthEvent((event) => events.push(event))
+
+    emit({
+      type: 'connection_established',
+      timestamp: '2026-10-15T00:00:00Z',
+      session_id: 'session-1',
+      message: 'Connected',
+    })
+
+    expect(events).toEqual([{ kind: 'handshake-complete' }])
+  })
+
   it('maps failed and logout events, including absent optional fields', () => {
     const { emit, gateway } = createHarness()
     const events: AuthEvent[] = []
