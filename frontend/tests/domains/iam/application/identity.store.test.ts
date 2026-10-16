@@ -216,6 +216,33 @@ describe('the identity store', () => {
     expect(store.getSnapshot().status).toBe('authenticated')
   })
 
+  // A socket that drops mid-handshake has neither confirmed nor denied the cookie.
+  it('keeps an SSO check pending across a socket that drops before the handshake settles', () => {
+    const { store, authEvent, connectionState } = setup({}, { ssoAuthenticated: true, ssoUserDisplay: 'Ada' })
+
+    connectionState(openState)
+    connectionState(closedState)
+    connectionState(openState)
+    expect(store.getSnapshot().status).toBe('authenticating')
+    expect(store.getSnapshot().principal.mode).toBe('sso')
+
+    authEvent({ kind: 'configured', authKind: 'sso', displayName: 'Ada', message: 'ok' })
+    authEvent({ kind: 'handshake-complete' })
+
+    expect(store.getSnapshot().status).toBe('authenticated')
+  })
+
+  it('does not resume an SSO check that a failure already settled', () => {
+    const { store, authEvent, connectionState } = setup({}, { ssoAuthenticated: true, ssoUserDisplay: 'Ada' })
+
+    connectionState(openState)
+    authEvent({ kind: 'handshake-complete' })
+    connectionState(closedState)
+    connectionState(openState)
+
+    expect(store.getSnapshot().status).toBe('unauthenticated')
+  })
+
   it('signs an SSO principal out when the handshake ends without auth_configured', () => {
     const { store, authEvent, connectionState } = setup({}, { ssoAuthenticated: true, ssoUserDisplay: 'Ada' })
 

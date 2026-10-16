@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useParams } from '@tanstack/react-router'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import type { ConversationId } from '@/shared/kernel/branded'
@@ -9,18 +9,22 @@ import type { ConversationId } from '@/shared/kernel/branded'
 export const useOpenConversation = (): ((id: ConversationId) => void) => {
   const { conversations } = useContainer()
   const { activeId } = useContainerStore('conversations')
+  const { conversationId: routeId } = useParams({ strict: false })
   const navigate = useNavigate()
 
   return useCallback(
     (id: ConversationId) => {
-      // Same URL means no route change to react to, so the reload is asked for directly.
-      if (id === activeId) {
+      // The route only loads an id that differs from the active one, and an unchanged URL raises
+      // nothing to react to, so either case asks the store directly. Re-picking the active
+      // conversation while another is still loading must also override that pending load.
+      if (id === activeId || id === routeId) {
         conversations.open(id)
-        return
       }
 
-      void navigate({ to: '/ui/c/$conversationId', params: { conversationId: id } })
+      if (id !== routeId) {
+        void navigate({ to: '/ui/c/$conversationId', params: { conversationId: id } })
+      }
     },
-    [activeId, conversations, navigate],
+    [activeId, conversations, navigate, routeId],
   )
 }

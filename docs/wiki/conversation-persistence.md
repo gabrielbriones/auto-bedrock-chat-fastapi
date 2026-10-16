@@ -102,6 +102,7 @@ full message shapes; a summary:
 | `conversation_not_found`            | The id doesn't exist **or** belongs to another user (deliberately not distinguished — see [Auth model](#auth-model))                              |
 | `conversation_history_unavailable`  | The conversation has recorded turns (`message_count > 0`) but the checkpoint has no values (process restarted with a non-persistent checkpointer) |
 | `invalid_conversation_request`      | Malformed payload (missing/invalid `conversation_id`, `title`, `limit`, `offset`)                                                                 |
+| `turn_in_progress`                  | A `clear` arrived while a chat turn is still running on that conversation; wait for its `ai_response` and send `clear` again                      |
 
 ### In-progress and interrupted turns
 

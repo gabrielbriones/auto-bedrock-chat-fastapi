@@ -154,7 +154,7 @@ describe('ServerFrameSchema', () => {
       tool_calls: [],
       tool_results: [],
       timestamp: '2026-10-14T17:49:59.968042',
-      metadata: { ...metadata, tool_result_sizes: [{ name: 'list_job_files', args: {}, bytes: 512 }] },
+      metadata: { ...metadata, tool_result_sizes: [{ name: 'list_job_files', bytes: 512 }] },
       conversation_id: 'conversation-1',
     }
 

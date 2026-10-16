@@ -176,11 +176,13 @@ export class IdentityStore {
     const credential = this.#credential
     // Dropping an SSO principal to `unauthenticated` here hid the conversations on every
     // reconnect, which wiped the transcript; the server confirms or denies it before
-    // `connection_established`.
+    // `connection_established`. A socket that drops before then leaves the check pending, so it
+    // carries over to the next attempt instead of being read as a sign-out.
+    const sso = credential === null && this.#session.principal.mode === 'sso'
     this.#ssoHandshakePending =
-      credential === null &&
-      this.#session.status === 'authenticated' &&
-      this.#session.principal.mode === 'sso'
+      sso &&
+      (this.#session.status === 'authenticated' ||
+        (this.#session.status === 'authenticating' && this.#ssoHandshakePending))
     this.#dispatch({
       type: 'socket-reset',
       reauthenticating: credential !== null || this.#ssoHandshakePending,

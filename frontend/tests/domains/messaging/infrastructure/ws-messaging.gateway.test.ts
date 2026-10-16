@@ -407,6 +407,34 @@ describe('WsMessagingGateway', () => {
     expect(events).toEqual([])
   })
 
+  // XMGPLAT-11999: a turn keeps running after the user switches away, and its answer used to land
+  // in the newly opened conversation's transcript.
+  it('drops progress and answers for a conversation the user has switched away from', () => {
+    const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+    let subscriber: ServerFrameSubscriber | undefined
+    const gateway = new WsMessagingGateway(
+      { send },
+      {
+        subscribe: (next) => {
+          subscriber = next
+          return () => { subscriber = undefined }
+        },
+      },
+      (conversationId) => conversationId === 'current',
+    )
+    const events: MessagingEvent[] = []
+    gateway.onEvent((event) => events.push(event))
+
+    subscriber?.({ type: 'typing', timestamp: TIMESTAMP, message: 'Calling get_jobs...', conversation_id: 'stale' })
+    subscriber?.(answer({ conversation_id: 'stale' }))
+    subscriber?.({ type: 'ai_response', timestamp: TIMESTAMP, message: 'boom', error: true, conversation_id: 'stale' })
+    subscriber?.({ type: 'typing', timestamp: TIMESTAMP, message: 'Calling get_jobs...', conversation_id: 'current' })
+    subscriber?.(answer({ conversation_id: null, message: 'anonymous' }))
+
+    expect(events.map((event) => event.kind)).toEqual(['typing', 'answered'])
+    expect(events[1]).toMatchObject({ kind: 'answered', text: 'anonymous' })
+  })
+
   // The thread exists but its checkpoint is gone: the transcript treats that as an empty load.
   it('maps unavailable history to an empty history load for that conversation', () => {
     const { events, emit } = createHarness()

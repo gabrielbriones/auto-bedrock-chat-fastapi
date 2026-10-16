@@ -221,6 +221,8 @@ const createChatStores = (
     logger: parts.logger,
     persistenceEnabled: bootstrap.conversationPersistenceEnabled,
   })
+  // History and a running turn's progress/answer are both dropped unless they belong to the
+  // conversation the user last asked for (XMGPLAT-11999).
   const messagingGateway = new WsMessagingGateway(
     socket,
     messageBus,

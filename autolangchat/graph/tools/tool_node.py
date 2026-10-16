@@ -204,11 +204,10 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
     metadata["tool_call_rounds"] = metadata.get("tool_call_rounds", 0) + 1
     metadata["total_tool_calls"] = metadata.get("total_tool_calls", 0) + len(tool_results)
 
-    args_by_id = {tc.get("id", ""): tc.get("args") or tc.get("arguments") or {} for tc in raw_tool_calls}
+    # Name and size only: arguments carry user-supplied data and this is logged at INFO and sent to the client.
     tool_result_sizes = [
         {
             "name": r.get("name"),
-            "args": args_by_id.get(r.get("tool_call_id"), {}),
             "bytes": len(json.dumps(r.get("result", r.get("error")), default=str).encode()),
         }
         for r in tool_results

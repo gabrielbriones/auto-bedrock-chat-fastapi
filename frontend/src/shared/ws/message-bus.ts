@@ -130,7 +130,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
     redirect_url: z.string().optional(),
   }),
   serverFrame('logout_success').extend({ message: z.string() }),
-  serverFrame('typing').extend({ message: z.string() }),
+  // Progress for a turn carries its conversation, so a client that switched away can ignore it.
+  serverFrame('typing').extend({ message: z.string(), conversation_id: z.string().nullable().optional() }),
   aiResponseFrameSchema,
   serverFrame('error').extend({ message: z.string() }),
   serverFrame('pong'),
