@@ -13,7 +13,7 @@ import { MESSAGING_COPY } from '@/shared/copy/messaging'
 
 type SocketWriter = Pick<SocketClient, 'send'>
 type FrameSource = Pick<MessageBus, 'subscribe'>
-type HistoryFilter = (conversationId: string) => boolean
+type ConversationFilter = (conversationId: string) => boolean
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -203,15 +203,29 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
   }
 }
 
+// The conversation a frame belongs to, for the frames that are scoped to one. A turn keeps running
+// after the user switches away (XMGPLAT-11999), so its progress and answer are scoped like history.
+const conversationOf = (frame: ServerFrame): string | null => {
+  switch (frame.type) {
+    case 'typing':
+    case 'ai_response':
+    case 'conversation_loaded':
+    case 'conversation_error':
+      return frame.conversation_id ?? null
+    default:
+      return null
+  }
+}
+
 export class WsMessagingGateway implements MessagingGateway {
-  readonly #acceptHistory: HistoryFilter
+  readonly #acceptConversation: ConversationFilter
   readonly #frames: FrameSource
   readonly #socket: SocketWriter
 
-  constructor(socket: SocketWriter, frames: FrameSource, acceptHistory: HistoryFilter = () => true) {
+  constructor(socket: SocketWriter, frames: FrameSource, acceptConversation: ConversationFilter = () => true) {
     this.#socket = socket
     this.#frames = frames
-    this.#acceptHistory = acceptHistory
+    this.#acceptConversation = acceptConversation
   }
 
   sendChat(text: string): SendResult {
@@ -220,17 +234,18 @@ export class WsMessagingGateway implements MessagingGateway {
 
   onEvent(callback: (event: MessagingEvent) => void): Unsubscribe {
     return this.#frames.subscribe((frame) => {
+      const scope = conversationOf(frame)
+
+      // The server still checkpoints a dropped answer; it shows when that conversation is reopened.
+      if (scope !== null && !this.#acceptConversation(scope)) {
+        return
+      }
+
       const event = toMessagingEvent(frame)
 
-      if (event === null) {
-        return
+      if (event !== null) {
+        callback(event)
       }
-
-      if (event.kind === 'history-loaded' && !this.#acceptHistory(event.conversationId)) {
-        return
-      }
-
-      callback(event)
     })
   }
 }

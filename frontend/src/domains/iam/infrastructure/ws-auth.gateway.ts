@@ -109,6 +109,8 @@ const toAuthEvent = (
       }
     case 'logout_success':
       return { kind: 'logged-out', message: frame.message }
+    case 'connection_established':
+      return { kind: 'handshake-complete' }
     default:
       return null
   }

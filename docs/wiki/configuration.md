@@ -56,15 +56,15 @@ autolangchat_plugin = add_autolangchat(
 
 ### Endpoints
 
-| Env Variable                              | Default    | Description                                             |
-| ----------------------------------------- | ---------- | ------------------------------------------------------- |
-| `AUTOCHAT_CHAT_ENDPOINT`                  | `/chat`    | Chat route base path                                    |
-| `AUTOCHAT_WEBSOCKET_ENDPOINT`             | `/chat/ws` | WebSocket endpoint                                      |
-| `AUTOCHAT_UI_ENDPOINT`                    | `/chat/ui` | Site-root mount for the chat UI (React SPA)             |
-| `AUTOCHAT_UI_DIST_DIR`                    | `frontend/dist` | Directory containing the built SPA                 |
-| `AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES`    | UI path    | Comma-separated allowed post-SSO return path prefixes   |
-| `AUTOCHAT_ENABLE_UI`                      | `true`     | Enable built-in chat UI                                 |
-| `AUTOCHAT_UI_LOCK_INPUT_WHILE_RESPONDING` | `true`     | Disable chat input while waiting for assistant response |
+| Env Variable                              | Default         | Description                                             |
+| ----------------------------------------- | --------------- | ------------------------------------------------------- |
+| `AUTOCHAT_CHAT_ENDPOINT`                  | `/chat`         | Chat route base path                                    |
+| `AUTOCHAT_WEBSOCKET_ENDPOINT`             | `/chat/ws`      | WebSocket endpoint                                      |
+| `AUTOCHAT_UI_ENDPOINT`                    | `/chat/ui`      | Site-root mount for the chat UI (React SPA)             |
+| `AUTOCHAT_UI_DIST_DIR`                    | `frontend/dist` | Directory containing the built SPA                      |
+| `AUTOCHAT_SSO_ALLOWED_RETURN_PREFIXES`    | UI path         | Comma-separated allowed post-SSO return path prefixes   |
+| `AUTOCHAT_ENABLE_UI`                      | `true`          | Enable built-in chat UI                                 |
+| `AUTOCHAT_UI_LOCK_INPUT_WHILE_RESPONDING` | `true`          | Disable chat input while waiting for assistant response |
 
 ### Tool Calling
 
@@ -139,6 +139,10 @@ autolangchat_plugin = add_autolangchat(
 | `history_msg_length_threshold`      | `100000`                 | Per-message threshold in Stage 2                        |
 | `history_msg_truncation_target`     | `85000`                  | Per-message target in Stage 2                           |
 | `AUTOCHAT_MAX_TRUNCATION_RECURSION` | `3`                      | Max recursion for safety-net halving (still an env var) |
+
+| Env Variable                              | Default | Description                                                                                                                                                                           |
+| ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION` | `0.10`  | Share of the model's `max_input_tokens` the input-token estimator holds back for estimate error (`0.0`–`0.5`). See [token-management.md](token-management.md#how-oversize-is-decided) |
 
 ### AI Summarization
 

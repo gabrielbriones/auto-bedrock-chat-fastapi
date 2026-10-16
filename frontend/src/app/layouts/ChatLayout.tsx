@@ -8,6 +8,7 @@ import {
   ConversationDrawerTrigger,
 } from '@/app/chat/ConversationDrawer'
 import { useConversationVisibility } from '@/app/chat/useConversationVisibility'
+import { useOpenConversation } from '@/app/chat/useOpenConversation'
 import { AppShell } from '@/app/layouts/AppShell'
 import { RouteBoundary } from '@/components/ui/composed/error-boundaries'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -77,6 +78,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
 
   const closeDrawer = useCallback(() => { setDrawerOpen(false) }, [])
   const openDrawer = useCallback(() => { setDrawerOpen(true) }, [])
+  const openConversation = useOpenConversation()
 
   // FR-SHELL-023: reported once, with the route and nothing the user typed.
   const report = useCallback((error: Error) => {
@@ -101,7 +103,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
           <ConnectionBadge connection={connection} />
         </div>
       }
-      sidebar={visible ? <ConversationSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebarCollapsed} /> : undefined}
+      sidebar={visible ? <ConversationSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebarCollapsed} onOpen={openConversation} /> : undefined}
       sidebarWidth={sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH}
       overlays={<ConversationDrawer open={drawerOpen} onOpenChange={setDrawerOpen} onNavigate={closeDrawer} />}
     >

@@ -27,6 +27,8 @@ export type AuthEvent =
       readonly kind: 'logged-out'
       readonly message: string
     }
+  // `connection_established`: an SSO cookie the server accepted has already produced `configured`.
+  | { readonly kind: 'handshake-complete' }
 
 export interface AuthGateway {
   // FR-IAM-010b: the caller must know a frame was dropped, or the UI waits forever for a reply

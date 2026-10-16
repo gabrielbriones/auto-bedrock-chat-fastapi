@@ -57,7 +57,9 @@ const metadataSchema = z
       )
       .optional(),
   })
-  .strict()
+  // Not `.strict()`: the backend adds metadata keys freely (XMGPLAT-11999), and one unknown key
+  // would drop the whole answer. Unknown keys are stripped instead.
+  .strip()
 
 const messageSchema = z
   .object({
@@ -128,7 +130,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
     redirect_url: z.string().optional(),
   }),
   serverFrame('logout_success').extend({ message: z.string() }),
-  serverFrame('typing').extend({ message: z.string() }),
+  // Progress for a turn carries its conversation, so a client that switched away can ignore it.
+  serverFrame('typing').extend({ message: z.string(), conversation_id: z.string().nullable().optional() }),
   aiResponseFrameSchema,
   serverFrame('error').extend({ message: z.string() }),
   serverFrame('pong'),

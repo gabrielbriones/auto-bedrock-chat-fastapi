@@ -73,6 +73,11 @@ User: "Show me electronics under $100"
   AI synthesizes response: "I found 3 electronics under $100: ..."
 ```
 
+Tool results go back into the model's context, so large ones count against
+its input-token limit. See
+[Token Management — How Oversize Is Decided](token-management.md#how-oversize-is-decided)
+for how the input budget and the size of a result are estimated per model.
+
 ---
 
 ## Recursive Tool Calls
@@ -179,3 +184,4 @@ async def search_products(q: str, limit: int = 10):
 - [OpenAPI Integration](openapi-integration.md)
 - [Authentication](authentication.md)
 - [Configuration](configuration.md) — `max_tool_calls`, `max_tool_call_rounds`
+- [Token Management](token-management.md) — truncation and the input-token budget for large tool results
