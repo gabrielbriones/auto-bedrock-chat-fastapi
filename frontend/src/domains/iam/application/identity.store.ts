@@ -45,6 +45,8 @@ export class IdentityStore {
   readonly #renewalIntervalMs: number
   readonly #renewalScheduler: SessionRenewalScheduler
   #session: AuthSession
+  // XMGPLAT-11999: an SSO principal is re-verified from the cookie during the handshake.
+  #ssoHandshakePending = false
   readonly #ssoGateway: SsoGateway
   #subscriptions: readonly Unsubscribe[] = []
   #wasOpen = false
@@ -64,6 +66,10 @@ export class IdentityStore {
         }
         if (event.kind === 'configured') {
           this.#renewalHeld = false
+          this.#ssoHandshakePending = false
+        }
+        if (event.kind === 'handshake-complete') {
+          this.#settleSsoHandshake()
         }
         this.#dispatch({ type: 'auth-event', event })
       }),
@@ -168,11 +174,33 @@ export class IdentityStore {
     }
 
     const credential = this.#credential
-    this.#dispatch({ type: 'socket-reset', reauthenticating: credential !== null })
+    // Dropping an SSO principal to `unauthenticated` here hid the conversations on every
+    // reconnect, which wiped the transcript; the server confirms or denies it before
+    // `connection_established`. A socket that drops before then leaves the check pending, so it
+    // carries over to the next attempt instead of being read as a sign-out.
+    const sso = credential === null && this.#session.principal.mode === 'sso'
+    this.#ssoHandshakePending =
+      sso &&
+      (this.#session.status === 'authenticated' ||
+        (this.#session.status === 'authenticating' && this.#ssoHandshakePending))
+    this.#dispatch({
+      type: 'socket-reset',
+      reauthenticating: credential !== null || this.#ssoHandshakePending,
+    })
 
     if (credential !== null && this.#authGateway.authenticate(credential) === 'dropped-closed') {
       this.#dispatch({ type: 'send-failed' })
     }
+  }
+
+  // The handshake ended without `auth_configured`: the cookie was not accepted.
+  #settleSsoHandshake(): void {
+    if (!this.#ssoHandshakePending) {
+      return
+    }
+
+    this.#ssoHandshakePending = false
+    this.#dispatch({ type: 'socket-reset', reauthenticating: false })
   }
 
   #dispatch(action: AuthSessionAction): void {

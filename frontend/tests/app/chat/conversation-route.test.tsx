@@ -140,6 +140,60 @@ describe('conversation URL binding', () => {
     expect(gateway.calls.filter(([method]) => method === 'load')).toEqual([['load', id('b')]])
   })
 
+  // XMGPLAT-11999: the URL used to wait for the server's reply, which a busy socket could hold back.
+  it('moves the URL to a sidebar pick before the server answers, and loads it once', async () => {
+    const { container, gateway, emit, pathname } = renderAt('/chat/ui/c/a')
+    await routeReady()
+    await authenticate(container)
+    emit(anEvent.loaded('a'))
+    emit(anEvent.listed(ROSTER))
+    gateway.calls.length = 0
+
+    await userEvent.click(screen.getByRole('button', { name: 'Stream triad' }))
+
+    await waitFor(() => expect(pathname()).toBe('/ui/c/b'))
+    expect(gateway.calls.filter(([method]) => method === 'load')).toEqual([['load', id('b')]])
+  })
+
+  it('reloads the active conversation when it is picked again', async () => {
+    const { container, gateway, emit } = renderAt('/chat/ui/c/a')
+    await routeReady()
+    await authenticate(container)
+    emit(anEvent.loaded('a'))
+    emit(anEvent.listed(ROSTER))
+    gateway.calls.length = 0
+
+    await userEvent.click(screen.getByRole('button', { name: 'GEMM tuning' }))
+
+    expect(gateway.calls).toEqual([['load', id('a')]])
+  })
+
+  // The active id is the last conversation loaded, not the URL: re-picking it while another pick is
+  // still loading must move the URL back and win over that pending load.
+  it('returns to the active conversation when it is picked again before another pick loads', async () => {
+    const { container, gateway, emit, pathname } = renderAt('/chat/ui/c/a')
+    await routeReady()
+    await authenticate(container)
+    emit(anEvent.loaded('a'))
+    emit(anEvent.listed(ROSTER))
+    gateway.calls.length = 0
+
+    await userEvent.click(screen.getByRole('button', { name: 'Stream triad' }))
+    await waitFor(() => expect(pathname()).toBe('/ui/c/b'))
+    await userEvent.click(screen.getByRole('button', { name: 'GEMM tuning' }))
+    await waitFor(() => expect(pathname()).toBe('/ui/c/a'))
+
+    emit(anEvent.loaded('b'))
+    emit(anEvent.loaded('a'))
+
+    expect(container.conversations.getSnapshot().activeId).toBe(id('a'))
+    expect(pathname()).toBe('/ui/c/a')
+    expect(gateway.calls.filter(([method]) => method === 'load')).toEqual([
+      ['load', id('b')],
+      ['load', id('a')],
+    ])
+  })
+
   it('loads a sidebar selection into the route and replaces the visible transcript', async () => {
     const { container, gateway, emit, pathname } = renderAt('/chat/ui/c/a')
     await routeReady()

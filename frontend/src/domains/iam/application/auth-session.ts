@@ -145,6 +145,9 @@ const onAuthEvent = (session: AuthSession, policy: AuthPolicy, event: AuthEvent)
       return onExpired(session, policy, event)
     case 'logged-out':
       return onLoggedOut(session, policy, event)
+    // The store decides what an unconfirmed handshake means; it carries no state of its own.
+    case 'handshake-complete':
+      return session
   }
 }
 

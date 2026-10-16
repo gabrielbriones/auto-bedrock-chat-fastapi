@@ -153,6 +153,23 @@ client = WebSocketChatClient(
 { "type": "chat", "message": "Your question here" }
 ```
 
+While a turn is running, the server keeps reading the socket: `ping` and the
+`conversation_*` frames are answered straight away, so a long tool-calling turn
+does not starve a client heartbeat. Only one turn runs per connection; a second
+`chat` sent before the first turn's `ai_response` is refused with an `error`
+frame (one sent after it is accepted, even while the server is still recording
+the previous turn). A `clear` sent while a turn is running on that conversation
+is refused with a `conversation_error` whose `code` is `turn_in_progress`, since
+the running turn would otherwise restore the cleared history when it finishes.
+If the client disconnects mid-turn, the turn still finishes and is checkpointed —
+reload the conversation to see the answer.
+
+A turn keeps running if the client opens another conversation meanwhile, so its
+progress (`typing`) and `ai_response` frames — including the error variant —
+carry the turn's `conversation_id` (`null` without conversation persistence).
+Ignore those that don't match the conversation on screen; the answer is in that
+conversation's history when it is reloaded.
+
 **Authenticate session:**
 
 ```json
@@ -310,6 +327,7 @@ Use it, not the shape of `messages`, to decide whether to show a
 
 ```json
 { "type": "typing", "message": "AI is thinking...", "timestamp": "..." }
+{ "type": "typing", "message": "Calling get_jobs... (1/1)", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 ```
 
 **Auth response:**

@@ -4,6 +4,7 @@ import { PanelLeftIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
+import { useOpenConversation } from '@/app/chat/useOpenConversation'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
 
 export type ConversationDrawerProps = {
@@ -16,10 +17,12 @@ export type ConversationDrawerProps = {
 // T-025 / FR-SHELL-018: below `lg` the roster moves into a sheet. It renders the same
 // `ConversationSidebar` as the persistent column, so there is one list, not two that drift.
 export function ConversationDrawer({ open, onOpenChange, onNavigate, footer }: ConversationDrawerProps) {
+  const openConversation = useOpenConversation()
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="p-0 lg:hidden">
-        <ConversationSidebar onNavigate={onNavigate} footer={footer} />
+        <ConversationSidebar onNavigate={onNavigate} onOpen={openConversation} footer={footer} />
       </SheetContent>
     </Sheet>
   )

@@ -204,6 +204,17 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
     metadata["tool_call_rounds"] = metadata.get("tool_call_rounds", 0) + 1
     metadata["total_tool_calls"] = metadata.get("total_tool_calls", 0) + len(tool_results)
 
+    # Name and size only: arguments carry user-supplied data and this is logged at INFO and sent to the client.
+    tool_result_sizes = [
+        {
+            "name": r.get("name"),
+            "bytes": len(json.dumps(r.get("result", r.get("error")), default=str).encode()),
+        }
+        for r in tool_results
+    ]
+    logger.info("Tool result sizes: %s", [{"name": r["name"], "bytes": r["bytes"]} for r in tool_result_sizes])
+    metadata["tool_result_sizes"] = metadata.get("tool_result_sizes", []) + tool_result_sizes
+
     logger.debug(
         "Tool execution complete: %d result(s), round %d",
         len(tool_results),

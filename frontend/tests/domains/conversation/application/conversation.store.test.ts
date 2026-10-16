@@ -40,14 +40,41 @@ describe('ConversationStore visibility', () => {
     expect(store.getSnapshot().activeId).toBeNull()
   })
 
-  // FR-CONV-012 / P2 / P4.
-  it('re-requests the roster and reloads the active conversation after a reconnect', () => {
-    const { gateway, connection } = createHarness()
+  // FR-CONV-012 / P2 / P4 / FR-IAM-010: the new socket has to be authenticated before the server
+  // answers anything, so the reload waits for that rather than for the socket to open.
+  it('re-requests the roster and reloads the active conversation once a reconnect is verified', () => {
+    const { store, gateway, connection } = createHarness()
     gateway.emit(anEvent.loaded('a'))
     connection.set(closedState)
     gateway.calls.length = 0
 
     connection.set(openState)
+    store.setAuthenticated(true, false)
+
+    expect(gateway.calls).toEqual([])
+    expect(store.getSnapshot().visible).toBe(true)
+    expect(store.getSnapshot().activeId).toBe(id('a'))
+
+    store.setAuthenticated(true, true)
+
+    expect(gateway.calls).toEqual([
+      ['requestRoster', undefined],
+      ['load', id('a')],
+    ])
+  })
+
+  // XMGPLAT-11999: an unchanged "authenticated" never reached the store after a reconnect, so the
+  // conversation was never reloaded and the next chat silently started a new one.
+  it('does not trust a verification from before the socket dropped', () => {
+    const { store, gateway, connection } = createHarness()
+    gateway.emit(anEvent.loaded('a'))
+    connection.set(closedState)
+    connection.set(openState)
+    gateway.calls.length = 0
+
+    expect(gateway.calls).toEqual([])
+
+    store.setAuthenticated(true, true)
 
     expect(gateway.calls).toEqual([
       ['requestRoster', undefined],

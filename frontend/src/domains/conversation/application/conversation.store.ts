@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- every conversation use case goes through this one store (SPEC-011 §4) */
 import type { ConversationId } from '@/shared/kernel/branded'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 import { isOk } from '@/shared/kernel/result'
@@ -49,6 +50,7 @@ export class ConversationStore {
   readonly #pendingTurn: PendingTurnWatcher
   #roster: ConversationRoster = emptyRoster
   #authenticated = false
+  #verified = false
   #persistenceDisabled = false
   #connected: boolean
   #notice: string | null = null
@@ -93,26 +95,32 @@ export class ConversationStore {
   getSnapshot = (): ConversationSnapshot => this.#snapshot
 
   // FR-CONV-001: the composition root owns the identity dependency, so `conv` never imports `iam`.
-  setAuthenticated(authenticated: boolean): void {
-    if (this.#authenticated === authenticated) {
-      return
-    }
-
+  // `authenticated` keeps the roster on screen; `verified` says this socket has been authenticated,
+  // which the server requires before it answers any conversation frame. A principal re-verified
+  // after a reconnect is the first without the second (XMGPLAT-11999).
+  setAuthenticated(authenticated: boolean, verified: boolean = authenticated): void {
     const wasVisible = this.#visible()
+    const wasReady = this.#ready()
     this.#authenticated = authenticated
-
-    if (this.#visible() && !wasVisible) {
-      this.#onBecameVisible()
-      return
-    }
+    this.#verified = authenticated && verified && this.#connected
 
     if (!this.#visible() && wasVisible) {
       this.#roster = clearActive(this.#roster)
       this.#requestedId = null
       this.#pendingTurn.stop()
+      this.#emit()
+      return
     }
 
-    this.#emit()
+    // P4: the first verification on a socket is what reloads the roster and the open conversation.
+    if (this.#ready() && !wasReady) {
+      this.#onBecameVisible()
+      return
+    }
+
+    if (this.#visible() !== wasVisible) {
+      this.#emit()
+    }
   }
 
   // FR-CONV-002 / P3: no reply frame is expected — the id arrives later.
@@ -342,9 +350,11 @@ export class ConversationStore {
     this.#connected = connected
 
     // FR-CONV-009b: a closed socket cannot answer a poll, so the watch stops rather than burning
-    // its remaining attempts against nothing.
+    // its remaining attempts against nothing. FR-IAM-010: authentication is per socket, so the
+    // next one is not verified until the composition root says so again.
     if (!connected) {
       this.#pendingTurn.stop()
+      this.#verified = false
     }
 
     if (reconnected) {
@@ -360,7 +370,7 @@ export class ConversationStore {
   }
 
   #refreshIfVisible(): void {
-    if (!this.#visible() || !this.#connected) {
+    if (!this.#ready()) {
       return
     }
 
@@ -382,6 +392,11 @@ export class ConversationStore {
     return this.#options.persistenceEnabled && this.#authenticated && !this.#persistenceDisabled
   }
 
+  // Whether a conversation request sent now would be answered rather than rejected as anonymous.
+  #ready(): boolean {
+    return this.#visible() && this.#verified && this.#connected
+  }
+
   // FR-CONV-017 / ADR-012: no optimistic mutation while the socket is closed, and the user is told
   // which mutation did not happen rather than being left to notice nothing changed.
   #guard(offlineMessage: string): boolean {
@@ -400,7 +415,6 @@ export class ConversationStore {
       activeId: this.#roster.activeId,
       selection: this.#roster.selection,
       selectionState: selectionState(this.#roster),
-      // eslint-disable-next-line max-lines
       bulkDeleteInFlight: this.#roster.pendingBulkDelete !== null,
       connected: this.#connected,
       notice: this.#notice,
