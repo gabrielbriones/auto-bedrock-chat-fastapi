@@ -231,3 +231,25 @@ class TestSummarizationEnvVars:
     def test_summarization_max_tokens_non_positive_rejected(self):
         with pytest.raises(ValidationError):
             _load_config(AUTOCHAT_SUMMARIZATION_MAX_TOKENS="0")
+
+
+class TestContextBudgetEnvVars:
+    """AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION for the ContextBudget estimator (XMGPLAT-11843)."""
+
+    def test_safety_fraction_defaults_to_ten_percent(self):
+        config = _load_config()
+        assert abs(config.context_budget_safety_fraction - 0.10) < 1e-9
+
+    def test_safety_fraction_from_autochat_var(self):
+        config = _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION="0.25")
+        assert abs(config.context_budget_safety_fraction - 0.25) < 1e-9
+
+    @pytest.mark.parametrize("value", ["0.0", "0.5"])
+    def test_safety_fraction_bounds_inclusive(self, value):
+        config = _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION=value)
+        assert abs(config.context_budget_safety_fraction - float(value)) < 1e-9
+
+    @pytest.mark.parametrize("value", ["-0.01", "0.51", "1.0"])
+    def test_safety_fraction_out_of_range_rejected(self, value):
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION=value)

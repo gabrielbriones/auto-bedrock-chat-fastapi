@@ -1,0 +1,1285 @@
+{
+  "fixtures": {
+    "dense.json": {
+      "chars": 16551,
+      "kind": "json"
+    },
+    "log.txt": {
+      "chars": 10975,
+      "kind": "log_tabular"
+    },
+    "prose.txt": {
+      "chars": 4125,
+      "kind": "prose"
+    },
+    "table.csv": {
+      "chars": 8994,
+      "kind": "log_tabular"
+    }
+  },
+  "generated_at": "2026-10-15T16:02:54+00:00",
+  "langchain_aws_version": "1.8.1",
+  "providers": {
+    "amazon": {
+      "models": [
+        {
+          "baseline_input_tokens": 47,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6372,
+              "fixture_tokens": 6276,
+              "input_tokens": 6323
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2239,
+              "fixture_tokens": 4935,
+              "input_tokens": 4982
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3433,
+              "fixture_tokens": 772,
+              "input_tokens": 819
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6588,
+              "fixture_tokens": 5422,
+              "input_tokens": 5469
+            }
+          },
+          "model_id": "global.amazon.nova-2-lite-v1:0"
+        },
+        {
+          "baseline_input_tokens": 2,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.991,
+              "fixture_tokens": 8313,
+              "input_tokens": 8315
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4538,
+              "fixture_tokens": 7549,
+              "input_tokens": 7551
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 779
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0584,
+              "fixture_tokens": 8498,
+              "input_tokens": 8500
+            }
+          },
+          "model_id": "us.amazon.nova-micro-v1:0"
+        },
+        {
+          "baseline_input_tokens": 2,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.991,
+              "fixture_tokens": 8313,
+              "input_tokens": 8315
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4538,
+              "fixture_tokens": 7549,
+              "input_tokens": 7551
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 779
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0584,
+              "fixture_tokens": 8498,
+              "input_tokens": 8500
+            }
+          },
+          "model_id": "us.amazon.nova-pro-v1:0"
+        }
+      ]
+    },
+    "anthropic": {
+      "models": [
+        {
+          "baseline_input_tokens": 8,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.1893,
+              "fixture_tokens": 7560,
+              "input_tokens": 7568
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.0119,
+              "fixture_tokens": 5455,
+              "input_tokens": 5463
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.0926,
+              "fixture_tokens": 810,
+              "input_tokens": 818
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6548,
+              "fixture_tokens": 5435,
+              "input_tokens": 5443
+            }
+          },
+          "model_id": "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+        },
+        {
+          "baseline_input_tokens": 7,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.8353,
+              "fixture_tokens": 9018,
+              "input_tokens": 9025
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.7745,
+              "fixture_tokens": 6185,
+              "input_tokens": 6192
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 3.5776,
+              "fixture_tokens": 1153,
+              "input_tokens": 1160
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6518,
+              "fixture_tokens": 5445,
+              "input_tokens": 5452
+            }
+          },
+          "model_id": "global.anthropic.claude-opus-4-8"
+        },
+        {
+          "baseline_input_tokens": 9,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.8353,
+              "fixture_tokens": 9018,
+              "input_tokens": 9027
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.7745,
+              "fixture_tokens": 6185,
+              "input_tokens": 6194
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 3.5776,
+              "fixture_tokens": 1153,
+              "input_tokens": 1162
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6518,
+              "fixture_tokens": 5445,
+              "input_tokens": 5454
+            }
+          },
+          "model_id": "global.anthropic.claude-sonnet-5-5"
+        },
+        {
+          "baseline_input_tokens": 7,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.8353,
+              "fixture_tokens": 9018,
+              "input_tokens": 9025
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.7745,
+              "fixture_tokens": 6185,
+              "input_tokens": 6192
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 3.5776,
+              "fixture_tokens": 1153,
+              "input_tokens": 1160
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6518,
+              "fixture_tokens": 5445,
+              "input_tokens": 5452
+            }
+          },
+          "model_id": "us.anthropic.claude-sonnet-5"
+        }
+      ]
+    },
+    "deepseek": {
+      "models": [
+        {
+          "baseline_input_tokens": 5,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4953,
+              "fixture_tokens": 6633,
+              "input_tokens": 6638
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2012,
+              "fixture_tokens": 4986,
+              "input_tokens": 4991
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3021,
+              "fixture_tokens": 778,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.657,
+              "fixture_tokens": 5428,
+              "input_tokens": 5433
+            }
+          },
+          "model_id": "deepseek.v3.2"
+        },
+        {
+          "baseline_input_tokens": 6,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4953,
+              "fixture_tokens": 6633,
+              "input_tokens": 6639
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2012,
+              "fixture_tokens": 4986,
+              "input_tokens": 4992
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3021,
+              "fixture_tokens": 778,
+              "input_tokens": 784
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.657,
+              "fixture_tokens": 5428,
+              "input_tokens": 5434
+            }
+          },
+          "model_id": "us.deepseek.r1-v1:0"
+        }
+      ]
+    },
+    "google": {
+      "models": [
+        {
+          "baseline_input_tokens": 10,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9401,
+              "fixture_tokens": 8531,
+              "input_tokens": 8541
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4616,
+              "fixture_tokens": 7509,
+              "input_tokens": 7519
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2749,
+              "fixture_tokens": 782,
+              "input_tokens": 792
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0579,
+              "fixture_tokens": 8502,
+              "input_tokens": 8512
+            }
+          },
+          "model_id": "google.gemma-3-12b-it"
+        },
+        {
+          "baseline_input_tokens": 10,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9401,
+              "fixture_tokens": 8531,
+              "input_tokens": 8541
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4616,
+              "fixture_tokens": 7509,
+              "input_tokens": 7519
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2749,
+              "fixture_tokens": 782,
+              "input_tokens": 792
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0579,
+              "fixture_tokens": 8502,
+              "input_tokens": 8512
+            }
+          },
+          "model_id": "google.gemma-3-27b-it"
+        },
+        {
+          "baseline_input_tokens": 10,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9401,
+              "fixture_tokens": 8531,
+              "input_tokens": 8541
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4616,
+              "fixture_tokens": 7509,
+              "input_tokens": 7519
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2749,
+              "fixture_tokens": 782,
+              "input_tokens": 792
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0579,
+              "fixture_tokens": 8502,
+              "input_tokens": 8512
+            }
+          },
+          "model_id": "google.gemma-3-4b-it"
+        }
+      ]
+    },
+    "meta": {
+      "models": [
+        {
+          "baseline_input_tokens": 16,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6255,
+              "fixture_tokens": 6304,
+              "input_tokens": 6320
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2212,
+              "fixture_tokens": 4941,
+              "input_tokens": 4957
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 793
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5439
+            }
+          },
+          "model_id": "us.meta.llama3-1-70b-instruct-v1:0"
+        },
+        {
+          "baseline_input_tokens": 36,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6255,
+              "fixture_tokens": 6304,
+              "input_tokens": 6340
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2212,
+              "fixture_tokens": 4941,
+              "input_tokens": 4977
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 813
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5459
+            }
+          },
+          "model_id": "us.meta.llama3-3-70b-instruct-v1:0"
+        },
+        {
+          "baseline_input_tokens": 36,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.623,
+              "fixture_tokens": 6310,
+              "input_tokens": 6346
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2212,
+              "fixture_tokens": 4941,
+              "input_tokens": 4977
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3157,
+              "fixture_tokens": 776,
+              "input_tokens": 812
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5459
+            }
+          },
+          "model_id": "us.meta.llama4-scout-17b-instruct-v1:0"
+        }
+      ]
+    },
+    "minimax": {
+      "models": [
+        {
+          "baseline_input_tokens": 23,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.5483,
+              "fixture_tokens": 6495,
+              "input_tokens": 6518
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2203,
+              "fixture_tokens": 4943,
+              "input_tokens": 4966
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3502,
+              "fixture_tokens": 771,
+              "input_tokens": 794
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6579,
+              "fixture_tokens": 5425,
+              "input_tokens": 5448
+            }
+          },
+          "model_id": "minimax.minimax-m2"
+        },
+        {
+          "baseline_input_tokens": 39,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.5483,
+              "fixture_tokens": 6495,
+              "input_tokens": 6534
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2203,
+              "fixture_tokens": 4943,
+              "input_tokens": 4982
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3502,
+              "fixture_tokens": 771,
+              "input_tokens": 810
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6579,
+              "fixture_tokens": 5425,
+              "input_tokens": 5464
+            }
+          },
+          "model_id": "minimax.minimax-m2.1"
+        },
+        {
+          "baseline_input_tokens": 39,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.5483,
+              "fixture_tokens": 6495,
+              "input_tokens": 6534
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2203,
+              "fixture_tokens": 4943,
+              "input_tokens": 4982
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3502,
+              "fixture_tokens": 771,
+              "input_tokens": 810
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6579,
+              "fixture_tokens": 5425,
+              "input_tokens": 5464
+            }
+          },
+          "model_id": "minimax.minimax-m2.5"
+        }
+      ]
+    },
+    "mistral": {
+      "models": [
+        {
+          "baseline_input_tokens": 4,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9972,
+              "fixture_tokens": 8287,
+              "input_tokens": 8291
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4674,
+              "fixture_tokens": 7479,
+              "input_tokens": 7483
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2548,
+              "fixture_tokens": 785,
+              "input_tokens": 789
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.058,
+              "fixture_tokens": 8501,
+              "input_tokens": 8505
+            }
+          },
+          "model_id": "mistral.devstral-2-123b"
+        },
+        {
+          "baseline_input_tokens": 4,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9972,
+              "fixture_tokens": 8287,
+              "input_tokens": 8291
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4674,
+              "fixture_tokens": 7479,
+              "input_tokens": 7483
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2548,
+              "fixture_tokens": 785,
+              "input_tokens": 789
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.058,
+              "fixture_tokens": 8501,
+              "input_tokens": 8505
+            }
+          },
+          "model_id": "mistral.ministral-3-8b-instruct"
+        },
+        {
+          "baseline_input_tokens": 4,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9972,
+              "fixture_tokens": 8287,
+              "input_tokens": 8291
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4674,
+              "fixture_tokens": 7479,
+              "input_tokens": 7483
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2548,
+              "fixture_tokens": 785,
+              "input_tokens": 789
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.058,
+              "fixture_tokens": 8501,
+              "input_tokens": 8505
+            }
+          },
+          "model_id": "mistral.voxtral-small-24b-2507"
+        },
+        {
+          "baseline_input_tokens": 4,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.8425,
+              "fixture_tokens": 8983,
+              "input_tokens": 8987
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4523,
+              "fixture_tokens": 7557,
+              "input_tokens": 7561
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.0,
+              "fixture_tokens": 825,
+              "input_tokens": 829
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0576,
+              "fixture_tokens": 8504,
+              "input_tokens": 8508
+            }
+          },
+          "model_id": "us.mistral.pixtral-large-2502-v1:0"
+        }
+      ]
+    },
+    "moonshot": {
+      "models": [
+        {
+          "baseline_input_tokens": 8,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6317,
+              "fixture_tokens": 6289,
+              "input_tokens": 6297
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.223,
+              "fixture_tokens": 4937,
+              "input_tokens": 4945
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3226,
+              "fixture_tokens": 775,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5431
+            }
+          },
+          "model_id": "moonshot.kimi-k2-thinking"
+        }
+      ]
+    },
+    "moonshotai": {
+      "models": [
+        {
+          "baseline_input_tokens": 86,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6317,
+              "fixture_tokens": 6289,
+              "input_tokens": 6375
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.223,
+              "fixture_tokens": 4937,
+              "input_tokens": 5023
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3226,
+              "fixture_tokens": 775,
+              "input_tokens": 861
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5509
+            }
+          },
+          "model_id": "global.moonshotai.kimi-k3"
+        },
+        {
+          "baseline_input_tokens": 28,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6317,
+              "fixture_tokens": 6289,
+              "input_tokens": 6317
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.223,
+              "fixture_tokens": 4937,
+              "input_tokens": 4965
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3226,
+              "fixture_tokens": 775,
+              "input_tokens": 803
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5451
+            }
+          },
+          "model_id": "moonshotai.kimi-k2.5"
+        }
+      ]
+    },
+    "nvidia": {
+      "models": [
+        {
+          "baseline_input_tokens": 13,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9972,
+              "fixture_tokens": 8287,
+              "input_tokens": 8300
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4674,
+              "fixture_tokens": 7479,
+              "input_tokens": 7492
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2548,
+              "fixture_tokens": 785,
+              "input_tokens": 798
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.058,
+              "fixture_tokens": 8501,
+              "input_tokens": 8514
+            }
+          },
+          "model_id": "nvidia.nemotron-nano-9b-v2"
+        },
+        {
+          "baseline_input_tokens": 17,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 1.9972,
+              "fixture_tokens": 8287,
+              "input_tokens": 8304
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4674,
+              "fixture_tokens": 7479,
+              "input_tokens": 7496
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.2548,
+              "fixture_tokens": 785,
+              "input_tokens": 802
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.058,
+              "fixture_tokens": 8501,
+              "input_tokens": 8518
+            }
+          },
+          "model_id": "nvidia.nemotron-super-3-120b"
+        }
+      ]
+    },
+    "openai": {
+      "models": [
+        {
+          "baseline_input_tokens": 7,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6056,
+              "fixture_tokens": 6352,
+              "input_tokens": 6359
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2212,
+              "fixture_tokens": 4941,
+              "input_tokens": 4948
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3157,
+              "fixture_tokens": 776,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5430
+            }
+          },
+          "model_id": "global.openai.gpt-5.6-luna"
+        },
+        {
+          "baseline_input_tokens": 7,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6056,
+              "fixture_tokens": 6352,
+              "input_tokens": 6359
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2212,
+              "fixture_tokens": 4941,
+              "input_tokens": 4948
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3157,
+              "fixture_tokens": 776,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5430
+            }
+          },
+          "model_id": "global.openai.gpt-6-luna"
+        },
+        {
+          "baseline_input_tokens": 68,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.6056,
+              "fixture_tokens": 6352,
+              "input_tokens": 6420
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.2212,
+              "fixture_tokens": 4941,
+              "input_tokens": 5009
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3157,
+              "fixture_tokens": 776,
+              "input_tokens": 844
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.6585,
+              "fixture_tokens": 5423,
+              "input_tokens": 5491
+            }
+          },
+          "model_id": "openai.gpt-oss-safeguard-20b"
+        }
+      ]
+    },
+    "qwen": {
+      "models": [
+        {
+          "baseline_input_tokens": 13,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.0892,
+              "fixture_tokens": 7922,
+              "input_tokens": 7935
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4763,
+              "fixture_tokens": 7434,
+              "input_tokens": 7447
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 790
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0587,
+              "fixture_tokens": 8495,
+              "input_tokens": 8508
+            }
+          },
+          "model_id": "qwen.qwen3-32b-v1:0"
+        },
+        {
+          "baseline_input_tokens": 9,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.0892,
+              "fixture_tokens": 7922,
+              "input_tokens": 7931
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4763,
+              "fixture_tokens": 7434,
+              "input_tokens": 7443
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 786
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0587,
+              "fixture_tokens": 8495,
+              "input_tokens": 8504
+            }
+          },
+          "model_id": "qwen.qwen3-coder-next"
+        },
+        {
+          "baseline_input_tokens": 9,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.0892,
+              "fixture_tokens": 7922,
+              "input_tokens": 7931
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4763,
+              "fixture_tokens": 7434,
+              "input_tokens": 7443
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 786
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0587,
+              "fixture_tokens": 8495,
+              "input_tokens": 8504
+            }
+          },
+          "model_id": "qwen.qwen3-vl-235b-a22b"
+        }
+      ]
+    },
+    "writer": {
+      "models": [
+        {
+          "baseline_input_tokens": 29,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.0892,
+              "fixture_tokens": 7922,
+              "input_tokens": 7951
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4763,
+              "fixture_tokens": 7434,
+              "input_tokens": 7463
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 806
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0587,
+              "fixture_tokens": 8495,
+              "input_tokens": 8524
+            }
+          },
+          "model_id": "us.writer.palmyra-x4-v1:0"
+        },
+        {
+          "baseline_input_tokens": 238,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.0892,
+              "fixture_tokens": 7922,
+              "input_tokens": 8160
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.4763,
+              "fixture_tokens": 7434,
+              "input_tokens": 7672
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 1015
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.0587,
+              "fixture_tokens": 8495,
+              "input_tokens": 8733
+            }
+          },
+          "model_id": "us.writer.palmyra-x5-v1:0"
+        }
+      ]
+    },
+    "xai": {
+      "models": [
+        {
+          "baseline_input_tokens": 19,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4293,
+              "fixture_tokens": 6813,
+              "input_tokens": 6832
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.1968,
+              "fixture_tokens": 4996,
+              "input_tokens": 5015
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3021,
+              "fixture_tokens": 778,
+              "input_tokens": 797
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.656,
+              "fixture_tokens": 5431,
+              "input_tokens": 5450
+            }
+          },
+          "model_id": "global.xai.grok-4.6"
+        },
+        {
+          "baseline_input_tokens": 19,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4293,
+              "fixture_tokens": 6813,
+              "input_tokens": 6832
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 2.1968,
+              "fixture_tokens": 4996,
+              "input_tokens": 5015
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3021,
+              "fixture_tokens": 778,
+              "input_tokens": 797
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.656,
+              "fixture_tokens": 5431,
+              "input_tokens": 5450
+            }
+          },
+          "model_id": "global.xai.grok-4.7"
+        }
+      ]
+    },
+    "zai": {
+      "models": [
+        {
+          "baseline_input_tokens": 6,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4498,
+              "fixture_tokens": 6756,
+              "input_tokens": 6762
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.9955,
+              "fixture_tokens": 5500,
+              "input_tokens": 5506
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.5154,
+              "fixture_tokens": 5935,
+              "input_tokens": 5941
+            }
+          },
+          "model_id": "zai.glm-4.7"
+        },
+        {
+          "baseline_input_tokens": 6,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4498,
+              "fixture_tokens": 6756,
+              "input_tokens": 6762
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.9955,
+              "fixture_tokens": 5500,
+              "input_tokens": 5506
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.5154,
+              "fixture_tokens": 5935,
+              "input_tokens": 5941
+            }
+          },
+          "model_id": "zai.glm-4.7-flash"
+        },
+        {
+          "baseline_input_tokens": 6,
+          "fixtures": {
+            "dense.json": {
+              "chars": 16551,
+              "chars_per_token": 2.4498,
+              "fixture_tokens": 6756,
+              "input_tokens": 6762
+            },
+            "log.txt": {
+              "chars": 10975,
+              "chars_per_token": 1.9955,
+              "fixture_tokens": 5500,
+              "input_tokens": 5506
+            },
+            "prose.txt": {
+              "chars": 4125,
+              "chars_per_token": 5.3089,
+              "fixture_tokens": 777,
+              "input_tokens": 783
+            },
+            "table.csv": {
+              "chars": 8994,
+              "chars_per_token": 1.5154,
+              "fixture_tokens": 5935,
+              "input_tokens": 5941
+            }
+          },
+          "model_id": "zai.glm-5"
+        }
+      ]
+    }
+  },
+  "region": "us-east-1"
+}

@@ -80,6 +80,96 @@ same model before falling back to `fallback_model` (if configured). See
 
 ---
 
+## How Oversize Is Decided
+
+Bedrock Converse has no way to count tokens before a call, so "will this
+payload fit?" is decided from an **estimate**. `autolangchat/context_budget.py`
+provides that estimate as pure functions (no I/O, no network). It does not
+change the pipeline above yet; it is the building block for deciding when a
+tool result or user message is too large to inline. The preprocessor
+thresholds and the safety-net retry stay in place as the backstop when an
+estimate is wrong.
+
+### Remaining budget per turn
+
+`ContextBudget` computes how many input tokens are still free for the model
+that will actually be called:
+
+```
+remaining = max_input_tokens            (model profile; 16,384 if unknown)
+          - reserved output             (max_tokens clamped to the model's output cap)
+          - bound tool schemas          (0 if the model can't call tools)
+          - current messages            (content + 8 tokens overhead per message)
+          - safety margin               (AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION × max_input_tokens)
+```
+
+- `max_input_tokens` comes from the model profile, including region-prefixed
+  inference-profile ids and `CAPABILITY_OVERRIDES`. If the cap is unknown,
+  16,384 tokens is assumed (below every model in the catalog) and a warning
+  is logged once per model id. It never raises.
+- If `max_tokens` is unset, the model's full output cap is reserved, since
+  Bedrock may use all of it.
+- Messages are sized the way they are sent: each tool result counts as its
+  own message, and assistant tool calls are counted as JSON.
+- `remaining_tokens` is never negative.
+
+```python
+from autolangchat.context_budget import ContextBudget
+
+budget = ContextBudget.for_turn(chat_config, messages)   # effective model of this turn
+budget.remaining_tokens                                   # tokens still free
+budget.fits(tool_result_text)                             # True if it fits as a new message
+budget.allowance_for("json")                              # chars of JSON that would fit
+
+# Re-check against another model, e.g. before a fallback retry
+ContextBudget.for_model(chat_config.fallback_model, max_tokens=chat_config.max_tokens, messages=messages)
+```
+
+`for_turn` uses `chat_config.model_id`, which already includes per-turn
+model overrides, and reserves the tools actually bound to the model
+(`chat_config.langchain_tools`).
+
+### Content kind and chars/token ratios
+
+Tokens per character depend on the content and on the model's tokenizer, so
+the estimate is `ceil(chars / ratio)` with a ratio per **provider** and
+**content kind**:
+
+| Kind          | Detected when                                                                          | Typical chars/token |
+| ------------- | -------------------------------------------------------------------------------------- | ------------------- |
+| `json`        | Starts with `{`, or with `[` followed by a JSON value (log lines like `[INFO]` aren't) | 1.7–2.5             |
+| `log_tabular` | Many digits/punctuation, many short lines, or binary-like text                         | 1.0–1.55            |
+| `prose`       | Everything else (including empty input)                                                | 3.4–5.05            |
+
+- Only the first 64 KB is inspected, so classifying multi-MB payloads stays
+  cheap.
+- Ratios are in `CONTEXT_BUDGET_CHARS_PER_TOKEN` in `autolangchat/defaults.py`,
+  keyed by the Bedrock provider in the model id (`anthropic`, `amazon`,
+  `openai`, `qwen`, ...). Anthropic prose is notably denser (3.40) than most
+  other providers (~5.0).
+- A provider without calibrated ratios uses the lowest ratio of any provider
+  for each kind, so it is over- rather than under-estimated.
+- Digit-heavy CSV is the densest content: some tokenizers split every digit
+  (about 1 char/token). `log_tabular` ratios are set to cover it, so
+  ordinary logs are over-estimated by up to about 50%.
+
+### Calibration
+
+The ratios were measured against real Bedrock `input_tokens` for 40 models
+across 15 providers (2026-10-15, `langchain-aws` 1.8.1). Each ratio is the
+densest model of that provider, minus 5% headroom, so estimates run high
+rather than low. Raw measurements and fixtures are in
+`tests/fixtures/context_budget/`, and `tests/test_context_budget.py` checks
+that no measured model is underestimated by more than 5%.
+
+### Safety margin
+
+| Env Variable                              | Default | Description                                                            |
+| ----------------------------------------- | ------- | ---------------------------------------------------------------------- |
+| `AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION` | `0.10`  | Share of `max_input_tokens` held back for estimate error (`0.0`–`0.5`) |
+
+---
+
 ## Plain-Text Truncation
 
 Default behavior. Oversized text is split preserving beginning and end:
@@ -216,4 +306,5 @@ DEBUG - Stage 2.1: message at index 1 truncated: 120000 → 85000 chars
 - [Token Usage Tracking](token-usage-tracking.md) — recording per-turn `input_tokens`/`output_tokens` for observability/billing (a separate concern from the budget/truncation system on this page)
 - `docs/message-truncation-diagrams.html` — visual diagrams of the truncation pipeline
 - `autolangchat/message_preprocessor.py` — implementation
+- `autolangchat/context_budget.py` — input-token estimator (`ContextBudget`)
 - `autolangchat/defaults.py` — all default values
