@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v4.1.0 (2026-10-16)
+
+### Bug Fixes
+
+- **chat**: Restore transcript on reconnect and scope turn frames
+  ([`7eca46b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7eca46b8bc6aff836b9eb3f6c0c9068cc0f37b93))
+
+- **context-budget**: Classify numeric JSON arrays and dedupe mirrored tool_use blocks
+  ([`aaacf9a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/aaacf9a52dbe4b13bfbd318a81940a030c40c1b7))
+
+- **session**: Close takeover auth bypass and capacity-ordering race (Copilot review)
+  ([`3399390`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/3399390b17c5a1f3d480ce3a37758799d3a817bf))
+
+- **session**: Reject or evict colliding reconnect sessions by user identity
+  ([`729bed0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/729bed0f2f8ce4a591f181fc7400a1e6594a8e7f))
+
+- **websocket**: Keep socket responsive and transcript intact during long turns
+  ([`6edbae4`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6edbae4e1d8b8c2b9c3e4792e8968dee0adc1900))
+
+### Chores
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`edb07a7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/edb07a746e726056c53889dbb31e193a66888ef7))
+
+- **deps**: Update python-minor-patch
+  ([`e1db4f5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e1db4f5ec85af37be3daaa86e400571dc524d171))
+
+### Features
+
+- **context-budget**: Add model-aware input token estimator
+  ([`d2225f9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d2225f976fd307ed1a840e7c90574be9f928b2cd))
+
+
 ## v4.0.0 (2026-10-13)
 
 ### Bug Fixes
