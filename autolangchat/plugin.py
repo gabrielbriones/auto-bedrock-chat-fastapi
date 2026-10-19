@@ -908,6 +908,7 @@ class AutoLangChatPlugin:
                 chat_graph=self.chat_graph,
                 require_conversation_user=self._build_require_conversation_user(),
                 in_progress=self.websocket_handler.in_progress,
+                artifact_store=self.session_manager.artifact_store,
             )
         else:
             logger.info(

@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from autolangchat.config import ChatConfig
 from autolangchat.graph.checkpointer import (
     build_checkpointer,
     close_checkpointer,
@@ -227,9 +228,7 @@ class TestSessionManagerReconnect:
     def session_manager(self):
         from autolangchat.session_manager import ChatSessionManager
 
-        cfg = MagicMock()
-        cfg.max_sessions = 100
-        cfg.session_timeout = 3600
+        cfg = ChatConfig().model_copy(update={"max_sessions": 100, "session_timeout": 3600})
         return ChatSessionManager(cfg)
 
     @pytest.mark.asyncio
@@ -275,9 +274,7 @@ class TestPeekSessionDoesNotCountAsActivity:
     def session_manager(self):
         from autolangchat.session_manager import ChatSessionManager
 
-        cfg = MagicMock()
-        cfg.max_sessions = 100
-        cfg.session_timeout = 3600
+        cfg = ChatConfig().model_copy(update={"max_sessions": 100, "session_timeout": 3600})
         return ChatSessionManager(cfg)
 
     @pytest.mark.asyncio

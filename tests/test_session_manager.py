@@ -35,15 +35,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from autolangchat import session_manager as session_manager_module
+from autolangchat.config import ChatConfig
 from autolangchat.exceptions import SessionError
 from autolangchat.session_manager import ChatSession, ChatSessionManager
 
 
 @pytest.fixture
 def session_manager():
-    cfg = MagicMock()
-    cfg.max_sessions = 100
-    cfg.session_timeout = 3600
+    cfg = ChatConfig().model_copy(update={"max_sessions": 100, "session_timeout": 3600})
     return ChatSessionManager(cfg)
 
 

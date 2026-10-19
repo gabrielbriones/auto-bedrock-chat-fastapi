@@ -62,6 +62,10 @@ def _make_config(**overrides):
     config.feedback_allow_anonymous = False
     config.conversation_persistence_enabled = True
     config.conversation_title_model_id = None
+    config.artifact_max_age_seconds = 86400
+    config.artifact_max_bytes_per_session = 16 * 1024 * 1024
+    config.artifact_max_items_per_session = 128
+    config.artifact_max_bytes = 128 * 1024 * 1024
     for key, value in overrides.items():
         setattr(config, key, value)
     return config

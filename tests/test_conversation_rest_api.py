@@ -24,6 +24,7 @@ import pytest
 from fastapi import FastAPI, HTTPException, Request
 from starlette.testclient import TestClient
 
+from autolangchat.artifacts import ArtifactError, ArtifactStore
 from autolangchat.conversation_routes import register_conversation_routes
 from autolangchat.db import SQLiteConversationStore
 
@@ -66,7 +67,15 @@ def in_flight():
 
 
 @pytest.fixture
-def client(store, chat_graph, in_flight):
+def artifact_store():
+    store = ArtifactStore()
+    store.register_connection("connection", "alice")
+    yield store
+    store.close()
+
+
+@pytest.fixture
+def client(store, chat_graph, in_flight, artifact_store):
     app = FastAPI()
 
     async def require_conversation_user(request: Request):
@@ -82,12 +91,31 @@ def client(store, chat_graph, in_flight):
         chat_graph=chat_graph,
         require_conversation_user=require_conversation_user,
         in_progress=in_flight.__contains__,
+        artifact_store=artifact_store,
     )
     return TestClient(app)
 
 
 def _auth(user):
     return {"X-User": user}
+
+
+@pytest.mark.parametrize("delete_all", [False, True])
+def test_conversation_deletion_purges_artifacts_and_revokes_inflight_scope(client, artifact_store, delete_all):
+    response = client.post("/chat/conversations", json={"user_id": "alice"}, headers=_auth("alice"))
+    conversation_id = response.json()["id"]
+    scope = artifact_store.activate("connection", conversation_id, "alice")
+    handle = artifact_store.put(scope, "original", {})
+    if delete_all:
+        response = client.delete("/chat/conversations", params={"user_id": "alice"}, headers=_auth("alice"))
+        assert response.status_code == 200
+    else:
+        response = client.delete(f"/chat/conversations/{conversation_id}", headers=_auth("alice"))
+        assert response.status_code == 204
+    with pytest.raises(ArtifactError):
+        artifact_store.put(scope, "late write", {})
+    fresh = artifact_store.activate("connection", conversation_id, "alice")
+    assert not artifact_store.contains(fresh, handle)
 
 
 # ---------------------------------------------------------------------------

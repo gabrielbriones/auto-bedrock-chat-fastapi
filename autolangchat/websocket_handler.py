@@ -16,6 +16,7 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from .artifacts import ArtifactError, ArtifactStore
 from .auth_handler import AuthenticationHandler, AuthType, Credentials, can_refresh
 from .config import ChatConfig
 from .conversation_titler import generate_conversation_title
@@ -465,6 +466,19 @@ class WebSocketChatHandler:
             await self._send_error(websocket, "Session not found")
             return
 
+        user_message = data.get("message", "")
+        if not isinstance(user_message, str):
+            await self._send_message(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "invalid_message",
+                    "message": "Chat message must be a string.",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+            return
+
         # SSO session expiry check
         if session.credentials and session.credentials.auth_type == AuthType.SSO and self.sso_session_store:
             session_token = session.credentials.session_token
@@ -477,6 +491,7 @@ class WebSocketChatHandler:
                     # SSO session expired — notify client and clear credentials
                     session.credentials = None
                     session.auth_handler = None
+                    self._reset_artifacts(session)
                     await self._send_message(
                         websocket,
                         {
@@ -509,6 +524,7 @@ class WebSocketChatHandler:
                         if refreshed_session is None:
                             session.credentials = None
                             session.auth_handler = None
+                            self._reset_artifacts(session)
                             await self._send_message(
                                 websocket,
                                 {
@@ -528,7 +544,6 @@ class WebSocketChatHandler:
                             sso_session_secret=self.config.sso_session_secret,
                         )
 
-        user_message = data.get("message", "")
         if not user_message.strip():
             await self._send_error(websocket, "Empty message")
             return
@@ -683,6 +698,14 @@ class WebSocketChatHandler:
             else:
                 thread_id = session.session_id
 
+            artifact_config: Dict[str, Any] = {}
+            artifact_store = getattr(self.session_manager, "artifact_store", None)
+            if isinstance(artifact_store, ArtifactStore) and self.config.artifact_enabled:
+                artifact_config = {
+                    "artifact_store": artifact_store,
+                    "artifact_scope": artifact_store.activate(session.connection_id, thread_id, session.user_id),
+                }
+
             # ------------------------------------------------------------------
             # Delegate entirely to LangGraph.
             # Pass only ``user_message`` — the ``init_turn`` node prepends it
@@ -710,6 +733,7 @@ class WebSocketChatHandler:
                             "token_usage_store": self.token_usage_store,
                             "session_id": session.session_id,
                             "user_id": session.user_id,
+                            **artifact_config,
                         }
                     },
                 )
@@ -820,6 +844,7 @@ class WebSocketChatHandler:
             if graph_metadata.get("auth_expired"):
                 session.credentials = None
                 session.auth_handler = None
+                self._reset_artifacts(session)
                 try:
                     await self._send_message(
                         websocket,
@@ -885,7 +910,7 @@ class WebSocketChatHandler:
             # Please try again in a moment."), which hides exactly the detail
             # (e.g. "requires a cross-region inference profile ID") a user
             # picking a model from the settings sidebar needs to see.
-            if isinstance(e, ModelInvocationError):
+            if isinstance(e, (ModelInvocationError, ArtifactError)):
                 error_response = f"⚠️ {e}"
             else:
                 error_response = self._create_error_response(str(e))
@@ -1320,6 +1345,7 @@ class WebSocketChatHandler:
                 )
                 return
             await self.chat_graph.aupdate_state(cfg, {"messages": [], "metadata": {}})
+            self._purge_thread_artifacts(thread_id, session.user_id)
         # Clear in-memory feedback metadata for this session too
         session.metadata.pop("feedback_meta", None)
 
@@ -1335,6 +1361,22 @@ class WebSocketChatHandler:
     # ------------------------------------------------------------------
     # Dynamic parameter overrides
     # ------------------------------------------------------------------
+
+    def _purge_thread_artifacts(self, thread_id: str, user_id: Optional[str]) -> None:
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.delete_thread(thread_id, user_id)
+
+    def _deactivate_artifacts(self, session: ChatSession) -> None:
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.deactivate(session.connection_id)
+
+    def _reset_artifacts(self, session: ChatSession) -> None:
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.delete_session(session.connection_id)
+            store.register_connection(session.connection_id, session.user_id)
 
     def _apply_config_overrides(
         self, session: ChatSession, raw_overrides: Any, override_mode: Any
@@ -1789,6 +1831,7 @@ class WebSocketChatHandler:
         if session is None:
             return
 
+        self._deactivate_artifacts(session)
         session.metadata["conversation_id"] = None
         # Stale per-turn feedback cache from the previous conversation no
         # longer applies once we've detached from it.
@@ -1858,6 +1901,7 @@ class WebSocketChatHandler:
 
         history = self._format_history_messages(raw_messages)
 
+        self._deactivate_artifacts(session)
         session.metadata["conversation_id"] = conversation_id
         # Switching conversations invalidates the per-turn feedback cache
         # collected against the previously active thread.
@@ -1896,6 +1940,7 @@ class WebSocketChatHandler:
             return
 
         await self.conversation_store.delete_conversation(conversation_id)
+        self._purge_thread_artifacts(conversation_id, session.user_id)
         if session.metadata.get("conversation_id") == conversation_id:
             session.metadata["conversation_id"] = None
             session.metadata.pop("feedback_meta", None)
@@ -1945,6 +1990,8 @@ class WebSocketChatHandler:
             return
 
         deleted_ids = await self.conversation_store.delete_conversations(session.user_id, unique_ids)
+        for deleted_id in deleted_ids:
+            self._purge_thread_artifacts(deleted_id, session.user_id)
 
         active_conversation_id = session.metadata.get("conversation_id")
         active_conversation_deleted = active_conversation_id in deleted_ids
@@ -1969,6 +2016,9 @@ class WebSocketChatHandler:
             return
 
         deleted_count = await self.conversation_store.delete_all_conversations(session.user_id)
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.delete_user(session.user_id)
         session.metadata["conversation_id"] = None
         session.metadata.pop("feedback_meta", None)
 
@@ -2308,6 +2358,7 @@ class WebSocketChatHandler:
 
         try:
             # If SSO session, also delete the server-side SSO session
+            self._reset_artifacts(session)
             if (
                 session.credentials
                 and session.credentials.auth_type == AuthType.SSO

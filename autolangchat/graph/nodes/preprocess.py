@@ -7,17 +7,105 @@ stay as plain dicts throughout the graph).
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 
-from ...defaults import DEFAULT_SUMMARIZATION_TEMPERATURE
+from ...artifacts import ArtifactError, ArtifactScope, ArtifactStore
+from ...context_budget import ContextBudget, estimate_message_tokens
+from ...defaults import DEFAULT_CONTEXT_BUDGET_SAFETY_FRACTION, DEFAULT_SUMMARIZATION_TEMPERATURE
 from ...message_preprocessor import MessagePreprocessor
 from ..state import ChatState
-from .llm_call import _build_llm
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_pending_message_budgets(messages: List[Dict], chat_config: Any) -> Dict[str, Any]:
+    """Estimate each message after the last assistant message (or system prompt).
+
+    A tool-call assistant message is also a boundary: the next invocation
+    evaluates its new tool results rather than re-evaluating earlier input.
+    Estimates do not reject, truncate, or replace messages.
+    """
+    start = 0
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") in ("assistant", "system"):
+            start = index + 1
+            break
+
+    budget = ContextBudget.for_turn(chat_config)
+    threshold = budget.max_input_tokens * getattr(
+        chat_config, "context_budget_safety_fraction", DEFAULT_CONTEXT_BUDGET_SAFETY_FRACTION
+    )
+    estimates = []
+    for index in range(start, len(messages)):
+        estimated_tokens = estimate_message_tokens(messages[index], provider=budget.provider)
+        exceeds_threshold = estimated_tokens > threshold
+        estimates.append(
+            {
+                "message_index": index,
+                "estimated_tokens": estimated_tokens,
+                "exceeds_threshold": exceeds_threshold,
+            }
+        )
+        logger.debug(
+            "Message context estimate: model_id=%s message_index=%d "
+            "estimated_tokens=%d threshold_tokens=%.1f exceeds_threshold=%s",
+            budget.model_id,
+            index,
+            estimated_tokens,
+            threshold,
+            exceeds_threshold,
+        )
+    return {"model_id": budget.model_id, "threshold_tokens": threshold, "messages": estimates}
+
+
+def _archive_pending_messages(messages: List[Dict], estimates: Dict[str, Any], config: RunnableConfig) -> List[Dict]:
+    """Attach scoped handles without replacing the original model input."""
+    configurable = config.get("configurable") or {}
+    if not getattr(configurable.get("chat_config"), "artifact_enabled", True):
+        return messages
+    store = configurable.get("artifact_store")
+    scope = configurable.get("artifact_scope")
+    if store is None and scope is None:
+        logger.debug("No live artifact scope supplied; messages remain unchanged")
+        return messages
+    if not isinstance(store, ArtifactStore) or not isinstance(scope, ArtifactScope):
+        raise ArtifactError("Both artifact_store and artifact_scope are required")
+    archived = list(messages)
+    for estimate in estimates["messages"]:
+        if not estimate["exceeds_threshold"]:
+            continue
+        index = estimate["message_index"]
+        message = messages[index]
+        message_metadata = dict(message.get("metadata") or {})
+        handle = message_metadata.get("artifact_handle")
+        if not isinstance(handle, str) or not store.contains(scope, handle):
+            content = message.get("content", "")
+            if message.get("role") == "user" and isinstance(content, str):
+                text = content
+            else:
+                text = json.dumps(
+                    {key: value for key, value in message.items() if key != "metadata"}, ensure_ascii=False
+                )
+            try:
+                handle = store.put(scope, text, {"source": f"{message.get('role', 'unknown')}_message"})
+            except ArtifactError:
+                logger.error("Failed to archive message %d in the current artifact scope", index, exc_info=True)
+                raise
+        message_metadata["artifact_handle"] = handle
+        archived[index] = {**message, "metadata": message_metadata}
+    return archived
+
+
+def prepare_message_artifacts(
+    messages: List[Dict], chat_config: Any, config: RunnableConfig
+) -> tuple[List[Dict], Dict[str, Any]]:
+    """Estimate and archive pending messages for preprocessing or a model retry."""
+    estimates = _estimate_pending_message_budgets(messages, chat_config)
+    return _archive_pending_messages(messages, estimates, config), estimates
 
 
 async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
@@ -44,6 +132,8 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
         logger.warning("preprocess_node: chat_config not in configurable; skipping preprocessing")
         return {}
 
+    messages, metadata["message_context_budget"] = prepare_message_artifacts(messages, chat_config, config)
+
     # Wire up the LLM directly when AI summarization is enabled.
     # A summarizer-specific config copy is used: separate model_id/temperature/
     # max_tokens/top_p overrides (falling back to the main chat config when
@@ -51,6 +141,9 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
     # (avoids Claude ValidationException when both are set).
     llm_client = None
     if getattr(chat_config, "enable_ai_summarization", False):
+        # Deferred to avoid a cycle with the LLM node's retry preparation.
+        from .llm_call import _build_llm
+
         # Precedence: an explicit summarization_temperature always wins (top_p
         # dropped). Otherwise, an explicit summarization_top_p is honored with
         # no temperature. Only when neither is configured do we fall back to

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from autolangchat.config import ChatConfig
+from autolangchat.context_budget import ContextBudget, estimate_message_tokens
 from autolangchat.exceptions import ContextWindowExceededError, ModelInvocationError
 from autolangchat.graph.nodes.llm_call import (
     _infer_profile_prefix_for_region,
@@ -26,6 +27,7 @@ from autolangchat.graph.nodes.llm_call import (
     _wrap_model_invocation_error,
     llm_call_node,
 )
+from autolangchat.graph.nodes.preprocess import _estimate_pending_message_budgets, preprocess_node
 
 LLAMA_3_3 = "meta.llama3-3-70b-instruct-v1:0"
 INFERENCE_PROFILE_ERROR = (
@@ -63,6 +65,122 @@ def _ai_message(content: str = "hello", stop_reason: str | None = None):
     msg.usage_metadata = None
     msg.response_metadata = {"stopReason": stop_reason} if stop_reason else {}
     return msg
+
+
+class TestMessageContextBudgets:
+    @pytest.mark.asyncio
+    async def test_primary_invocation_reuses_preprocessing_without_repeating_checks(self):
+        config = _runnable_config(_config())
+        state = await preprocess_node(_state(), config)
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=_ai_message())
+        with (
+            patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm),
+            patch("autolangchat.graph.nodes.llm_call.prepare_message_artifacts") as prepare,
+        ):
+            result = await llm_call_node(state, config)
+        prepare.assert_not_called()
+        assert result["metadata"]["message_context_budget"] == state["metadata"]["message_context_budget"]
+
+    @pytest.mark.parametrize(
+        "roles,expected_indices",
+        [
+            (["system", "user", "user"], [1, 2]),
+            (["user", "user"], [0, 1]),
+            (["system", "user", "assistant", "user", "user"], [3, 4]),
+            (["system", "user", "assistant", "tool", "tool"], [3, 4]),
+            (["system", "user", "assistant"], []),
+            ([], []),
+        ],
+    )
+    def test_only_messages_since_last_assistant_or_system_are_estimated(self, roles, expected_indices):
+        messages = [{"role": role, "content": f"message {index}"} for index, role in enumerate(roles)]
+        chat_config = _config()
+        budget = ContextBudget.for_turn(chat_config)
+
+        result = _estimate_pending_message_budgets(messages, chat_config)
+
+        assert [entry["message_index"] for entry in result["messages"]] == expected_indices
+        assert [entry["estimated_tokens"] for entry in result["messages"]] == [
+            estimate_message_tokens(messages[index], provider=budget.provider) for index in expected_indices
+        ]
+
+    @pytest.mark.parametrize("offset,exceeds", [(-1, False), (0, False), (1, True)])
+    def test_threshold_is_strictly_greater_than_configured_fraction(self, offset, exceeds):
+        message = {"role": "user", "content": "message"}
+        chat_config = _config()
+        budget = ContextBudget.for_turn(chat_config)
+        estimated_tokens = estimate_message_tokens(message, provider=budget.provider)
+        threshold = estimated_tokens - offset
+        chat_config = chat_config.model_copy(
+            update={"context_budget_safety_fraction": threshold / budget.max_input_tokens}
+        )
+
+        result = _estimate_pending_message_budgets([message], chat_config)
+
+        assert result["messages"][0]["exceeds_threshold"] is exceeds
+        assert message == {"role": "user", "content": "message"}
+
+    def test_smaller_effective_model_changes_threshold(self):
+        message = {"role": "user", "content": "word " * 10_000}
+        large = _estimate_pending_message_budgets([message], _config(model_id="us.anthropic.claude-sonnet-5"))
+        small = _estimate_pending_message_budgets([message], _config(model_id="qwen.qwen3-32b-v1:0"))
+
+        assert large["messages"][0]["exceeds_threshold"] is False
+        assert small["messages"][0]["exceeds_threshold"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_estimates_before_every_tool_loop_invocation(self, streaming):
+        from langchain_core.messages import AIMessageChunk
+
+        chat_config = _config()
+        state = {"messages": [{"role": "system", "content": "system"}, {"role": "user", "content": "hi"}]}
+        llm = MagicMock()
+        invocation_estimates = []
+
+        async def invoke(_messages):
+            invocation_estimates.append(estimator.call_count)
+            return _ai_message()
+
+        async def stream(_messages):
+            invocation_estimates.append(estimator.call_count)
+            yield AIMessageChunk(content="hello")
+
+        llm.ainvoke = AsyncMock(side_effect=invoke)
+        llm.astream = stream
+        runnable_config = _runnable_config(chat_config)
+        if streaming:
+            runnable_config["configurable"]["on_progress"] = AsyncMock()
+
+        with (
+            patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm),
+            patch(
+                "autolangchat.graph.nodes.preprocess._estimate_pending_message_budgets",
+                wraps=_estimate_pending_message_budgets,
+            ) as estimator,
+        ):
+            state.update(await preprocess_node(state, runnable_config))
+            first = await llm_call_node(state, runnable_config)
+            state = {
+                "messages": state["messages"]
+                + [
+                    {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "lookup", "args": {}}]},
+                    {
+                        "role": "tool",
+                        "content": "",
+                        "tool_results": [{"tool_call_id": "c1", "name": "lookup", "result": {"answer": "found"}}],
+                    },
+                ],
+                "metadata": first["metadata"],
+            }
+            state.update(await preprocess_node(state, runnable_config))
+            second = await llm_call_node(state, runnable_config)
+
+        assert invocation_estimates == [1, 2]
+        assert [entry["message_index"] for entry in first["metadata"]["message_context_budget"]["messages"]] == [1]
+        assert [entry["message_index"] for entry in second["metadata"]["message_context_budget"]["messages"]] == [3]
+        assert second["metadata"]["message_context_budget"]["messages"][0]["estimated_tokens"] > 0
 
 
 class TestInferenceProfileDetection:
@@ -149,6 +267,7 @@ class TestLLMCallNodeErrorPaths:
 
         assert mock_build.call_args_list[1].args[0] == f"us.{LLAMA_3_3}"
         assert result["metadata"]["inference_profile_model_id"] == f"us.{LLAMA_3_3}"
+        assert result["metadata"]["message_context_budget"]["model_id"] == f"us.{LLAMA_3_3}"
         assert result["messages"][-1]["content"] == "hello"
 
     @pytest.mark.asyncio
@@ -177,15 +296,26 @@ class TestLLMCallNodeErrorPaths:
         # primary model first; only when that retry also overflows does the
         # fallback model get used. Hence three clients: primary, re-truncated
         # primary, fallback.
-        with patch(
-            "autolangchat.graph.nodes.llm_call._build_llm",
-            side_effect=[failing_llm, failing_llm, working_llm],
+        with (
+            patch(
+                "autolangchat.graph.nodes.llm_call._build_llm",
+                side_effect=[failing_llm, failing_llm, working_llm],
+            ),
+            patch(
+                "autolangchat.graph.nodes.preprocess._estimate_pending_message_budgets",
+                wraps=_estimate_pending_message_budgets,
+            ) as estimator,
         ):
             result = await llm_call_node(_state(), _runnable_config(chat_config))
 
+        assert [call.args[1].model_id for call in estimator.call_args_list] == [
+            chat_config.model_id,
+            chat_config.fallback_model,
+        ]
         assert result["metadata"]["emergency_retruncation_applied"] is True
         assert result["metadata"]["fallback_model_used"] is True
         assert result["metadata"]["fallback_model"] == chat_config.fallback_model
+        assert result["metadata"]["message_context_budget"]["model_id"] == chat_config.fallback_model
 
     @pytest.mark.asyncio
     async def test_both_models_failing_raises_context_window_error(self):

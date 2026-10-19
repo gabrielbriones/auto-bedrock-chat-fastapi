@@ -208,6 +208,17 @@ class TestChatMessageOverrides:
         assert effective_config.temperature == 0.7
         assert session.metadata.get("config_overrides", {}) == {}
 
+    def test_large_message_reaches_graph_unchanged(self):
+        handler, _ = _make_handler()
+        websocket = _websocket()
+        message = "\u00e9" * 1_048_577
+
+        asyncio.run(handler._handle_chat_message(websocket, {"message": message}))
+
+        handler.chat_graph.ainvoke.assert_awaited_once()
+        assert handler.chat_graph.ainvoke.call_args.args[0] == {"user_message": message}
+        assert not [frame for frame in _sent_messages(websocket) if frame.get("type") == "error"]
+
     def test_allowlist_restricts_overridable_params(self):
         handler, _ = _make_handler(allowed_dynamic_overrides=["temperature"])
         websocket = _websocket()
