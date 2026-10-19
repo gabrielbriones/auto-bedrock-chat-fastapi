@@ -20,6 +20,9 @@ the work. Recovery retries still re-evaluate inside the LLM node because
 they bypass the preprocessing node and may change model or payload.
 Existing truncation behavior is unchanged. Repeated attempts reuse the
 existing live handle rather than copying the same content again.
+If a payload expires during the primary request, emergency retry preparation
+renews its handle on the original history before truncating the retry input,
+so the returned checkpoint retains the replacement handle.
 
 The original message still follows the existing logging, checkpoint,
 feedback-query, title-generation, and model-input paths. Artifact handles
@@ -71,6 +74,9 @@ Disabling artifacts preserves the ordinary processing path.
 bounded inspection, capped at 1,000 lines and 64 KiB of UTF-8 output.
 The `truncated` flag indicates that the requested region was not returned
 in full. This internal method is not registered as an assistant tool.
+Reads scan line boundaries without allocating a list of every line or
+encoding the entire selected region. Output assembly is byte-bounded;
+`total_lines` still requires scanning the artifact, outside the store lock.
 
 WebSocket turns receive the live store and scope through LangGraph's
 `configurable` runtime values, never as checkpointed store objects.

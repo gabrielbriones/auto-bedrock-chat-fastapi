@@ -310,6 +310,7 @@ class TestLLMCallNodeErrorPaths:
 
         assert [call.args[1].model_id for call in estimator.call_args_list] == [
             chat_config.model_id,
+            chat_config.model_id,
             chat_config.fallback_model,
         ]
         assert result["metadata"]["emergency_retruncation_applied"] is True

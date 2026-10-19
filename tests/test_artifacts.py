@@ -3,12 +3,15 @@
 import asyncio
 import json
 import logging
+import re
+import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage
 
+import autolangchat.artifacts as artifacts_module
 from autolangchat.artifacts import ArtifactError, ArtifactStore
 from autolangchat.config import ChatConfig
 from autolangchat.graph.graph import build_chat_graph
@@ -50,7 +53,7 @@ def test_isolation_switching_and_reconnection():
 
 def test_expiry_and_bounded_reads(monkeypatch):
     clock = [0]
-    monkeypatch.setattr("autolangchat.artifacts.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
     store, scope = _store(max_age_seconds=10)
     handle = store.put(scope, "\u00e9" * 40_000, {})
     region = store.read_region(scope, handle)
@@ -63,6 +66,114 @@ def test_expiry_and_bounded_reads(monkeypatch):
     store.close()
     with pytest.raises(ArtifactError):
         store.put(scope, "closed", {})
+
+
+@pytest.mark.parametrize("text", ["", "a", "a\n", "\n\n", "a\r\nb\rc\n", "a\v\f\x1c\x1d\x1e\x85\u2028\u2029b"])
+@pytest.mark.parametrize("start_line,max_lines", [(1, 1), (2, 3), (20, 2)])
+def test_region_reads_preserve_splitlines_semantics(text, start_line, max_lines):
+    store, scope = _store()
+    handle = store.put(scope, text, {})
+    lines = text.splitlines(keepends=True)
+    result = store.read_region(scope, handle, start_line=start_line, max_lines=max_lines)
+    assert result["text"] == "".join(lines[start_line - 1 : start_line - 1 + max_lines])
+    assert result["total_lines"] == len(lines)
+    assert result["truncated"] is (start_line - 1 + max_lines < len(lines))
+
+
+@pytest.mark.parametrize("text", ["a\n" * 500_000, "\u20ac" * 1_000_000])
+def test_region_read_temporary_allocations_are_bounded(text):
+    store, scope = _store()
+    handle = store.put(scope, text, {})
+    tracemalloc.start()
+    try:
+        result = store.read_region(scope, handle)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1_048_576
+    assert len(result["text"].encode("utf-8")) <= 65536
+    assert result["truncated"] is True
+
+
+def test_byte_cap_does_not_skip_partial_unicode_to_append_later_lines():
+    store, scope = _store()
+    text = "a" * 65534 + "\u20ac\nlater\n"
+    handle = store.put(scope, text, {})
+    result = store.read_region(scope, handle)
+    assert result["text"] == text.encode("utf-8")[:65536].decode("utf-8", errors="ignore")
+    assert result["truncated"] is True
+
+
+@pytest.mark.parametrize("invalidate", ["delete", "switch", "expire"])
+def test_region_read_revalidates_after_scanning(monkeypatch, invalidate):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "first\nsecond\n", {})
+    finditer = re.finditer
+
+    def scan(*args):
+        for boundary in finditer(*args):
+            yield boundary
+        if invalidate == "delete":
+            store.delete_session("connection")
+        elif invalidate == "switch":
+            store.activate("connection", "other", "alice")
+        else:
+            clock[0] = 10
+
+    monkeypatch.setattr(re, "finditer", scan)
+    with pytest.raises(ArtifactError):
+        store.read_region(scope, handle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_fallback", [False, True])
+async def test_expiry_during_primary_request_preserves_replacement_handle(monkeypatch, use_fallback):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    chat_config = ChatConfig().model_copy(
+        update={"context_budget_safety_fraction": 0, "fallback_model": "qwen.qwen3-32b-v1:0"}
+    )
+    original = "full original request"
+    original_handle = store.put(scope, original, {"source": "user_message"})
+    original_metadata = {"message_id": "u1", "timestamp": "t1", "artifact_handle": original_handle}
+    messages = [{"role": "user", "content": original, "metadata": original_metadata}]
+    calls = []
+
+    async def invoke(lc_messages):
+        calls.append(lc_messages)
+        if len(calls) == 1:
+            clock[0] = 10
+            raise Exception("input is too long")
+        if use_fallback and len(calls) == 2:
+            raise Exception("input is too long")
+        return AIMessage(content="answer")
+
+    async def truncate(**kwargs):
+        return [{**kwargs["messages"][0], "content": "shortened"}]
+
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(side_effect=invoke)
+    with (
+        patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm),
+        patch("autolangchat.graph.nodes.llm_call.MessagePreprocessor.preprocess_messages", side_effect=truncate),
+    ):
+        result = await llm_call_node(
+            {"messages": messages},
+            {"configurable": {"chat_config": chat_config, "artifact_store": store, "artifact_scope": scope}},
+        )
+    user = result["messages"][0]
+    replacement = user["metadata"]["artifact_handle"]
+    assert replacement != original_handle
+    assert store.read_region(scope, replacement)["text"] == original
+    assert user["content"] == original
+    assert user["metadata"] == {**original_metadata, "artifact_handle": replacement}
+    assert messages[0]["metadata"] == original_metadata
+    assert calls[1][0].content == "shortened"
+    if use_fallback:
+        assert calls[2][0].content == original
 
 
 def test_atomic_quota_and_deduplication():

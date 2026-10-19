@@ -595,6 +595,9 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 _EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
             )
             try:
+                # Renew expired handles on the original history before making
+                # the retry-only truncated copy, so checkpoint metadata survives.
+                messages, metadata["message_context_budget"] = prepare_message_artifacts(messages, chat_config, config)
                 retruncated = await MessagePreprocessor(config=chat_config).preprocess_messages(
                     messages=list(messages),
                     on_progress=on_progress,

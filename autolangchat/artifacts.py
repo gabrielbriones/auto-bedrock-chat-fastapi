@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -144,13 +145,40 @@ class ArtifactStore:
                 or artifact.scope.user_id != scope.user_id
             ):
                 raise ArtifactError("Artifact is unavailable in this scope")
-            lines = artifact.text.splitlines(keepends=True)
-            text = "".join(lines[start_line - 1 : start_line - 1 + max_lines])
-            bounded = text.encode("utf-8")[:ARTIFACT_READ_MAX_BYTES].decode("utf-8", errors="ignore")
+        parts: list[str] = []
+        remaining = ARTIFACT_READ_MAX_BYTES
+        total_lines = 0
+        offset = 0
+        byte_truncated = False
+
+        def collect_line(end: int) -> None:
+            nonlocal total_lines, offset, remaining, byte_truncated
+            total_lines += 1
+            if start_line <= total_lines < start_line + max_lines and not byte_truncated:
+                # At most one character per remaining byte can fit.
+                candidate = artifact.text[offset : min(end, offset + remaining)]
+                encoded = candidate.encode("utf-8")
+                bounded = encoded[:remaining].decode("utf-8", errors="ignore")
+                parts.append(bounded)
+                remaining -= len(bounded.encode("utf-8"))
+                if len(bounded) < end - offset:
+                    byte_truncated = True
+            offset = end
+
+        for boundary in re.finditer(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]", artifact.text):
+            collect_line(boundary.end())
+        if offset < len(artifact.text):
+            collect_line(len(artifact.text))
+
+        with self._lock:
+            self._validate(scope)
+            self.expire()
+            if self._artifacts.get(handle) is not artifact:
+                raise ArtifactError("Artifact is unavailable in this scope")
             return {
-                "text": bounded,
-                "total_lines": len(lines),
-                "truncated": bounded != text or start_line - 1 + max_lines < len(lines),
+                "text": "".join(parts),
+                "total_lines": total_lines,
+                "truncated": byte_truncated or start_line - 1 + max_lines < total_lines,
                 "metadata": dict(artifact.metadata),
             }
 
