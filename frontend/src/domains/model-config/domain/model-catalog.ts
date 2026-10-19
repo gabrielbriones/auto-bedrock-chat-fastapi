@@ -7,6 +7,8 @@ export type ModelFamily = {
 
 export type ModelCatalog = {
   readonly families: readonly ModelFamily[]
+  /** The server's `default_region`: the inference-profile prefix bare ids resolve to. */
+  readonly defaultRegion?: string | null
 }
 
 // Parity fallback name for a model with no provider at all (blank string) — SPEC-014 §2 FR-CFG-003.
@@ -33,8 +35,10 @@ const groupByProvider = (models: readonly ModelDescriptor[]): readonly ModelFami
 export const buildModelCatalog = (
   models: readonly ModelDescriptor[],
   groups: readonly ModelFamily[],
+  defaultRegion: string | null = null,
 ): ModelCatalog => ({
   families: groups.length > 0 ? groups : groupByProvider(models),
+  defaultRegion,
 })
 
 export const findModel = (catalog: ModelCatalog, modelId: string): ModelDescriptor | null => {
@@ -62,24 +66,59 @@ const bareModelId = (modelId: string): string => {
 export const regionOf = (modelId: string): string | null =>
   bareModelId(modelId) === modelId ? null : (modelId.split('.')[0] ?? null)
 
-const byRegionlessFirst = (a: ModelDescriptor, b: ModelDescriptor): number =>
-  Number(regionOf(a.id) !== null) - Number(regionOf(b.id) !== null)
+// Region-less first, then the default region, then the rest in catalog order.
+const variantRank = (modelId: string, defaultRegion: string | null): number => {
+  const region = regionOf(modelId)
+  return region === null ? 0 : region === defaultRegion ? 1 : 2
+}
 
-/** Every catalog entry sharing `modelId`'s bare id, region-less one first. */
-export const regionVariants = (catalog: ModelCatalog, modelId: string): readonly ModelDescriptor[] => {
+const byRepresentativeFirst =
+  (defaultRegion: string | null) =>
+  (a: ModelDescriptor, b: ModelDescriptor): number =>
+    variantRank(a.id, defaultRegion) - variantRank(b.id, defaultRegion)
+
+const sameModelVariants = (catalog: ModelCatalog, modelId: string): readonly ModelDescriptor[] => {
   const bare = bareModelId(modelId)
   return catalog.families
     .flatMap((family) => family.models.filter((model) => bareModelId(model.id) === bare))
-    .sort(byRegionlessFirst)
+    .sort(byRepresentativeFirst(catalog.defaultRegion ?? null))
+}
+
+/**
+ * The id to send for `modelId`: a bare id (the "Default" region) becomes its default-region
+ * variant when the catalog has one, mirroring the server's `resolve_model_region`.
+ */
+export const withDefaultRegion = (catalog: ModelCatalog, modelId: string): string => {
+  const defaultRegion = catalog.defaultRegion ?? null
+  if (defaultRegion === null || regionOf(modelId) !== null) {
+    return modelId
+  }
+  const candidate = `${defaultRegion}.${modelId}`
+  return findModel(catalog, candidate) === null ? modelId : candidate
+}
+
+/** The entry representing `modelId`'s model in the model picker (region-less one when present). */
+export const representativeModel = (catalog: ModelCatalog, modelId: string): ModelDescriptor | null =>
+  sameModelVariants(catalog, modelId)[0] ?? null
+
+/**
+ * Region dropdown entries for `modelId`'s model. The region-less ("Default") entry is omitted when
+ * the default-region variant exists, since the server would resolve it to that variant anyway.
+ */
+export const regionVariants = (catalog: ModelCatalog, modelId: string): readonly ModelDescriptor[] => {
+  const variants = sameModelVariants(catalog, modelId)
+  const bare = bareModelId(modelId)
+  return withDefaultRegion(catalog, bare) === bare ? variants : variants.filter((model) => regionOf(model.id) !== null)
 }
 
 /** One entry per bare id, in catalog order, represented by its region-less variant when present. */
-export const baseModels = (family: ModelFamily): readonly ModelDescriptor[] => {
+export const baseModels = (family: ModelFamily, defaultRegion: string | null = null): readonly ModelDescriptor[] => {
   const byBare = new Map<string, ModelDescriptor>()
+  const compare = byRepresentativeFirst(defaultRegion)
   for (const model of family.models) {
     const bare = bareModelId(model.id)
     const current = byBare.get(bare)
-    if (current === undefined || byRegionlessFirst(model, current) < 0) {
+    if (current === undefined || compare(model, current) < 0) {
       byBare.set(bare, model)
     }
   }

@@ -277,6 +277,21 @@ class TestMalformedOverridePayloads:
 
 
 class TestConfigUpdateMessage:
+    def test_default_region_model_id_resolves_instead_of_erroring(self):
+        # XMGPLAT-12046: the sidebar's "Default" region sends a bare model id.
+        handler, session = _make_handler()
+        handler.config = handler.config.model_copy(update={"default_region": "us"})
+        websocket = _websocket()
+
+        asyncio.run(
+            handler._handle_config_update(websocket, {"config_overrides": {"model_id": "anthropic.claude-sonnet-5"}})
+        )
+
+        assert session.metadata["config_overrides"] == {"model_id": "us.anthropic.claude-sonnet-5"}
+        sent = _sent_messages(websocket)
+        assert sent[-1]["active_overrides"] == {"model_id": "us.anthropic.claude-sonnet-5"}
+        assert sent[-1]["rejected_overrides"] == []
+
     def test_config_update_persists_session_overrides_by_default(self):
         handler, session = _make_handler()
         websocket = _websocket()

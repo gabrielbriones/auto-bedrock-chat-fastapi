@@ -50,6 +50,27 @@ describe('ModelPicker', () => {
     expect(onSelect).toHaveBeenCalledWith('anthropic.haiku')
   })
 
+  it('sends the default-region variant when picking a model by its region-less entry (XMGPLAT-12046)', async () => {
+    const onSelect = jest.fn<(modelId: string) => void>()
+    const regional = buildModelCatalog(
+      [
+        { id: 'anthropic.opus', name: 'Opus', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+        { id: 'us.anthropic.opus', name: 'Opus (US)', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+        { id: 'global.anthropic.opus', name: 'Opus (Global)', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+        { id: 'anthropic.haiku', name: 'Haiku', provider: 'anthropic', supportsTemperature: true, maxOutputTokens: 4096 },
+      ],
+      [],
+      'global',
+    )
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<ModelPicker catalog={regional} selectedModelId="anthropic.haiku" onSelect={onSelect} />)
+
+    await user.click(screen.getByRole('button', { name: 'Haiku' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Opus' }))
+
+    expect(onSelect).toHaveBeenCalledWith('global.anthropic.opus')
+  })
+
   it('opens the model submenu without a sideways entrance animation (XMGPLAT-11804)', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     render(<ModelPicker catalog={catalog} selectedModelId="claude" onSelect={jest.fn()} />)

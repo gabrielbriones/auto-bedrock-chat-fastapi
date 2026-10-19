@@ -55,6 +55,38 @@ describe('SettingsDialog', () => {
     expect(onCommit).toHaveBeenCalledWith('model_id', 'global.anthropic.opus')
   })
 
+  it('replaces the "Default" region with the server default region (XMGPLAT-12046)', async () => {
+    const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const regional = buildModelCatalog(
+      [
+        { ...claude, id: 'anthropic.opus', name: 'Opus' },
+        { ...claude, id: 'global.anthropic.opus', name: 'Opus (Global)' },
+        { ...claude, id: 'us.anthropic.opus', name: 'Opus (US)' },
+      ],
+      [],
+      'us',
+    )
+
+    render(
+      <SettingsDialog
+        open
+        profile={toConfigurationProfile({ model_id: 'us.anthropic.opus' }, null, regional)}
+        onOpenChange={jest.fn()}
+        onCommit={onCommit}
+      />,
+    )
+
+    const region = screen.getByRole('combobox', { name: 'Region' })
+    expect(region).toHaveTextContent('US')
+    await user.click(region)
+    const options = await screen.findAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual(['US', 'Global'])
+
+    await user.click(screen.getByRole('option', { name: 'Global' }))
+    expect(onCommit).toHaveBeenCalledWith('model_id', 'global.anthropic.opus')
+  })
+
   it('clamps a max_tokens commit to the effective model cap before forwarding it (FR-CFG-005a)', async () => {
     const onCommit = jest.fn<(key: OverrideKey, value: OverrideValue) => void>()
     const user = userEvent.setup()
