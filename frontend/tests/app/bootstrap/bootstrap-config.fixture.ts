@@ -12,6 +12,7 @@ export const bootstrapConfigFixture: Record<string, unknown> = {
   supportedAuthTypes: ['bearer', 'basic', 'api_key', 'oauth2', 'custom', 'sso'],
   defaultAuthType: 'bearer',
   modelId: 'claude-3-5-sonnet',
+  defaultRegion: 'global',
   presetPrompts: [],
   variables: [],
   ssoEnabled: false,

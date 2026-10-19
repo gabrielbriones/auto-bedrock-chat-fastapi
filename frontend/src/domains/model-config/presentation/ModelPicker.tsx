@@ -13,7 +13,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { MODEL_CONFIG_COPY } from '@/shared/copy/model-config'
 
-import { baseModels, familyOf, findModel, regionVariants, type ModelCatalog } from '@/domains/model-config/domain/model-catalog'
+import {
+  baseModels,
+  familyOf,
+  findModel,
+  representativeModel,
+  withDefaultRegion,
+  type ModelCatalog,
+} from '@/domains/model-config/domain/model-catalog'
 
 export type ModelPickerProps = {
   readonly catalog: ModelCatalog
@@ -29,9 +36,10 @@ export type ModelPickerProps = {
 
 type FamilyModelsProps = Pick<ModelPickerProps, 'selectedModelId' | 'onSelect'> & {
   readonly family: ModelCatalog['families'][number]
+  readonly defaultRegion: string | null
 }
 
-function FamilyModels({ family, selectedModelId, onSelect }: FamilyModelsProps) {
+function FamilyModels({ family, defaultRegion, selectedModelId, onSelect }: FamilyModelsProps) {
   return (
     <DropdownMenuRadioGroup
       value={selectedModelId}
@@ -41,7 +49,7 @@ function FamilyModels({ family, selectedModelId, onSelect }: FamilyModelsProps) 
         }
       }}
     >
-      {baseModels(family).map((model) => (
+      {baseModels(family, defaultRegion).map((model) => (
         // FR-CFG-003a: the built-in radio indicator marks the current model as selected. Regional
         // variants collapse into one entry; the region is picked in the settings dialog.
         <DropdownMenuRadioItem key={model.id} value={model.id}>
@@ -62,7 +70,7 @@ export function ModelPicker({
 }: ModelPickerProps) {
   const currentFamily = selectedModelId === null ? null : familyOf(catalog, selectedModelId)
   const currentModel = selectedModelId === null ? null : findModel(catalog, selectedModelId)
-  const selectedBaseId = selectedModelId === null ? null : (regionVariants(catalog, selectedModelId)[0]?.id ?? selectedModelId)
+  const selectedBaseId = selectedModelId === null ? null : (representativeModel(catalog, selectedModelId)?.id ?? selectedModelId)
   // FR-CFG-003a, deferred to onOpenChangeComplete: opened alongside the parent, the submenu anchors to a still-moving trigger and jumps.
   const [openFamily, setOpenFamily] = useState<string | null>(null)
 
@@ -98,7 +106,13 @@ export function ModelPicker({
               align="end"
               className="max-h-[min(70vh,36rem)] max-w-[calc(100vw-1rem)] overflow-y-auto"
             >
-              <FamilyModels family={family} selectedModelId={selectedBaseId} onSelect={onSelect} />
+              <FamilyModels
+                family={family}
+                defaultRegion={catalog.defaultRegion ?? null}
+                selectedModelId={selectedBaseId}
+                // A region-less entry stands for the model's "Default" region: send its concrete variant.
+                onSelect={(id) => onSelect(withDefaultRegion(catalog, id))}
+              />
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         ))}

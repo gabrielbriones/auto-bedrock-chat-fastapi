@@ -280,7 +280,7 @@ const createModelConfig = (
   notifications: NotificationPort,
 ) => {
   const configurationGateway = new WsModelConfigGateway(socket, messageBus)
-  const catalog = buildModelCatalog(bootstrap.availableModels, bootstrap.availableModelGroups)
+  const catalog = buildModelCatalog(bootstrap.availableModels, bootstrap.availableModelGroups, bootstrap.defaultRegion)
   const modelConfig = new ModelConfigStore({
     profile: toConfigurationProfile(
       { model_id: bootstrap.modelId, ...bootstrap.overrideDefaults },

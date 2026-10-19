@@ -146,6 +146,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
         "default_auth_type": "",
         "ui_title": "AI Assistant",
         "model_id": "us.anthropic.claude-sonnet-5",
+        "default_region": "global",
         "model_display_name": "Claude Sonnet 5 (US)",
         "ui_welcome_message": "Welcome",
         "app_title": "Test App",
@@ -177,6 +178,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
     assert payload["websocketUrl"] == "/chat/ws"
     assert payload["uiEndpoint"] == "/chat/ui"
     assert payload["modelId"] == "us.anthropic.claude-sonnet-5"
+    assert payload["defaultRegion"] == "global"
     assert payload["uiTitle"] == "AI Assistant"
     assert payload["appTitle"] == "Test App"
     assert payload["modelDisplayName"] == "Claude Sonnet 5 (US)"

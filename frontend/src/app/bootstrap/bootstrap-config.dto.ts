@@ -44,6 +44,8 @@ const bootstrapConfigSchema = z.object({
   supportedAuthTypes: z.array(z.string()),
   defaultAuthType: z.string(),
   modelId: z.string(),
+  // Older backends omit it; bare ids then keep their "Default" region entry.
+  defaultRegion: z.string().nullable().default(null),
   presetPrompts: z.array(presetPromptSchema),
   variables: z.array(z.record(z.string(), z.unknown())),
   ssoEnabled: z.boolean(),

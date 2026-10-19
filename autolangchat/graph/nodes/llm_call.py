@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover
 
 from langchain_core.runnables import RunnableConfig
 
-from ...config import MODEL_ID_REGION_PREFIXES, split_model_id
+from ...config import MODEL_ID_REGION_PREFIXES, resolve_model_region, split_model_id
 from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
@@ -150,10 +150,14 @@ def _retry_model_id_with_inference_profile(model_id: str, chat_config: Any) -> O
     """Return a region-prefixed retry id for ``model_id`` (e.g.
     "meta.llama3-3-70b-instruct-v1:0" -> "us.meta.llama3-3-70b-instruct-v1:0"),
     or ``None`` if ``model_id`` already carries a recognized region prefix
-    (nothing left to retry with)."""
+    (nothing left to retry with). Prefers the configured ``default_region``
+    when that profile exists, else infers one from ``aws_region``."""
     region_prefix, _provider_key = split_model_id(model_id)
     if region_prefix in MODEL_ID_REGION_PREFIXES:
         return None
+    resolved = resolve_model_region(model_id, getattr(chat_config, "default_region", None))
+    if resolved != model_id:
+        return resolved
     prefix = _infer_profile_prefix_for_region(getattr(chat_config, "aws_region", None))
     return f"{prefix}.{model_id}"
 

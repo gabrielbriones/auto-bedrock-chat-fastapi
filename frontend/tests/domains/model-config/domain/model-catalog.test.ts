@@ -1,6 +1,15 @@
 import { describe, expect, it } from '@jest/globals'
 
-import { buildModelCatalog, familyOf, findModel, modelDisplayName } from '@/domains/model-config/domain/model-catalog'
+import {
+  baseModels,
+  buildModelCatalog,
+  familyOf,
+  findModel,
+  modelDisplayName,
+  regionVariants,
+  representativeModel,
+  withDefaultRegion,
+} from '@/domains/model-config/domain/model-catalog'
 import type { ModelDescriptor } from '@/domains/model-config/domain/model-descriptor'
 
 const model = (overrides: Partial<ModelDescriptor> = {}): ModelDescriptor => ({
@@ -92,5 +101,80 @@ describe('modelDisplayName', () => {
   it('does not treat a two-segment id as region-prefixed', () => {
     const bare = buildModelCatalog([model({ id: 'claude', name: 'Claude' })], [])
     expect(modelDisplayName(bare, 'us.claude')).toBe('us.claude')
+  })
+})
+
+// XMGPLAT-12046: the region-less ("Default") variant must resolve to the server's default region.
+describe('default region', () => {
+  const sonnet = [
+    model({ id: 'anthropic.claude-sonnet-5', name: 'Claude Sonnet 5' }),
+    model({ id: 'eu.anthropic.claude-sonnet-5', name: 'Claude Sonnet 5 (EU)' }),
+    model({ id: 'global.anthropic.claude-sonnet-5', name: 'Claude Sonnet 5 (Global)' }),
+    model({ id: 'us.anthropic.claude-sonnet-5', name: 'Claude Sonnet 5 (US)' }),
+  ]
+  const llama = model({ id: 'meta.llama3-3-70b-instruct-v1:0', name: 'Llama 3.3', provider: 'meta' })
+  const ids = (models: readonly { id: string }[]) => models.map((entry) => entry.id)
+
+  describe('withDefaultRegion', () => {
+    it('maps a bare id to its default-region variant', () => {
+      expect(withDefaultRegion(buildModelCatalog(sonnet, [], 'global'), 'anthropic.claude-sonnet-5')).toBe(
+        'global.anthropic.claude-sonnet-5',
+      )
+      expect(withDefaultRegion(buildModelCatalog(sonnet, [], 'us'), 'anthropic.claude-sonnet-5')).toBe(
+        'us.anthropic.claude-sonnet-5',
+      )
+    })
+
+    it('passes an explicitly selected region through unchanged', () => {
+      const catalog = buildModelCatalog(sonnet, [], 'global')
+      expect(withDefaultRegion(catalog, 'eu.anthropic.claude-sonnet-5')).toBe('eu.anthropic.claude-sonnet-5')
+    })
+
+    it('keeps a bare id with no default-region variant in the catalog', () => {
+      expect(withDefaultRegion(buildModelCatalog([llama], [], 'global'), llama.id)).toBe(llama.id)
+    })
+
+    it('is a no-op without a default region (older backends)', () => {
+      expect(withDefaultRegion(buildModelCatalog(sonnet, []), 'anthropic.claude-sonnet-5')).toBe(
+        'anthropic.claude-sonnet-5',
+      )
+    })
+  })
+
+  describe('regionVariants', () => {
+    it('hides the "Default" entry and lists the default region first', () => {
+      const catalog = buildModelCatalog(sonnet, [], 'us')
+      expect(ids(regionVariants(catalog, 'eu.anthropic.claude-sonnet-5'))).toEqual([
+        'us.anthropic.claude-sonnet-5',
+        'eu.anthropic.claude-sonnet-5',
+        'global.anthropic.claude-sonnet-5',
+      ])
+    })
+
+    it('keeps the "Default" entry when the default region has no variant', () => {
+      const catalog = buildModelCatalog(sonnet, [], 'jp')
+      expect(ids(regionVariants(catalog, 'us.anthropic.claude-sonnet-5'))[0]).toBe('anthropic.claude-sonnet-5')
+    })
+
+    it('keeps the "Default" entry without a default region', () => {
+      const catalog = buildModelCatalog(sonnet, [])
+      expect(ids(regionVariants(catalog, 'us.anthropic.claude-sonnet-5'))).toHaveLength(4)
+    })
+  })
+
+  describe('representativeModel / baseModels', () => {
+    it('still represents the model by its region-less entry', () => {
+      const catalog = buildModelCatalog(sonnet, [], 'global')
+      expect(representativeModel(catalog, 'eu.anthropic.claude-sonnet-5')?.name).toBe('Claude Sonnet 5')
+      expect(ids(baseModels({ provider: 'anthropic', models: sonnet }, 'global'))).toEqual(['anthropic.claude-sonnet-5'])
+    })
+
+    it('prefers the default-region variant when there is no region-less entry', () => {
+      const prefixed = sonnet.slice(1)
+      expect(ids(baseModels({ provider: 'anthropic', models: prefixed }, 'us'))).toEqual(['us.anthropic.claude-sonnet-5'])
+      expect(representativeModel(buildModelCatalog(prefixed, [], 'us'), 'eu.anthropic.claude-sonnet-5')?.id).toBe(
+        'us.anthropic.claude-sonnet-5',
+      )
+    })
   })
 })

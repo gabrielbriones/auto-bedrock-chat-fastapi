@@ -67,6 +67,11 @@ OVERRIDABLE_PARAMS = OVERRIDABLE_LLM_PARAMS | OVERRIDABLE_FEATURE_TOGGLES
 # (US)" vs "Claude Opus 4.8").
 MODEL_ID_REGION_PREFIXES = frozenset({"us", "eu", "au", "jp", "global"})
 
+# Region prefix applied to bare model ids (the UI's "Default" region) when the
+# host doesn't set ``AUTOCHAT_DEFAULT_REGION`` -- see
+# ``ChatConfig.default_region`` and :func:`resolve_model_region`.
+DEFAULT_MODEL_REGION = "global"
+
 # Human-readable labels for the provider segment of a Bedrock model id, used as
 # the first level of the grouped model dropdown. Unknown providers fall back to
 # a title-cased version of the raw segment, so a newly-added vendor still shows
@@ -106,6 +111,27 @@ def split_model_id(model_id: str) -> "tuple[Optional[str], str]":
     if len(parts) > 2 and parts[0] in MODEL_ID_REGION_PREFIXES:
         return parts[0], parts[1]
     return None, parts[0]
+
+
+def resolve_model_region(model_id: str, default_region: Optional[str]) -> str:
+    """Prefix a bare model id with ``default_region`` when that inference
+    profile exists, e.g. ``("anthropic.claude-sonnet-5", "global")`` ->
+    ``"global.anthropic.claude-sonnet-5"``.
+
+    Bedrock rejects bare ids for models that are only served through a
+    cross-region inference profile, and only the main chat call retries that
+    failure -- so a bare id (the UI's "Default" region) is resolved up front
+    instead. Already-prefixed ids, and bare ids with no ``default_region``
+    variant in ``_PROFILES`` (e.g. models only offered as a foundation-model
+    id), are returned unchanged.
+    """
+    if not model_id or not default_region:
+        return model_id
+    region_prefix, _provider_key = split_model_id(model_id)
+    if region_prefix is not None:
+        return model_id
+    candidate = f"{default_region}.{model_id}"
+    return candidate if candidate in _PROFILES else model_id
 
 
 def get_model_provider(model_id: str) -> str:
@@ -165,9 +191,22 @@ class ChatConfig(BaseSettings):
 
     # Model Configuration
     model_id: str = Field(
-        default="us.anthropic.claude-sonnet-5",
+        default=f"{DEFAULT_MODEL_REGION}.anthropic.claude-sonnet-5",
         alias="AUTOCHAT_MODEL_ID",
-        description="Model identifier",
+        description=(
+            "Model identifier. A bare id (no region prefix) is resolved to its "
+            "default_region inference profile when one exists."
+        ),
+    )
+
+    default_region: str = Field(
+        default=DEFAULT_MODEL_REGION,
+        alias="AUTOCHAT_DEFAULT_REGION",
+        description=(
+            "Bedrock cross-region inference-profile prefix (us, eu, au, jp, global) "
+            'applied to bare model ids -- the settings sidebar\'s "Default" region -- '
+            "so they don't fail with Bedrock's on-demand throughput error."
+        ),
     )
 
     temperature: float = Field(
@@ -1530,6 +1569,27 @@ class ChatConfig(BaseSettings):
             return v.lower()
         return v
 
+    @field_validator("default_region", mode="before")
+    @classmethod
+    def validate_default_region(cls, v):
+        """Normalize ``default_region`` and restrict it to known profile prefixes."""
+        region = str(v or "").strip().lower()
+        if region not in MODEL_ID_REGION_PREFIXES:
+            raise ValueError(
+                f"default_region '{v}' is not a Bedrock inference-profile prefix "
+                f"(expected one of {sorted(MODEL_ID_REGION_PREFIXES)})."
+            )
+        return region
+
+    @model_validator(mode="after")
+    def resolve_default_region_model_ids(self) -> "ChatConfig":
+        """Resolve bare configured model ids to their ``default_region`` profile."""
+        for field in ("model_id", "fallback_model", "summarization_model_id", "conversation_title_model_id"):
+            value = getattr(self, field)
+            if value:
+                setattr(self, field, resolve_model_region(value, self.default_region))
+        return self
+
     @model_validator(mode="after")
     def validate_sso_config(self):
         """Validate SSO configuration when SSO is enabled"""
@@ -1898,7 +1958,7 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
             and (allowlist is None or "model_id" in allowlist)
             and not self._validate_override_value("model_id", proposed_model_id)
         ):
-            effective_model_id = proposed_model_id
+            effective_model_id = resolve_model_region(proposed_model_id, self.default_region)
 
         for key, value in overrides.items():
             if key not in OVERRIDABLE_PARAMS:
@@ -1913,7 +1973,9 @@ Please feel free to ask me anything, and I'll do my best to help you!"""
                 rejection_reasons.append(error)
                 continue
 
-            valid_overrides[key] = value
+            # A bare model id is the UI's "Default" region: pin it to the
+            # configured default_region instead of sending it to Bedrock as-is.
+            valid_overrides[key] = resolve_model_region(value, self.default_region) if key == "model_id" else value
 
         return valid_overrides, rejection_reasons
 
@@ -2017,8 +2079,13 @@ def load_config(
                 if not isinstance(val, int) or val < 1 or val > 10:
                     raise ConfigurationError("max_truncation_recursion must be between 1 and 10")
 
-            # Create base config from .env
-            config = ChatConfig()
+            # Create base config from .env. default_region is seeded up front so
+            # bare model ids read from .env resolve against the caller's region
+            # rather than the library default.
+            base_kwargs = (
+                {"AUTOCHAT_DEFAULT_REGION": overrides["default_region"]} if "default_region" in overrides else {}
+            )
+            config = ChatConfig(**base_kwargs)
 
             # Re-create with overrides to ensure validators run.
             # model_copy accepts field names; model_validate re-runs validators.

@@ -7,7 +7,7 @@ import { MODEL_CONFIG_COPY } from '@/shared/copy/model-config'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { effectiveModelId, resolveEffectiveModel } from '@/domains/model-config/domain/effective-model'
-import { regionVariants } from '@/domains/model-config/domain/model-catalog'
+import { representativeModel } from '@/domains/model-config/domain/model-catalog'
 import { visibleFields } from '@/domains/model-config/domain/visible-fields'
 import { ModelPicker } from '@/domains/model-config/presentation/ModelPicker'
 import { ProviderLogo } from '@/domains/model-config/presentation/ProviderLogo'
@@ -48,7 +48,7 @@ export function ComposerModelPicker({ configuredModel }: ComposerModelPickerProp
   const [open, setOpen] = useState(false)
   const modelId = effectiveModelId(profile)
   const effectiveModel = resolveEffectiveModel(profile)
-  const baseModel = modelId === null ? undefined : regionVariants(profile.catalog, modelId)[0]
+  const baseModel = modelId === null ? undefined : (representativeModel(profile.catalog, modelId) ?? undefined)
   const modelName = baseModel !== undefined && baseModel.id !== modelId
     ? baseModel.name
     : configuredModel?.id === modelId

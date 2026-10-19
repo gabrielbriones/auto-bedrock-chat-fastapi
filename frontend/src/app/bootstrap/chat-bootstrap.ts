@@ -32,6 +32,8 @@ export type ChatBootstrap = {
   readonly supportedAuthTypes: readonly string[];
   readonly defaultAuthType: string;
   readonly modelId: string;
+  /** Inference-profile prefix the server resolves bare model ids to; null from older backends. */
+  readonly defaultRegion: string | null;
   readonly presetPrompts: readonly PresetPromptConfig[];
   readonly variables: readonly Readonly<Record<string, unknown>>[];
   readonly ssoEnabled: boolean;

@@ -35,16 +35,17 @@ autolangchat_plugin = add_autolangchat(
 
 ### AWS / Bedrock
 
-| Env Variable             | Default                        | Description                      |
-| ------------------------ | ------------------------------ | -------------------------------- |
-| `AWS_REGION`             | `us-east-1`                    | AWS region                       |
-| `AWS_ACCESS_KEY_ID`      | —                              | AWS access key (or use IAM role) |
-| `AWS_SECRET_ACCESS_KEY`  | —                              | AWS secret key                   |
-| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-5` | Model identifier                 |
-| `AUTOCHAT_TEMPERATURE`   | `0.7`                          | Response randomness (0.0–1.0)    |
-| `AUTOCHAT_MAX_TOKENS`    | `4096`                         | Max tokens in model response     |
-| `AUTOCHAT_TOP_P`         | `0.9`                          | Top-p sampling parameter         |
-| `AUTOCHAT_SYSTEM_PROMPT` | `None`                         | Custom system prompt             |
+| Env Variable              | Default                            | Description                                                                                                                                           |
+| ------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AWS_REGION`              | `us-east-1`                        | AWS region                                                                                                                                            |
+| `AWS_ACCESS_KEY_ID`       | —                                  | AWS access key (or use IAM role)                                                                                                                      |
+| `AWS_SECRET_ACCESS_KEY`   | —                                  | AWS secret key                                                                                                                                        |
+| `AUTOCHAT_MODEL_ID`       | `global.anthropic.claude-sonnet-5` | Model identifier                                                                                                                                      |
+| `AUTOCHAT_DEFAULT_REGION` | `global`                           | Inference-profile prefix (`us`, `eu`, `au`, `jp`, `global`) applied to bare model ids, including the settings sidebar's "Default" region, when that profile exists |
+| `AUTOCHAT_TEMPERATURE`    | `0.7`                              | Response randomness (0.0–1.0)                                                                                                                         |
+| `AUTOCHAT_MAX_TOKENS`     | `4096`                             | Max tokens in model response                                                                                                                          |
+| `AUTOCHAT_TOP_P`          | `0.9`                              | Top-p sampling parameter                                                                                                                              |
+| `AUTOCHAT_SYSTEM_PROMPT`  | `None`                             | Custom system prompt                                                                                                                                  |
 
 > **Per-model capabilities.** `AUTOCHAT_TEMPERATURE`, `AUTOCHAT_TOP_P` and
 > `AUTOCHAT_MAX_TOKENS` are applied according to what the selected model
