@@ -253,3 +253,23 @@ class TestContextBudgetEnvVars:
     def test_safety_fraction_out_of_range_rejected(self, value):
         with pytest.raises(ValidationError):
             _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION=value)
+
+
+class TestArtifactEnvVars:
+    def test_enabled_by_default_and_can_be_disabled(self):
+        assert _load_config().artifact_enabled is True
+        assert _load_config(AUTOCHAT_ARTIFACT_ENABLED="false").artifact_enabled is False
+
+    @pytest.mark.parametrize(
+        "name,field",
+        [
+            ("AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS", "artifact_max_age_seconds"),
+            ("AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION", "artifact_max_bytes_per_session"),
+            ("AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION", "artifact_max_items_per_session"),
+            ("AUTOCHAT_ARTIFACT_MAX_BYTES", "artifact_max_bytes"),
+        ],
+    )
+    def test_positive_limits_are_configurable(self, name, field):
+        assert getattr(_load_config(**{name: "123"}), field) == 123
+        with pytest.raises(ValidationError):
+            _load_config(**{name: "0"})

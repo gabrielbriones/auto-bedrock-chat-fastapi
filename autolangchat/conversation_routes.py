@@ -42,6 +42,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 
 from .admin.admin_auth import AdminIdentity
+from .artifacts import ArtifactStore
 from .db.conversation_base import BaseConversationStore
 from .exceptions import ConversationNotFoundError
 from .history import format_history_messages, has_recent_tool_loop
@@ -89,6 +90,7 @@ def register_conversation_routes(
     chat_graph: Any,
     require_conversation_user: Callable,
     in_progress: Optional[Callable[[str], bool]] = None,
+    artifact_store: Optional[ArtifactStore] = None,
 ) -> APIRouter:
     """Register the ``{prefix}/conversations*`` routes on ``app``.
 
@@ -158,6 +160,8 @@ def register_conversation_routes(
     ) -> ConversationDeleteAllResponse:
         _ensure_self(user_id, identity)
         deleted_count = await conversation_store.delete_all_conversations(identity.user_id)
+        if artifact_store is not None:
+            artifact_store.delete_user(identity.user_id)
         return ConversationDeleteAllResponse(deleted_count=deleted_count)
 
     @router.get("/{conversation_id}", response_model=ConversationResponse, summary="Get one conversation's metadata")
@@ -197,6 +201,8 @@ def register_conversation_routes(
         if conversation is None or conversation.get("user_id") != identity.user_id:
             raise _not_found()
         await conversation_store.delete_conversation(conversation_id)
+        if artifact_store is not None:
+            artifact_store.delete_thread(conversation_id, identity.user_id)
         return None
 
     @router.get(

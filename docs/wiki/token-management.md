@@ -90,6 +90,34 @@ tool result or user message is too large to inline. The preprocessor
 thresholds and the safety-net retry stay in place as the backstop when an
 estimate is wrong.
 
+### Per-message evaluation before model calls
+
+The LangGraph preprocessing node builds `ContextBudget.for_turn` before
+each primary model invocation, including tool-loop calls. The primary LLM
+call reuses its estimates without repeating estimation or archiving.
+Recovery retries bypass that node and re-evaluate inside the LLM node.
+It estimates each message **after the most recent assistant message**, or
+after the system prompt for a new conversation. An assistant tool-call
+message is also a boundary: the next call evaluates the new tool results.
+If there is no assistant or system message, all messages are evaluated.
+
+Each message's token estimate, including message framing and structured
+tool results, is compared independently with
+`context_budget_safety_fraction * max_input_tokens` (default fraction:
+`0.10`). This comparison does not use the remaining aggregate context
+budget. Retries use the model and messages actually being submitted.
+
+The latest attempt's estimates are stored in graph metadata under
+`message_context_budget`, with the model ID, threshold, and per-message
+indices, token estimates, and `exceeds_threshold` flags. With a live artifact
+scope, oversized messages are copied to the [session artifact store](session-artifacts.md)
+and tagged with a handle, without replacing their content. Archiving happens
+before preprocessing truncation to preserve original payloads.
+
+There is no application-level WebSocket input-message size cap. Deployment
+WebSocket server/proxy limits still apply independently, and the existing
+preprocessor and context-window recovery behavior are unchanged.
+
 ### Remaining budget per turn
 
 `ContextBudget` computes how many input tokens are still free for the model

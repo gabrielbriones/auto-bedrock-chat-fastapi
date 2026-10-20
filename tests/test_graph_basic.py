@@ -5,6 +5,7 @@ ChatBedrockConverse so no real AWS credentials are needed.
 """
 
 import asyncio
+import copy
 import functools
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,6 +40,12 @@ class _FakeChatConfig:
 
     def get_system_prompt(self) -> str:
         return ""
+
+    def model_copy(self, *, update):
+        config = copy.copy(self)
+        for key, value in update.items():
+            setattr(config, key, value)
+        return config
 
 
 # ---------------------------------------------------------------------------

@@ -36,11 +36,13 @@ except ImportError:  # pragma: no cover
 
 from langchain_core.runnables import RunnableConfig
 
+from ...artifacts import ArtifactError
 from ...config import MODEL_ID_REGION_PREFIXES, resolve_model_region, split_model_id
 from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
 from ..state import ChatState
+from .preprocess import prepare_message_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -533,6 +535,14 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         Surfaced from ``AIMessage.usage_metadata`` into
         ``metadata["usage"]``.
 
+    Context estimates:
+        Preprocessing estimates messages since the last assistant message
+        (or system prompt for a new conversation) before primary invocations.
+        Retries re-evaluate here because they bypass the preprocessing node.
+        Per-message estimates are recorded in ``metadata["message_context_budget"]``.
+        With a live artifact scope, messages above the per-message threshold
+        are archived and tagged with a handle without replacing their content.
+
     Stop reason:
         Bedrock Converse's ``response_metadata["stopReason"]`` (e.g.
         ``end_turn``, ``max_tokens``, ``tool_use``) is surfaced into the
@@ -571,6 +581,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         llm = _build_llm(primary_model, chat_config)
         ai_msg = await _invoke_with_streaming(llm, lc_messages, on_progress)
         metadata["fallback_model_used"] = False
+    except ArtifactError:
+        raise
     except Exception as exc:
         if _is_context_window_error(exc):
             # --- Safety net 1: emergency re-truncation, same model ---
@@ -583,6 +595,9 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 _EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
             )
             try:
+                # Renew expired handles on the original history before making
+                # the retry-only truncated copy, so checkpoint metadata survives.
+                messages, metadata["message_context_budget"] = prepare_message_artifacts(messages, chat_config, config)
                 retruncated = await MessagePreprocessor(config=chat_config).preprocess_messages(
                     messages=list(messages),
                     on_progress=on_progress,
@@ -594,8 +609,13 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 # through this path, which callers need to be able to observe).
                 metadata["emergency_retruncation_applied"] = True
                 llm = _build_llm(primary_model, chat_config)
+                retruncated, metadata["message_context_budget"] = prepare_message_artifacts(
+                    retruncated, chat_config, config
+                )
                 ai_msg = await _invoke_with_streaming(llm, _to_langchain_messages(retruncated), on_progress)
                 metadata["fallback_model_used"] = False
+            except ArtifactError:
+                raise
             except Exception as retry_exc:
                 if not (fallback_model and _is_context_window_error(retry_exc)):
                     raise ContextWindowExceededError(
@@ -610,9 +630,14 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 )
                 try:
                     llm_fb = _build_llm(fallback_model, chat_config)
+                    messages, metadata["message_context_budget"] = prepare_message_artifacts(
+                        messages, chat_config.model_copy(update={"model_id": fallback_model}), config
+                    )
                     ai_msg = await _invoke_with_streaming(llm_fb, lc_messages, on_progress)
                     metadata["fallback_model_used"] = True
                     metadata["fallback_model"] = fallback_model
+                except ArtifactError:
+                    raise
                 except Exception as fb_exc:
                     raise ContextWindowExceededError(
                         f"Primary ({primary_model}), emergency re-truncation, and fallback "
@@ -633,9 +658,14 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             )
             try:
                 llm_profile = _build_llm(profile_model_id, chat_config)
+                messages, metadata["message_context_budget"] = prepare_message_artifacts(
+                    messages, chat_config.model_copy(update={"model_id": profile_model_id}), config
+                )
                 ai_msg = await _invoke_with_streaming(llm_profile, lc_messages, on_progress)
                 metadata["fallback_model_used"] = False
                 metadata["inference_profile_model_id"] = profile_model_id
+            except ArtifactError:
+                raise
             except Exception as profile_exc:
                 logger.error(
                     "Inference-profile retry also failed for %s (tried %s): %s",

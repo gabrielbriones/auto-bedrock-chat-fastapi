@@ -9,6 +9,10 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
+    DEFAULT_ARTIFACT_MAX_AGE_SECONDS,
+    DEFAULT_ARTIFACT_MAX_BYTES,
+    DEFAULT_ARTIFACT_MAX_BYTES_PER_SESSION,
+    DEFAULT_ARTIFACT_MAX_ITEMS_PER_SESSION,
     DEFAULT_CONTEXT_BUDGET_SAFETY_FRACTION,
     DEFAULT_ENABLE_AI_SUMMARIZATION,
     DEFAULT_MAX_CONVERSATION_MESSAGES,
@@ -460,6 +464,19 @@ class ChatConfig(BaseSettings):
         gt=0,
         description="Timeout for API calls in seconds",
     )
+
+    # Session Artifact Configuration
+    artifact_enabled: bool = Field(default=True, alias="AUTOCHAT_ARTIFACT_ENABLED")
+    artifact_max_age_seconds: int = Field(
+        default=DEFAULT_ARTIFACT_MAX_AGE_SECONDS, alias="AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS", gt=0
+    )
+    artifact_max_bytes_per_session: int = Field(
+        default=DEFAULT_ARTIFACT_MAX_BYTES_PER_SESSION, alias="AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION", gt=0
+    )
+    artifact_max_items_per_session: int = Field(
+        default=DEFAULT_ARTIFACT_MAX_ITEMS_PER_SESSION, alias="AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION", gt=0
+    )
+    artifact_max_bytes: int = Field(default=DEFAULT_ARTIFACT_MAX_BYTES, alias="AUTOCHAT_ARTIFACT_MAX_BYTES", gt=0)
 
     # WebSocket Configuration
     max_sessions: int = Field(
