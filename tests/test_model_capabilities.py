@@ -12,6 +12,7 @@ set fail the turn with a Bedrock ``ValidationException``.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
 from autolangchat.config import ChatConfig
@@ -134,10 +135,13 @@ class TestClampMaxTokens:
 
 
 class TestBuildBedrockKwargs:
-    def test_omits_sampling_params_for_models_that_reject_them(self):
-        kwargs = build_bedrock_kwargs(SONNET_5, _config(temperature=0.7, top_p=0.9))
+    def test_omits_sampling_params_for_models_that_reject_them(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="autolangchat.model_capabilities"):
+            kwargs = build_bedrock_kwargs(SONNET_5, _config(temperature=0.7, top_p=0.9))
+
         assert "temperature" not in kwargs
         assert "top_p" not in kwargs
+        assert "does not support temperature/top_p" not in caplog.text
 
     def test_passes_temperature_for_models_that_support_it(self):
         kwargs = build_bedrock_kwargs(LLAMA_3_3, _config(temperature=0.3, top_p=0.9))

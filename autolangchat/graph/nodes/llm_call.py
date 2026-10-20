@@ -38,6 +38,7 @@ from langchain_core.runnables import RunnableConfig
 
 from ...artifacts import ArtifactError
 from ...config import MODEL_ID_REGION_PREFIXES, resolve_model_region, split_model_id
+from ...context_budget import estimate_message_tokens, provider_for_model
 from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
@@ -473,38 +474,63 @@ def _generate_message_preview(content: Any, max_preview_len: int = 100) -> tuple
     return content_len, preview
 
 
-def _log_conversation(messages: List[Dict], label: str) -> None:
-    """Log message states at DEBUG level — role, sizes, tool call/result counts."""
+def _log_conversation(messages: List[Dict], label: str, provider: Optional[str] = None) -> None:
+    """Log roles, sizes, token counts/estimates, and role-specific tool details."""
     if not logger.isEnabledFor(logging.DEBUG):
         return
     logger.debug("%s: %d messages", label, len(messages))
     for i, msg in enumerate(messages):
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
-        tool_calls = msg.get("tool_calls") or []
-        tool_results = msg.get("tool_results") or []
         content_len, preview = _generate_message_preview(content)
-        role_label = f"{role} [system prompt]" if role == "system" else role
-        logger.debug(
-            "  [%d] %s (%s chars, tool_calls=%d, tool_results=%d): %s",
-            i,
-            role_label,
-            f"{content_len:,}",
-            len(tool_calls),
-            len(tool_results),
-            preview,
-        )
-        for j, tr in enumerate(tool_results):
-            if not isinstance(tr, dict):
-                continue
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            metadata = msg.get("metadata")
+            usage = metadata.get("usage") if isinstance(metadata, dict) else None
+            usage = usage if isinstance(usage, dict) else {}
             logger.debug(
-                "      - tool_result[%d] name=%s tool_call_id=%s",
-                j,
-                tr.get("name"),
-                tr.get("tool_call_id") or tr.get("tool_use_id"),
+                "  [%d] %s (%s chars, input_tokens=%s, output_tokens=%s, tool_calls=%d): %s",
+                i,
+                role,
+                f"{content_len:,}",
+                usage.get("input_tokens", "unknown"),
+                usage.get("output_tokens", "unknown"),
+                len(tool_calls),
+                preview,
             )
-        for j, tc in enumerate(tool_calls):
-            logger.debug("      - tool_call[%d] id=%s name=%s", j, tc.get("id"), tc.get("name"))
+            for j, tc in enumerate(tool_calls):
+                logger.debug("      - tool_call[%d] id=%s name=%s", j, tc.get("id"), tc.get("name"))
+        elif role == "tool":
+            tool_results = msg.get("tool_results") or []
+            logger.debug(
+                "  [%d] %s (%s chars, estimated_tokens=%d, tool_results=%d): %s",
+                i,
+                role,
+                f"{content_len:,}",
+                estimate_message_tokens(msg, provider=provider),
+                len(tool_results),
+                preview,
+            )
+            for j, tr in enumerate(tool_results):
+                if not isinstance(tr, dict):
+                    continue
+                logger.debug(
+                    "      - tool_result[%d] name=%s tool_call_id=%s",
+                    j,
+                    tr.get("name"),
+                    tr.get("tool_call_id") or tr.get("tool_use_id"),
+                )
+        elif role == "user":
+            logger.debug(
+                "  [%d] %s (%s chars, estimated_tokens=%d): %s",
+                i,
+                role,
+                f"{content_len:,}",
+                estimate_message_tokens(msg, provider=provider),
+                preview,
+            )
+        else:
+            logger.debug("  [%d] %s (%s chars): %s", i, role, f"{content_len:,}", preview)
 
 
 async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
@@ -574,7 +600,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     primary_model = chat_config.model_id
     fallback_model = getattr(chat_config, "fallback_model", None)
 
-    _log_conversation(messages, "LLM call — conversation state")
+    _log_conversation(messages, "LLM call — conversation state", provider=provider_for_model(primary_model))
 
     # --- Primary call ---
     try:
@@ -710,11 +736,14 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             metadata["recovered_text_tool_calls"] = metadata.get("recovered_text_tool_calls", 0) + len(recovered)
 
     if logger.isEnabledFor(logging.DEBUG):
-        content_len, preview = _generate_message_preview(response_dict.get("content", ""))
+        content_len, preview = _generate_message_preview(response_dict.get("content", ""), max_preview_len=300)
         tool_calls = response_dict.get("tool_calls") or []
+        usage = response_dict.get("metadata", {}).get("usage", {})
         logger.debug(
-            "LLM response — assistant (%s chars, tool_calls=%d): %s",
+            "LLM response — assistant (%s chars, input_tokens=%s, output_tokens=%s, tool_calls=%d): %s",
             f"{content_len:,}",
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
             len(tool_calls),
             preview,
         )
@@ -732,6 +761,12 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     if usage:
         metadata["input_tokens"] = (metadata.get("input_tokens") or 0) + (usage.get("input_tokens") or 0)
         metadata["output_tokens"] = (metadata.get("output_tokens") or 0) + (usage.get("output_tokens") or 0)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "LLM response — cumulative token usage (input_tokens=%s, output_tokens=%s)",
+            metadata.get("input_tokens", 0),
+            metadata.get("output_tokens", 0),
+        )
 
     # Update model_id with the actual model used (may differ if fallback was triggered)
     metadata["model_id"] = response_dict.get("metadata", {}).get("model_id") or primary_model

@@ -38,6 +38,7 @@ from .exceptions import (
     UnauthorizedFeedbackError,
     WebSocketError,
 )
+from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo
 from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
 from .model_capabilities import build_bedrock_kwargs
@@ -565,8 +566,9 @@ class WebSocketChatHandler:
                     )
                     return
 
-            logger.info("Received user message (%d chars)", len(user_message))
-            logger.debug("Received user message: %s", user_message)
+            content_len, preview = _generate_message_preview(user_message, max_preview_len=500)
+            logger.info("Received user message (%d chars)", content_len)
+            logger.debug("Received user message: %s", preview)
 
             # Send typing indicator
             await self._send_message(
@@ -755,8 +757,6 @@ class WebSocketChatHandler:
             # Graph messages are dicts: {"role": "assistant", "content": "...", ...}
             content = final_msg.get("content") or ""
             final_response = final_msg
-            logger.info("Chat response (%s chars)", f"{len(content):,}")
-            logger.debug("Chat response preview: %s", content[:100])
 
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata["model_id"] = effective_config.model_id
@@ -803,6 +803,15 @@ class WebSocketChatHandler:
                 "query": user_message,
                 "kb_sources": response_metadata.get("kb_sources", []),
             }
+
+            content_len, preview = _generate_message_preview(content, max_preview_len=500)
+            logger.info(
+                "Chat response (%s chars, input_tokens=%s, output_tokens=%s)",
+                f"{content_len:,}",
+                response_metadata.get("input_tokens"),
+                response_metadata.get("output_tokens"),
+            )
+            logger.debug("Chat response preview: %s", preview)
 
             # Send response to client. This can fail if the connection has
             # dropped mid-turn (e.g. a network/proxy reconnect while the
@@ -2621,8 +2630,8 @@ class WebSocketChatHandler:
 
         try:
             # Mirrors Starlette's send_json serialization so the logged size matches the frame size.
-            payload_bytes = len(json.dumps(message, separators=(",", ":"), ensure_ascii=False, default=str).encode())
-            logger.info(f"WS send: type={message.get('type')} size={payload_bytes} bytes")
+            # payload_bytes = len(json.dumps(message, separators=(",", ":"), ensure_ascii=False, default=str).encode())
+            # logger.info(f"WS send: type={message.get('type')} size={payload_bytes} bytes")
             await websocket.send_json(message)
         except Exception as e:
             if log_errors:
