@@ -101,6 +101,18 @@ describe('reconcileRoster frame handling', () => {
     expect(titledFirst.items[0]?.title).toBe('Job 42')
   })
 
+  // XMGPLAT-12043: a late auto-title must not overwrite a manual rename.
+  it('keeps a renamed title when a titled frame arrives afterwards', () => {
+    const roster = reduce(
+      emptyRoster,
+      anEvent.created('a'),
+      anEvent.renamed('a', 'My Title'),
+      anEvent.titled('a', 'Job 42'),
+    )
+
+    expect(roster.items[0]?.title).toBe('My Title')
+  })
+
   // FR-CONV-016: a single page, so a list frame replaces rather than merges.
   it('replaces the roster on a list frame and prunes what it dropped', () => {
     const roster = reduce(

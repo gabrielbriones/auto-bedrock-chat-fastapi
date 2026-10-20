@@ -186,6 +186,14 @@ class PostgresConversationStore(BaseConversationStore):
         if not found:
             raise ConversationNotFoundError(f"conversation {conversation_id} not found")
 
+    async def set_title_if_unset(self, conversation_id: str, title: str) -> bool:
+        sql = "UPDATE conversations SET title = %s, updated_at = now() WHERE id = %s AND (title IS NULL OR title = '')"
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(sql, (title, conversation_id))
+            updated = cur.rowcount > 0
+            await conn.commit()
+        return updated
+
     async def record_turn(self, conversation_id: str) -> None:
         sql = "UPDATE conversations SET message_count = message_count + 1, updated_at = now() WHERE id = %s"
         async with self._pool.connection() as conn, conn.cursor() as cur:

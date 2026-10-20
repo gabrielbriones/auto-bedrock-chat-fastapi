@@ -166,6 +166,9 @@ class WebSocketChatHandler:
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
         self._background_tasks: set = set()
+        # conversation_id -> in-flight auto-title task, so a manual rename can
+        # cancel it. Entries remove themselves on completion.
+        self._pending_title_tasks: Dict[str, "asyncio.Task[Any]"] = {}
         # thread_id -> number of chat_graph.ainvoke calls currently running
         # for it. Per-process: another uvicorn worker won't see these.
         self._in_flight_threads: Dict[str, int] = {}
@@ -873,15 +876,13 @@ class WebSocketChatHandler:
             # just sent above. Fires once per conversation (only on the turn
             # that created it).
             if conversation_just_created and conversation_id is not None:
-                self._spawn_background_task(
-                    self._generate_and_apply_title(
-                        websocket,
-                        conversation_id,
-                        [
-                            {"role": "user", "content": user_message},
-                            {"role": "assistant", "content": content},
-                        ],
-                    )
+                self._spawn_title_task(
+                    websocket,
+                    conversation_id,
+                    [
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": content},
+                    ],
                 )
 
             # Token usage is now recorded inside the graph itself by
@@ -1680,8 +1681,8 @@ class WebSocketChatHandler:
 
         return session
 
-    def _spawn_background_task(self, coro: Any) -> None:
-        """Schedule ``coro`` as a fire-and-forget task.
+    def _spawn_background_task(self, coro: Any) -> "asyncio.Task[Any]":
+        """Schedule ``coro`` as a fire-and-forget task and return it.
 
         Keeps a strong reference in ``self._background_tasks`` until the
         task completes (removed via a done-callback) so it isn't
@@ -1704,6 +1705,29 @@ class WebSocketChatHandler:
                 logger.error("Background task failed", exc_info=exc)
 
         task.add_done_callback(_on_done)
+        return task
+
+    def _spawn_title_task(self, websocket: WebSocket, conversation_id: str, messages: List[Dict[str, Any]]) -> None:
+        """Start auto-titling for ``conversation_id``, tracked so a rename can cancel it."""
+        task = self._spawn_background_task(self._generate_and_apply_title(websocket, conversation_id, messages))
+        self._pending_title_tasks[conversation_id] = task
+
+        def _forget(t: "asyncio.Task[Any]") -> None:
+            if self._pending_title_tasks.get(conversation_id) is t:
+                del self._pending_title_tasks[conversation_id]
+
+        task.add_done_callback(_forget)
+
+    def _cancel_pending_title(self, conversation_id: str) -> None:
+        """Cancel an in-flight auto-title task for ``conversation_id``, if any.
+
+        Only reaches tasks in this process; the conditional write in
+        ``_generate_and_apply_title`` covers renames from other workers or
+        the REST API.
+        """
+        task = self._pending_title_tasks.pop(conversation_id, None)
+        if task is not None and not task.done():
+            task.cancel()
 
     def _build_title_llm_client(self) -> Optional[Any]:
         """Build a lightweight LLM client for conversation-title generation.
@@ -1750,11 +1774,26 @@ class WebSocketChatHandler:
         logged and otherwise swallowed — an untitled conversation is a
         cosmetic issue, not a hard failure, and the client already has a
         working conversation either way.
+
+        A manual rename always wins: generation is skipped if the
+        conversation already has a title, the write only lands if the title
+        is still unset, and ``conversation_titled`` is not sent otherwise.
+        ``asyncio.CancelledError`` (from ``_cancel_pending_title``)
+        propagates so the task ends as cancelled.
         """
         try:
+            conversation = await self.conversation_store.get_conversation(conversation_id)
+            if conversation is None or conversation.get("title"):
+                return
             llm_client = self._build_title_llm_client()
             title = await generate_conversation_title(llm_client, messages)
-            await self.conversation_store.update_conversation(conversation_id, title=title)
+            applied = await self.conversation_store.set_title_if_unset(conversation_id, title)
+            if not applied:
+                logger.debug(
+                    "Skipping auto-title for conversation_id=%s: title was set while generating",
+                    conversation_id,
+                )
+                return
             await self._send_message(
                 websocket,
                 {
@@ -2058,6 +2097,10 @@ class WebSocketChatHandler:
                 websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
             )
             return
+
+        # Stop any in-flight auto-title before writing, so it can't land
+        # (or notify the client) after the user's chosen title.
+        self._cancel_pending_title(conversation_id)
 
         try:
             await self.conversation_store.update_conversation(conversation_id, title=title)
