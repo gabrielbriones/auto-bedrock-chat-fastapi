@@ -54,13 +54,15 @@ export const reconcileRoster = (
     // thread with the title it carries, and the later `created` merges onto it.
     // A `titled` frame only names an untitled thread: a late auto-title must not overwrite a title
     // the user already chose with a rename.
-    case 'titled':
-      return upsert(
-        roster,
-        event.id,
-        { title: findConversation(roster, event.id)?.title ?? event.title, updatedAt: at },
-        at,
-      )
+    case 'titled': {
+      const existing = findConversation(roster, event.id)
+
+      if (existing !== undefined && existing.title !== null) {
+        return roster
+      }
+
+      return upsert(roster, event.id, { title: event.title, updatedAt: at }, at)
+    }
 
     case 'renamed':
       return upsert(roster, event.id, { title: event.title, updatedAt: at }, at)
