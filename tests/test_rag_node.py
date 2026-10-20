@@ -50,7 +50,9 @@ class _DummyKBStore:
     def hybrid_search(self, **kwargs):
         return [
             {
-                "similarity_score": 0.9,
+                "similarity_score": 0.68,
+                "semantic_component": 0.8,
+                "keyword_component": 0.4,
                 "content": "Relevant context",
                 "chunk_id": "chunk-1",
                 "document_id": "doc-1",
@@ -60,7 +62,7 @@ class _DummyKBStore:
 
 
 @pytest.mark.asyncio
-async def test_rag_node_preserves_user_message_when_injecting_context():
+async def test_rag_node_preserves_user_message_when_injecting_context(caplog):
     state = {
         "messages": [
             {"role": "system", "content": "old system prompt"},
@@ -77,7 +79,8 @@ async def test_rag_node_preserves_user_message_when_injecting_context():
         }
     }
 
-    result = await rag_node(state, config)
+    with caplog.at_level("DEBUG", logger="autolangchat.graph.nodes.rag"):
+        result = await rag_node(state, config)
 
     roles = [message["role"] for message in result["messages"]]
     assert roles.count("system") == 1
@@ -88,3 +91,4 @@ async def test_rag_node_preserves_user_message_when_injecting_context():
         for message in result["messages"]
     )
     assert result["kb_results"]
+    assert "score=0.6800 (semantic=0.8000 x 0.70=0.5600, keyword=0.4000 x 0.30=0.1200) [chunk-1]" in caplog.text

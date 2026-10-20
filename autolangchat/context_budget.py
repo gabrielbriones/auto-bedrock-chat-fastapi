@@ -190,7 +190,7 @@ def estimate_tokens(text: Any, kind: Optional[str] = None, provider: Optional[st
         return 0
     if kind is None:
         kind = classify_content(text)
-        logger.debug("Classified content as %s", kind)
+        # logger.debug("Classified content as %s", kind)
     return math.ceil(len(text) / chars_per_token(kind, provider))
 
 

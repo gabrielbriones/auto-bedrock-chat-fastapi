@@ -211,20 +211,13 @@ def build_bedrock_kwargs(
     resolved_temperature = _from_config("temperature") if temperature is _UNSET else temperature
     resolved_top_p = _from_config("top_p") if top_p is _UNSET else top_p
 
-    if not supports_temperature(model_id):
-        # The model rejects both sampling knobs -- sending either one is a
-        # ValidationException, so fall back to the model's own defaults.
-        if resolved_temperature is not None or resolved_top_p is not None:
-            logger.debug(
-                "Model '%s' does not support temperature/top_p; omitting both",
-                model_id,
-            )
-    elif resolved_temperature is not None:
-        # Bedrock Converse rejects requests carrying both temperature and
-        # top_p, so temperature wins when both are configured.
-        kwargs["temperature"] = resolved_temperature
-    elif resolved_top_p is not None:
-        kwargs["top_p"] = resolved_top_p
+    if supports_temperature(model_id):
+        if resolved_temperature is not None:
+            # Bedrock Converse rejects requests carrying both temperature and
+            # top_p, so temperature wins when both are configured.
+            kwargs["temperature"] = resolved_temperature
+        elif resolved_top_p is not None:
+            kwargs["top_p"] = resolved_top_p
 
     if include_credentials:
         access_key = _from_config("aws_access_key_id")

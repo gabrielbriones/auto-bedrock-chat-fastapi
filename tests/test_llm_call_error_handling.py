@@ -384,6 +384,27 @@ class TestStopReasonMetadata:
         assert caplog.records == []
 
 
+class TestTokenUsageLogging:
+    @pytest.mark.asyncio
+    async def test_logs_current_response_and_cumulative_token_usage(self, caplog):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        ai_message = _ai_message()
+        ai_message.usage_metadata = {"input_tokens": 12, "output_tokens": 34}
+        llm.ainvoke = AsyncMock(return_value=ai_message)
+        state = _state()
+        state["metadata"] = {"input_tokens": 5, "output_tokens": 6}
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            with caplog.at_level(logging.DEBUG, logger="autolangchat.graph.nodes.llm_call"):
+                result = await llm_call_node(state, _runnable_config(chat_config))
+
+        assert "LLM response — assistant (5 chars, input_tokens=12, output_tokens=34" in caplog.text
+        assert "LLM response — cumulative token usage (input_tokens=17, output_tokens=40)" in caplog.text
+        assert result["metadata"]["input_tokens"] == 17
+        assert result["metadata"]["output_tokens"] == 40
+
+
 class TestTruncatedEmptyResponseFallback:
     """XMGPLAT-11208 follow-up: a model can exhaust its entire max_tokens
     budget on hidden reasoning before emitting any visible text (observed
