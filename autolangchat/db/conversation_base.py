@@ -107,20 +107,16 @@ class BaseConversationStore(ABC):
     async def set_title_if_unset(self, conversation_id: str, title: str) -> bool:
         """Set ``title`` only if the conversation has no title yet (NULL or empty).
 
-        Used by auto-titling so a generated title can never overwrite one
-        the user set manually (via WebSocket or REST) while the LLM call
-        was in flight. Returns ``True`` if the title was written, ``False``
-        if the conversation already had a title or no longer exists.
+        Used by auto-titling so a generated title cannot overwrite a manual
+        title saved while the LLM call was in flight. Returns ``True`` if
+        the title was written, ``False`` if the conversation already had a
+        title, no longer exists, or the store lacks an atomic implementation.
 
         Concrete backends override this with a single conditional
-        ``UPDATE`` so the check-and-write is atomic across workers. This
-        default is a non-atomic fallback for third-party stores.
+        ``UPDATE`` so the check-and-write is atomic across workers. The
+        default skips auto-titling for stores without an atomic override.
         """
-        conversation = await self.get_conversation(conversation_id)
-        if conversation is None or conversation.get("title"):
-            return False
-        await self.update_conversation(conversation_id, title=title)
-        return True
+        return False
 
     @abstractmethod
     async def record_turn(self, conversation_id: str) -> None:
