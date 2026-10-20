@@ -310,6 +310,13 @@ reply in the background, using `conversation_title_model_id` (or the main
 via `conversation_titled`. If the LLM call fails or isn't configured, the
 title falls back to a truncated prefix of the first user message.
 
+A manual rename always wins over auto-titling. A `conversation_rename` on
+the same connection cancels the in-flight title generation. Regardless of
+where the rename comes from (WebSocket, `PATCH /chat/conversations/{id}`, or
+another worker), the generated title is only written if the conversation is
+still untitled. If it isn't, `conversation_titled` is not sent. Conversations
+that already have a title are never auto-titled.
+
 ---
 
 ## See Also

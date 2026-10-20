@@ -1100,6 +1100,131 @@ async def test_titling_failure_is_swallowed_and_does_not_affect_chat_delivery():
 
 
 # ---------------------------------------------------------------------------
+# Regression (XMGPLAT-12043): a manual rename must never be overwritten by an
+# in-flight auto-title.
+# ---------------------------------------------------------------------------
+
+
+class _GatedTitleLLM:
+    """Title LLM that blocks until ``release`` is set, so a test can rename mid-generation."""
+
+    def __init__(self, title="A Generated Title"):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+        self._title = title
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return SimpleNamespace(content=self._title)
+
+
+async def _start_conversation_with_gated_title(handler, llm):
+    handler._build_title_llm_client = lambda: llm
+    ws = _new_ws()
+    await handler._handle_chat_message(ws, {"message": "hello"})
+    conv_id = next(m["conversation_id"] for m in _sent(ws) if m["type"] == "conversation_created")
+    return ws, conv_id
+
+
+async def test_ws_rename_during_title_generation_cancels_auto_title():
+    store = await _make_store()
+    try:
+        handler = _make_handler(_make_session(), conversation_store=store)
+        llm = _GatedTitleLLM()
+        ws, conv_id = await _start_conversation_with_gated_title(handler, llm)
+        await asyncio.wait_for(llm.started.wait(), timeout=1)
+        title_task = handler._pending_title_tasks[conv_id]
+
+        await handler._handle_conversation_rename(ws, {"conversation_id": conv_id, "title": "My Title"})
+        llm.release.set()
+        await asyncio.gather(*handler._background_tasks, return_exceptions=True)
+
+        assert title_task.cancelled()
+        assert conv_id not in handler._pending_title_tasks
+        assert len(handler._background_tasks) == 0
+        assert (await store.get_conversation(conv_id))["title"] == "My Title"
+        types = [m["type"] for m in _sent(ws)]
+        assert "conversation_renamed" in types
+        assert "conversation_titled" not in types
+    finally:
+        await store.close()
+
+
+async def test_rename_from_elsewhere_during_title_generation_is_kept():
+    """A rename this handler can't cancel (REST PATCH, another worker) is
+    still protected by the conditional write."""
+    store = await _make_store()
+    try:
+        handler = _make_handler(_make_session(), conversation_store=store)
+        llm = _GatedTitleLLM()
+        ws, conv_id = await _start_conversation_with_gated_title(handler, llm)
+        await asyncio.wait_for(llm.started.wait(), timeout=1)
+
+        await store.update_conversation(conv_id, title="My Title")
+        llm.release.set()
+        await asyncio.gather(*handler._background_tasks)
+
+        assert (await store.get_conversation(conv_id))["title"] == "My Title"
+        assert "conversation_titled" not in [m["type"] for m in _sent(ws)]
+    finally:
+        await store.close()
+
+
+async def test_auto_title_skipped_when_conversation_already_titled():
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice", title="My Title")
+        handler = _make_handler(_make_session(), conversation_store=store)
+        llm = _GatedTitleLLM()
+        llm.release.set()
+        handler._build_title_llm_client = lambda: llm
+
+        ws = _new_ws()
+        await handler._generate_and_apply_title(ws, "conv-1", [{"role": "user", "content": "hello"}])
+
+        assert llm.calls == 0
+        assert (await store.get_conversation("conv-1"))["title"] == "My Title"
+        assert _sent(ws) == []
+    finally:
+        await store.close()
+
+
+async def test_rename_of_conversation_without_pending_title_is_unaffected():
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice")
+        handler = _make_handler(_make_session(), conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_rename(ws, {"conversation_id": "conv-1", "title": "My Title"})
+
+        assert _sent(ws)[0]["type"] == "conversation_renamed"
+        assert (await store.get_conversation("conv-1"))["title"] == "My Title"
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("initial_title", [None, ""])
+async def test_set_title_if_unset_writes_only_untitled_conversations(initial_title):
+    store = await _make_store()
+    try:
+        await store.create_conversation("untitled", "alice", title=initial_title)
+        await store.create_conversation("titled", "alice", title="Manual")
+
+        assert await store.set_title_if_unset("untitled", "Auto") is True
+        assert await store.set_title_if_unset("titled", "Auto") is False
+        assert await store.set_title_if_unset("missing", "Auto") is False
+
+        assert (await store.get_conversation("untitled"))["title"] == "Auto"
+        assert (await store.get_conversation("titled"))["title"] == "Manual"
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
 # Regression: _active_thread_id must agree with _handle_chat_message's
 # use_conversation_persistence gate, not just the raw config flag.
 # ---------------------------------------------------------------------------
