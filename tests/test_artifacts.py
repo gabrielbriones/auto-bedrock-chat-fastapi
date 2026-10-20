@@ -6,6 +6,8 @@ import logging
 import re
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +27,248 @@ def _store(**limits):
     store = ArtifactStore(**limits)
     store.register_connection("connection", "alice")
     return store, store.activate("connection", "thread", "alice")
+
+
+def test_statistics_are_aggregate_snapshots_and_exclude_dedup_hits():
+    store, scope = _store()
+    assert store.statistics() == {
+        "active_artifacts": 0,
+        "bytes": 0,
+        "puts": 0,
+        "expiries": 0,
+        "quota_rejections": 0,
+        "failed_reads": 0,
+    }
+    handle = store.put(scope, "\u00e9", {"private": "metadata"})
+    assert store.put(scope, "\u00e9", {"private": "metadata"}) == handle
+    assert store.contains(scope, handle)
+    store.read_region(scope, handle)
+    snapshot = store.statistics()
+    assert snapshot == {
+        "active_artifacts": 1,
+        "bytes": 2,
+        "puts": 1,
+        "expiries": 0,
+        "quota_rejections": 0,
+        "failed_reads": 0,
+    }
+    snapshot["puts"] = -1
+    assert store.statistics()["puts"] == 1
+
+
+@pytest.mark.parametrize("cleanup", ["thread", "user", "session", "close"])
+def test_statistics_after_cleanup_preserve_lifetime_counters(cleanup):
+    store, scope = _store()
+    store.put(scope, "first", {})
+    store.register_connection("other", "bob")
+    other = store.activate("other", "thread", "bob")
+    store.put(other, "second", {})
+    if cleanup == "thread":
+        store.delete_thread("thread", "alice")
+    elif cleanup == "user":
+        store.delete_user("alice")
+    elif cleanup == "session":
+        store.delete_session("connection")
+    else:
+        store.close()
+    stats = store.statistics()
+    assert stats["active_artifacts"] == (0 if cleanup == "close" else 1)
+    assert stats["bytes"] == (0 if cleanup == "close" else 6)
+    assert stats["puts"] == 2
+    assert stats["expiries"] == 0
+
+
+def test_statistics_expire_payloads_once(monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "expired", {})
+    clock[0] = 5
+    store.put(scope, "live", {})
+    clock[0] = 10
+    assert store.statistics() == {
+        "active_artifacts": 1,
+        "bytes": 4,
+        "puts": 2,
+        "expiries": 1,
+        "quota_rejections": 0,
+        "failed_reads": 0,
+    }
+    store.expire()
+    assert not store.contains(scope, handle)
+    with pytest.raises(ArtifactError):
+        store.read_region(scope, handle)
+    assert store.statistics()["expiries"] == 1
+    assert store.statistics()["failed_reads"] == 1
+    clock[0] = 15
+    assert store.statistics()["expiries"] == 2
+    assert store.statistics()["bytes"] == 0
+
+
+@pytest.mark.parametrize("unavailable", ["unknown", "foreign", "inactive", "closed"])
+def test_statistics_count_each_unavailable_read_once(unavailable):
+    store, scope = _store()
+    handle = store.put(scope, "private", {})
+    if unavailable == "unknown":
+        handle = "unknown"
+    elif unavailable == "foreign":
+        store.register_connection("other", "bob")
+        scope = store.activate("other", "thread", "bob")
+    elif unavailable == "inactive":
+        store.deactivate("connection")
+    else:
+        store.close()
+    with pytest.raises(ArtifactError):
+        store.read_region(scope, handle)
+    assert store.statistics()["failed_reads"] == 1
+
+
+@pytest.mark.parametrize("unavailable", ["unknown", "foreign", "inactive", "closed"])
+def test_contains_probe_does_not_count_as_failed_read(unavailable):
+    store, scope = _store()
+    handle = store.put(scope, "private", {})
+    if unavailable == "unknown":
+        handle = "unknown"
+    elif unavailable == "foreign":
+        store.register_connection("other", "bob")
+        scope = store.activate("other", "thread", "bob")
+    elif unavailable == "inactive":
+        store.deactivate("connection")
+    else:
+        store.close()
+    if unavailable in ("unknown", "foreign"):
+        assert not store.contains(scope, handle)
+    else:
+        with pytest.raises(ArtifactError):
+            store.contains(scope, handle)
+    assert store.statistics()["failed_reads"] == 0
+
+
+def test_statistics_do_not_count_invalid_arguments_or_failed_writes_as_reads():
+    store, scope = _store()
+    handle = store.put(scope, "text", {})
+    with pytest.raises(ValueError):
+        store.read_region(scope, handle, start_line=0)
+    store.deactivate("connection")
+    with pytest.raises(ArtifactError):
+        store.put(scope, "late", {})
+    assert store.statistics()["failed_reads"] == 0
+    assert store.statistics()["quota_rejections"] == 0
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [{"max_items_per_session": 4}, {"max_bytes_per_session": 4}, {"max_bytes": 4}],
+)
+def test_statistics_count_concurrent_puts_and_quota_rejections(limits):
+    store, scope = _store(**limits)
+
+    def put(index):
+        try:
+            store.put(scope, str(index), {})
+        except ArtifactError:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(put, range(8)))
+    assert sum(results) == 4
+    assert store.statistics() == {
+        "active_artifacts": 4,
+        "bytes": 4,
+        "puts": 4,
+        "expiries": 0,
+        "quota_rejections": 4,
+        "failed_reads": 0,
+    }
+
+
+@pytest.mark.parametrize("quota", ["items", "session_bytes", "store_bytes"])
+def test_concurrent_distinct_puts_enforce_exact_quota_across_threads(quota):
+    limits = {
+        "items": {"max_items_per_session": 3},
+        "session_bytes": {"max_bytes_per_session": 7},
+        "store_bytes": {"max_bytes": 7},
+    }
+    store, scope = _store(**limits[quota])
+    scopes = [scope] * 8
+    if quota == "store_bytes":
+        scopes = []
+        for index in range(8):
+            connection_id = f"connection-{index}"
+            store.register_connection(connection_id, f"user-{index}")
+            scopes.append(store.activate(connection_id, "thread", f"user-{index}"))
+    ready = Barrier(8, timeout=5)
+
+    def put(index):
+        ready.wait()
+        try:
+            return store.put(scopes[index], "\u00e9", {"index": index})
+        except ArtifactError as error:
+            assert "quota exceeded" in str(error)
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        handles = list(executor.map(put, range(8)))
+    accepted = [(scope, handle) for scope, handle in zip(scopes, handles) if handle is not None]
+    assert len(accepted) == 3
+    assert len({handle for _, handle in accepted}) == 3
+    for scope, handle in accepted:
+        assert store.read_region(scope, handle)["text"] == "\u00e9"
+    assert store.statistics() == {
+        "active_artifacts": 3,
+        "bytes": 6,
+        "puts": 3,
+        "expiries": 0,
+        "quota_rejections": 5,
+        "failed_reads": 0,
+    }
+
+
+@pytest.mark.parametrize("mutation", ["expire", "thread", "user", "session", "close"])
+def test_read_racing_with_expiry_or_deletion_fails_without_partial_result(monkeypatch, mutation):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "first\nsecond\nthird\n", {})
+    scanning = Event()
+    resume = Event()
+    finditer = re.finditer
+
+    def scan(*args):
+        for boundary in finditer(*args):
+            yield boundary
+            scanning.set()
+            assert resume.wait(timeout=5), "Read was not released after mutation"
+
+    monkeypatch.setattr(artifacts_module.re, "finditer", scan)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        reading = executor.submit(store.read_region, scope, handle)
+        try:
+            assert scanning.wait(timeout=5), "Read never reached the scanning phase"
+            if mutation == "expire":
+                clock[0] = 10
+                store.expire()
+            elif mutation == "thread":
+                store.delete_thread(scope.thread_id, scope.user_id)
+            elif mutation == "user":
+                store.delete_user(scope.user_id)
+            elif mutation == "session":
+                store.delete_session(scope.connection_id)
+            else:
+                store.close()
+        finally:
+            resume.set()
+        with pytest.raises(ArtifactError, match="unavailable"):
+            reading.result(timeout=5)
+    assert store.statistics() == {
+        "active_artifacts": 0,
+        "bytes": 0,
+        "puts": 1,
+        "expiries": int(mutation == "expire"),
+        "quota_rejections": 0,
+        "failed_reads": 1,
+    }
 
 
 def test_isolation_switching_and_reconnection():
@@ -125,6 +369,8 @@ def test_region_read_revalidates_after_scanning(monkeypatch, invalidate):
     monkeypatch.setattr(re, "finditer", scan)
     with pytest.raises(ArtifactError):
         store.read_region(scope, handle)
+    assert store.statistics()["failed_reads"] == 1
+    assert store.statistics()["expiries"] == (1 if invalidate == "expire" else 0)
 
 
 @pytest.mark.asyncio
@@ -181,6 +427,7 @@ def test_atomic_quota_and_deduplication():
     with ThreadPoolExecutor(max_workers=4) as executor:
         handles = list(executor.map(lambda _: store.put(scope, "\u00e9" * 4, {}), range(8)))
     assert len(set(handles)) == 1
+    assert store.statistics()["puts"] == 1
     with pytest.raises(ArtifactError, match="quota"):
         store.put(scope, "different", {})
     store.delete_thread("thread", "alice")
@@ -325,6 +572,24 @@ async def test_original_is_archived_before_lossy_preprocessing():
     assert result["messages"][0]["content"] == "truncated"
     handle = result["messages"][0]["metadata"]["artifact_handle"]
     assert store.read_region(scope, handle)["text"] == original
+
+
+@pytest.mark.asyncio
+async def test_rearchiving_an_expired_handle_does_not_count_as_failed_read(monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    config = ChatConfig().model_copy(update={"context_budget_safety_fraction": 0})
+    runnable = {"configurable": {"chat_config": config, "artifact_store": store, "artifact_scope": scope}}
+    first = await preprocess_node({"messages": [{"role": "user", "content": "original"}]}, runnable)
+    expired_handle = first["messages"][0]["metadata"]["artifact_handle"]
+    clock[0] = 10
+    second = await preprocess_node({"messages": first["messages"]}, runnable)
+    assert second["messages"][0]["metadata"]["artifact_handle"] != expired_handle
+    stats = store.statistics()
+    assert stats["puts"] == 2
+    assert stats["expiries"] == 1
+    assert stats["failed_reads"] == 0
 
 
 @pytest.mark.asyncio

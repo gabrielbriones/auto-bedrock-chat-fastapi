@@ -771,10 +771,16 @@ class AutoLangChatPlugin:
                 self._apply_new_sso_cookie(response, request, new_sso_session_token)
                 return response
 
-        # Statistics endpoint
+        # Statistics endpoint (admin only; 404 when the admin API is disabled,
+        # matching the unregistered ``/admin/*`` block)
         @self.app.get(f"{self.config.chat_endpoint}/stats")
-        async def chat_statistics():
+        async def chat_statistics(request: Request):
             """Get chat statistics"""
+
+            require_admin = getattr(self, "_require_admin", None)
+            if require_admin is None:
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            await require_admin(request)
 
             try:
                 stats = await self.websocket_handler.get_statistics()

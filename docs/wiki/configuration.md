@@ -35,17 +35,17 @@ autolangchat_plugin = add_autolangchat(
 
 ### AWS / Bedrock
 
-| Env Variable              | Default                            | Description                                                                                                                                           |
-| ------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AWS_REGION`              | `us-east-1`                        | AWS region                                                                                                                                            |
-| `AWS_ACCESS_KEY_ID`       | —                                  | AWS access key (or use IAM role)                                                                                                                      |
-| `AWS_SECRET_ACCESS_KEY`   | —                                  | AWS secret key                                                                                                                                        |
-| `AUTOCHAT_MODEL_ID`       | `global.anthropic.claude-sonnet-5` | Model identifier                                                                                                                                      |
+| Env Variable              | Default                            | Description                                                                                                                                                        |
+| ------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AWS_REGION`              | `us-east-1`                        | AWS region                                                                                                                                                         |
+| `AWS_ACCESS_KEY_ID`       | —                                  | AWS access key (or use IAM role)                                                                                                                                   |
+| `AWS_SECRET_ACCESS_KEY`   | —                                  | AWS secret key                                                                                                                                                     |
+| `AUTOCHAT_MODEL_ID`       | `global.anthropic.claude-sonnet-5` | Model identifier                                                                                                                                                   |
 | `AUTOCHAT_DEFAULT_REGION` | `global`                           | Inference-profile prefix (`us`, `eu`, `au`, `jp`, `global`) applied to bare model ids, including the settings sidebar's "Default" region, when that profile exists |
-| `AUTOCHAT_TEMPERATURE`    | `0.7`                              | Response randomness (0.0–1.0)                                                                                                                         |
-| `AUTOCHAT_MAX_TOKENS`     | `4096`                             | Max tokens in model response                                                                                                                          |
-| `AUTOCHAT_TOP_P`          | `0.9`                              | Top-p sampling parameter                                                                                                                              |
-| `AUTOCHAT_SYSTEM_PROMPT`  | `None`                             | Custom system prompt                                                                                                                                  |
+| `AUTOCHAT_TEMPERATURE`    | `0.7`                              | Response randomness (0.0–1.0)                                                                                                                                      |
+| `AUTOCHAT_MAX_TOKENS`     | `4096`                             | Max tokens in model response                                                                                                                                       |
+| `AUTOCHAT_TOP_P`          | `0.9`                              | Top-p sampling parameter                                                                                                                                           |
+| `AUTOCHAT_SYSTEM_PROMPT`  | `None`                             | Custom system prompt                                                                                                                                               |
 
 > **Per-model capabilities.** `AUTOCHAT_TEMPERATURE`, `AUTOCHAT_TOP_P` and
 > `AUTOCHAT_MAX_TOKENS` are applied according to what the selected model
@@ -73,6 +73,27 @@ autolangchat_plugin = add_autolangchat(
 | ---------------------------- | ------------- | ---------------------------------------------------------- |
 | `AUTOCHAT_MAX_TOOL_CALLS`    | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit) |
 | `AUTOCHAT_OPENAPI_SPEC_FILE` | `None`        | Path to external OpenAPI spec file                         |
+
+### Session Artifacts
+
+| Env Variable                              | Default     | Description                                                                 |
+| ----------------------------------------- | ----------- | --------------------------------------------------------------------------- |
+| `AUTOCHAT_ARTIFACT_ENABLED`               | `true`      | Enable automatic archiving of oversized messages for WebSocket graph turns  |
+| `AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS`       | `86400`     | Maximum payload lifetime in seconds, including while the connection is open |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `16777216`  | UTF-8 payload-byte quota per live connection (16 MiB)                       |
+| `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Artifact-count quota per live connection, across its conversations          |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `134217728` | Total UTF-8 payload-byte quota per store/process (128 MiB)                  |
+
+All numeric limits must be positive. There is no separate per-item cap.
+Quotas exclude Python object overhead, transient serialization and existing
+checkpoint copies; allow additional memory for those. Quota exhaustion fails
+archiving explicitly rather than silently evicting content. Disabling artifacts
+preserves ordinary message processing.
+
+Storage and quotas are worker-local, not shared across replicas. See
+[Session artifacts](session-artifacts.md) for lifetime, ownership, deployment
+constraints and the aggregate counters exposed under `sessions.artifacts` at
+`GET {chat_endpoint}/stats` (admin only; see `AUTOCHAT_ADMIN_ENABLED`).
 
 ### Dynamic Parameter Overrides
 

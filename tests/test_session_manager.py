@@ -30,11 +30,14 @@ replacement session" bug).
 import asyncio
 import uuid
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from autolangchat import artifacts as artifacts_module
 from autolangchat import session_manager as session_manager_module
+from autolangchat.artifacts import ArtifactError
 from autolangchat.config import ChatConfig
 from autolangchat.exceptions import SessionError
 from autolangchat.session_manager import ChatSession, ChatSessionManager
@@ -50,6 +53,109 @@ def _websocket():
     ws = MagicMock()
     ws.close = AsyncMock()
     return ws
+
+
+async def test_statistics_include_aggregate_artifact_snapshot(session_manager):
+    store = session_manager.artifact_store
+    assert (await session_manager.get_statistics())["artifacts"] == store.statistics()
+    store.register_connection("artifact-connection", "private-user")
+    scope = store.activate("artifact-connection", "private-thread", "private-user")
+    store.put(scope, "\u00e9", {"private": "metadata"})
+    stats = await session_manager.get_statistics()
+    assert stats["artifacts"] == {
+        "active_artifacts": 1,
+        "bytes": 2,
+        "puts": 1,
+        "expiries": 0,
+        "quota_rejections": 0,
+        "failed_reads": 0,
+    }
+    assert stats["active_sessions"] == 0
+    assert stats["unique_users"] == 0
+    store.delete_session("artifact-connection")
+    stats = await session_manager.get_statistics()
+    assert stats["artifacts"]["active_artifacts"] == 0
+    assert stats["artifacts"]["bytes"] == 0
+    assert stats["artifacts"]["puts"] == 1
+
+
+async def test_background_cleanup_sweeps_artifacts_without_expiring_live_session(monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    sleeping = asyncio.Event()
+    resume = asyncio.Event()
+    swept = asyncio.Event()
+
+    async def sleep_until_released(delay):
+        assert delay == 300
+        sleeping.set()
+        await resume.wait()
+        resume.clear()
+
+    monkeypatch.setattr(session_manager_module.asyncio, "sleep", sleep_until_released)
+    manager = ChatSessionManager(ChatConfig().model_copy(update={"artifact_max_age_seconds": 10}))
+    ws = _websocket()
+    try:
+        await manager.create_session(ws, user_id="alice")
+        session = await manager.get_session(ws)
+        store = manager.artifact_store
+        scope = store.activate(session.connection_id, "thread", session.user_id)
+        handle = store.put(scope, "expires during live session", {})
+        expire = store.expire
+
+        def tracked_expire():
+            expire()
+            swept.set()
+
+        monkeypatch.setattr(store, "expire", tracked_expire)
+        await asyncio.wait_for(sleeping.wait(), timeout=5)
+        clock[0] = 10
+        resume.set()
+        await asyncio.wait_for(swept.wait(), timeout=5)
+        # Do not let statistics() or contains() perform the expiry under test.
+        monkeypatch.setattr(store, "expire", lambda: None)
+        assert store.statistics()["active_artifacts"] == 0
+        assert store.statistics()["bytes"] == 0
+        assert store.statistics()["expiries"] == 1
+        assert not store.contains(scope, handle)
+        assert await manager.get_session(ws) is session
+        ws.close.assert_not_called()
+        assert not manager._cleanup_task.done()
+    finally:
+        await manager.shutdown()
+    assert manager._cleanup_task.done()
+
+
+async def test_shutdown_closes_store_and_revokes_all_connections():
+    manager = ChatSessionManager(ChatConfig())
+    connections = []
+    try:
+        for user in ("alice", "bob"):
+            ws = _websocket()
+            await manager.create_session(ws, user_id=user)
+            session = await manager.get_session(ws)
+            scope = manager.artifact_store.activate(session.connection_id, "thread", user)
+            handle = manager.artifact_store.put(scope, user, {})
+            connections.append((ws, scope, handle))
+        await manager.shutdown()
+        assert manager._cleanup_task.done()
+        assert await manager.get_session_count() == 0
+        assert manager.artifact_store.statistics()["active_artifacts"] == 0
+        assert manager.artifact_store.statistics()["bytes"] == 0
+        assert manager.artifact_store.statistics()["puts"] == 2
+        for ws, scope, handle in connections:
+            ws.close.assert_awaited_once()
+            assert await manager.peek_session(ws) is None
+            with pytest.raises(ArtifactError):
+                manager.artifact_store.read_region(scope, handle)
+            with pytest.raises(ArtifactError):
+                manager.artifact_store.put(scope, "late write", {})
+            with pytest.raises(ArtifactError):
+                manager.artifact_store.register_connection(scope.connection_id, scope.user_id)
+            with pytest.raises(ArtifactError):
+                manager.artifact_store.activate(scope.connection_id, scope.thread_id, scope.user_id)
+    finally:
+        await manager.shutdown()
 
 
 async def test_collision_same_user_evicts_stale_connection_and_closes_socket(session_manager):

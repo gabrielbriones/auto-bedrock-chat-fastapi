@@ -8,11 +8,19 @@ so these tests exercise the real ``AutoLangChatPlugin._setup_routes``/
 
 from __future__ import annotations
 
+import logging
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import autolangchat.artifacts as artifacts_module
+from autolangchat.artifacts import ArtifactError
 from autolangchat.config import ChatConfig
 from autolangchat.plugin import AutoLangChatPlugin, _build_bootstrap_payload
+from autolangchat.session_manager import ChatSessionManager
+from autolangchat.websocket_handler import WebSocketChatHandler
 
 
 class _FakeSessionStore:
@@ -39,8 +47,11 @@ def _make_config(**overrides):
 
 
 def _make_bare_plugin(config, sso_session_store=None):
+    from autolangchat.admin.admin_auth import build_admin_authorizer
+
     plugin = object.__new__(AutoLangChatPlugin)
     plugin.app = FastAPI()
+    plugin.app_base_url = "http://localhost:8000"
     plugin.config = config
     plugin.sso_session_store = sso_session_store
     plugin._preset_prompts = []
@@ -49,11 +60,99 @@ def _make_bare_plugin(config, sso_session_store=None):
     plugin._feedback_authorizer = None
     plugin._conversation_store = None
     plugin._kb_store = None
+    plugin._token_usage_store = None
     plugin.embedding_client = None
     plugin.websocket_handler = None
     plugin.chat_graph = None
+    plugin._admin_authorizer_override = None
+    plugin._admin_authorizer = build_admin_authorizer(config, app_base_url=plugin.app_base_url)
     plugin._setup_routes()
     return plugin
+
+
+@pytest.mark.parametrize("chat_endpoint", ["/chat", "/custom-chat"])
+async def test_stats_route_surfaces_aggregate_artifacts_without_private_data(chat_endpoint, monkeypatch, caplog):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    config = _make_config(
+        chat_endpoint=chat_endpoint,
+        artifact_max_age_seconds=10,
+        artifact_max_items_per_session=1,
+        admin_enabled=True,
+        require_tool_auth=False,
+    )
+    plugin = _make_bare_plugin(config)
+    manager = ChatSessionManager(config)
+    handler = WebSocketChatHandler(manager, config, chat_graph=None)
+    plugin.websocket_handler = handler
+    store = manager.artifact_store
+    store.register_connection("private-connection", "private-user")
+    scope = store.activate("private-connection", "private-thread", "private-user")
+    private_values = ["private-connection", "private-user", "private-thread", "private-payload", "private-metadata"]
+    try:
+        with TestClient(plugin.app) as client, caplog.at_level(logging.DEBUG, logger="autolangchat.artifacts"):
+            empty = client.get(f"{chat_endpoint}/stats")
+            assert empty.status_code == 200
+            assert empty.json()["sessions"]["artifacts"] == {
+                "active_artifacts": 0,
+                "bytes": 0,
+                "puts": 0,
+                "expiries": 0,
+                "quota_rejections": 0,
+                "failed_reads": 0,
+            }
+            handle = store.put(scope, "private-payload", {"source": "private-metadata"})
+            private_values.append(handle)
+            assert store.put(scope, "private-payload", {"source": "private-metadata"}) == handle
+            with pytest.raises(ArtifactError, match="quota"):
+                store.put(scope, "rejected", {})
+            assert not store.contains(scope, "unknown")
+            with pytest.raises(ArtifactError, match="unavailable"):
+                store.read_region(scope, "unknown")
+            expected = {
+                "active_artifacts": 1,
+                "bytes": 15,
+                "puts": 1,
+                "expiries": 0,
+                "quota_rejections": 1,
+                "failed_reads": 1,
+            }
+            assert (await handler.get_statistics())["sessions"]["artifacts"] == expected
+            response = client.get(f"{chat_endpoint}/stats")
+            assert response.status_code == 200
+            assert response.json()["sessions"]["artifacts"] == expected
+            assert response.json()["websocket"] == {"total_messages_handled": 0, "total_errors": 0}
+            assert response.json()["tools"] == {}
+            for private in private_values:
+                assert private not in response.text
+                assert private not in caplog.text
+
+            clock[0] = 10
+            expired = client.get(f"{chat_endpoint}/stats").json()["sessions"]["artifacts"]
+            assert expired == {**expected, "active_artifacts": 0, "bytes": 0, "expiries": 1}
+    finally:
+        await handler.http_client.aclose()
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "overrides,status,body_key",
+    [
+        ({"admin_enabled": False, "require_tool_auth": False}, 404, "detail"),
+        ({"admin_enabled": True, "require_tool_auth": True}, 401, "code"),
+    ],
+)
+def test_stats_route_requires_admin_and_never_calls_handler_when_denied(overrides, status, body_key):
+    plugin = _make_bare_plugin(_make_config(**overrides))
+    plugin.websocket_handler = MagicMock()
+    plugin.websocket_handler.get_statistics = AsyncMock(return_value={"sessions": {"artifacts": {}}})
+
+    response = TestClient(plugin.app).get("/chat/stats")
+
+    assert response.status_code == status
+    assert body_key in response.json()
+    assert "artifacts" not in response.text
+    plugin.websocket_handler.get_statistics.assert_not_awaited()
 
 
 def test_config_route_unauthenticated_returns_200_with_sso_false():

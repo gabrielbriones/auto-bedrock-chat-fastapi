@@ -415,6 +415,7 @@ class ChatSessionManager:
             "unique_users": len(self._user_sessions),
             "max_sessions": self.config.max_sessions,
             "session_timeout": self.config.session_timeout,
+            "artifacts": self.artifact_store.statistics(),
         }
 
     async def _close_websocket_quietly(self, websocket: WebSocket, session_id: str) -> None:
