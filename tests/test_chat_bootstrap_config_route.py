@@ -9,7 +9,7 @@ so these tests exercise the real ``AutoLangChatPlugin._setup_routes``/
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -151,6 +151,53 @@ def test_stats_route_requires_admin_and_never_calls_handler_when_denied(override
 
     assert response.status_code == status
     assert body_key in response.json()
+    assert "artifacts" not in response.text
+    plugin.websocket_handler.get_statistics.assert_not_awaited()
+
+
+def test_stats_route_advertises_configured_security_schemes_in_openapi():
+    plugin = _make_bare_plugin(
+        _make_config(
+            admin_enabled=True,
+            require_tool_auth=True,
+            auth_verification_endpoint="http://auth.example/verify",
+            supported_auth_types=["bearer_token", "api_key"],
+        )
+    )
+
+    schema = TestClient(plugin.app).get("/openapi.json").json()
+
+    security = schema["paths"]["/chat/stats"]["get"]["security"]
+    advertised = {name for requirement in security for name in requirement}
+    assert advertised == {"HTTPBearer", "APIKeyHeader"}
+    assert {"HTTPBearer", "APIKeyHeader"} <= set(schema["components"]["securitySchemes"])
+
+
+@pytest.mark.parametrize("llm_healthy", [True, False])
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"admin_enabled": False, "require_tool_auth": False},
+        {"admin_enabled": True, "require_tool_auth": True},
+    ],
+)
+def test_health_never_exposes_statistics_to_unauthenticated_callers(overrides, llm_healthy):
+    plugin = _make_bare_plugin(_make_config(**overrides))
+    plugin.websocket_handler = MagicMock()
+    plugin.websocket_handler.get_statistics = AsyncMock(return_value={"sessions": {"artifacts": {"bytes": 1}}})
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock() if llm_healthy else AsyncMock(side_effect=RuntimeError("model unavailable"))
+
+    with (
+        patch("autolangchat.plugin.build_bedrock_kwargs", return_value={}),
+        patch("langchain_aws.ChatBedrockConverse", return_value=llm),
+    ):
+        response = TestClient(plugin.app).get("/chat/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == ("healthy" if llm_healthy else "degraded")
+    assert "statistics" not in body
     assert "artifacts" not in response.text
     plugin.websocket_handler.get_statistics.assert_not_awaited()
 

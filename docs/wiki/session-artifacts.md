@@ -105,8 +105,10 @@ Snapshots contain no handles, ownership identifiers, metadata or payloads.
 `WebSocketChatHandler.get_statistics()` and `GET {chat_endpoint}/stats` expose
 it under `sessions.artifacts`. `GET {chat_endpoint}/stats` requires an admin
 caller (the same authorization as `{chat_endpoint}/admin/*`) and returns 404
-unless `AUTOCHAT_ADMIN_ENABLED=true`. Artifact storage logs include only
-aggregate size information, not handles or ownership identifiers.
+unless `AUTOCHAT_ADMIN_ENABLED=true`. The unauthenticated
+`GET {chat_endpoint}/health` response does not include statistics. Artifact
+storage logs include only aggregate size information, not handles or ownership
+identifiers.
 
 ## Internal access and non-WebSocket callers
 

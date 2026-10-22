@@ -12,7 +12,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from fastapi import FastAPI, Query, Request, WebSocket
+from fastapi import Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -702,12 +702,10 @@ class AutoLangChatPlugin:
                     "model": self.config.model_id,
                     "region": self.config.aws_region,
                 }
-                stats = await self.websocket_handler.get_statistics()
                 return JSONResponse(
                     {
                         "status": "degraded",
                         "llm": llm_status,
-                        "statistics": stats,
                         "config": {
                             "model_id": self.config.model_id,
                             "region": self.config.aws_region,
@@ -717,12 +715,10 @@ class AutoLangChatPlugin:
                     }
                 )
 
-            stats = await self.websocket_handler.get_statistics()
             return JSONResponse(
                 {
                     "status": "healthy",
                     "llm": llm_status,
-                    "statistics": stats,
                     "config": {
                         "model_id": self.config.model_id,
                         "region": self.config.aws_region,
@@ -771,23 +767,8 @@ class AutoLangChatPlugin:
                 self._apply_new_sso_cookie(response, request, new_sso_session_token)
                 return response
 
-        # Statistics endpoint (admin only; 404 when the admin API is disabled,
-        # matching the unregistered ``/admin/*`` block)
-        @self.app.get(f"{self.config.chat_endpoint}/stats")
-        async def chat_statistics(request: Request):
-            """Get chat statistics"""
-
-            require_admin = getattr(self, "_require_admin", None)
-            if require_admin is None:
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
-            await require_admin(request)
-
-            try:
-                stats = await self.websocket_handler.get_statistics()
-                return JSONResponse(stats)
-            except Exception as e:
-                logger.error(f"Failed to get statistics: {str(e)}")
-                return JSONResponse({"error": str(e)}, status_code=500)
+        # Statistics endpoint is registered after the admin block, where
+        # ``require_admin`` exists, so its security schemes reach OpenAPI.
 
         # Tools information endpoint
         @self.app.get(f"{self.config.chat_endpoint}/tools")
@@ -926,6 +907,19 @@ class AutoLangChatPlugin:
         # registered here so unknown subpaths get a clean 404.
         if self.config.admin_enabled:
             self._setup_admin_routes()
+
+            # Admin only; unregistered (404) when the admin API is disabled,
+            # matching the ``/admin/*`` block.
+            @self.app.get(f"{self.config.chat_endpoint}/stats")
+            async def chat_statistics(identity=Depends(self._require_admin)):  # noqa: B008
+                """Get chat statistics"""
+
+                try:
+                    stats = await self.websocket_handler.get_statistics()
+                    return JSONResponse(stats)
+                except Exception as e:
+                    logger.error(f"Failed to get statistics: {str(e)}")
+                    return JSONResponse({"error": str(e)}, status_code=500)
 
         logger.info("Chat routes setup complete:")
         logger.info(f"  WebSocket: {self.config.websocket_endpoint}")
