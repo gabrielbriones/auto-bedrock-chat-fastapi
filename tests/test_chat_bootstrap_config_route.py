@@ -181,17 +181,17 @@ def test_stats_route_advertises_configured_security_schemes_in_openapi():
         {"admin_enabled": True, "require_tool_auth": True},
     ],
 )
-def test_health_never_exposes_statistics_to_unauthenticated_callers(overrides, llm_healthy):
+def test_health_never_exposes_statistics_to_unauthenticated_callers(overrides, llm_healthy, monkeypatch):
     plugin = _make_bare_plugin(_make_config(**overrides))
     plugin.websocket_handler = MagicMock()
     plugin.websocket_handler.get_statistics = AsyncMock(return_value={"sessions": {"artifacts": {"bytes": 1}}})
     llm = MagicMock()
     llm.ainvoke = AsyncMock() if llm_healthy else AsyncMock(side_effect=RuntimeError("model unavailable"))
+    # Patch the namespace the route resolves names from; a dotted "autolangchat.plugin"
+    # path breaks when other tests leave the package without a ``plugin`` attribute.
+    monkeypatch.setitem(AutoLangChatPlugin._setup_routes.__globals__, "build_bedrock_kwargs", lambda *a, **k: {})
 
-    with (
-        patch("autolangchat.plugin.build_bedrock_kwargs", return_value={}),
-        patch("langchain_aws.ChatBedrockConverse", return_value=llm),
-    ):
+    with patch("langchain_aws.ChatBedrockConverse", return_value=llm):
         response = TestClient(plugin.app).get("/chat/health")
 
     assert response.status_code == 200
