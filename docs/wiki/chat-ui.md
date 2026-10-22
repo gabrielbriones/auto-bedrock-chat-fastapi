@@ -35,15 +35,15 @@ release wheels by `.github/workflows/release.yml`). Build it with
 
 ## Endpoints Registered by the Plugin
 
-| Method | Path                     | Description                                  |
-| ------ | ------------------------ | --------------------------------------------- |
+| Method | Path                     | Description                                                 |
+| ------ | ------------------------ | ----------------------------------------------------------- |
 | `GET`  | `/chat/ui`, `/chat/ui/*` | Serves the React SPA (deep links fall back to `index.html`) |
-| `GET`  | `/chat/config`           | JSON bootstrap payload read by the SPA       |
-| `WS`   | `/chat/ws`               | WebSocket chat connection                    |
-| `GET`  | `/chat/health`           | Plugin health check                          |
-| `GET`  | `/chat/stats`            | Chat statistics                              |
-| `GET`  | `/chat/tools`            | Tool metadata and schema stats               |
-| `POST` | `/chat/knowledge/search` | Hybrid KB search endpoint (when RAG enabled) |
+| `GET`  | `/chat/config`           | JSON bootstrap payload read by the SPA                      |
+| `WS`   | `/chat/ws`               | WebSocket chat connection                                   |
+| `GET`  | `/chat/health`           | Plugin health check                                         |
+| `GET`  | `/chat/stats`            | Chat statistics (admin only; 404 unless admin enabled)      |
+| `GET`  | `/chat/tools`            | Tool metadata and schema stats                              |
+| `POST` | `/chat/knowledge/search` | Hybrid KB search endpoint (when RAG enabled)                |
 
 All paths are configurable. Example with custom paths:
 

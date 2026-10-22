@@ -46,7 +46,7 @@ That's it. The plugin registers:
 | Endpoint                      | Description                                   |
 | ----------------------------- | --------------------------------------------- |
 | `GET /chat/health`            | Health check                                  |
-| `GET /chat/stats`             | Chat statistics                               |
+| `GET /chat/stats`             | Chat statistics (admin only)                  |
 | `GET /chat/tools`             | Exposed tool metadata                         |
 | `WS /chat/ws`                 | WebSocket chat                                |
 | `GET /chat/ui`                | Built-in React chat UI (if enabled)           |

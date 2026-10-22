@@ -47,6 +47,19 @@ The maximum age is an upper bound even on a live connection. Expired
 payloads are removed on store access and during the session cleanup sweep
 (normally every five minutes). Restarting the process loses all payloads.
 
+### Deployment limitations
+
+The store is process-local: each live socket must stay on its owning worker,
+and artifact handles cannot be transferred to another worker or replica.
+Multiple workers may each serve their own connections, but their stores,
+quotas and statistics are independent. A reconnect, even if routed to the same
+worker, creates a new connection scope and cannot recover the old artifacts.
+
+Sharing artifacts across workers or replicas would require a shared backend,
+which is not supported today. If that capability is needed, create a separate
+ticket for the backend and any necessary abstraction; the current concrete
+store and single-module layout remain unchanged.
+
 ## Configuration
 
 | Environment variable                      | Default     | Meaning                                              |
@@ -66,6 +79,36 @@ Quota exhaustion fails archiving explicitly with `ArtifactError`, logs the
 failure, and stops the invocation rather than pretending the payload was
 stored. It is a storage-capacity failure, not an input-size rejection.
 Disabling artifacts preserves the ordinary processing path.
+
+## Store statistics
+
+`ArtifactStore.statistics()` returns an atomic, aggregate-only snapshot:
+
+| Field              | Meaning                                                |
+| ------------------ | ------------------------------------------------------ |
+| `active_artifacts` | Current number of unexpired artifacts                  |
+| `bytes`            | Current UTF-8 payload bytes, excluding object overhead |
+| `puts`             | Successful insertions, excluding deduplication hits    |
+| `expiries`         | Artifacts removed by TTL expiry                        |
+| `quota_rejections` | Put calls rejected by any storage quota                |
+| `failed_reads`     | Unavailable-handle or scope failures in `read_region`  |
+
+Taking a snapshot expires overdue artifacts first. Lifetime counters are
+per store instance and survive explicit deletion and `close()`; the live
+gauges reflect the remaining contents. A failed read counts once per
+`read_region` call, including revocation during scanning and access after
+closure. `contains()` is an availability probe used to decide whether to
+re-archive a message, so it never counts as a failed read. Invalid range
+arguments are not counted as failed reads.
+Snapshots contain no handles, ownership identifiers, metadata or payloads.
+`ChatSessionManager.get_statistics()` includes the snapshot under `artifacts`.
+`WebSocketChatHandler.get_statistics()` and `GET {chat_endpoint}/stats` expose
+it under `sessions.artifacts`. `GET {chat_endpoint}/stats` requires an admin
+caller (the same authorization as `{chat_endpoint}/admin/*`) and returns 404
+unless `AUTOCHAT_ADMIN_ENABLED=true`. The unauthenticated
+`GET {chat_endpoint}/health` response does not include statistics. Artifact
+storage logs include only aggregate size information, not handles or ownership
+identifiers.
 
 ## Internal access and non-WebSocket callers
 

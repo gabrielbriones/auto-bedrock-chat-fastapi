@@ -48,6 +48,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from autolangchat import websocket_handler
+from autolangchat.artifacts import ArtifactError
+from autolangchat.config import ChatConfig
 from autolangchat.history import TOOL_LOOP_LEASE
 from autolangchat.session_manager import ChatSessionManager
 from autolangchat.websocket_handler import WebSocketChatHandler
@@ -151,6 +153,86 @@ async def _make_store():
     store = SQLiteConversationStore(db_path=":memory:")
     await store.open()
     return store
+
+
+@pytest.mark.parametrize("deleted_thread", ["first", "second"])
+async def test_conversation_switch_retains_artifacts_and_delete_purges_only_owned_thread(deleted_thread):
+    conversations = await _make_store()
+    config = ChatConfig().model_copy(update={"conversation_persistence_enabled": True})
+    manager = ChatSessionManager(config)
+    ws = _new_ws()
+    ws.close = AsyncMock()
+    handler = WebSocketChatHandler(
+        session_manager=manager, config=config, chat_graph=_make_chat_graph(), conversation_store=conversations
+    )
+    try:
+        await manager.create_session(ws, user_id="alice", is_authenticated=True)
+        session = await manager.get_session(ws)
+        artifacts = manager.artifact_store
+        for thread in ("first", "second"):
+            await conversations.create_conversation(thread, "alice")
+
+        await handler._handle_conversation_load(ws, {"conversation_id": "first"})
+        assert _sent(ws)[-1]["type"] == "conversation_loaded"
+        first = artifacts.activate(session.connection_id, session.metadata["conversation_id"], session.user_id)
+        first_handle = artifacts.put(first, "first payload", {})
+
+        await handler._handle_conversation_load(ws, {"conversation_id": "second"})
+        assert session.metadata["conversation_id"] == "second"
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(first, first_handle)
+        second = artifacts.activate(session.connection_id, session.metadata["conversation_id"], session.user_id)
+        second_handle = artifacts.put(second, "second payload", {})
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(second, first_handle)
+
+        await handler._handle_conversation_new(ws, {})
+        assert session.metadata["conversation_id"] is None
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(second, second_handle)
+        assert artifacts.statistics()["active_artifacts"] == 2
+
+        for thread, handle in (("second", second_handle), ("first", first_handle)):
+            await handler._handle_conversation_load(ws, {"conversation_id": thread})
+            restored = artifacts.activate(session.connection_id, session.metadata["conversation_id"], session.user_id)
+            assert artifacts.read_region(restored, handle)["text"] == f"{thread} payload"
+        active_first = restored
+
+        remote_scopes = {}
+        for connection, user in (("another-alice", "alice"), ("bob", "bob")):
+            artifacts.register_connection(connection, user)
+            remote = artifacts.activate(connection, deleted_thread, user)
+            remote_scopes[user] = (remote, artifacts.put(remote, "remote payload", {}))
+
+        await handler._handle_conversation_delete(ws, {"conversation_id": deleted_thread})
+        assert _sent(ws)[-1]["type"] == "conversation_deleted"
+        assert await conversations.get_conversation(deleted_thread) is None
+        assert artifacts.statistics()["active_artifacts"] == 2
+        bob_scope, bob_handle = remote_scopes["bob"]
+        assert artifacts.read_region(bob_scope, bob_handle)["text"] == "remote payload"
+        alice_scope, alice_handle = remote_scopes["alice"]
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(alice_scope, alice_handle)
+        alice_scope = artifacts.activate(alice_scope.connection_id, deleted_thread, "alice")
+        assert not artifacts.contains(alice_scope, alice_handle)
+
+        if deleted_thread == "first":
+            assert session.metadata["conversation_id"] is None
+            with pytest.raises(ArtifactError):
+                artifacts.read_region(active_first, first_handle)
+            await handler._handle_conversation_load(ws, {"conversation_id": "second"})
+            remaining_thread, remaining_handle = "second", second_handle
+        else:
+            assert session.metadata["conversation_id"] == "first"
+            assert artifacts.read_region(active_first, first_handle)["text"] == "first payload"
+            remaining_thread, remaining_handle = "first", first_handle
+        remaining = artifacts.activate(session.connection_id, remaining_thread, "alice")
+        assert artifacts.read_region(remaining, remaining_handle)["text"] == f"{remaining_thread} payload"
+        deleted = artifacts.activate(session.connection_id, deleted_thread, "alice")
+        assert not artifacts.contains(deleted, first_handle if deleted_thread == "first" else second_handle)
+    finally:
+        await handler.shutdown()
+        await conversations.close()
 
 
 # ---------------------------------------------------------------------------
