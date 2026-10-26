@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { LogContext, Logger } from '@/shared/logging/logger'
+import { toolCallEndFrameSchema, toolCallStartFrameSchema } from '@/shared/ws/tool-frames'
 
 export type ContextId = 'iam' | 'messaging' | 'feedback' | 'model-config' | 'conversation'
 
@@ -132,6 +133,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   serverFrame('logout_success').extend({ message: z.string() }),
   // Progress for a turn carries its conversation, so a client that switched away can ignore it.
   serverFrame('typing').extend({ message: z.string(), conversation_id: z.string().nullable().optional() }),
+  toolCallStartFrameSchema,
+  toolCallEndFrameSchema,
   aiResponseFrameSchema,
   serverFrame('error').extend({ message: z.string() }),
   serverFrame('pong'),
@@ -196,6 +199,8 @@ export const FRAME_OWNER = {
   auth_expired: 'iam',
   logout_success: 'iam',
   typing: 'messaging',
+  tool_call_start: 'messaging',
+  tool_call_end: 'messaging',
   ai_response: 'messaging',
   error: 'messaging',
   pong: 'messaging',

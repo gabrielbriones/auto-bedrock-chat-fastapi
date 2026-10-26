@@ -33,6 +33,18 @@ export type MessagingEvent =
   /** ADR-008 / P1: typing moves the unresolved turn into streaming; text application is T-071. */
   | { readonly kind: 'typing'; readonly text: string }
   | {
+      readonly kind: 'tool-started'
+      readonly id: string
+      readonly name: string
+      readonly arguments: unknown
+    }
+  | {
+      readonly kind: 'tool-finished'
+      readonly id: string
+      readonly error: string | null
+      readonly durationMs: number | null
+    }
+  | {
       readonly kind: 'history-loaded'
       readonly conversationId: string
       readonly messages: readonly LoadedHistoryMessage[]

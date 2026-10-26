@@ -175,3 +175,35 @@ def test_metadata_kb_path():
         "url": "https://example.com/a",
         "score": 0.91,
     }
+
+
+def test_ai_response_carries_tool_activity_from_earlier_rounds():
+    """The answering message has no tool calls of its own; the live frame must still
+    carry this turn's tool rounds (and none from earlier turns), as a reloaded history does."""
+    old_call = {"id": "old-1", "name": "old_tool", "args": {}}
+    call_1 = {"id": "tc-1", "name": "get_job", "args": {"job_id": "j1"}}
+    call_2 = {"id": "tc-2", "name": "list_job_files", "args": {"job_id": "j1"}}
+    result_1 = {"tool_call_id": "tc-1", "name": "get_job", "result": "{}"}
+    result_2 = {"tool_call_id": "tc-2", "name": "list_job_files", "result": "[]"}
+
+    graph_state = {
+        "messages": [
+            {"role": "user", "content": "earlier"},
+            {"role": "assistant", "content": "", "tool_calls": [old_call]},
+            {"role": "tool", "content": "[]", "tool_results": [{"tool_call_id": "old-1", "name": "old_tool"}]},
+            {"role": "assistant", "content": "earlier answer", "tool_calls": [], "tool_results": []},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "", "tool_calls": [call_1]},
+            {"role": "tool", "content": "[]", "tool_results": [result_1]},
+            {"role": "assistant", "content": "", "tool_calls": [call_2]},
+            {"role": "tool", "content": "[]", "tool_results": [result_2]},
+            _assistant_message(),
+        ],
+        "metadata": _graph_metadata(),
+        "kb_results": [],
+    }
+
+    response = _run_and_get_ai_response(graph_state)
+
+    assert response["tool_calls"] == [call_1, call_2]
+    assert response["tool_results"] == [result_1, result_2]

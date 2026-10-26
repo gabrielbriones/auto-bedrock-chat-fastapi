@@ -1,18 +1,28 @@
 import { CheckIcon, CopyIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
 
-type ShikiToken = {
-  readonly content: string
+type ShikiTokenStyle = {
   readonly color?: string
   readonly fontStyle?: number
 }
 
+type ShikiToken = {
+  readonly content: string
+  readonly variants?: Readonly<Record<string, ShikiTokenStyle>>
+}
+
+const THEMES = ['light', 'dark'] as const
+
 export type CodeBlockProps = {
   readonly code: string
   readonly language: string
+  /** Soft-wraps long lines instead of scrolling sideways; suited to data payloads rather than source. */
+  readonly wrap?: boolean
+  readonly className?: string
 }
 
 const LANGUAGE_LOADERS: Record<string, () => Promise<unknown>> = {
@@ -34,10 +44,11 @@ const getHighlighter = () => {
     import('shiki/core'),
     import('shiki/engine/javascript'),
     import('shiki/themes/github-light.mjs'),
-  ]).then(([core, engine, theme]) =>
+    import('shiki/themes/github-dark.mjs'),
+  ]).then(([core, engine, light, dark]) =>
     core.createHighlighterCore({
       engine: engine.createJavaScriptRegexEngine(),
-      themes: [theme.default],
+      themes: [light.default, dark.default],
       langs: [],
     }),
   )
@@ -52,21 +63,37 @@ const highlight = async (code: string, language: string): Promise<readonly (read
 
   const [instance, languageModule] = await Promise.all([getHighlighter(), loadLanguage()])
   await instance.loadLanguage(languageModule as never)
-  return instance.codeToTokens(code, { lang: language as never, theme: 'github-light' as never }).tokens
+  return instance.codeToTokensWithThemes(code, {
+    lang: language as never,
+    themes: { light: 'github-light', dark: 'github-dark' } as never,
+  })
+}
+
+/** Exposes each theme's colours as CSS variables so the `code-token` utility can follow the colour scheme. */
+const tokenStyle = (variants: ShikiToken['variants']): CSSProperties | undefined => {
+  if (variants === undefined) {
+    return undefined
+  }
+  const style: Record<string, string> = {}
+  for (const theme of THEMES) {
+    const variant = variants[theme]
+    if (variant?.color !== undefined) {
+      style[`--shiki-${theme}`] = variant.color
+    }
+    if (variant?.fontStyle === 1) {
+      style[`--shiki-${theme}-font-style`] = 'italic'
+    } else if (variant?.fontStyle === 2) {
+      style[`--shiki-${theme}-font-weight`] = 'bold'
+    }
+  }
+  return style as CSSProperties
 }
 
 function TokenLines({ tokens }: { readonly tokens: readonly (readonly ShikiToken[])[] }) {
   return tokens.map((line, lineIndex) => (
     <span key={lineIndex}>
       {line.map((token, tokenIndex) => (
-        <span
-          key={tokenIndex}
-          style={{
-            color: token.color,
-            fontStyle: token.fontStyle === 1 ? 'italic' : undefined,
-            fontWeight: token.fontStyle === 2 ? 'bold' : undefined,
-          }}
-        >
+        <span key={tokenIndex} className="code-token" style={tokenStyle(token.variants)}>
           {token.content}
         </span>
       ))}
@@ -75,10 +102,8 @@ function TokenLines({ tokens }: { readonly tokens: readonly (readonly ShikiToken
   ))
 }
 
-/** Loads Shiki only for fenced Markdown and renders its tokens as React nodes, never raw HTML. */
-export function CodeBlock({ code, language }: CodeBlockProps) {
+function useHighlightedTokens(code: string, language: string): readonly (readonly ShikiToken[])[] {
   const [tokens, setTokens] = useState<readonly (readonly ShikiToken[])[] | null>(null)
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -100,15 +125,25 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
     }
   }, [code, language])
 
+  return tokens ?? [code.split('\n').map((content): ShikiToken => ({ content }))]
+}
+
+/** Loads Shiki only for fenced Markdown and renders its tokens as React nodes, never raw HTML. */
+export function CodeBlock({ code, language, wrap = false, className }: CodeBlockProps) {
+  const renderedTokens = useHighlightedTokens(code, language)
+  const [copied, setCopied] = useState(false)
+
   const copy = () => {
     void navigator.clipboard?.writeText(code).then(() => setCopied(true))
   }
 
-  const renderedTokens: readonly (readonly ShikiToken[])[] =
-    tokens ?? [code.split('\n').map((content): ShikiToken => ({ content }))]
-
   return (
-    <div className="relative my-3 overflow-hidden rounded-lg border border-border bg-muted/50">
+    <div
+      className={cn(
+        'relative my-3 overflow-hidden rounded-lg border border-border bg-muted/50 dark:border-white/15 dark:bg-code-bg',
+        className,
+      )}
+    >
       <Button
         aria-label={MESSAGING_COPY.transcript.copyCode}
         className="absolute top-2 right-2"
@@ -120,7 +155,10 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
       >
         {copied ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
       </Button>
-      <pre className="overflow-x-auto p-4 pr-10 text-sm" data-language={language}>
+      <pre
+        className={cn('p-4 pr-10 text-sm', wrap ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto')}
+        data-language={language}
+      >
         <code>
           <TokenLines tokens={renderedTokens} />
         </code>

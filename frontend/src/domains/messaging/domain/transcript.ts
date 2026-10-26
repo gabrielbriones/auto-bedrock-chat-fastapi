@@ -1,5 +1,5 @@
 import { createMessage, type ChatMessage } from '@/domains/messaging/domain/message'
-import { isUnresolved, type Turn, type TurnActivity } from '@/domains/messaging/domain/turn'
+import { isUnresolved, type LiveToolCall, type Turn, type TurnActivity } from '@/domains/messaging/domain/turn'
 
 // ADR-013: transient notices are their own collection, never fake `Message` entities, so loading a
 // conversation drops them instead of persisting "Connection error occurred" into a transcript.
@@ -33,6 +33,8 @@ export type TranscriptEntry = {
   readonly interrupted: InterruptionReason | null
   /** Final response provenance and context-loss metadata, shown with that response only. */
   readonly activity: TurnActivity | null
+  /** The in-flight turn's tool calls as they run; set on its streaming preview entry only. */
+  readonly liveTools?: readonly LiveToolCall[]
 }
 
 // Sorts immediately after the request it streams for and before whatever a later turn contributes;
@@ -59,6 +61,7 @@ const activityEntry = (turn: Turn): TranscriptEntry => ({
   progress: turn.toolProgress !== null,
   interrupted: null,
   activity: null,
+  liveTools: turn.liveTools,
 })
 
 const turnEntries = (turn: Turn): TranscriptEntry[] => {

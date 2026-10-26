@@ -22,6 +22,18 @@ export type ToolResult = {
   readonly error: unknown | null
 }
 
+export type LiveToolStatus = 'running' | 'succeeded' | 'failed'
+
+/** A tool call as it happens, from its start frame through its end frame. */
+export type LiveToolCall = {
+  readonly id: string
+  readonly name: string
+  readonly arguments: unknown
+  readonly status: LiveToolStatus
+  readonly error: string | null
+  readonly durationMs: number | null
+}
+
 export type KbCitation = {
   readonly documentId: string | null
   readonly title: string | null
@@ -36,6 +48,8 @@ export type TurnActivity = {
   readonly citations: readonly KbCitation[]
   /** The server condensed older context before answering this turn. */
   readonly truncated: boolean
+  /** How long each call took, by tool call id, when it was watched live. */
+  readonly toolDurationsMs?: Readonly<Record<string, number>>
 }
 
 const NO_ACTIVITY: TurnActivity = {
@@ -59,6 +73,8 @@ export type Turn = {
   readonly streamText: string | null
   /** The latest tool-progress string (ADR-008), rendered instead of `streamText` while present. */
   readonly toolProgress: string | null
+  /** Every tool call this turn has started so far, in start order, while the answer is pending. */
+  readonly liveTools: readonly LiveToolCall[]
   /** Why the turn was abandoned; `null` for every other status. */
   readonly abandonReason: AbandonReason | null
   /** Final response provenance and context-loss notice data (FR-MSG-015...023). */
@@ -94,6 +110,7 @@ export const createTurn = (
   status: 'sent',
   streamText: null,
   toolProgress: null,
+  liveTools: [],
   abandonReason: null,
   activity: NO_ACTIVITY,
 })
@@ -118,7 +135,9 @@ export const applyStreamingSnapshot = (
   kind: StreamingSnapshotKind,
 ): TurnResult => {
   if (kind === 'tool-progress') {
-    return transition(turn, 'streaming', { ...turn, toolProgress: text })
+    // Once tool calls are shown individually, the legacy "Calling fn... (n/total)" text is redundant.
+    const toolProgress = turn.liveTools.length > 0 ? null : text
+    return transition(turn, 'streaming', { ...turn, toolProgress })
   }
 
   const current = turn.streamText ?? ''
@@ -128,13 +147,58 @@ export const applyStreamingSnapshot = (
   return transition(turn, 'streaming', { ...turn, streamText, toolProgress: null })
 }
 
+// A new tool round ends whatever the model streamed before it, and the next model call streams
+// from an empty snapshot again — so the text baseline resets rather than rejecting it as shorter.
+export const startLiveTool = (
+  turn: Turn,
+  call: Pick<LiveToolCall, 'id' | 'name' | 'arguments'>,
+): TurnResult => {
+  if (turn.liveTools.some((tool) => tool.id === call.id)) {
+    return transition(turn, 'streaming', turn)
+  }
+
+  const tool: LiveToolCall = {
+    id: call.id,
+    name: call.name,
+    arguments: call.arguments,
+    status: 'running',
+    error: null,
+    durationMs: null,
+  }
+  return transition(turn, 'streaming', {
+    ...turn,
+    streamText: null,
+    toolProgress: null,
+    liveTools: [...turn.liveTools, tool],
+  })
+}
+
+export const finishLiveTool = (
+  turn: Turn,
+  id: string,
+  error: string | null,
+  durationMs: number | null,
+): TurnResult =>
+  transition(turn, 'streaming', {
+    ...turn,
+    liveTools: turn.liveTools.map((tool) =>
+      tool.id === id ? { ...tool, status: error === null ? 'succeeded' : 'failed', error, durationMs } : tool,
+    ),
+  })
+
 // I2: a response is attached exactly when the turn reaches `answered` or `failed`.
 export const answerTurn = (
   turn: Turn,
   response: ChatMessage,
   conversationId: ConversationId | null = turn.conversationId,
   activity: TurnActivity = NO_ACTIVITY,
-): TurnResult => transition(turn, 'answered', { ...turn, response, conversationId, activity })
+): TurnResult => {
+  const watched = turn.liveTools.flatMap((tool) =>
+    tool.durationMs === null ? [] : [[tool.id, tool.durationMs] as const],
+  )
+  const withDurations = watched.length > 0 ? { ...activity, toolDurationsMs: Object.fromEntries(watched) } : activity
+  return transition(turn, 'answered', { ...turn, response, conversationId, activity: withDurations })
+}
 
 export const failTurn = (turn: Turn, response: ChatMessage): TurnResult =>
   transition(turn, 'failed', { ...turn, response })

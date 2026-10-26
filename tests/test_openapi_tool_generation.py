@@ -519,6 +519,83 @@ class TestToolManagerExecuteConcurrency:
         ]
 
     @pytest.mark.asyncio
+    async def test_tool_events_report_each_call_start_and_end(self):
+        """on_tool_event gets a start per call up front and an end as each call lands."""
+        manager = _make_manager_with_limit(None)
+
+        async def _execute(tool_metadata, arguments, auth_info=None):
+            index = arguments["index"]
+            if index == 1:
+                raise RuntimeError("boom")
+            # The first call is the slowest, so ends arrive out of call order.
+            await asyncio.sleep((3 - index) * 0.02)
+            return {"index": index}
+
+        manager._execute_single_tool_call = _execute
+
+        events = []
+
+        async def on_tool_event(event):
+            events.append(event)
+
+        calls = [{"id": f"call_{i}", "name": "list_jobs", "arguments": {"index": i}} for i in range(3)]
+        calls.append({"id": "call_unknown", "name": "nope", "arguments": {}})
+        await manager.execute_tool_calls(calls, on_tool_event=on_tool_event)
+
+        starts = [e for e in events if e["type"] == "tool_call_start"]
+        ends = {e["tool_call_id"]: e for e in events if e["type"] == "tool_call_end"}
+
+        assert [(e["tool_call_id"], e["position"], e["total"]) for e in starts] == [
+            ("call_0", 1, 4),
+            ("call_1", 2, 4),
+            ("call_2", 3, 4),
+            ("call_unknown", 4, 4),
+        ]
+        assert starts[0]["arguments"] == {"index": 0}
+        assert ends["call_0"]["status"] == "success" and ends["call_0"]["error"] is None
+        assert ends["call_1"]["status"] == "error" and "boom" in ends["call_1"]["error"]
+        assert ends["call_unknown"]["status"] == "error"
+        assert all(isinstance(e["duration_ms"], int) for e in ends.values())
+        end_order = [e["tool_call_id"] for e in events if e["type"] == "tool_call_end"]
+        assert end_order.index("call_2") < end_order.index("call_0")
+
+    @pytest.mark.asyncio
+    async def test_tool_events_cover_calls_skipped_by_the_cap(self):
+        manager = _make_manager_with_limit(1)
+
+        async def _execute(tool_metadata, arguments, auth_info=None):
+            return {"ok": True}
+
+        manager._execute_single_tool_call = _execute
+
+        events = []
+
+        async def on_tool_event(event):
+            events.append(event)
+
+        await manager.execute_tool_calls(_make_calls(2), on_tool_event=on_tool_event)
+
+        ends = [e for e in events if e["type"] == "tool_call_end"]
+        assert [e["status"] for e in ends] == ["success", "error"]
+        assert "max_tool_calls" in ends[1]["error"]
+
+    @pytest.mark.asyncio
+    async def test_failing_tool_event_callback_does_not_break_execution(self):
+        manager = _make_manager_with_limit(None)
+
+        async def _execute(tool_metadata, arguments, auth_info=None):
+            return {"ok": True}
+
+        manager._execute_single_tool_call = _execute
+
+        async def on_tool_event(event):
+            raise RuntimeError("socket closed")
+
+        results = await manager.execute_tool_calls(_make_calls(2), on_tool_event=on_tool_event)
+
+        assert all(r["result"] == {"ok": True} for r in results)
+
+    @pytest.mark.asyncio
     async def test_total_tool_calls_executed_counter_correct(self):
         """The counter must increment once per attempted call, matching prior behavior."""
         manager = _make_manager_with_limit(None)

@@ -175,6 +175,14 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
                 except Exception:
                     pass
 
+        # Structured per-call start/end events, so a client can show each call live.
+        async def _tool_event(event: Dict[str, Any]) -> None:
+            if on_progress_raw is not None:
+                try:
+                    await on_progress_raw({**event, "timestamp": datetime.now().isoformat()})
+                except Exception:
+                    pass
+
         logger.debug(
             "Executing %d tool call(s): %s",
             len(normalized_calls),
@@ -184,6 +192,7 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
             normalized_calls,
             auth_info=auth_info,
             on_progress=_tool_progress if on_progress_raw is not None else None,
+            on_tool_event=_tool_event if on_progress_raw is not None else None,
         )
 
         auth_expiration_behaviour = getattr(chat_config, "auth_expiration_behaviour", "none")

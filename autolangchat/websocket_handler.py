@@ -102,6 +102,30 @@ def _close_dangling_tool_loop(messages: List[Dict[str, Any]]) -> Optional[List[D
     return closed
 
 
+def _collect_turn_tool_activity(messages: List[Dict[str, Any]]) -> Tuple[List[Any], List[Any]]:
+    """Return the tool calls and results made since the turn's user message.
+
+    The graph stores each tool round as its own assistant/tool messages ahead of the
+    answering message, so the final message alone carries none of them. This mirrors how
+    a reloaded conversation folds those rounds into the answer.
+    """
+    start = 0
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") == "user":
+            start = index + 1
+            break
+
+    tool_calls: List[Any] = []
+    tool_results: List[Any] = []
+    for message in messages[start:]:
+        role = message.get("role")
+        if role == "assistant":
+            tool_calls.extend(message.get("tool_calls") or [])
+        elif role == "tool":
+            tool_results.extend(message.get("tool_results") or [])
+    return tool_calls, tool_results
+
+
 def _get_sso_session_store_class():
     """Lazy import of SSOSessionStore (requires PyJWT)."""
     from .sso.sso_session_store import SSOSessionStore
@@ -757,6 +781,7 @@ class WebSocketChatHandler:
             # Graph messages are dicts: {"role": "assistant", "content": "...", ...}
             content = final_msg.get("content") or ""
             final_response = final_msg
+            turn_tool_calls, turn_tool_results = _collect_turn_tool_activity(graph_messages)
 
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata["model_id"] = effective_config.model_id
@@ -829,8 +854,8 @@ class WebSocketChatHandler:
                         "type": "ai_response",
                         "message_id": message_id,
                         "message": final_response.get("content") or "",
-                        "tool_calls": final_response.get("tool_calls", []),
-                        "tool_results": final_response.get("tool_results", []),
+                        "tool_calls": turn_tool_calls,
+                        "tool_results": turn_tool_results,
                         "timestamp": datetime.now().isoformat(),
                         "metadata": response_metadata,
                         "conversation_id": conversation_id,
