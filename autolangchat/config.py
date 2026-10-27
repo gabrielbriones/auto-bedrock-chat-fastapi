@@ -489,7 +489,7 @@ class ChatConfig(BaseSettings):
     artifact_read_max_bytes: int = Field(
         default=ARTIFACT_READ_MAX_BYTES,
         alias="AUTOCHAT_ARTIFACT_READ_MAX_BYTES",
-        gt=0,
+        ge=4,
         le=ARTIFACT_READ_MAX_BYTES,
         description="Maximum UTF-8 bytes of artifact text one read_content_range or grep_content call may return",
     )
