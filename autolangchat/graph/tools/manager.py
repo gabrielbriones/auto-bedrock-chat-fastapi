@@ -334,8 +334,11 @@ class ToolManager:
             started = time.monotonic()
             try:
                 outcome = await coro
+            except asyncio.CancelledError as e:
+                await _emit_end(tool_call, str(e) or "Cancelled", started)
+                raise
             except Exception as e:
-                await _emit_end(tool_call, str(e), started)
+                await _emit_end(tool_call, str(e) or type(e).__name__, started)
                 raise
             await _emit_end(tool_call, None, started)
             return outcome
