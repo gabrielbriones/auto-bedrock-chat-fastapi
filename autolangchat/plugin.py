@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import AutoLangChatError
 from .graph.graph import build_chat_graph
+from .graph.tools.artifact_tools import build_artifact_tools
 from .graph.tools.generator import ToolsGenerator
 from .graph.tools.manager import ToolManager
 from .model_capabilities import build_bedrock_kwargs
@@ -280,13 +281,21 @@ class AutoLangChatPlugin:
         self.embedding_client = BedrockEmbeddingClient(self.config)
 
         # Build tool manager: generator parses the OpenAPI spec and produces
-        # execution metadata; manager uses that metadata for HTTP dispatch only.
-        tools_generator = ToolsGenerator(app=self.app, config=self.config)
+        # execution metadata; manager dispatches those over HTTP and the
+        # in-process internal tools (session artifacts) by name. Internal
+        # names are reserved so a colliding OpenAPI operation is skipped.
+        internal_tools = build_artifact_tools() if self.config.artifact_enabled else []
+        tools_generator = ToolsGenerator(
+            app=self.app,
+            config=self.config,
+            reserved_names=[tool.name for tool in internal_tools],
+        )
         self._tools_generator = tools_generator  # retained for update_tools()
         self.tool_manager = ToolManager(
             generated_tools=tools_generator._generated_tools,
             config=self.config,
             base_url=tools_generator.get_api_base_url(),
+            internal_tools=internal_tools,
         )
         self.app_base_url = self.tool_manager.base_url
 
@@ -2614,7 +2623,12 @@ class AutoLangChatPlugin:
             pass
 
     async def update_tools(self):
-        """Update tools description from current FastAPI routes"""
+        """Update tools description from current FastAPI routes.
+
+        Internal tools stay registered on the manager, so ``_sync_config``
+        adds their schemas back next to the regenerated OpenAPI tools; the
+        generator keeps their names reserved across the rebuild.
+        """
 
         try:
             # Rebuild generator cache, sync manager dict and config

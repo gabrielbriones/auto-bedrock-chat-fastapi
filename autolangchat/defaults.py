@@ -20,6 +20,17 @@ DEFAULT_ARTIFACT_MAX_ITEMS_PER_SESSION = 128
 DEFAULT_ARTIFACT_MAX_BYTES = 128 * 1024 * 1024
 ARTIFACT_READ_MAX_BYTES = 65536
 ARTIFACT_READ_MAX_LINES = 1000
+ARTIFACT_SEARCH_MAX_PATTERN_CHARS = 200
+ARTIFACT_SEARCH_MAX_MATCHES = 200
+ARTIFACT_SEARCH_MAX_CONTEXT_LINES = 20
+# Longer lines are returned as a window around the first match.
+ARTIFACT_SEARCH_MAX_LINE_CHARS = 500
+# Regex searches only match the first characters of longer lines, bounding
+# backtracking on giant single-line payloads (literal search scans them fully).
+ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS = 8192
+# Model-facing defaults for the read_content_range / grep_content tools.
+ARTIFACT_TOOL_DEFAULT_MAX_LINES = 200
+ARTIFACT_TOOL_DEFAULT_MAX_MATCHES = 50
 
 # ── AI Summarization ────────────────────────────────────────────────────
 DEFAULT_ENABLE_AI_SUMMARIZATION = False

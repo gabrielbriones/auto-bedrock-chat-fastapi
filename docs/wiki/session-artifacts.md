@@ -3,7 +3,8 @@
 Session artifacts are ephemeral copies of oversized chat messages held in
 process-local memory. Artifact creation is enabled by default. It does not
 replace message content, impose a WebSocket input-size limit, or expose
-filesystem paths or assistant tools.
+filesystem paths. The assistant reads artifacts through the
+[`read_content_range` and `grep_content` tools](#assistant-tools).
 
 ## Graph integration
 
@@ -69,6 +70,8 @@ store and single-module layout remain unchanged.
 | `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `16777216`  | Payload-byte quota per live connection (16 MiB)      |
 | `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Item quota per live connection                       |
 | `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `134217728` | Total payload-byte quota per store/process (128 MiB) |
+| `AUTOCHAT_ARTIFACT_READ_MAX_LINES`        | `1000`      | Lines per `read_content_range` call (at most 1000)   |
+| `AUTOCHAT_ARTIFACT_READ_MAX_BYTES`        | `65536`     | UTF-8 bytes per artifact read/search (at most 65536) |
 
 All numeric limits must be positive. Quotas count UTF-8 payload bytes, not
 Python object/index overhead or existing checkpoint copies; budget additional
@@ -84,22 +87,22 @@ Disabling artifacts preserves the ordinary processing path.
 
 `ArtifactStore.statistics()` returns an atomic, aggregate-only snapshot:
 
-| Field              | Meaning                                                |
-| ------------------ | ------------------------------------------------------ |
-| `active_artifacts` | Current number of unexpired artifacts                  |
-| `bytes`            | Current UTF-8 payload bytes, excluding object overhead |
-| `puts`             | Successful insertions, excluding deduplication hits    |
-| `expiries`         | Artifacts removed by TTL expiry                        |
-| `quota_rejections` | Put calls rejected by any storage quota                |
-| `failed_reads`     | Unavailable-handle or scope failures in `read_region`  |
+| Field              | Meaning                                                                        |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `active_artifacts` | Current number of unexpired artifacts                                          |
+| `bytes`            | Current UTF-8 payload bytes, excluding object overhead                         |
+| `puts`             | Successful insertions, excluding deduplication hits                            |
+| `expiries`         | Artifacts removed by TTL expiry                                                |
+| `quota_rejections` | Put calls rejected by any storage quota                                        |
+| `failed_reads`     | Unavailable-handle or scope failures in `read_region`, `get_meta` and `search` |
 
 Taking a snapshot expires overdue artifacts first. Lifetime counters are
 per store instance and survive explicit deletion and `close()`; the live
 gauges reflect the remaining contents. A failed read counts once per
-`read_region` call, including revocation during scanning and access after
+`read_region`, `get_meta` or `search` call, including revocation during scanning and access after
 closure. `contains()` is an availability probe used to decide whether to
 re-archive a message, so it never counts as a failed read. Invalid range
-arguments are not counted as failed reads.
+or search arguments are not counted as failed reads.
 Snapshots contain no handles, ownership identifiers, metadata or payloads.
 `ChatSessionManager.get_statistics()` includes the snapshot under `artifacts`.
 `WebSocketChatHandler.get_statistics()` and `GET {chat_endpoint}/stats` expose
@@ -116,10 +119,30 @@ identifiers.
 `read_region(scope, handle, start_line=1, max_lines=100)` supports internal
 bounded inspection, capped at 1,000 lines and 64 KiB of UTF-8 output.
 The `truncated` flag indicates that the requested region was not returned
-in full. This internal method is not registered as an assistant tool.
+in full. The assistant reaches it through `read_content_range` (below).
 Reads scan line boundaries without allocating a list of every line or
 encoding the entire selected region. Output assembly is byte-bounded;
 `total_lines` still requires scanning the artifact, outside the store lock.
+
+`get_meta(scope, handle)` returns `size_bytes`, `total_lines` (counted once
+at `put`), `expires_in_seconds`, `source` and a copy of the metadata without
+reading the text.
+
+`search(scope, handle, pattern, context_lines=0, max_matches=50, regex=False,
+ignore_case=True)` matches each line on its own, without its terminator, so a
+match never spans lines. Patterns are literal and case-insensitive by default.
+Regexes are opt-in and limited to 200 characters; invalid patterns or limits
+raise `ValueError`. `context_lines` is capped at 20 and `max_matches` at 200.
+The result lists 1-based matching and context lines in order without
+duplicates (`line`, `text`, `match`, `clipped`, and `column` for matches),
+plus `match_count`, `total_lines`, `truncated` and `metadata`. Lines longer
+than 500 characters are clipped to a window around the first match, and the
+total output is capped at 64 KiB of UTF-8. `truncated` means more matching
+lines exist than were returned. Like `read_region`, the scan runs outside the
+store lock and the handle is revalidated afterwards, so expiry or revocation
+during a search fails without a partial result.
+
+All three methods share the same scope, expiry and `ArtifactError` behavior.
 
 WebSocket turns receive the live store and scope through LangGraph's
 `configurable` runtime values, never as checkpointed store objects.
@@ -128,5 +151,86 @@ archiving and log that no live artifact scope is available. A caller wanting
 archiving must explicitly register and activate its own scope and arrange
 its cleanup; it must not borrow another session's scope.
 
-Assistant-facing marker replacement and region/search tool registration
-remain follow-up work.
+Assistant-facing marker replacement (spilling oversized tool results to a
+handle) remains follow-up work.
+
+## Assistant tools
+
+When `AUTOCHAT_ARTIFACT_ENABLED` is true, the plugin registers two in-process
+[internal tools](tool-calling.md#internal-tools) that the model can call with
+an artifact handle. They are bound to the model next to the OpenAPI tools, but
+never listed or callable over [MCP](configuration.md#mcp-model-context-protocol), which has no live chat
+session. When artifacts are disabled they are not registered at all.
+
+Both tools read only the caller's own live scope. Without one (MCP, or direct
+`chat_graph.ainvoke` callers that do not pass `artifact_store` and
+`artifact_scope`) they return `tool_unavailable`.
+
+### `read_content_range`
+
+| Argument     | Default | Notes                                                          |
+| ------------ | ------- | -------------------------------------------------------------- |
+| `handle`     | —       | Required                                                       |
+| `start_line` | `1`     | 1-based                                                        |
+| `max_lines`  | `200`   | Up to `AUTOCHAT_ARTIFACT_READ_MAX_LINES`                       |
+| `start_byte` | —       | Byte-paging mode, for giant single lines such as minified JSON |
+| `max_bytes`  | —       | Byte-paging mode, up to `AUTOCHAT_ARTIFACT_READ_MAX_BYTES`     |
+
+Line mode returns `text` as line-numbered lines (`12: ...`), plus
+`start_line`, `end_line`, `total_lines`, `has_more` and `next_start_line`
+(`null` on the last page). If a single line is longer than one page, the page
+stops inside it with `line_truncated: true`, `next_start_byte` and a `hint`.
+Byte mode returns `text`, `start_byte`, `end_byte`, `total_bytes`, `has_more`
+and `next_start_byte`; offsets always fall on UTF-8 character boundaries. Line
+and byte arguments can't be combined.
+
+An empty artifact returns an empty page (`total_lines: 0`, `has_more: false`).
+Text that was stored with invalid UTF-8 or binary bytes comes back with the
+replacement characters and control characters that were stored, escaped like
+any JSON string.
+
+### `grep_content`
+
+| Argument        | Default | Notes                                      |
+| --------------- | ------- | ------------------------------------------ |
+| `handle`        | —       | Required                                   |
+| `pattern`       | —       | Required                                   |
+| `context_lines` | `0`     | 0–20 lines before and after each match     |
+| `max_matches`   | `50`    | 1–200                                      |
+| `regex`         | `false` | Opt-in; patterns of at most 200 characters |
+
+Matching is a case-insensitive literal substring by default. Regexes are
+matched one line at a time and only against the first 8,192 characters of each
+line, which bounds backtracking; `partially_searched_lines` and a `hint`
+report lines that were longer. The result has grep-style `text` (`12: match`,
+`12- context`, `--` between groups), `match_count`, `total_lines` and
+`truncated` (more matches exist than were returned).
+
+### Output caps
+
+Each result is capped by `AUTOCHAT_ARTIFACT_READ_MAX_LINES`,
+`AUTOCHAT_ARTIFACT_READ_MAX_BYTES` and the turn's
+[`ContextBudget`](token-management.md) allowance, measured on the JSON-escaped
+text the model actually receives. When too little context is left to return a
+useful page, the tools return `context_exhausted` without reading.
+
+### Errors
+
+Expected failures are returned as `{"error": code, "message": ...}`:
+
+| Code                   | When                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `artifact_unavailable` | Unknown, expired, revoked or other-scope handle. The message is the same in every case and never reveals other sessions. |
+| `invalid_arguments`    | Unknown, mistyped or out-of-range arguments, or a range past the end                                                     |
+| `context_exhausted`    | Not enough context budget left for a useful page                                                                         |
+| `tool_unavailable`     | No live chat session (MCP, or graph callers without an artifact scope)                                                   |
+
+`artifact_unavailable` failures count toward the store's `failed_reads`;
+argument errors do not.
+
+### Aliases
+
+`read_artifact_range` and `grep_artifact` share the same handlers and are
+dispatched by name, but they are never bound to the model or listed anywhere.
+All four names are reserved: an OpenAPI operation with the same cleaned name is
+logged and skipped while artifacts are enabled.

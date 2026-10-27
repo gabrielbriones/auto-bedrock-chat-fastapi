@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import sys
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
@@ -16,6 +17,11 @@ from langchain_core.messages import AIMessage
 import autolangchat.artifacts as artifacts_module
 from autolangchat.artifacts import ArtifactError, ArtifactStore
 from autolangchat.config import ChatConfig
+from autolangchat.defaults import (
+    ARTIFACT_READ_MAX_BYTES,
+    ARTIFACT_SEARCH_MAX_LINE_CHARS,
+    ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS,
+)
 from autolangchat.graph.graph import build_chat_graph
 from autolangchat.graph.nodes.llm_call import llm_call_node
 from autolangchat.graph.nodes.preprocess import preprocess_node
@@ -324,6 +330,18 @@ def test_region_reads_preserve_splitlines_semantics(text, start_line, max_lines)
     assert result["truncated"] is (start_line - 1 + max_lines < len(lines))
 
 
+def test_line_boundaries_match_splitlines_for_every_code_point():
+    # Every code point once, plus every break followed by \n so \r\n is the only two-character break.
+    text = "".join(map(chr, range(sys.maxunicode + 1)))
+    text += "".join(line[-1] + "\n" for line in text.splitlines(keepends=True)[:-1])
+    ends, end = [], 0
+    for line in text.splitlines(keepends=True):
+        end += len(line)
+        ends.append(end)
+    assert [end for _, _, end in artifacts_module._line_spans(text)] == ends
+    assert [start for start, _, _ in artifacts_module._line_spans(text)] == [0] + ends[:-1]
+
+
 @pytest.mark.parametrize("text", ["a\n" * 500_000, "\u20ac" * 1_000_000])
 def test_region_read_temporary_allocations_are_bounded(text):
     store, scope = _store()
@@ -371,6 +389,355 @@ def test_region_read_revalidates_after_scanning(monkeypatch, invalidate):
         store.read_region(scope, handle)
     assert store.statistics()["failed_reads"] == 1
     assert store.statistics()["expiries"] == (1 if invalidate == "expire" else 0)
+
+
+def test_get_meta_describes_artifact_without_counting_reads(monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "\u00e9\nsecond\n", {"source": "tool_result", "tool": "jobs"})
+    clock[0] = 2.5
+    meta = store.get_meta(scope, handle)
+    assert meta == {
+        "size_bytes": 10,
+        "total_lines": 2,
+        "expires_in_seconds": 8,
+        "source": "tool_result",
+        "metadata": {"source": "tool_result", "tool": "jobs"},
+    }
+    meta["metadata"]["source"] = "changed"
+    assert store.get_meta(scope, handle)["source"] == "tool_result"
+    assert store.get_meta(scope, store.put(scope, "", {}))["source"] is None
+    assert store.statistics()["failed_reads"] == 0
+
+
+@pytest.mark.parametrize("text", ["", "a", "a\n", "\n\n", "a\r\nb\rc\n", "a\v\f\x1c\x1d\x1e\x85\u2028\u2029b"])
+def test_get_meta_and_search_line_counts_match_splitlines(text):
+    store, scope = _store()
+    handle = store.put(scope, text, {})
+    lines = text.splitlines()
+    assert store.get_meta(scope, handle)["total_lines"] == len(lines)
+    result = store.search(scope, handle, ".", regex=True, max_matches=20)
+    assert result["total_lines"] == len(lines)
+    assert [(entry["line"], entry["text"]) for entry in result["lines"]] == [
+        (number, line) for number, line in enumerate(lines, 1) if line
+    ]
+
+
+@pytest.mark.parametrize("operation", ["get_meta", "search", "read_bytes"])
+@pytest.mark.parametrize("unavailable", ["unknown", "foreign", "other_thread", "inactive", "closed", "expired"])
+def test_get_meta_and_search_fail_closed_and_count_failed_reads(monkeypatch, operation, unavailable):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "private", {})
+    if unavailable == "unknown":
+        handle = "unknown"
+    elif unavailable == "foreign":
+        store.register_connection("other", "bob")
+        scope = store.activate("other", "thread", "bob")
+    elif unavailable == "other_thread":
+        scope = store.activate("connection", "other-thread", "alice")
+    elif unavailable == "inactive":
+        store.deactivate("connection")
+    elif unavailable == "closed":
+        store.close()
+    else:
+        clock[0] = 10
+    with pytest.raises(ArtifactError, match="unavailable") as error:
+        if operation == "get_meta":
+            store.get_meta(scope, handle)
+        elif operation == "read_bytes":
+            store.read_bytes(scope, handle)
+        else:
+            store.search(scope, handle, "private")
+    assert "private" not in str(error.value) and "alice" not in str(error.value)
+    assert store.statistics()["failed_reads"] == 1
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"pattern": ""},
+        {"pattern": "a" * 201, "regex": True},
+        {"pattern": "(", "regex": True},
+        {"pattern": "a", "context_lines": -1},
+        {"pattern": "a", "context_lines": 21},
+        {"pattern": "a", "max_matches": 0},
+        {"pattern": "a", "max_matches": 201},
+    ],
+)
+def test_search_rejects_invalid_arguments_without_counting_reads(kwargs):
+    store, scope = _store()
+    handle = store.put(scope, "a\n", {})
+    with pytest.raises(ValueError):
+        store.search(scope, handle, **kwargs)
+    assert store.statistics()["failed_reads"] == 0
+
+
+def test_search_literal_is_case_insensitive_and_regex_is_opt_in():
+    store, scope = _store()
+    handle = store.put(scope, "Error: a.c\nerror abc\nok\n", {})
+    assert [entry["line"] for entry in store.search(scope, handle, "ERROR")["lines"]] == [1, 2]
+    assert [entry["line"] for entry in store.search(scope, handle, "a.c")["lines"]] == [1]
+    assert [entry["line"] for entry in store.search(scope, handle, "a.c", regex=True)["lines"]] == [1, 2]
+    assert [entry["line"] for entry in store.search(scope, handle, "Error", ignore_case=False)["lines"]] == [1]
+    assert store.search(scope, handle, "([")["lines"] == []
+    long_literal = store.search(scope, handle, "a" * 201)
+    assert long_literal["lines"] == [] and long_literal["match_count"] == 0
+
+
+def test_search_matches_one_line_at_a_time():
+    store, scope = _store()
+    handle = store.put(scope, "alpha\r\nbeta\rgamma\u2028delta", {})
+    assert store.search(scope, handle, "alpha.*beta", regex=True)["lines"] == []
+    assert store.search(scope, handle, "a\\s+b", regex=True)["lines"] == []
+    assert [entry["line"] for entry in store.search(scope, handle, "^[bg]", regex=True)["lines"]] == [2, 3]
+    assert [entry["line"] for entry in store.search(scope, handle, "a$", regex=True)["lines"]] == [1, 2, 3, 4]
+
+
+def test_search_merges_context_without_duplicates():
+    store, scope = _store()
+    text = "".join(f"line {number}{' hit' if number in (3, 5, 12) else ''}\n" for number in range(1, 16))
+    handle = store.put(scope, text, {"source": "user_message"})
+    result = store.search(scope, handle, "hit", context_lines=2)
+    assert [(entry["line"], entry["match"]) for entry in result["lines"]] == [
+        (1, False),
+        (2, False),
+        (3, True),
+        (4, False),
+        (5, True),
+        (6, False),
+        (7, False),
+        (10, False),
+        (11, False),
+        (12, True),
+        (13, False),
+        (14, False),
+    ]
+    assert result["lines"][2] == {"line": 3, "text": "line 3 hit", "match": True, "clipped": False, "column": 8}
+    assert result["match_count"] == 3
+    assert result["total_lines"] == 15
+    assert result["truncated"] is False
+    assert result["metadata"] == {"source": "user_message"}
+
+
+def test_search_reports_truncation_only_when_more_matches_exist():
+    store, scope = _store()
+    handle = store.put(scope, "hit\nmiss\nhit\nmiss\nhit\n", {})
+    exact = store.search(scope, handle, "hit", max_matches=3)
+    assert (exact["match_count"], exact["truncated"]) == (3, False)
+    limited = store.search(scope, handle, "hit", max_matches=2, context_lines=1)
+    assert [(entry["line"], entry["match"]) for entry in limited["lines"]] == [
+        (1, True),
+        (2, False),
+        (3, True),
+        (4, False),
+    ]
+    assert (limited["match_count"], limited["truncated"], limited["total_lines"]) == (2, True, 5)
+
+
+def test_search_clips_giant_lines_around_the_match():
+    store, scope = _store()
+    text = '{"items": [' + "1, " * 100_000 + '"NEEDLE"' + ", 2" * 100_000 + "]}"
+    handle = store.put(scope, text, {})
+    result = store.search(scope, handle, "needle")
+    [entry] = result["lines"]
+    assert entry["clipped"] is True
+    assert len(entry["text"]) == ARTIFACT_SEARCH_MAX_LINE_CHARS
+    assert "NEEDLE" in entry["text"]
+    assert entry["column"] == text.index("NEEDLE") + 1
+    context = store.search(scope, store.put(scope, "x" * 10_000 + "\nhit\n", {}), "hit", context_lines=1)
+    assert context["lines"][0] == {
+        "line": 1,
+        "text": "x" * ARTIFACT_SEARCH_MAX_LINE_CHARS,
+        "match": False,
+        "clipped": True,
+    }
+
+
+def test_search_output_is_byte_capped():
+    store, scope = _store()
+    handle = store.put(scope, ("\u20ac" * 400 + " hit\n") * 200, {})
+    result = store.search(scope, handle, "hit", max_matches=200)
+    assert sum(len(entry["text"].encode("utf-8")) for entry in result["lines"]) <= ARTIFACT_READ_MAX_BYTES
+    assert 0 < result["match_count"] < 200
+    assert result["truncated"] is True
+    assert result["total_lines"] == 200
+
+
+def test_search_handles_empty_and_non_ascii_artifacts():
+    store, scope = _store()
+    assert store.search(scope, store.put(scope, "", {}), "a") == {
+        "lines": [],
+        "match_count": 0,
+        "total_lines": 0,
+        "truncated": False,
+        "partially_searched_lines": 0,
+        "metadata": {},
+    }
+    handle = store.put(scope, "\ufffd\x00binary\nSTRASSE stra\u00dfe\n", {})
+    assert [entry["line"] for entry in store.search(scope, handle, "\x00bin")["lines"]] == [1]
+    assert store.search(scope, handle, "\u00df")["lines"][0]["column"] == 13
+
+
+def test_search_output_respects_max_bytes():
+    store, scope = _store()
+    handle = store.put(scope, "hit one\nhit two\nhit three\n", {})
+    result = store.search(scope, handle, "hit", max_bytes=len("hit one") + len("hit two"))
+    assert [entry["line"] for entry in result["lines"]] == [1, 2]
+    assert result["truncated"] is True
+    for max_bytes in (0, ARTIFACT_READ_MAX_BYTES + 1):
+        with pytest.raises(ValueError):
+            store.search(scope, handle, "hit", max_bytes=max_bytes)
+
+
+def test_regex_search_only_scans_the_start_of_giant_lines():
+    store, scope = _store()
+    window = ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS
+    text = "early " + "x" * window + " late\nshort late\n"
+    handle = store.put(scope, text, {})
+    regex = store.search(scope, handle, "late", regex=True)
+    assert [entry["line"] for entry in regex["lines"]] == [2]
+    assert regex["partially_searched_lines"] == 1
+    assert [entry["line"] for entry in store.search(scope, handle, "early", regex=True)["lines"]] == [1]
+    literal = store.search(scope, handle, "late")
+    assert [entry["line"] for entry in literal["lines"]] == [1, 2]
+    assert literal["partially_searched_lines"] == 0
+
+
+def test_read_region_reports_numbered_lines_clipping_and_byte_offsets():
+    store, scope = _store()
+    handle = store.put(scope, "\u00e9a\r\nbb\nccc\n", {})
+    region = store.read_region(scope, handle, start_line=2, max_lines=2)
+    assert region["lines"] == [
+        {"line": 2, "text": "bb", "clipped": False, "start_byte": 5},
+        {"line": 3, "text": "ccc", "clipped": False},
+    ]
+    clipped = store.read_region(scope, handle, max_bytes=7)
+    assert clipped["text"] == "\u00e9a\r\nbb"
+    assert clipped["lines"] == [
+        {"line": 1, "text": "\u00e9a", "clipped": False, "start_byte": 0},
+        {"line": 2, "text": "bb", "clipped": False},
+    ]
+    assert clipped["truncated"] is True
+    cut = store.read_region(scope, handle, start_line=3, max_bytes=2)
+    assert cut["lines"] == [{"line": 3, "text": "cc", "clipped": True, "start_byte": 8}]
+    for max_bytes in (0, ARTIFACT_READ_MAX_BYTES + 1):
+        with pytest.raises(ValueError):
+            store.read_region(scope, handle, max_bytes=max_bytes)
+    assert store.statistics()["failed_reads"] == 0
+
+
+def test_read_bytes_snaps_to_character_boundaries():
+    store, scope = _store()
+    text = "a\u00e9\u20ac\U0001f600z"
+    handle = store.put(scope, text, {"source": "tool_result"})
+    encoded = text.encode("utf-8")
+    assert store.read_bytes(scope, handle, max_bytes=5) == {
+        "text": "a\u00e9",
+        "start_byte": 0,
+        "end_byte": 3,
+        "total_bytes": len(encoded),
+        "truncated": True,
+        "metadata": {"source": "tool_result"},
+    }
+    # A mid-character offset snaps back so nothing is skipped.
+    middle = store.read_bytes(scope, handle, start_byte=4, max_bytes=7)
+    assert (middle["text"], middle["start_byte"], middle["end_byte"]) == ("\u20ac\U0001f600", 3, 10)
+    end = store.read_bytes(scope, handle, start_byte=10)
+    assert (end["text"], end["truncated"]) == ("z", False)
+    assert store.read_bytes(scope, handle, start_byte=len(encoded))["text"] == ""
+    pieces, offset = [], 0
+    while offset < len(encoded):
+        page = store.read_bytes(scope, handle, start_byte=offset, max_bytes=4)
+        pieces.append(page["text"])
+        offset = page["end_byte"]
+    assert "".join(pieces) == text
+
+
+def test_read_bytes_spans_chunked_encoding():
+    store, scope = _store()
+    text = "\u20ac" * (artifacts_module._UTF8_CHUNK_CHARS + 10)
+    handle = store.put(scope, text, {})
+    page = store.read_bytes(scope, handle, start_byte=3 * artifacts_module._UTF8_CHUNK_CHARS + 1, max_bytes=7)
+    assert (page["text"], page["start_byte"]) == ("\u20ac\u20ac", 3 * artifacts_module._UTF8_CHUNK_CHARS)
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"start_byte": -1}, {"start_byte": 4}, {"max_bytes": 3}, {"max_bytes": ARTIFACT_READ_MAX_BYTES + 1}]
+)
+def test_read_bytes_rejects_invalid_ranges_without_counting_reads(kwargs):
+    store, scope = _store()
+    handle = store.put(scope, "abc", {})
+    with pytest.raises(ValueError):
+        store.read_bytes(scope, handle, **kwargs)
+    assert store.statistics()["failed_reads"] == 0
+
+
+@pytest.mark.parametrize("invalidate", ["delete", "switch", "expire"])
+def test_read_bytes_revalidates_after_reading(monkeypatch, invalidate):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module.time, "monotonic", lambda: clock[0])
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "payload", {})
+    char_at_byte = artifacts_module._char_at_byte
+
+    def locate(*args):
+        located = char_at_byte(*args)
+        if invalidate == "delete":
+            store.delete_session("connection")
+        elif invalidate == "switch":
+            store.activate("connection", "other", "alice")
+        else:
+            clock[0] = 10
+        return located
+
+    monkeypatch.setattr(artifacts_module, "_char_at_byte", locate)
+    with pytest.raises(ArtifactError):
+        store.read_bytes(scope, handle)
+    assert store.statistics()["failed_reads"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["expire", "thread", "user", "session", "close"])
+def test_search_racing_with_expiry_or_deletion_fails_without_partial_result(monkeypatch, mutation):
+    clock = [0]
+    monkeypatch.setattr(artifacts_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    store, scope = _store(max_age_seconds=10)
+    handle = store.put(scope, "first hit\nsecond hit\nthird hit\n", {})
+    scanning = Event()
+    resume = Event()
+    finditer = re.finditer
+
+    def scan(*args):
+        for boundary in finditer(*args):
+            yield boundary
+            scanning.set()
+            assert resume.wait(timeout=5), "Search was not released after mutation"
+
+    monkeypatch.setattr(artifacts_module.re, "finditer", scan)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        searching = executor.submit(store.search, scope, handle, "hit")
+        try:
+            assert scanning.wait(timeout=5), "Search never reached the scanning phase"
+            # These take the store lock, so they would deadlock if the scan held it.
+            if mutation == "expire":
+                clock[0] = 10
+                store.expire()
+            elif mutation == "thread":
+                store.delete_thread(scope.thread_id, scope.user_id)
+            elif mutation == "user":
+                store.delete_user(scope.user_id)
+            elif mutation == "session":
+                store.delete_session(scope.connection_id)
+            else:
+                store.close()
+        finally:
+            resume.set()
+        with pytest.raises(ArtifactError, match="unavailable"):
+            searching.result(timeout=5)
+    assert store.statistics()["failed_reads"] == 1
+    assert store.statistics()["expiries"] == int(mutation == "expire")
 
 
 @pytest.mark.asyncio

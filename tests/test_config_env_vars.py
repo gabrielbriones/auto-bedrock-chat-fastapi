@@ -273,3 +273,17 @@ class TestArtifactEnvVars:
         assert getattr(_load_config(**{name: "123"}), field) == 123
         with pytest.raises(ValidationError):
             _load_config(**{name: "0"})
+
+    @pytest.mark.parametrize(
+        "name,field,ceiling",
+        [
+            ("AUTOCHAT_ARTIFACT_READ_MAX_LINES", "artifact_read_max_lines", 1000),
+            ("AUTOCHAT_ARTIFACT_READ_MAX_BYTES", "artifact_read_max_bytes", 65536),
+        ],
+    )
+    def test_read_caps_default_to_and_cannot_exceed_the_store_limits(self, name, field, ceiling):
+        assert getattr(_load_config(), field) == ceiling
+        assert getattr(_load_config(**{name: "50"}), field) == 50
+        for value in ("0", str(ceiling + 1)):
+            with pytest.raises(ValidationError):
+                _load_config(**{name: value})

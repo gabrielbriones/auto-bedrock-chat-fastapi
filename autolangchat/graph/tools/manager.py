@@ -1,27 +1,30 @@
-"""Tool Manager — owns tool execution via HTTP.
+"""Tool Manager — owns tool execution via HTTP and in-process internal tools.
 
 This module provides:
 
 - **Tool execution**: ``ToolManager`` executes tool calls via HTTP, applying
-  authentication from an ``AuthInfo`` dataclass.
+  authentication from an ``AuthInfo`` dataclass.  Calls whose name matches a
+  registered ``InternalTool`` are dispatched to its in-process handler instead.
 - **Authentication**: ``AuthInfo`` dataclass for transport-agnostic auth state.
 
 Tool generation (OpenAPI spec parsing, LangChain wrapping) is handled by
 ``ToolsGenerator`` in ``generator.py``.  ``ToolManager`` receives the parsed
-tool metadata dict and only concerns itself with HTTP dispatch.
+tool metadata dict and only concerns itself with dispatch.
 """
 
 import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from types import MappingProxyType
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 
 import httpx
 
 from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
 from ...exceptions import ToolError, ToolHTTPError
+from .internal import InternalTool, ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,12 @@ class ToolManager:
             function_desc}}`` produced by ``ToolsGenerator._generated_tools``.
         config: Application configuration (``ChatConfig`` instance).
         base_url: Resolved API base URL for HTTP calls.
+        internal_tools: In-process tools dispatched by name before HTTP.
+            Their names are reserved: a generated tool with the same name is
+            logged and left out of the bound schemas. Pass the same names as
+            ``ToolsGenerator(reserved_names=...)`` so collisions are dropped at
+            generation time and never reach MCP either. Tools with
+            ``exposed=False`` (aliases) can be dispatched but are never bound.
 
     Example::
 
@@ -96,14 +105,24 @@ class ToolManager:
         generated_tools: Dict[str, Any],
         config: Optional[ChatConfig] = None,
         base_url: str = "http://localhost:8000",
+        internal_tools: Optional[Iterable[InternalTool]] = None,
     ):
         self._generated_tools = generated_tools
+        self._internal_tools: Dict[str, InternalTool] = {}
+        for tool in internal_tools or ():
+            if tool.name in self._internal_tools:
+                raise ValueError(f"Duplicate internal tool name: {tool.name!r}")
+            self._internal_tools[tool.name] = tool
         self._config = config or ChatConfig()
         self._base_url = base_url.rstrip("/")
         self._http_client = httpx.AsyncClient(timeout=self._config.timeout)
         self._langchain_tools: Optional[List[Any]] = None
         self._total_tool_calls_executed: int = 0
-        logger.info("ToolManager ready: %d tools", len(generated_tools))
+        logger.info(
+            "ToolManager ready: %d tools, %d internal tools",
+            len(generated_tools),
+            len(self._internal_tools),
+        )
         self._sync_config()
 
     # ------------------------------------------------------------------
@@ -114,6 +133,27 @@ class ToolManager:
     def base_url(self) -> str:
         """The resolved API base URL."""
         return self._base_url
+
+    @property
+    def internal_tools(self) -> Mapping[str, InternalTool]:
+        """Read-only view of registered internal tools (including hidden aliases), by name."""
+        return MappingProxyType(self._internal_tools)
+
+    def _http_tools(self, *, log_collisions: bool = False) -> Dict[str, Any]:
+        """Generated HTTP tools, minus any whose name is reserved by an internal tool."""
+        if not self._internal_tools:
+            return self._generated_tools
+        tools: Dict[str, Any] = {}
+        for name, meta in self._generated_tools.items():
+            if name in self._internal_tools:
+                if log_collisions:
+                    logger.warning("Skipping generated tool %r: name is reserved by an internal tool", name)
+                continue
+            tools[name] = meta
+        return tools
+
+    def _exposed_internal_tools(self) -> List[InternalTool]:
+        return [t for t in self._internal_tools.values() if t.exposed]
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -152,7 +192,7 @@ class ToolManager:
             "object": dict,
         }
 
-        def _make_tool(func_name: str, tool_meta: Dict, fn_desc: Dict) -> Any:
+        def _make_tool(func_name: str, fn_desc: Dict, invoke: Callable[[Dict[str, Any]], Awaitable[Any]]) -> Any:
             parameters = fn_desc.get("parameters", {})
             properties = parameters.get("properties", {})
             required_params = set(parameters.get("required", []))
@@ -169,10 +209,9 @@ class ToolManager:
                     field_defs[p_name] = (_Optional[py_type], Field(None, description=desc))
 
             args_model = create_model(f"{func_name}_args", **field_defs)
-            mgr = self
 
             async def _invoke(**kwargs: Any) -> str:
-                result = await mgr._execute_single_tool_call(tool_meta, kwargs, auth_info=None)
+                result = await invoke(kwargs)
                 if isinstance(result, str):
                     return result
                 return _json.dumps(result)
@@ -184,18 +223,30 @@ class ToolManager:
                 args_schema=args_model,
             )
 
+        def _http_invoker(tool_meta: Dict[str, Any]) -> Callable[[Dict[str, Any]], Awaitable[Any]]:
+            return lambda kwargs: self._execute_single_tool_call(tool_meta, kwargs, auth_info=None)
+
+        def _internal_invoker(tool: InternalTool) -> Callable[[Dict[str, Any]], Awaitable[Any]]:
+            # Invoked outside the graph there is no per-turn context, so
+            # session-bound tools fail closed with tool_unavailable.
+            return lambda kwargs: tool.invoke(kwargs, _empty_tool_context(self._config))
+
         self._langchain_tools = [
-            _make_tool(func_name, tool_meta, tool_meta["function_desc"])
-            for func_name, tool_meta in self._generated_tools.items()
-        ]
+            _make_tool(func_name, tool_meta["function_desc"], _http_invoker(tool_meta))
+            for func_name, tool_meta in self._http_tools().items()
+        ] + [_make_tool(t.name, t.function_desc, _internal_invoker(t)) for t in self._exposed_internal_tools()]
         logger.info("Generated %d LangChain tools", len(self._langchain_tools))
         return self._langchain_tools
 
     def _sync_config(self) -> None:
-        """Populate ``config.tools_desc`` and ``config.langchain_tools`` from current state."""
+        """Populate ``config.tools_desc`` and ``config.langchain_tools`` from current state.
+
+        Includes the schemas of exposed internal tools so ``bind_tools`` sees them.
+        """
         tools_desc = {
             "type": "function",
-            "functions": [t["function_desc"] for t in self._generated_tools.values()],
+            "functions": [t["function_desc"] for t in self._http_tools(log_collisions=True).values()]
+            + [t.function_desc for t in self._exposed_internal_tools()],
         }
         self._config.tools_desc = tools_desc
         self._config.langchain_tools = self.generate_langchain_tools()
@@ -205,6 +256,7 @@ class ToolManager:
         name: str,
         arguments: Dict[str, Any],
         auth_info: Optional[AuthInfo] = None,
+        tool_context: Optional[ToolContext] = None,
     ) -> Any:
         """Execute a single named tool call and return its raw result.
 
@@ -218,30 +270,42 @@ class ToolManager:
         exceptions propagate so callers can map them to their own error
         format (e.g. a JSON-RPC error response).
 
+        Internal tools (including hidden aliases) are matched by name before
+        the HTTP tools and run in-process with ``tool_context``.
+
         Args:
-            name: Registered tool name (a key in ``_generated_tools``).
+            name: Registered tool name (an internal tool or a key in
+                ``_generated_tools``).
             arguments: Arguments for the tool call.
             auth_info: Optional authentication data for the HTTP request.
+            tool_context: Per-call context for internal tools. When omitted,
+                session-bound internal tools return ``tool_unavailable``.
 
         Returns:
             The parsed response (JSON dict, list, or string) from the tool's
-            HTTP endpoint.
+            HTTP endpoint, or the internal handler's result.
 
         Raises:
             ToolError: If ``name`` is not a registered tool, or required
                 arguments are missing.
         """
-        tool_metadata = self._generated_tools.get(name)
-        if not tool_metadata:
-            raise ToolError(f"Unknown tool: {name}")
+        internal_tool = self._internal_tools.get(name)
+        if internal_tool is not None:
+            fn_desc = internal_tool.function_desc
+        else:
+            tool_metadata = self._generated_tools.get(name)
+            if not tool_metadata:
+                raise ToolError(f"Unknown tool: {name}")
+            fn_desc = tool_metadata.get("function_desc", {})
 
-        fn_desc = tool_metadata.get("function_desc", {})
         required = fn_desc.get("parameters", {}).get("required", [])
         missing = [p for p in required if p not in arguments]
         if missing:
             raise ToolError(f"Missing required arguments for tool {name}: {missing}")
 
         self._total_tool_calls_executed += 1
+        if internal_tool is not None:
+            return await internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config))
         return await self._execute_single_tool_call(tool_metadata, arguments, auth_info)
 
     async def execute_tool_calls(
@@ -250,12 +314,14 @@ class ToolManager:
         auth_info: Optional[AuthInfo] = None,
         on_progress: Optional[Callable] = None,
         on_tool_event: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        tool_context: Optional[ToolContext] = None,
     ) -> List[Dict[str, Any]]:
-        """Execute a list of tool calls concurrently by making HTTP requests.
+        """Execute a list of tool calls concurrently.
 
         Each tool call is validated, then (if valid) dispatched concurrently
-        as an HTTP request to the appropriate API endpoint via
-        ``asyncio.gather()``. Authentication headers are applied from
+        via ``asyncio.gather()``: internal tools run their in-process handler
+        with ``tool_context``; all others become an HTTP request to the
+        appropriate API endpoint. Authentication headers are applied from
         ``auth_info`` when provided.
 
         Args:
@@ -268,6 +334,8 @@ class ToolManager:
             on_tool_event: Optional async callback receiving structured
                 ``tool_call_start`` / ``tool_call_end`` event dicts, so a client
                 can render each call live as it starts and as it finishes.
+            tool_context: Per-turn context for internal tools. When omitted,
+                session-bound internal tools return ``tool_unavailable``.
 
         Returns:
             List of result dicts (in the original ``tool_calls`` order), each
@@ -348,9 +416,10 @@ class ToolManager:
             function_name = tool_call.get("name")
             self._total_tool_calls_executed += 1
 
-            # Validate: tool exists
-            tool_metadata = self._generated_tools.get(function_name)
-            if not tool_metadata:
+            # Validate: tool exists (internal tools take precedence over HTTP)
+            internal_tool = self._internal_tools.get(function_name)
+            tool_metadata = None if internal_tool is not None else self._generated_tools.get(function_name)
+            if internal_tool is None and not tool_metadata:
                 logger.warning(f"Unknown tool requested: {function_name}")
                 results[i] = {
                     "tool_call_id": tool_call.get("id"),
@@ -363,7 +432,9 @@ class ToolManager:
 
             # Validate: required arguments present
             arguments = tool_call.get("arguments", {})
-            fn_desc = tool_metadata.get("function_desc", {})
+            fn_desc = (
+                internal_tool.function_desc if internal_tool is not None else tool_metadata.get("function_desc", {})
+            )
             required = fn_desc.get("parameters", {}).get("required", [])
             missing = [p for p in required if p not in arguments]
             if missing:
@@ -390,9 +461,11 @@ class ToolManager:
 
             await _emit_start(tool_call, position)
             pending_indices.append(i)
-            pending_coros.append(
-                _run_and_report(tool_call, self._execute_single_tool_call(tool_metadata, arguments, auth_info))
-            )
+            if internal_tool is not None:
+                coro = internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config))
+            else:
+                coro = self._execute_single_tool_call(tool_metadata, arguments, auth_info)
+            pending_coros.append(_run_and_report(tool_call, coro))
 
         if pending_coros:
             outcomes = await asyncio.gather(*pending_coros, return_exceptions=True)
@@ -474,7 +547,8 @@ class ToolManager:
         """Return tool execution statistics."""
         return {
             "total_tool_calls_executed": self._total_tool_calls_executed,
-            "total_tools_available": len(self._generated_tools),
+            "total_tools_available": len(self._http_tools()),
+            "internal_tools_available": len(self._exposed_internal_tools()),
         }
 
     # ------------------------------------------------------------------
@@ -559,3 +633,8 @@ class ToolManager:
 # ---------------------------------------------------------------------------
 # Utility function
 # ---------------------------------------------------------------------------
+
+
+def _empty_tool_context(config: Any) -> ToolContext:
+    """Context for internal calls made without a live session (session-bound tools fail closed)."""
+    return ToolContext(artifact_store=None, artifact_scope=None, context_budget=None, chat_config=config)

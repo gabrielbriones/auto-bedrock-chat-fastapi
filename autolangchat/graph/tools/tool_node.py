@@ -33,6 +33,16 @@ updates ``auth_info.credentials.bearer_token``, and retries only the failed
 calls once. If refresh isn't possible (e.g. manual bearer token) or fails,
 ``metadata["auth_expired"]`` is set so ``_handle_chat_message`` can send the
 ``auth_expired`` WebSocket message after the graph turn completes.
+
+Internal tools
+--------------
+In-process tools (``InternalTool``) get a ``ToolContext`` built here from
+``config["configurable"]``: ``artifact_store`` / ``artifact_scope`` (injected by
+the WebSocket handler when ``artifact_enabled``), ``chat_config``, and a
+``ContextBudget`` for the current state messages. The budget is only computed
+when the round calls an internal tool. Without a valid store and scope (MCP,
+direct ``chat_graph.ainvoke`` callers, artifacts disabled) the context carries
+none, so session-bound tools fail closed with ``tool_unavailable``.
 """
 
 from __future__ import annotations
@@ -44,10 +54,46 @@ from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 
+from ...artifacts import ArtifactScope, ArtifactStore
 from ...auth_handler import can_refresh
+from ...context_budget import ContextBudget
 from ..state import ChatState
+from .internal import ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+def _build_tool_context(
+    configurable: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+    *,
+    needs_budget: bool,
+) -> ToolContext:
+    """Build the per-turn ``ToolContext`` for internal tools from ``configurable``.
+
+    The store and scope are passed through only when both are valid and
+    artifacts are enabled; otherwise both are ``None`` so session-bound tools
+    return ``tool_unavailable`` instead of touching another scope.
+    """
+    chat_config = configurable.get("chat_config")
+    store = configurable.get("artifact_store")
+    scope = configurable.get("artifact_scope")
+
+    if not getattr(chat_config, "artifact_enabled", True):
+        store = scope = None
+    elif not (isinstance(store, ArtifactStore) and isinstance(scope, ArtifactScope)):
+        if store is not None or scope is not None:
+            logger.warning("Ignoring incomplete artifact context: both artifact_store and artifact_scope are required")
+        store = scope = None
+
+    budget = None
+    if needs_budget and chat_config is not None:
+        try:
+            budget = ContextBudget.for_turn(chat_config, messages)
+        except Exception:
+            logger.warning("Could not compute the context budget for internal tools", exc_info=True)
+
+    return ToolContext(artifact_store=store, artifact_scope=scope, context_budget=budget, chat_config=chat_config)
 
 
 async def _handle_reactive_auth_expiration(
@@ -113,8 +159,9 @@ async def _handle_reactive_auth_expiration(
 async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     """Execute tool calls from the last assistant message and append results.
 
-    Reads ``tool_manager``, ``auth_info``, and ``on_progress`` from
-    ``config["configurable"]``.  If ``tool_manager`` is absent (e.g. during
+    Reads ``tool_manager``, ``auth_info``, ``on_progress`` and the artifact
+    context (see ``_build_tool_context``) from ``config["configurable"]``.
+    If ``tool_manager`` is absent (e.g. during
     unit tests that don't inject one), the node returns an error result
     without raising so the graph can continue.
 
@@ -183,6 +230,13 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
                 except Exception:
                     pass
 
+        internal_tools = getattr(tool_manager, "internal_tools", None) or {}
+        tool_context = _build_tool_context(
+            configurable,
+            messages,
+            needs_budget=any(c["name"] in internal_tools for c in normalized_calls),
+        )
+
         logger.debug(
             "Executing %d tool call(s): %s",
             len(normalized_calls),
@@ -193,6 +247,7 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
             auth_info=auth_info,
             on_progress=_tool_progress if on_progress_raw is not None else None,
             on_tool_event=_tool_event if on_progress_raw is not None else None,
+            tool_context=tool_context,
         )
 
         auth_expiration_behaviour = getattr(chat_config, "auth_expiration_behaviour", "none")

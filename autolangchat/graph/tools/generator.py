@@ -31,7 +31,7 @@ Usage (standalone)::
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Iterable, Optional, Union
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -50,6 +50,7 @@ class ToolsGenerator:
         app: Optional[FastAPI] = None,
         config: Optional[ChatConfig] = None,
         openapi_spec: Optional[Union[str, Path, Dict]] = None,
+        reserved_names: Optional[Iterable[str]] = None,
     ):
         """
         Initialize ToolsGenerator for framework-agnostic tool generation.
@@ -61,11 +62,16 @@ class ToolsGenerator:
                          - Path to OpenAPI spec file (str or Path)
                          - OpenAPI spec dict directly
                          - None (will use config.openapi_spec_file or app's spec)
+            reserved_names: Tool names owned by in-process internal tools
+                (including hidden aliases). An OpenAPI operation whose cleaned
+                name matches one is logged and skipped, so it never reaches
+                ``tools_desc``, the MCP tool list or ``ToolManager``.
 
         Note: Either app or openapi_spec must be provided (or config.openapi_spec_file set)
         """
         self.app = app
         self.config = config or ChatConfig()
+        self._reserved_names = frozenset(reserved_names or ())
         self._openapi_schema = None
         # Single source of truth: {func_name: {path, method, operation, function_desc}}
         self._generated_tools: Optional[Dict[str, Any]] = None
@@ -117,6 +123,14 @@ class ToolsGenerator:
                         continue
 
                     func_name = function_desc["name"]
+                    if func_name in self._reserved_names:
+                        logger.warning(
+                            "Skipping OpenAPI operation %s %s: tool name %r is reserved by an internal tool",
+                            method.upper(),
+                            path,
+                            func_name,
+                        )
+                        continue
                     self._generated_tools[func_name] = {
                         "path": path,
                         "method": method.upper(),
@@ -136,6 +150,11 @@ class ToolsGenerator:
         """OpenAI-style tool schema, computed from ``_generated_tools``."""
         generated = self._generated_tools or {}
         return {"type": "function", "functions": [t["function_desc"] for t in generated.values()]}
+
+    @property
+    def reserved_names(self) -> frozenset:
+        """Tool names reserved for internal tools; kept across ``invalidate_cache()``."""
+        return self._reserved_names
 
     def invalidate_cache(self) -> None:
         """Invalidate all cached schema data and rebuild immediately.

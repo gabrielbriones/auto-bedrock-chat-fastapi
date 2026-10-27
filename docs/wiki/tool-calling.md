@@ -80,6 +80,51 @@ for how the input budget and the size of a result are estimated per model.
 
 ---
 
+## Internal Tools
+
+Besides the OpenAPI-generated tools, `ToolManager` can dispatch **internal
+tools**: Python handlers that run in-process instead of over HTTP. The plugin
+uses this seam for the [session artifact readers](session-artifacts.md#assistant-tools)
+(`read_content_range`, `grep_content`), which are registered only when
+`AUTOCHAT_ARTIFACT_ENABLED` is true.
+
+An `InternalTool` (`autolangchat/graph/tools/internal.py`) has:
+
+| Field              | Meaning                                                                    |
+| ------------------ | -------------------------------------------------------------------------- |
+| `name`             | Dispatch name; must equal `function_desc["name"]`                          |
+| `function_desc`    | Same shape as `ToolsGenerator` output: `name`, `description`, `parameters` |
+| `handler`          | `async handler(arguments, ctx)`                                            |
+| `requires_session` | Needs a live chat session (default `True`)                                 |
+| `exposed`          | Bound to the model (default `True`); `False` for hidden aliases            |
+
+`ctx` is a `ToolContext` with `artifact_store`, `artifact_scope`,
+`context_budget` and `chat_config`. `tools_execution_node` builds it each round
+from `config["configurable"]`, computing a `ContextBudget` from the current
+messages only when the round calls an internal tool.
+
+How the seam fits in:
+
+- **Dispatch.** `execute_tool_calls` and `call_tool` match internal tools by
+  name before HTTP tools. Hidden aliases can be dispatched but are never bound.
+- **Binding.** `_sync_config` and `generate_langchain_tools` add the exposed
+  internal schemas to `config.tools_desc` and `config.langchain_tools`, so
+  `bind_tools` sees them. `AutoLangChatPlugin.update_tools()` keeps them after
+  regenerating the OpenAPI tools.
+- **Reserved names.** Internal names, including aliases, are reserved. An
+  OpenAPI operation with the same cleaned name is logged and skipped by
+  `ToolsGenerator(reserved_names=...)`, with `ToolManager` as a fallback filter.
+- **No session.** Session-bound tools called without a store and scope (direct
+  `chat_graph.ainvoke` callers, or LangChain tools invoked outside the graph)
+  return `{"error": "tool_unavailable", ...}`.
+- **MCP.** Session-bound internal tools are left out of the MCP `tools/list`
+  and rejected by `tools/call`, because MCP has no live chat session.
+- **Errors.** Handlers return expected failures as
+  `{"error": code, "message": ...}`. Unexpected exceptions are reported like
+  any other failed tool call.
+
+---
+
 ## Recursive Tool Calls
 
 The AI can make multiple sequential tool calls to solve complex queries:
