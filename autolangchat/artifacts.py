@@ -475,7 +475,7 @@ class ArtifactStore:
             if hit is None:
                 if after:
                     after -= 1
-                    truncated = not context(number, start, stop)
+                    context(number, start, stop)
                 elif context_lines:
                     before.append((number, start, stop))
                 continue
