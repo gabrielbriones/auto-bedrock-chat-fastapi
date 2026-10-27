@@ -66,14 +66,18 @@ store and single-module layout remain unchanged.
 | ----------------------------------------- | ----------- | ---------------------------------------------------- |
 | `AUTOCHAT_ARTIFACT_ENABLED`               | `true`      | Enable automatic archiving for WebSocket graph turns |
 | `AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS`       | `86400`     | Maximum payload age                                  |
-| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `16777216`  | Payload-byte quota per live connection (16 MiB)      |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `201326592` | Payload-byte quota per live connection (192 MiB)     |
 | `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Item quota per live connection                       |
-| `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `134217728` | Total payload-byte quota per store/process (128 MiB) |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `536870912` | Total payload-byte quota per store/process (512 MiB) |
 
 All numeric limits must be positive. Quotas count UTF-8 payload bytes, not
 Python object/index overhead or existing checkpoint copies; budget additional
 memory for those and for transient serialization. Each worker owns a separate
 store. Check-and-insert operations, expiry, and deletion are synchronized.
+
+Archiving a tool message stores both its `tool_results` and its `content`
+mirror (about 2x the result for log text), so keep the per-session quota at
+least 3x `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES`; the defaults satisfy this.
 
 Quota exhaustion fails archiving explicitly with `ArtifactError`, logs the
 failure, and stops the invocation rather than pretending the payload was

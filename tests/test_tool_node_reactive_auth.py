@@ -16,6 +16,7 @@ from autolangchat.config import ChatConfig
 from autolangchat.graph.tools.generator import ToolsGenerator
 from autolangchat.graph.tools.manager import AuthInfo, ToolManager
 from autolangchat.graph.tools.tool_node import tools_execution_node
+from tests.http_stubs import stub_http
 
 _GET_JOBS_SPEC = {
     "openapi": "3.0.0",
@@ -278,10 +279,7 @@ class TestEndToEndWithRealToolManager:
     @pytest.mark.asyncio
     async def test_real_401_response_triggers_refresh_and_retry(self):
         tm = _make_real_tool_manager()
-        ok_response = MagicMock(status_code=200)
-        ok_response.json.return_value = {"jobs": []}
-        unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
-        tm._http_client.request = AsyncMock(side_effect=[unauthorized_response, ok_response])
+        requests = stub_http(tm, (401, "Unauthorized"), (200, {"jobs": []}))
 
         sso_session_store = MagicMock()
         sso_session_store.get_session.return_value = {"refresh_token": "rt", "access_token": "old_access_token"}
@@ -302,7 +300,7 @@ class TestEndToEndWithRealToolManager:
             }
             result = await tools_execution_node(_make_state_with_tool_call(name="get_jobs"), config)
 
-        assert tm._http_client.request.await_count == 2
+        assert len(requests) == 2
         assert "auth_expired" not in result["metadata"]
         tool_results = result["messages"][-1]["tool_results"]
         assert tool_results[0]["result"] == {"jobs": []}
@@ -317,8 +315,7 @@ class TestEndToEndWithRealToolManager:
         regression caught after round 4, then status_code leaking into the
         nested dict caught after round 5)."""
         tm = _make_real_tool_manager()
-        unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
-        tm._http_client.request = AsyncMock(return_value=unauthorized_response)
+        stub_http(tm, (401, "Unauthorized"))
 
         config = {
             "configurable": {
