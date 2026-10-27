@@ -166,6 +166,22 @@ describe('ChatSessionStore', () => {
       expect(awaitingResponse).toBe(true)
     })
 
+    it('shows each tool call live on the pending turn as it starts and finishes', () => {
+      harness.store.send('analyse job 42')
+
+      harness.emit({ kind: 'tool-started', id: 'call-1', name: 'get_jobs', arguments: { id: 42 } })
+      expect(harness.store.getSnapshot().transcript[1]?.liveTools).toEqual([
+        { id: 'call-1', name: 'get_jobs', arguments: { id: 42 }, status: 'running', error: null, durationMs: null },
+      ])
+
+      harness.emit({ kind: 'tool-finished', id: 'call-1', error: null, durationMs: 80 })
+      expect(harness.store.getSnapshot().transcript[1]?.liveTools?.[0]).toMatchObject({
+        status: 'succeeded',
+        durationMs: 80,
+      })
+      expect(harness.store.getSnapshot().awaitingResponse).toBe(true)
+    })
+
     it('trims trailing whitespace and refuses an empty message without a network call', () => {
       expect(harness.store.send('   ')).toBe('empty')
       expect(harness.sendChat).not.toHaveBeenCalled()

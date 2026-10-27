@@ -13,8 +13,9 @@ tool metadata dict and only concerns itself with HTTP dispatch.
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
@@ -248,6 +249,7 @@ class ToolManager:
         tool_calls: List[Dict[str, Any]],
         auth_info: Optional[AuthInfo] = None,
         on_progress: Optional[Callable] = None,
+        on_tool_event: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> List[Dict[str, Any]]:
         """Execute a list of tool calls concurrently by making HTTP requests.
 
@@ -263,6 +265,9 @@ class ToolManager:
             on_progress: Optional async callback ``(message: str) -> None``
                 invoked for each valid tool call, before execution starts,
                 for progress reporting.
+            on_tool_event: Optional async callback receiving structured
+                ``tool_call_start`` / ``tool_call_end`` event dicts, so a client
+                can render each call live as it starts and as it finishes.
 
         Returns:
             List of result dicts (in the original ``tool_calls`` order), each
@@ -291,6 +296,53 @@ class ToolManager:
         pending_indices: List[int] = []
         pending_coros: List[Any] = []
 
+        async def _emit(event: Dict[str, Any]) -> None:
+            if on_tool_event is None:
+                return
+            try:
+                await on_tool_event(event)
+            except Exception as e:
+                logger.error(f"Error in on_tool_event callback for {event.get('name')}: {e}")
+
+        async def _emit_start(tool_call: Dict[str, Any], position: int) -> None:
+            await _emit(
+                {
+                    "type": "tool_call_start",
+                    "tool_call_id": tool_call.get("id"),
+                    "name": tool_call.get("name"),
+                    "arguments": tool_call.get("arguments", {}),
+                    "position": position,
+                    "total": len(tool_calls),
+                }
+            )
+
+        async def _emit_end(tool_call: Dict[str, Any], error: Optional[str], started: float) -> None:
+            await _emit(
+                {
+                    "type": "tool_call_end",
+                    "tool_call_id": tool_call.get("id"),
+                    "name": tool_call.get("name"),
+                    "status": "success" if error is None else "error",
+                    "error": error,
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+            )
+
+        async def _run_and_report(tool_call: Dict[str, Any], coro: Awaitable[Any]) -> Any:
+            # Equivalent to gather(return_exceptions=True) for this call, but reports
+            # each call's completion as soon as it lands instead of once all have.
+            started = time.monotonic()
+            try:
+                outcome = await coro
+            except asyncio.CancelledError as e:
+                await _emit_end(tool_call, str(e) or "Cancelled", started)
+                raise
+            except Exception as e:
+                await _emit_end(tool_call, str(e) or type(e).__name__, started)
+                raise
+            await _emit_end(tool_call, None, started)
+            return outcome
+
         for i, tool_call in enumerate(capped_calls):
             position = i + 1
             function_name = tool_call.get("name")
@@ -305,6 +357,8 @@ class ToolManager:
                     "name": function_name,
                     "error": f"Unknown tool: {function_name}",
                 }
+                await _emit_start(tool_call, position)
+                await _emit_end(tool_call, results[i]["error"], time.monotonic())
                 continue
 
             # Validate: required arguments present
@@ -319,6 +373,8 @@ class ToolManager:
                     "name": function_name,
                     "error": f"Missing required arguments: {missing}",
                 }
+                await _emit_start(tool_call, position)
+                await _emit_end(tool_call, results[i]["error"], time.monotonic())
                 continue
 
             logger.debug(f"Executing tool call {position}/{total_tools}: {tool_call}")
@@ -332,8 +388,11 @@ class ToolManager:
                 except Exception as e:
                     logger.error(f"Error in on_progress callback for {function_name}: {e}")
 
+            await _emit_start(tool_call, position)
             pending_indices.append(i)
-            pending_coros.append(self._execute_single_tool_call(tool_metadata, arguments, auth_info))
+            pending_coros.append(
+                _run_and_report(tool_call, self._execute_single_tool_call(tool_metadata, arguments, auth_info))
+            )
 
         if pending_coros:
             outcomes = await asyncio.gather(*pending_coros, return_exceptions=True)
@@ -374,7 +433,7 @@ class ToolManager:
 
         # Return stub errors for tool calls that were dropped by the cap so that
         # every tool_call ID in the assistant message has a matching toolResult.
-        for skipped in skipped_calls:
+        for offset, skipped in enumerate(skipped_calls):
             tc_id = skipped.get("id", "")
             tc_name = skipped.get("name", "")
             if not tc_id:
@@ -383,16 +442,19 @@ class ToolManager:
                     "Bedrock's toolUse contract. Check upstream tool call normalization."
                 )
                 continue
+            skipped_error = (
+                f"Tool call skipped: exceeded max_tool_calls limit "
+                f"({limit}). Reduce the number of tool calls in a single turn."
+            )
             final_results.append(
                 {
                     "tool_call_id": tc_id,
                     "name": tc_name,
-                    "error": (
-                        f"Tool call skipped: exceeded max_tool_calls limit "
-                        f"({limit}). Reduce the number of tool calls in a single turn."
-                    ),
+                    "error": skipped_error,
                 }
             )
+            await _emit_start(skipped, total_tools + offset + 1)
+            await _emit_end(skipped, skipped_error, time.monotonic())
 
         return final_results
 

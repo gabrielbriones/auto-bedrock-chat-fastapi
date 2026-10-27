@@ -153,6 +153,46 @@ describe('WsMessagingGateway', () => {
     expect(events).toEqual([{ kind: 'typing', text: 'Hello wor' }])
   })
 
+  it('maps tool call start and end frames to live tool events', () => {
+    const { emit, events } = createHarness()
+
+    emit({
+      type: 'tool_call_start',
+      timestamp: TIMESTAMP,
+      tool_call_id: 'call-1',
+      name: 'get_jobs',
+      arguments: { status: 'running' },
+      position: 1,
+      total: 2,
+      conversation_id: null,
+    })
+    emit({
+      type: 'tool_call_end',
+      timestamp: TIMESTAMP,
+      tool_call_id: 'call-1',
+      name: 'get_jobs',
+      status: 'error',
+      error: 'HTTP 500',
+      duration_ms: 42,
+      conversation_id: null,
+    })
+    emit({
+      type: 'tool_call_end',
+      timestamp: TIMESTAMP,
+      tool_call_id: 'call-2',
+      name: 'get_job',
+      status: 'success',
+      error: null,
+      duration_ms: 7,
+    })
+
+    expect(events).toEqual([
+      { kind: 'tool-started', id: 'call-1', name: 'get_jobs', arguments: { status: 'running' } },
+      { kind: 'tool-finished', id: 'call-1', error: 'HTTP 500', durationMs: 42 },
+      { kind: 'tool-finished', id: 'call-2', error: null, durationMs: 7 },
+    ])
+  })
+
   it('maps loaded conversation messages into persisted history', () => {
     const { emit, events } = createHarness()
 

@@ -198,7 +198,7 @@ class TestToolsExecutionNode:
             received.append(msg)
 
         # Make execute_tool_calls actually invoke the on_progress callback
-        async def _exec(calls, auth_info=None, on_progress=None):
+        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None):
             if on_progress:
                 await on_progress("Calling fn... (1/1)")
             return [{"tool_call_id": "c1", "name": "fn", "result": {}}]
@@ -279,7 +279,7 @@ class TestGraphToolLoop:
         tool_exec_count = {"n": 0}
         tm = MagicMock()
 
-        async def _exec(calls, auth_info=None, on_progress=None):
+        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None):
             tool_exec_count["n"] += 1
             return results_1 if tool_exec_count["n"] == 1 else results_2
 
@@ -323,7 +323,7 @@ class TestGraphToolLoop:
         call_kwargs: List = []
         tm = MagicMock()
 
-        async def _exec(calls, auth_info=None, on_progress=None):
+        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None):
             call_kwargs.append({"auth_info": auth_info})
             return [{"tool_call_id": "c1", "name": "get_jobs", "result": {}}]
 

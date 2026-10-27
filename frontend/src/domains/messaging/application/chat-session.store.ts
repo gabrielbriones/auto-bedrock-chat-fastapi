@@ -23,7 +23,9 @@ import {
   classifyTypingFrame,
   createTurn,
   failTurn,
+  finishLiveTool,
   isUnresolved,
+  startLiveTool,
   type Turn,
   type TurnResult,
 } from '@/domains/messaging/domain/turn'
@@ -163,6 +165,12 @@ export class ChatSessionStore {
       case 'typing':
         this.#observeTyping(event.text)
         return
+      case 'tool-started':
+        this.#updatePending((turn) => startLiveTool(turn, event))
+        return
+      case 'tool-finished':
+        this.#updatePending((turn) => finishLiveTool(turn, event.id, event.error, event.durationMs))
+        return
       case 'history-loaded':
         this.#history = event.messages.map((message, index) => ({
           message: createMessage(
@@ -240,6 +248,13 @@ export class ChatSessionStore {
     this.#resolve(pending.id, (turn) =>
       applyStreamingSnapshot(turn, text, classifyTypingFrame(text)),
     )
+  }
+
+  #updatePending(transition: (turn: Turn) => TurnResult): void {
+    const pending = this.#pendingTurn()
+    if (pending !== undefined) {
+      this.#resolve(pending.id, transition)
+    }
   }
 
   // FR-MSG-024: a drop or an intentional close leaves nothing awaiting a response forever.

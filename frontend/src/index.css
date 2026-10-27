@@ -114,6 +114,7 @@
   --code-fg: var(--palette-neutral-200);
   --tool-bg: var(--palette-brand-50);
   --tool-border: var(--palette-brand-200);
+  --tool-panel-bg: var(--background);
 
   /* Status tokens (same both themes — success/warning/danger already read on light or dark) */
   --status-connected: var(--palette-success-500);
@@ -182,6 +183,7 @@
   --code-fg: var(--palette-neutral-200);
   --tool-bg: color-mix(in oklch, var(--palette-brand-vivid) 16%, transparent);
   --tool-border: var(--palette-brand-700);
+  --tool-panel-bg: color-mix(in oklch, var(--palette-neutral-800) 65%, var(--palette-neutral-950));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -217,6 +219,7 @@
     --code-fg: var(--palette-neutral-200);
     --tool-bg: color-mix(in oklch, var(--palette-brand-vivid) 16%, transparent);
     --tool-border: var(--palette-brand-700);
+    --tool-panel-bg: color-mix(in oklch, var(--palette-neutral-800) 65%, var(--palette-neutral-950));
   }
 }
 
@@ -316,6 +319,7 @@
   --color-code-fg: var(--code-fg);
   --color-tool-bg: var(--tool-bg);
   --color-tool-border: var(--tool-border);
+  --color-tool-panel-bg: var(--tool-panel-bg);
 
   --color-status-connected: var(--status-connected);
   --color-status-disconnected: var(--status-disconnected);
@@ -405,4 +409,24 @@ body {
   background-image:
     radial-gradient(60rem 18rem at 18% -40%, var(--glow), transparent 70%),
     radial-gradient(40rem 14rem at 95% 120%, color-mix(in oklch, var(--glow) 60%, transparent), transparent 70%);
+}
+/* Shiki tokens carry both palettes as variables; the active colour scheme picks one */
+@utility code-token {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+
+  &:is(.dark *) {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style);
+    font-weight: var(--shiki-dark-font-weight);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    &:is(:root:not(.light):not(.dark) *) {
+      color: var(--shiki-dark);
+      font-style: var(--shiki-dark-font-style);
+      font-weight: var(--shiki-dark-font-weight);
+    }
+  }
 }
