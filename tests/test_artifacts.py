@@ -1,5 +1,6 @@
 """Artifact storage isolation, lifetime, and graph integration."""
 
+import ast
 import asyncio
 import json
 import logging
@@ -1040,7 +1041,8 @@ async def test_tool_results_are_archived_with_structure_and_retries_reuse_handle
         )
     assert len(store._artifacts) == 1
     handle = result["messages"][2]["metadata"]["artifact_handle"]
-    assert json.loads(store.read_region(scope, handle)["text"]) == messages[2]
+    # Only the results are stored: ``content`` is a JSON mirror of them and would duplicate every result.
+    assert json.loads(store.read_region(scope, handle)["text"]) == messages[2]["tool_results"]
     assert result["messages"][2]["tool_results"] == messages[2]["tool_results"]
     assert "artifact_handle" not in result["messages"][0].get("metadata", {})
     assert result["metadata"]["fallback_model_used"] is True
@@ -1152,14 +1154,14 @@ class TestArtifactMarkers:
         ],
     )
     def test_markers_only_when_artifact_tools_are_bound(self, enabled, tools, supports, expected):
-        from autolangchat.graph.nodes import llm_call
+        from autolangchat.graph.tools import artifact_tools
 
         config = SimpleNamespace(
             artifact_enabled=enabled,
             langchain_tools=[SimpleNamespace(name=n) for n in tools],
         )
-        with patch.object(llm_call, "supports_tool_calling", return_value=supports):
-            assert llm_call._artifact_tools_bound(config, "model") is expected
+        with patch.object(artifact_tools, "supports_tool_calling", return_value=supports):
+            assert artifact_tools.artifact_tools_bound(config, "model") is expected
 
 
 @pytest.mark.asyncio
@@ -1200,3 +1202,67 @@ async def test_model_reads_archived_paste_using_only_the_handle_marker():
     tool_message = next(m for m in result["messages"] if m["role"] == "tool")
     assert "7: line 7 ERROR code=XYZ-42 disk full" in json.dumps(tool_message["tool_results"][0]["result"])
     assert paste in next(m for m in result["messages"] if m["role"] == "user")["content"]
+
+
+@pytest.mark.asyncio
+async def test_oversized_paste_becomes_a_marker_the_model_reads_back(caplog):
+    """A ~1 MB user message is replaced by a marker (so it is not truncated) and read back through its handle."""
+    from autolangchat.graph.tools.artifact_tools import build_artifact_tools
+    from autolangchat.graph.tools.manager import ToolManager
+
+    store, scope = _store()
+    config = ChatConfig().model_copy(update={"enable_ai_summarization": False})
+    manager = ToolManager(generated_tools={}, config=config, internal_tools=build_artifact_tools())
+    rows = [f"cpu{i % 64}.counter_{i:05d}," + ",".join(str((i * 7 + c) % 3) for c in range(80)) for i in range(5000)]
+    paste = "analyze this:\n" + "\n".join(rows)
+    assert len(paste) > 500_000  # over the preprocessor's Stage 1 truncation threshold as well
+    seen = []
+
+    async def invoke(messages, *args, **kwargs):
+        seen.append(messages)
+        if len(seen) == 1:
+            found = re.search(r"'artifact_handle': '([0-9a-f-]{36})'", messages[-1].content)
+            assert found, "the model was never told the handle"
+            args = {"handle": found.group(1), "pattern": "counter_04321"}
+            return AIMessage(content="", tool_calls=[{"id": "call_1", "name": "grep_content", "args": args}])
+        return AIMessage(content="found it")
+
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(side_effect=invoke)
+    runnable = {
+        "configurable": {
+            "thread_id": "thread",
+            "chat_config": config,
+            "tool_manager": manager,
+            "artifact_store": store,
+            "artifact_scope": scope,
+        }
+    }
+    with caplog.at_level("DEBUG", logger="autolangchat"):
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            graph = build_chat_graph(config, tool_manager=manager)
+            result = await graph.ainvoke({"user_message": paste}, config=runnable)
+            checkpoint = await graph.aget_state(runnable)
+
+    # The model saw the same small marker a tool result gets, naming the handle and the tools, not the paste.
+    first_input = seen[0][-1].content
+    marker = ast.literal_eval(first_input)
+    assert len(first_input) < 3_000 and marker["source"] == "user_message" and "tool_name" not in marker
+    assert marker["message"] == "Large content stored as a session artifact; only a preview is shown below."
+    assert marker["preview"] == paste[:1000] and marker["size_bytes"] == len(paste.encode())
+    assert "read_content_range" in marker["read_hint"] and "grep_content" in marker["read_hint"]
+    # It is what the conversation holds, in the result and in the checkpoint.
+    user = next(m for m in result["messages"] if m["role"] == "user")
+    assert user["artifact_marker"] is True and user["content"] == first_input
+    assert next(m for m in checkpoint.values["messages"] if m["role"] == "user")["artifact_marker"] is True
+    # The original is stored once, complete, and the model could search it by line.
+    handle = marker["artifact_handle"]
+    assert store.get_meta(scope, handle)["size_bytes"] == len(paste.encode()) == store.statistics()["bytes"]
+    grep = next(m for m in result["messages"] if m["role"] == "tool")["tool_results"][0]["result"]
+    assert "4323: cpu33.counter_04321" in json.dumps(grep)
+    assert result["messages"][-1]["content"] == "found it"
+    # Nothing was truncated, and the log says what happened to the message.
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any(m.startswith(("Truncating message", "Truncated oversized")) for m in messages)
+    assert any(m.startswith("Spilled user message 1: ") for m in messages)
+    assert not any("Archived message" in m for m in messages)

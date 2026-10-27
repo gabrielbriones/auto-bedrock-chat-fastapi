@@ -77,12 +77,18 @@ Tool results go back into the model's context, so large ones count against
 its input-token limit. See
 [Token Management — How Oversize Is Decided](token-management.md#how-oversize-is-decided)
 for how the input budget and the size of a result are estimated per model.
+An oversized successful result is replaced by a small marker before it reaches
+the model (by the preprocessing node, which is where the context budget is
+estimated), with the original stored as a
+[session artifact](session-artifacts.md#tool-result-markers) the model can read
+back in pages.
 
 ### Response Size Limit
 
 Each tool response body is streamed and capped at `tool_response_max_bytes` (default 64 MiB, counted on decoded bytes,
 so a compressed body is limited by its decompressed size). This protects the server's memory from a huge or endless
-response; it is a safety net, not the mechanism that keeps normal large results out of the model's context.
+response; it is a safety net. What keeps normal large results out of the model's context is the
+[tool result spill](session-artifacts.md#tool-result-markers).
 
 Compressed responses are decoded in bounded steps (at most 1 MiB per decompression call, per encoding layer), so a
 small high-ratio body cannot allocate far beyond the cap. Requests advertise `Accept-Encoding: gzip, deflate`, and a
@@ -104,7 +110,9 @@ response using any other `Content-Encoding` (for example `br` or `zstd`) fails w
   ```
 
   The same result is returned on the chat (graph) path, through MCP `tools/call`, and to direct LangChain
-  `StructuredTool` use.
+  `StructuredTool` use. On the chat path with a live artifact scope it is then
+  [stored as an artifact](session-artifacts.md#tool-result-markers) (its `text` kept as plain text, line by line)
+  and replaced by a marker.
 
 - **HTTP errors (>= 400)**: only a small bounded part of the body is read; `ToolHTTPError.details` keeps its first 500
   characters.
@@ -155,6 +163,14 @@ How the seam fits in:
 - **Errors.** Handlers return expected failures as
   `{"error": code, "message": ...}`. Unexpected exceptions are reported like
   any other failed tool call.
+- **Logging.** At DEBUG, each internal tool result is logged with its strings clipped to 500 characters
+  (`Internal tool result <tool> (call <id>, <bytes> bytes): ...`); see
+  [Reading the logs](session-artifacts.md#tool-result-markers).
+- **Never replaced.** Results of internal tools are not replaced by an
+  [artifact marker](session-artifacts.md#tool-result-markers), even when large:
+  their output is already sized to the turn's context budget, and replacing it
+  would make the model chase its own handle. They still count toward the
+  message total when the other results of the same round are sized.
 
 ---
 

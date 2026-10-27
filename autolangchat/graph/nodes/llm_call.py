@@ -43,7 +43,7 @@ from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
 from ..state import ChatState
-from ..tools.artifact_tools import GREP_CONTENT, READ_CONTENT_RANGE
+from ..tools.artifact_tools import GREP_CONTENT, READ_CONTENT_RANGE, artifact_tools_bound
 from .preprocess import prepare_message_artifacts
 
 logger = logging.getLogger(__name__)
@@ -276,14 +276,6 @@ def _wrap_model_invocation_error(model_id: str, exc: Exception, chat_config: Any
         )
     message = f"Model '{display_name}' ({model_id}) rejected the request: {reason}.{hint}"
     return ModelInvocationError(message, model_id=model_id, reason=reason)
-
-
-def _artifact_tools_bound(chat_config: Any, model_id: str) -> bool:
-    """Whether the artifact tools are bound to the model, so handles are worth advertising."""
-    if not getattr(chat_config, "artifact_enabled", True) or not supports_tool_calling(model_id):
-        return False
-    bound = {getattr(t, "name", None) for t in (getattr(chat_config, "langchain_tools", None) or [])}
-    return READ_CONTENT_RANGE in bound
 
 
 def _artifact_marker(msg: Dict, what: str) -> str:
@@ -595,8 +587,11 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         (or system prompt for a new conversation) before primary invocations.
         Retries re-evaluate here because they bypass the preprocessing node.
         Per-message estimates are recorded in ``metadata["message_context_budget"]``.
-        With a live artifact scope, messages above the per-message threshold
-        are archived and tagged with a handle without replacing their content.
+        Messages above the per-message threshold are handled in the same pass:
+        oversized tool results and user messages are replaced by artifact
+        markers (see ``graph/tools/spill.py``), and with a live artifact scope
+        any other message is copied into the store and tagged with a handle
+        without replacing its content.
 
     Stop reason:
         Bedrock Converse's ``response_metadata["stopReason"]`` (e.g.
@@ -626,7 +621,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         raise RuntimeError("llm_call_node: chat_config not found in configurable")
 
     primary_model = chat_config.model_id
-    lc_messages = _to_langchain_messages(messages, artifact_markers=_artifact_tools_bound(chat_config, primary_model))
+    lc_messages = _to_langchain_messages(messages, artifact_markers=artifact_tools_bound(chat_config, primary_model))
     fallback_model = getattr(chat_config, "fallback_model", None)
 
     _log_conversation(messages, "LLM call — conversation state", provider=provider_for_model(primary_model))
@@ -670,7 +665,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 ai_msg = await _invoke_with_streaming(
                     llm,
                     _to_langchain_messages(
-                        retruncated, artifact_markers=_artifact_tools_bound(chat_config, primary_model)
+                        retruncated, artifact_markers=artifact_tools_bound(chat_config, primary_model)
                     ),
                     on_progress,
                 )
@@ -694,7 +689,13 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                     messages, metadata["message_context_budget"] = prepare_message_artifacts(
                         messages, chat_config.model_copy(update={"model_id": fallback_model}), config
                     )
-                    ai_msg = await _invoke_with_streaming(llm_fb, lc_messages, on_progress)
+                    ai_msg = await _invoke_with_streaming(
+                        llm_fb,
+                        _to_langchain_messages(
+                            messages, artifact_markers=artifact_tools_bound(chat_config, fallback_model)
+                        ),
+                        on_progress,
+                    )
                     metadata["fallback_model_used"] = True
                     metadata["fallback_model"] = fallback_model
                 except ArtifactError:

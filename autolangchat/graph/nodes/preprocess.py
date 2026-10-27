@@ -9,17 +9,26 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.runnables import RunnableConfig
 
 from ...artifacts import ArtifactError, ArtifactScope, ArtifactStore
-from ...context_budget import ContextBudget, estimate_message_tokens
+from ...context_budget import ContextBudget, TextEstimate, estimate_message_parts
 from ...defaults import DEFAULT_CONTEXT_BUDGET_SAFETY_FRACTION, DEFAULT_SUMMARIZATION_TEMPERATURE
-from ...message_preprocessor import MessagePreprocessor
+from ...message_preprocessor import MessagePreprocessor, has_artifact_markers
 from ..state import ChatState
+from ..tools.spill import replace_oversized_message
 
 logger = logging.getLogger(__name__)
+
+
+def _describe_parts(parts: List[TextEstimate]) -> str:
+    """What each part's estimate was made from, for the debug log: tokens, characters, kind and ratio."""
+    return "; ".join(
+        f"{part.label}: {part.tokens} tokens ({part.chars:,} chars, kind={part.kind}, {part.chars_per_token:.2f} chars/token)"
+        for part in parts
+    )
 
 
 def _estimate_pending_message_budgets(messages: List[Dict], chat_config: Any) -> Dict[str, Any]:
@@ -27,6 +36,10 @@ def _estimate_pending_message_budgets(messages: List[Dict], chat_config: Any) ->
 
     A tool-call assistant message is also a boundary: the next invocation
     evaluates its new tool results rather than re-evaluating earlier input.
+    This is the only place the context budget of pending messages is
+    estimated. Every message also carries the estimate of each of its parts
+    (``parts``: a result of a tool message, the text of a user message), which
+    :func:`_archive_pending_messages` uses to decide which parts to replace.
     Estimates do not reject, truncate, or replace messages.
     """
     start = 0
@@ -41,51 +54,99 @@ def _estimate_pending_message_budgets(messages: List[Dict], chat_config: Any) ->
     )
     estimates = []
     for index in range(start, len(messages)):
-        estimated_tokens = estimate_message_tokens(messages[index], provider=budget.provider)
+        parts = estimate_message_parts(messages[index], provider=budget.provider)
+        estimated_tokens = sum(part.tokens for part in parts)
         exceeds_threshold = estimated_tokens > threshold
         estimates.append(
             {
                 "message_index": index,
                 "estimated_tokens": estimated_tokens,
                 "exceeds_threshold": exceeds_threshold,
+                "parts": [{"estimated_tokens": part.tokens} for part in parts],
             }
         )
         logger.debug(
             "Message context estimate: model_id=%s message_index=%d "
-            "estimated_tokens=%d threshold_tokens=%.1f exceeds_threshold=%s",
+            "estimated_tokens=%d threshold_tokens=%.1f exceeds_threshold=%s%s",
             budget.model_id,
             index,
             estimated_tokens,
             threshold,
             exceeds_threshold,
+            f" parts=[{_describe_parts(parts)}]" if logger.isEnabledFor(logging.DEBUG) else "",
         )
     return {"model_id": budget.model_id, "threshold_tokens": threshold, "messages": estimates}
 
 
-def _archive_pending_messages(messages: List[Dict], estimates: Dict[str, Any], config: RunnableConfig) -> List[Dict]:
-    """Attach scoped handles without replacing the original model input."""
-    configurable = config.get("configurable") or {}
-    if not getattr(configurable.get("chat_config"), "artifact_enabled", True):
-        return messages
+def _artifact_target(
+    chat_config: Any, configurable: Dict[str, Any]
+) -> tuple[Optional[ArtifactStore], Optional[ArtifactScope]]:
+    """The live artifact store and scope; ``(None, None)`` when artifacts are disabled or none were supplied."""
+    if not getattr(chat_config, "artifact_enabled", True):
+        return None, None
     store = configurable.get("artifact_store")
     scope = configurable.get("artifact_scope")
     if store is None and scope is None:
-        logger.debug("No live artifact scope supplied; messages remain unchanged")
-        return messages
+        logger.debug("No live artifact scope supplied; oversized messages are not archived")
+        return None, None
     if not isinstance(store, ArtifactStore) or not isinstance(scope, ArtifactScope):
         raise ArtifactError("Both artifact_store and artifact_scope are required")
+    return store, scope
+
+
+def _archive_pending_messages(
+    messages: List[Dict], estimates: Dict[str, Any], chat_config: Any, config: RunnableConfig
+) -> List[Dict]:
+    """Replace oversized tool results and user messages by artifact markers, and copy any other oversized message.
+
+    Works from the estimates only: it never estimates a message itself. Oversized tool results are replaced even
+    without a live artifact scope (by flagged previews), so an unbounded payload never reaches the model. An
+    oversized user message is replaced only when its original can be stored, and is otherwise left to the
+    preprocessor's truncation. A message that is not replaced, for example one that a marker would not shrink, is
+    copied into the store and tagged with a handle, keeping its content.
+    """
+    configurable = config.get("configurable") or {}
+    store, scope = _artifact_target(chat_config, configurable)
+    exempt_tools = getattr(configurable.get("tool_manager"), "internal_tools", None) or {}
     archived = list(messages)
     for estimate in estimates["messages"]:
         if not estimate["exceeds_threshold"]:
             continue
         index = estimate["message_index"]
         message = messages[index]
+        try:
+            outcome = replace_oversized_message(
+                message,
+                [part["estimated_tokens"] for part in estimate["parts"]],
+                estimates["threshold_tokens"],
+                message_index=index,
+                model_id=estimates["model_id"],
+                chat_config=chat_config,
+                artifact_store=store,
+                artifact_scope=scope,
+                exempt_tools=exempt_tools,
+            )
+        except ArtifactError:
+            logger.error("Failed to store message %d as a session artifact", index, exc_info=True)
+            raise
+        if outcome.changed:
+            archived[index] = outcome.message
+            continue
+        if store is None or scope is None:
+            continue
+        if has_artifact_markers(message):
+            # Spilled originals are already stored; archiving the marker message would duplicate them.
+            continue
         message_metadata = dict(message.get("metadata") or {})
         handle = message_metadata.get("artifact_handle")
         if not isinstance(handle, str) or not store.contains(scope, handle):
             content = message.get("content", "")
+            tool_results = message.get("tool_results")
             if message.get("role") == "user" and isinstance(content, str):
                 text = content
+            elif message.get("role") == "tool" and isinstance(tool_results, list):
+                # ``content`` is a JSON mirror of ``tool_results``; storing both would keep every result twice.
+                text = json.dumps(tool_results, ensure_ascii=False)
             else:
                 text = json.dumps(
                     {key: value for key, value in message.items() if key != "metadata"}, ensure_ascii=False
@@ -93,8 +154,15 @@ def _archive_pending_messages(messages: List[Dict], estimates: Dict[str, Any], c
             try:
                 handle = store.put(scope, text, {"source": f"{message.get('role', 'unknown')}_message"})
             except ArtifactError:
-                logger.error("Failed to archive message %d in the current artifact scope", index, exc_info=True)
+                logger.error("Failed to store a copy of message %d in the current artifact scope", index, exc_info=True)
                 raise
+            logger.debug(
+                "Stored a copy of message %d (role=%s, ~%d tokens) as artifact %s; the message keeps its content",
+                index,
+                message.get("role", "unknown"),
+                estimate["estimated_tokens"],
+                handle,
+            )
         message_metadata["artifact_handle"] = handle
         archived[index] = {**message, "metadata": message_metadata}
     return archived
@@ -103,15 +171,22 @@ def _archive_pending_messages(messages: List[Dict], estimates: Dict[str, Any], c
 def prepare_message_artifacts(
     messages: List[Dict], chat_config: Any, config: RunnableConfig
 ) -> tuple[List[Dict], Dict[str, Any]]:
-    """Estimate and archive pending messages for preprocessing or a model retry."""
+    """Estimate pending messages once, then replace or copy the oversized ones into the artifact store.
+
+    Used by the preprocessing node and by model retries, which bypass it.
+    """
     estimates = _estimate_pending_message_budgets(messages, chat_config)
-    return _archive_pending_messages(messages, estimates, config), estimates
+    return _archive_pending_messages(messages, estimates, chat_config, config), estimates
 
 
 async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
-    """Truncate/summarise the conversation history before the LLM call.
+    """Replace oversized tool results, then truncate/summarise the history before the LLM call.
 
-    Wraps :meth:`MessagePreprocessor.preprocess_messages` which runs:
+    First, :func:`prepare_message_artifacts` estimates the pending messages
+    once, replaces oversized tool results and user messages with artifact
+    markers, and copies other oversized messages into the artifact store.
+    Then it wraps
+    :meth:`MessagePreprocessor.preprocess_messages` which runs:
 
     * **Stage 1** — single-message truncation (>500 K chars → 425 K)
     * **Stage 2.1** — history-total per-message truncation (>650 K total)

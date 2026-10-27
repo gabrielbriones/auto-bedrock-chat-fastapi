@@ -12,11 +12,14 @@ Covers the two failure paths added for the "only Claude Sonnet 5 works" bug:
 
 from __future__ import annotations
 
+import ast
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from autolangchat.artifacts import ArtifactStore
 from autolangchat.config import ChatConfig
 from autolangchat.context_budget import ContextBudget, estimate_message_tokens
 from autolangchat.exceptions import ContextWindowExceededError, ModelInvocationError
@@ -27,7 +30,11 @@ from autolangchat.graph.nodes.llm_call import (
     _wrap_model_invocation_error,
     llm_call_node,
 )
-from autolangchat.graph.nodes.preprocess import _estimate_pending_message_budgets, preprocess_node
+from autolangchat.graph.nodes.preprocess import (
+    _estimate_pending_message_budgets,
+    prepare_message_artifacts,
+    preprocess_node,
+)
 
 LLAMA_3_3 = "meta.llama3-3-70b-instruct-v1:0"
 INFERENCE_PROFILE_ERROR = (
@@ -317,6 +324,53 @@ class TestLLMCallNodeErrorPaths:
         assert result["metadata"]["fallback_model_used"] is True
         assert result["metadata"]["fallback_model"] == chat_config.fallback_model
         assert result["metadata"]["message_context_budget"]["model_id"] == chat_config.fallback_model
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["user", "tool"])
+    async def test_fallback_receives_the_marker_created_for_its_smaller_context(self, role):
+        chat_config = _config(
+            model_id="us.anthropic.claude-sonnet-5",
+            fallback_model="qwen.qwen3-32b-v1:0",
+            enable_ai_summarization=False,
+            langchain_tools=[SimpleNamespace(name="read_content_range"), SimpleNamespace(name="grep_content")],
+        )
+        text = "counter,value\n" * 8000
+        message = {"role": role, "content": text}
+        if role == "tool":
+            message["tool_results"] = [{"name": "download", "tool_call_id": "t1", "result": text}]
+        store = ArtifactStore()
+        store.register_connection("conn", "user")
+        scope = store.activate("conn", "thread", "user")
+        config = {"configurable": {"chat_config": chat_config, "artifact_store": store, "artifact_scope": scope}}
+        try:
+            messages, estimates = prepare_message_artifacts([message], chat_config, config)
+            assert estimates["messages"][0]["exceeds_threshold"] is False
+            invoke = AsyncMock(
+                side_effect=[
+                    Exception("Input is too long for requested model"),
+                    Exception("Input is too long for requested model"),
+                    _ai_message(),
+                ]
+            )
+            with (
+                patch("autolangchat.graph.nodes.llm_call._build_llm"),
+                patch("autolangchat.graph.nodes.llm_call._invoke_with_streaming", invoke),
+            ):
+                result = await llm_call_node({"messages": messages}, config)
+
+            primary_content = invoke.call_args_list[0].args[1][-1].content
+            fallback_content = invoke.call_args_list[2].args[1][-1].content
+            assert primary_content == text
+            assert len(fallback_content) < 3000
+            marker = ast.literal_eval(fallback_content)
+            assert marker["read_hint"].startswith("Call read_content_range")
+            assert store.get_meta(scope, marker["artifact_handle"])["size_bytes"] == len(text.encode())
+            replaced = result["messages"][0]
+            expected = replaced["content"] if role == "user" else str(replaced["tool_results"][0]["result"])
+            assert fallback_content == expected
+            assert result["metadata"]["fallback_model_used"] is True
+        finally:
+            store.close()
 
     @pytest.mark.asyncio
     async def test_both_models_failing_raises_context_window_error(self):

@@ -41,6 +41,7 @@ from .exceptions import (
 from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo
 from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
+from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
@@ -792,6 +793,9 @@ class WebSocketChatHandler:
             response_metadata["model_name"] = effective_config.get_model_display_name()
             response_metadata["tool_call_rounds"] = graph_metadata.get("tool_call_rounds", 0)
             response_metadata["total_tool_calls"] = graph_metadata.get("total_tool_calls", 0)
+            response_metadata["spilled_artifacts"] = sum(
+                1 for result in turn_tool_results if is_artifact_marker_entry(result)
+            )
             response_metadata["preprocessing_applied"] = graph_metadata.get("preprocessing_applied", False)
             if graph_metadata.get("tool_result_sizes"):
                 response_metadata["tool_result_sizes"] = graph_metadata["tool_result_sizes"]
