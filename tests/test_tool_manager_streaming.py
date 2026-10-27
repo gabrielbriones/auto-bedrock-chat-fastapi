@@ -8,6 +8,8 @@ stream, never by timing.
 import asyncio
 import gzip
 import json
+import tracemalloc
+import zlib
 from typing import AsyncIterator
 from unittest.mock import patch
 
@@ -15,7 +17,7 @@ import httpx
 import pytest
 
 from autolangchat.config import ChatConfig
-from autolangchat.exceptions import ToolHTTPError
+from autolangchat.exceptions import ToolError, ToolHTTPError
 from autolangchat.graph.tools.generator import ToolsGenerator
 from autolangchat.graph.tools.manager import ToolManager
 from tests.http_stubs import stub_http, stub_http_stream
@@ -245,6 +247,126 @@ class TestLegacyShape:
 
         assert results[0]["result"]["truncated"] is True
         assert "error" not in results[0]
+
+
+def _compress(data_chunks, wbits: int) -> bytes:
+    compressor = zlib.compressobj(9, zlib.DEFLATED, wbits)
+    return b"".join(compressor.compress(chunk) for chunk in data_chunks) + compressor.flush()
+
+
+def _zeros(total_mib: int):
+    return (b"\0" * (1024 * 1024) for _ in range(total_mib))
+
+
+async def _tiny_chunks(data: bytes, size: int = 7) -> AsyncIterator[bytes]:
+    for start in range(0, len(data), size):
+        yield data[start : start + size]
+
+
+class TestBoundedDecompression:
+    @pytest.mark.asyncio
+    async def test_stacked_gzip_bomb_does_not_allocate_beyond_the_cap(self):
+        manager = _make_manager(cap=1024)
+        gzip_wbits = zlib.MAX_WBITS | 16
+        bomb = _compress([_compress(_zeros(128), gzip_wbits)], gzip_wbits)
+        assert len(bomb) < 2048
+        stub_http_stream(manager, _once(bomb), **{"content-encoding": "gzip, gzip"})
+
+        tracemalloc.start()
+        try:
+            result = await _fetch(manager)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert result["truncated"] is True
+        assert result["bytes_read"] == 1024
+        assert peak < 16 * 1024 * 1024
+
+    @pytest.mark.asyncio
+    async def test_single_layer_gzip_bomb_does_not_allocate_beyond_the_cap(self):
+        manager = _make_manager(cap=1024)
+        bomb = _compress(_zeros(128), zlib.MAX_WBITS | 16)
+        stub_http_stream(manager, _once(bomb), **{"content-encoding": "gzip"})
+
+        tracemalloc.start()
+        try:
+            result = await _fetch(manager)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert result["truncated"] is True
+        assert peak < 16 * 1024 * 1024
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wbits", [zlib.MAX_WBITS, -zlib.MAX_WBITS], ids=["zlib-wrapped", "raw-deflate"])
+    async def test_deflate_decodes_with_and_without_the_zlib_header(self, wbits):
+        manager = _make_manager(cap=10 * 1024 * 1024)
+        stub_http_stream(manager, _once(_compress([b"hello deflate"], wbits)), **{"content-encoding": "deflate"})
+
+        assert await _fetch(manager) == "hello deflate"
+
+    @pytest.mark.asyncio
+    async def test_output_larger_than_one_decode_step_is_fully_decoded(self):
+        manager = _make_manager(cap=10 * 1024 * 1024)
+        text = "log line\n" * 350_000  # about 3 MiB, several decode steps from one tiny chunk
+        stub_http_stream(manager, _once(gzip.compress(text.encode())), **{"content-encoding": "gzip"})
+
+        assert await _fetch(manager) == text
+
+    @pytest.mark.asyncio
+    async def test_body_split_into_tiny_network_chunks_is_decoded(self):
+        manager = _make_manager()
+        stub_http_stream(
+            manager, _tiny_chunks(gzip.compress(json.dumps({"ok": [1, 2, 3]}).encode())), **{"content-encoding": "gzip"}
+        )
+
+        assert await _fetch(manager) == {"ok": [1, 2, 3]}
+
+    @pytest.mark.asyncio
+    async def test_stacked_encodings_are_decoded_in_reverse_order(self):
+        manager = _make_manager()
+        payload = _compress([_compress([b"stacked body"], zlib.MAX_WBITS)], zlib.MAX_WBITS | 16)
+        stub_http_stream(manager, _once(payload), **{"content-encoding": "deflate, gzip"})
+
+        assert await _fetch(manager) == "stacked body"
+
+    @pytest.mark.asyncio
+    async def test_identity_encoding_is_passed_through(self):
+        manager = _make_manager()
+        stub_http_stream(manager, _once(b"plain"), **{"content-encoding": "identity"})
+
+        assert await _fetch(manager) == "plain"
+
+    @pytest.mark.asyncio
+    async def test_unsupported_encoding_is_rejected_and_the_response_closed(self):
+        manager = _make_manager()
+        body = _EndlessBody()
+        stub_http_stream(manager, body, **{"content-encoding": "br"})
+
+        with pytest.raises(ToolError, match="Unsupported Content-Encoding"):
+            await _fetch(manager)
+
+        assert body.pulled == 0
+        assert body.closed is True
+
+    @pytest.mark.asyncio
+    async def test_corrupt_compressed_body_raises_a_decoding_error(self):
+        manager = _make_manager()
+        stub_http_stream(manager, _once(b"this is not gzip data"), **{"content-encoding": "gzip"})
+
+        with pytest.raises(httpx.DecodingError):
+            await _fetch(manager)
+
+    @pytest.mark.asyncio
+    async def test_request_only_advertises_decodable_encodings(self):
+        manager = _make_manager()
+        requests = stub_http(manager, (200, {}))
+
+        await _fetch(manager)
+
+        assert requests[0].headers["accept-encoding"] == "gzip, deflate"
 
 
 async def _once(data: bytes) -> AsyncIterator[bytes]:

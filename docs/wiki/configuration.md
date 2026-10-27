@@ -84,15 +84,19 @@ A tool response over `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` is not parsed: reading s
 | ----------------------------------------- | ----------- | --------------------------------------------------------------------------- |
 | `AUTOCHAT_ARTIFACT_ENABLED`               | `true`      | Enable automatic archiving of oversized messages for WebSocket graph turns  |
 | `AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS`       | `86400`     | Maximum payload lifetime in seconds, including while the connection is open |
-| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `67108864`  | UTF-8 payload-byte quota per live connection (64 MiB)                       |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `201326592` | UTF-8 payload-byte quota per live connection (192 MiB)                      |
 | `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Artifact-count quota per live connection, across its conversations          |
-| `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `134217728` | Total UTF-8 payload-byte quota per store/process (128 MiB)                  |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `536870912` | Total UTF-8 payload-byte quota per store/process (512 MiB)                  |
 
 All numeric limits must be positive. There is no separate per-item cap.
 Quotas exclude Python object overhead, transient serialization and existing
 checkpoint copies; allow additional memory for those. Quota exhaustion fails
 archiving explicitly rather than silently evicting content. Disabling artifacts
 preserves ordinary message processing.
+
+Archiving a tool message stores both its `tool_results` and its `content` mirror (about 2x the result for log text),
+so keep `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` at least 3x `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES`; the defaults satisfy
+this.
 
 Storage and quotas are worker-local, not shared across replicas. See
 [Session artifacts](session-artifacts.md) for lifetime, ownership, deployment

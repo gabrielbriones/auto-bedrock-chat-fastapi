@@ -84,6 +84,10 @@ Each tool response body is streamed and capped at `tool_response_max_bytes` (def
 so a compressed body is limited by its decompressed size). This protects the server's memory from a huge or endless
 response; it is a safety net, not the mechanism that keeps normal large results out of the model's context.
 
+Compressed responses are decoded in bounded steps (at most 1 MiB per decompression call, per encoding layer), so a
+small high-ratio body cannot allocate far beyond the cap. Requests advertise `Accept-Encoding: gzip, deflate`, and a
+response using any other `Content-Encoding` (for example `br` or `zstd`) fails with a `ToolError`.
+
 - **At or below the cap**: the body is parsed as before (JSON, else plain text) and the result shape is unchanged.
 - **Over the cap**: reading stops, the connection is closed, the body is **not** parsed, and the tool returns a flagged
   result holding the text read so far:

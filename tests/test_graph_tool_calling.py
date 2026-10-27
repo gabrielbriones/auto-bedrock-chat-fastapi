@@ -268,6 +268,61 @@ class TestTruncatedToolResponse:
         assert json.loads(tool_msg["content"])[0]["truncated"] is True
         assert result["metadata"]["tool_result_sizes"][0]["bytes"] > 0
 
+    @pytest.mark.asyncio
+    async def test_truncated_result_is_archived_by_preprocessing_within_default_quota_ratios(self):
+        """With a live artifact scope, the preprocess archive pass stores the truncated
+        message (tool_results plus the content mirror) without a quota error. Sizes are the
+        default ChatConfig cap and quotas scaled down by the same factor."""
+        from autolangchat.artifacts import ArtifactStore
+        from autolangchat.config import ChatConfig
+        from autolangchat.graph.nodes.preprocess import prepare_message_artifacts
+        from autolangchat.graph.tools.generator import ToolsGenerator
+        from autolangchat.graph.tools.manager import ToolManager
+        from tests.http_stubs import stub_http_stream
+
+        defaults = ChatConfig(model_id="test-model", excluded_paths=[])
+        scale = 64
+        config = ChatConfig(
+            model_id="test-model",
+            excluded_paths=[],
+            AUTOCHAT_TOOL_RESPONSE_MAX_BYTES=defaults.tool_response_max_bytes // scale,
+        )
+        generator = ToolsGenerator(openapi_spec=_JOBS_SPEC, config=config)
+        tm = ToolManager(generated_tools=generator._generated_tools, config=config, base_url="http://test-api")
+        cap = config.tool_response_max_bytes
+        stub_http_stream(
+            tm, _bytes_stream(b"log line of typical text\n" * (cap // 20)), **{"content-type": "text/plain"}
+        )
+
+        store = ArtifactStore(
+            max_bytes_per_session=defaults.artifact_max_bytes_per_session // scale,
+            max_bytes=defaults.artifact_max_bytes // scale,
+        )
+        store.register_connection("conn", None)
+        scope = store.activate("conn", "thread", None)
+        configurable = {
+            "tool_manager": tm,
+            "auth_info": None,
+            "chat_config": config,
+            "artifact_store": store,
+            "artifact_scope": scope,
+        }
+
+        state: ChatState = {
+            "messages": [
+                {"role": "user", "content": "show the logs"},
+                {"role": "assistant", "content": "", "tool_calls": [{"name": "get_jobs", "args": {}, "id": "c1"}]},
+            ],
+            "metadata": {},
+        }
+        result = await tools_execution_node(state, {"configurable": configurable})
+        assert result["messages"][-1]["tool_results"][0]["result"]["truncated"] is True
+
+        archived, _ = prepare_message_artifacts(result["messages"], config, {"configurable": configurable})
+
+        assert store.statistics()["quota_rejections"] == 0
+        assert archived[-1]["metadata"]["artifact_handle"]
+
 
 # ---------------------------------------------------------------------------
 # Full graph round-trip with tool calling

@@ -23,6 +23,7 @@ import httpx
 from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
 from ...exceptions import ToolError, ToolHTTPError
+from .bounded_decoding import ACCEPT_ENCODING, iter_decoded_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -552,6 +553,10 @@ class ToolManager:
         if auth_info and auth_info.auth_handler and auth_info.credentials:
             headers = await auth_info.auth_handler.apply_auth_to_headers(headers)
 
+        # Only advertise encodings that bounded_decoding can decode with a capped output.
+        if not any(name.lower() == "accept-encoding" for name in headers):
+            headers["Accept-Encoding"] = ACCEPT_ENCODING
+
         if method in ["GET", "DELETE"]:
             request = self._http_client.build_request(method=method, url=url, params=query_params, headers=headers)
         else:  # POST, PUT, PATCH
@@ -598,8 +603,14 @@ class ToolManager:
         """Send ``request`` and read at most the configured number of body bytes.
 
         The cap counts decoded bytes (so a compressed body is limited by its
-        decompressed size) and is lower for error responses. Reading stops as
-        soon as the cap is exceeded, and the response is always closed.
+        decompressed size) and is lower for error responses. Decompression is
+        done here in bounded steps (see ``bounded_decoding``), never by httpx,
+        so a highly compressed body cannot allocate far beyond the cap. Reading
+        stops as soon as the cap is exceeded, and the response is always closed.
+
+        Raises:
+            ToolError: If the response uses a ``Content-Encoding`` other than
+                identity, gzip or deflate.
         """
         response = await self._http_client.send(request, stream=True)
         try:
@@ -609,7 +620,7 @@ class ToolManager:
 
             buf = bytearray()
             truncated = False
-            async for chunk in response.aiter_bytes():
+            async for chunk in iter_decoded_chunks(response):
                 remaining = limit - len(buf)
                 if len(chunk) > remaining:
                     buf += chunk[:remaining]
