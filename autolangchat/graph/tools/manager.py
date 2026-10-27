@@ -12,6 +12,7 @@ tool metadata dict and only concerns itself with HTTP dispatch.
 """
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -24,6 +25,27 @@ from ...config import ChatConfig
 from ...exceptions import ToolError, ToolHTTPError
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on how much of an HTTP error body is read; only the first 500
+# characters end up in ToolHTTPError.details.
+_ERROR_BODY_READ_MAX_BYTES = 4096
+
+
+@dataclass
+class _RawResponse:
+    """A fully-read (possibly size-capped) HTTP response body."""
+
+    status_code: int
+    content_type: str
+    encoding: str
+    body: bytes
+    truncated: bool
+
+    def text(self) -> str:
+        try:
+            return self.body.decode(self.encoding, errors="replace")
+        except LookupError:
+            return self.body.decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +247,9 @@ class ToolManager:
 
         Returns:
             The parsed response (JSON dict, list, or string) from the tool's
-            HTTP endpoint.
+            HTTP endpoint. A response over ``config.tool_response_max_bytes``
+            is returned as a flagged ``{"truncated": True, ...}`` dict with the
+            text read so far (see ``_execute_single_tool_call``).
 
         Raises:
             ToolError: If ``name`` is not a registered tool, or required
@@ -496,10 +520,14 @@ class ToolManager:
 
         Returns:
             The parsed successful response (JSON dict/list, or plain text if
-            not JSON-decodable).
+            not JSON-decodable). If the body exceeds
+            ``config.tool_response_max_bytes`` it is not parsed; a flagged dict
+            ``{"truncated": True, "message", "bytes_read", "limit_bytes",
+            "content_type", "text"}`` holding the text read so far is returned.
 
         Raises:
-            ToolHTTPError: If the response status is >=400.
+            ToolHTTPError: If the response status is >=400 (``details`` is the
+                first 500 characters of a size-bounded read of the body).
             Exception: Network-level failures (connection, timeout, etc.)
                 propagate as raised by the underlying HTTP client.
         """
@@ -524,36 +552,80 @@ class ToolManager:
         if auth_info and auth_info.auth_handler and auth_info.credentials:
             headers = await auth_info.auth_handler.apply_auth_to_headers(headers)
 
-        # Make HTTP request. Only the request itself is wrapped -- a raised
-        # ToolHTTPError below must propagate to the caller (execute_tool_calls()'s
-        # gather, or call_tool()'s direct await), not get swallowed here too.
+        if method in ["GET", "DELETE"]:
+            request = self._http_client.build_request(method=method, url=url, params=query_params, headers=headers)
+        else:  # POST, PUT, PATCH
+            request = self._http_client.build_request(
+                method=method,
+                url=url,
+                params=query_params,
+                json=query_params if query_params else None,
+                headers=headers,
+            )
+
+        # Only the request/read itself is wrapped -- a raised ToolHTTPError
+        # below must propagate to the caller (execute_tool_calls()'s gather, or
+        # call_tool()'s direct await), not get swallowed here too.
         try:
-            if method in ["GET", "DELETE"]:
-                response = await self._http_client.request(
-                    method=method,
-                    url=url,
-                    params=query_params,
-                    headers=headers,
-                )
-            else:  # POST, PUT, PATCH
-                response = await self._http_client.request(
-                    method=method,
-                    url=url,
-                    params=query_params,
-                    json=query_params if query_params else None,
-                    headers=headers,
-                )
+            raw = await self._read_capped_response(request)
         except Exception as e:
             logger.error(f"Error executing HTTP request to {url}: {str(e)}")
             raise
 
-        if response.status_code >= 400:
-            raise ToolHTTPError(response.status_code, response.text[:500])
+        if raw.status_code >= 400:
+            raise ToolHTTPError(raw.status_code, raw.text()[:500])
+
+        if raw.truncated:
+            limit = self._config.tool_response_max_bytes
+            logger.warning(
+                "Tool response from %s exceeded tool_response_max_bytes (%d); returning truncated result", url, limit
+            )
+            return {
+                "truncated": True,
+                "message": f"Response exceeded the {limit}-byte limit and was truncated; only the first {limit} bytes are included.",
+                "bytes_read": len(raw.body),
+                "limit_bytes": limit,
+                "content_type": raw.content_type,
+                "text": raw.text(),
+            }
 
         try:
-            return response.json()
+            return json.loads(raw.body)
         except Exception:
-            return response.text
+            return raw.text()
+
+    async def _read_capped_response(self, request: httpx.Request) -> _RawResponse:
+        """Send ``request`` and read at most the configured number of body bytes.
+
+        The cap counts decoded bytes (so a compressed body is limited by its
+        decompressed size) and is lower for error responses. Reading stops as
+        soon as the cap is exceeded, and the response is always closed.
+        """
+        response = await self._http_client.send(request, stream=True)
+        try:
+            limit = self._config.tool_response_max_bytes
+            if response.status_code >= 400:
+                limit = min(limit, _ERROR_BODY_READ_MAX_BYTES)
+
+            buf = bytearray()
+            truncated = False
+            async for chunk in response.aiter_bytes():
+                remaining = limit - len(buf)
+                if len(chunk) > remaining:
+                    buf += chunk[:remaining]
+                    truncated = True
+                    break
+                buf += chunk
+
+            return _RawResponse(
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+                encoding=response.encoding or "utf-8",
+                body=bytes(buf),
+                truncated=truncated,
+            )
+        finally:
+            await response.aclose()
 
 
 # ---------------------------------------------------------------------------

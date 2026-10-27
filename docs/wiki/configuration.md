@@ -69,10 +69,14 @@ autolangchat_plugin = add_autolangchat(
 
 ### Tool Calling
 
-| Env Variable                 | Default       | Description                                                |
-| ---------------------------- | ------------- | ---------------------------------------------------------- |
-| `AUTOCHAT_MAX_TOOL_CALLS`    | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit) |
-| `AUTOCHAT_OPENAPI_SPEC_FILE` | `None`        | Path to external OpenAPI spec file                         |
+| Env Variable                       | Default       | Description                                                       |
+| ---------------------------------- | ------------- | ----------------------------------------------------------------- |
+| `AUTOCHAT_MAX_TOOL_CALLS`          | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit)        |
+| `AUTOCHAT_OPENAPI_SPEC_FILE`       | `None`        | Path to external OpenAPI spec file                                |
+| `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` | `67108864`    | Max bytes (64 MiB) of an HTTP tool response; over it is truncated |
+
+A tool response over `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` is not parsed: reading stops and the tool returns a flagged
+`truncated` result. See [Tool Calling — Response Size Limit](tool-calling.md#response-size-limit).
 
 ### Session Artifacts
 
@@ -80,7 +84,7 @@ autolangchat_plugin = add_autolangchat(
 | ----------------------------------------- | ----------- | --------------------------------------------------------------------------- |
 | `AUTOCHAT_ARTIFACT_ENABLED`               | `true`      | Enable automatic archiving of oversized messages for WebSocket graph turns  |
 | `AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS`       | `86400`     | Maximum payload lifetime in seconds, including while the connection is open |
-| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `16777216`  | UTF-8 payload-byte quota per live connection (16 MiB)                       |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `67108864`  | UTF-8 payload-byte quota per live connection (64 MiB)                       |
 | `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Artifact-count quota per live connection, across its conversations          |
 | `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `134217728` | Total UTF-8 payload-byte quota per store/process (128 MiB)                  |
 

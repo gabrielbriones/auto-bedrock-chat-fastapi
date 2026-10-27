@@ -17,7 +17,9 @@ from mcp import types  # noqa: E402
 from autolangchat.config import ChatConfig  # noqa: E402
 from autolangchat.exceptions import ToolError  # noqa: E402
 from autolangchat.graph.tools.generator import ToolsGenerator  # noqa: E402
+from autolangchat.graph.tools.manager import ToolManager  # noqa: E402
 from autolangchat.mcp.server import _build_mcp_tool_list, build_mcp_server, build_mcp_session_manager  # noqa: E402
+from tests.http_stubs import stub_http_stream  # noqa: E402
 
 _SPEC: Dict[str, Any] = {
     "openapi": "3.0.0",
@@ -131,6 +133,33 @@ class TestBuildMcpServer:
 
         assert result.root.isError is True
         assert "Unknown tool" in result.root.content[0].text
+
+
+class TestCallToolTruncatedResponse:
+    @pytest.mark.asyncio
+    async def test_oversized_response_returns_truncated_flagged_text_result(self):
+        config = ChatConfig(model_id="test-model", excluded_paths=[], AUTOCHAT_TOOL_RESPONSE_MAX_BYTES=100)
+        generator = ToolsGenerator(openapi_spec=_SPEC, config=config)
+        tool_manager = ToolManager(
+            generated_tools=generator._generated_tools, config=config, base_url="http://test-api"
+        )
+        stub_http_stream(tool_manager, _bytes_stream(b"log line\n" * 1000), **{"content-type": "text/plain"})
+        server = build_mcp_server(generator, tool_manager)
+
+        handler = server.request_handlers[types.CallToolRequest]
+        request = types.CallToolRequest(params=types.CallToolRequestParams(name="list_jobs", arguments={}))
+        result = await handler(request)
+
+        assert result.root.isError is False
+        payload = result.root.structuredContent
+        assert payload["truncated"] is True
+        assert payload["limit_bytes"] == 100
+        assert payload["bytes_read"] == 100
+        assert payload["text"].startswith("log line")
+
+
+async def _bytes_stream(data: bytes):
+    yield data
 
 
 class TestRequireToolAuth:

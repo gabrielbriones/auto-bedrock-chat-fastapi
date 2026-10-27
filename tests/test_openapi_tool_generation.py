@@ -19,6 +19,7 @@ import pytest
 
 from autolangchat.graph.tools.generator import ToolsGenerator
 from autolangchat.graph.tools.manager import ToolManager
+from tests.http_stubs import stub_http
 
 # ---------------------------------------------------------------------------
 # Minimal inline OpenAPI spec for testing
@@ -208,13 +209,7 @@ class TestToolManagerGenerateLangchainTools:
         tools = manager.generate_langchain_tools()
         tool_map = {t.name: t for t in tools}
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"jobs": [{"id": 1}]}
-        fake_response.text = json.dumps({"jobs": [{"id": 1}]})
-
-        # Patch the HTTP client request method on the manager
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {"jobs": [{"id": 1}]}))
 
         result = await tool_map["list_jobs"].ainvoke({"status": "running"})
         data = json.loads(result)
@@ -252,29 +247,19 @@ class TestToolManagerExecuteCap:
     async def test_unlimited_executes_all_calls(self):
         """max_tool_calls=None must execute every call — no skipping."""
         manager = _make_manager_with_limit(None)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {}))
 
         calls = _make_calls(5)
         results = await manager.execute_tool_calls(calls)
 
         assert len(results) == 5
-        assert manager._http_client.request.await_count == 5
+        assert len(requests) == 5
 
     @pytest.mark.asyncio
     async def test_cap_produces_one_result_per_call(self):
         """With a cap of 2 and 5 calls the result list must still have 5 entries."""
         manager = _make_manager_with_limit(2)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {}))
 
         calls = _make_calls(5)
         results = await manager.execute_tool_calls(calls)
@@ -285,28 +270,18 @@ class TestToolManagerExecuteCap:
     async def test_cap_only_executes_capped_calls_via_http(self):
         """HTTP must be called only for the first *max_tool_calls* entries."""
         manager = _make_manager_with_limit(3)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {}))
 
         calls = _make_calls(6)
         await manager.execute_tool_calls(calls)
 
-        assert manager._http_client.request.await_count == 3
+        assert len(requests) == 3
 
     @pytest.mark.asyncio
     async def test_skipped_calls_return_stub_errors(self):
         """Calls beyond the cap must come back as error results (not successes)."""
         manager = _make_manager_with_limit(2)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {}))
 
         calls = _make_calls(4)
         results = await manager.execute_tool_calls(calls)
@@ -320,12 +295,7 @@ class TestToolManagerExecuteCap:
     async def test_result_tool_call_ids_match_inputs(self):
         """Every result tool_call_id must match the id of the corresponding input call."""
         manager = _make_manager_with_limit(2)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {}))
 
         calls = _make_calls(5)
         results = await manager.execute_tool_calls(calls)
@@ -346,11 +316,7 @@ class TestToolManagerExecuteCap:
         this feature existed (PR #150 round 6 review -- status_code must not
         leak into the nested legacy dict)."""
         manager = _make_manager_with_limit(None)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 401
-        fake_response.text = "Unauthorized"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (401, "Unauthorized"))
 
         results = await manager.execute_tool_calls(_make_calls(1))
 
@@ -367,10 +333,7 @@ class TestToolManagerExecuteCap:
         result, not flattened into a tool failure (PR #150 round 2 review)."""
         manager = _make_manager_with_limit(None)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"error": None, "data": {"jobs": []}}
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {"error": None, "data": {"jobs": []}}))
 
         results = await manager.execute_tool_calls(_make_calls(1))
 
@@ -388,10 +351,7 @@ class TestToolManagerExecuteCap:
         (PR #150 round 4 review)."""
         manager = _make_manager_with_limit(None)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"status_code": 200, "data": {"jobs": []}}
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {"status_code": 200, "data": {"jobs": []}}))
 
         results = await manager.execute_tool_calls(_make_calls(1))
 
@@ -410,10 +370,7 @@ class TestToolManagerExecuteCap:
 
         manager = _make_manager_with_limit(None)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 401
-        fake_response.text = "Unauthorized"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (401, "Unauthorized"))
 
         with pytest.raises(ToolHTTPError) as exc_info:
             await manager.call_tool("list_jobs", {})
@@ -623,16 +580,12 @@ class TestToolManagerCallTool:
     async def test_returns_raw_result_for_known_tool(self):
         manager = _make_manager(_GET_SPEC)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"jobs": []}
-        fake_response.text = '{"jobs": []}'
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {"jobs": []}))
 
         result = await manager.call_tool("list_jobs", {})
 
         assert result == {"jobs": []}
-        manager._http_client.request.assert_awaited_once()
+        assert len(requests) == 1
 
     @pytest.mark.asyncio
     async def test_unknown_tool_raises_tool_error(self):
@@ -690,13 +643,9 @@ class TestToolManagerCallTool:
         auth_handler = AuthenticationHandler(credentials=credentials)
         auth_info = AuthInfo(credentials=credentials, auth_handler=auth_handler)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {}))
 
         await manager.call_tool("list_jobs", {}, auth_info=auth_info)
 
-        _, kwargs = manager._http_client.request.call_args
+        kwargs = {"headers": requests[0].headers}
         assert kwargs["headers"].get("Authorization") == "Bearer tok123"

@@ -255,6 +255,16 @@ class TestContextBudgetEnvVars:
             _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION=value)
 
 
+class TestToolResponseMaxBytesEnvVar:
+    def test_default_is_64_mib(self):
+        assert _load_config().tool_response_max_bytes == 64 * 1024 * 1024
+
+    def test_configurable_and_must_be_positive(self):
+        assert _load_config(AUTOCHAT_TOOL_RESPONSE_MAX_BYTES="123").tool_response_max_bytes == 123
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_TOOL_RESPONSE_MAX_BYTES="0")
+
+
 class TestArtifactEnvVars:
     def test_enabled_by_default_and_can_be_disabled(self):
         assert _load_config().artifact_enabled is True

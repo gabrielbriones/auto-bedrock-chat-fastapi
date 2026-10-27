@@ -221,6 +221,55 @@ class TestToolsExecutionNode:
 
 
 # ---------------------------------------------------------------------------
+# Oversized HTTP responses through the real ToolManager
+# ---------------------------------------------------------------------------
+
+_JOBS_SPEC: Dict[str, Any] = {
+    "openapi": "3.0.0",
+    "info": {"title": "Test API", "version": "1.0.0"},
+    "paths": {"/jobs": {"get": {"operationId": "get_jobs", "summary": "List jobs", "responses": {"200": {}}}}},
+}
+
+
+async def _bytes_stream(data: bytes):
+    yield data
+
+
+class TestTruncatedToolResponse:
+    @pytest.mark.asyncio
+    async def test_oversized_response_reaches_state_as_flagged_serializable_result(self):
+        """A response over tool_response_max_bytes flows through tools_execution_node
+        as a flagged, JSON-serializable result (never a raw object or an error)."""
+        from autolangchat.config import ChatConfig
+        from autolangchat.graph.tools.generator import ToolsGenerator
+        from autolangchat.graph.tools.manager import ToolManager
+        from tests.http_stubs import stub_http_stream
+
+        config = ChatConfig(model_id="test-model", excluded_paths=[], AUTOCHAT_TOOL_RESPONSE_MAX_BYTES=64)
+        generator = ToolsGenerator(openapi_spec=_JOBS_SPEC, config=config)
+        tm = ToolManager(generated_tools=generator._generated_tools, config=config, base_url="http://test-api")
+        stub_http_stream(tm, _bytes_stream(b"log line\n" * 100), **{"content-type": "text/plain"})
+
+        state: ChatState = {
+            "messages": [
+                {"role": "user", "content": "show the logs"},
+                {"role": "assistant", "content": "", "tool_calls": [{"name": "get_jobs", "args": {}, "id": "c1"}]},
+            ],
+            "metadata": {},
+        }
+        result = await tools_execution_node(state, {"configurable": {"tool_manager": tm, "auth_info": None}})
+
+        tool_msg = result["messages"][-1]
+        entry = tool_msg["tool_results"][0]
+        assert "error" not in entry
+        assert entry["result"]["truncated"] is True
+        assert entry["result"]["bytes_read"] == 64
+        assert entry["result"]["limit_bytes"] == 64
+        assert json.loads(tool_msg["content"])[0]["truncated"] is True
+        assert result["metadata"]["tool_result_sizes"][0]["bytes"] > 0
+
+
+# ---------------------------------------------------------------------------
 # Full graph round-trip with tool calling
 # ---------------------------------------------------------------------------
 

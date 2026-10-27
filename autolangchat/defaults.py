@@ -8,6 +8,7 @@ from this module instead of hardcoding values.
 
 # ── Tool Call Limits ─────────────────────────────────────────────────────
 DEFAULT_MAX_TOOL_CALLS = None  # None = unlimited
+DEFAULT_TOOL_RESPONSE_MAX_BYTES = 64 * 1024 * 1024
 
 # ── Conversation History ─────────────────────────────────────────────────
 DEFAULT_MAX_CONVERSATION_MESSAGES = 20
@@ -15,7 +16,7 @@ DEFAULT_PRESERVE_SYSTEM_MESSAGE = True
 
 # ── Session Artifacts ────────────────────────────────────────────────────
 DEFAULT_ARTIFACT_MAX_AGE_SECONDS = 86400
-DEFAULT_ARTIFACT_MAX_BYTES_PER_SESSION = 16 * 1024 * 1024
+DEFAULT_ARTIFACT_MAX_BYTES_PER_SESSION = 64 * 1024 * 1024
 DEFAULT_ARTIFACT_MAX_ITEMS_PER_SESSION = 128
 DEFAULT_ARTIFACT_MAX_BYTES = 128 * 1024 * 1024
 ARTIFACT_READ_MAX_BYTES = 65536

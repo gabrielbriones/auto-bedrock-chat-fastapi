@@ -66,7 +66,7 @@ store and single-module layout remain unchanged.
 | ----------------------------------------- | ----------- | ---------------------------------------------------- |
 | `AUTOCHAT_ARTIFACT_ENABLED`               | `true`      | Enable automatic archiving for WebSocket graph turns |
 | `AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS`       | `86400`     | Maximum payload age                                  |
-| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `16777216`  | Payload-byte quota per live connection (16 MiB)      |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `67108864`  | Payload-byte quota per live connection (64 MiB)      |
 | `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Item quota per live connection                       |
 | `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `134217728` | Total payload-byte quota per store/process (128 MiB) |
 

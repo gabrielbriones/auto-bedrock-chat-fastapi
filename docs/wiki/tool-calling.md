@@ -78,6 +78,35 @@ its input-token limit. See
 [Token Management — How Oversize Is Decided](token-management.md#how-oversize-is-decided)
 for how the input budget and the size of a result are estimated per model.
 
+### Response Size Limit
+
+Each tool response body is streamed and capped at `tool_response_max_bytes` (default 64 MiB, counted on decoded bytes,
+so a compressed body is limited by its decompressed size). This protects the server's memory from a huge or endless
+response; it is a safety net, not the mechanism that keeps normal large results out of the model's context.
+
+- **At or below the cap**: the body is parsed as before (JSON, else plain text) and the result shape is unchanged.
+- **Over the cap**: reading stops, the connection is closed, the body is **not** parsed, and the tool returns a flagged
+  result holding the text read so far:
+
+  ```json
+  {
+    "truncated": true,
+    "message": "Response exceeded the 67108864-byte limit and was truncated; only the first 67108864 bytes are included.",
+    "bytes_read": 67108864,
+    "limit_bytes": 67108864,
+    "content_type": "text/plain",
+    "text": "..."
+  }
+  ```
+
+  The same result is returned on the chat (graph) path, through MCP `tools/call`, and to direct LangChain
+  `StructuredTool` use.
+
+- **HTTP errors (>= 400)**: only a small bounded part of the body is read; `ToolHTTPError.details` keeps its first 500
+  characters.
+
+Raise or lower the cap with `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` (see [Configuration](configuration.md#tool-calling)).
+
 ---
 
 ## Recursive Tool Calls
