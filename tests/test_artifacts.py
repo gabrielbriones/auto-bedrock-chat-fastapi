@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sys
+import time
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
@@ -461,7 +462,9 @@ def test_get_meta_and_search_fail_closed_and_count_failed_reads(monkeypatch, ope
         {"pattern": ""},
         {"pattern": "a" * 201, "regex": True},
         {"pattern": "(", "regex": True},
-        {"pattern": "a", "context_lines": -1},
+        {"pattern": r"(a)\1", "regex": True},
+        {"pattern": "(?=a)", "regex": True},
+        {"pattern": "(?<=a)b", "regex": True},
         {"pattern": "a", "context_lines": 21},
         {"pattern": "a", "max_matches": 0},
         {"pattern": "a", "max_matches": 201},
@@ -485,6 +488,24 @@ def test_search_literal_is_case_insensitive_and_regex_is_opt_in():
     assert store.search(scope, handle, "([")["lines"] == []
     long_literal = store.search(scope, handle, "a" * 201)
     assert long_literal["lines"] == [] and long_literal["match_count"] == 0
+
+
+def test_search_regex_runs_in_linear_time_on_catastrophic_patterns():
+    store, scope = _store()
+    handle = store.put(scope, ("a" * 5000 + "b\n") * 20 + "needle\n", {})
+    started = time.monotonic()
+    for pattern in ("(a+)+$", "(a|aa)+$", "(a*)*c", "(.*a){20}x"):
+        result = store.search(scope, handle, pattern, regex=True)
+        assert result["match_count"] == 0
+    assert [e["line"] for e in store.search(scope, handle, "(?:ne+)dle$", regex=True)["lines"]] == [21]
+    assert time.monotonic() - started < 5
+
+
+def test_search_regex_honours_ignore_case():
+    store, scope = _store()
+    handle = store.put(scope, "Error\nerror\n", {})
+    assert [e["line"] for e in store.search(scope, handle, "^error$", regex=True)["lines"]] == [1, 2]
+    assert [e["line"] for e in store.search(scope, handle, "^error$", regex=True, ignore_case=False)["lines"]] == [2]
 
 
 def test_search_matches_one_line_at_a_time():
@@ -1075,3 +1096,105 @@ async def test_lifecycle_handlers_revoke_inflight_artifact_scopes(operation):
                 assert not store.contains(fresh, handle)
     finally:
         await handler.shutdown()
+
+
+class TestArtifactMarkers:
+    HANDLE = "11111111-2222-3333-4444-555555555555"
+
+    def _messages(self):
+        meta = {"artifact_handle": self.HANDLE}
+        return [
+            {"role": "user", "content": "big paste", "metadata": meta},
+            {"role": "user", "content": "small"},
+            {
+                "role": "tool",
+                "tool_results": [
+                    {"tool_call_id": "a", "name": "t1", "result": "r1"},
+                    {"tool_call_id": "b", "name": "t2", "result": "r2"},
+                ],
+                "metadata": meta,
+            },
+        ]
+
+    def test_markers_name_handle_and_tools_without_mutating_messages(self):
+        from autolangchat.graph.nodes.llm_call import _to_langchain_messages
+
+        messages = self._messages()
+        lc = _to_langchain_messages(messages, artifact_markers=True)
+
+        assert lc[0].content.startswith("big paste\n\n[Archived:")
+        assert self.HANDLE in lc[0].content
+        assert "read_content_range" in lc[0].content and "grep_content" in lc[0].content
+        assert lc[1].content == "small"
+        assert [m.content.startswith(("r1", "r2")) and self.HANDLE in m.content for m in lc[2:]] == [True, True]
+        assert messages == self._messages()
+
+    def test_no_markers_by_default_or_without_handle(self):
+        from autolangchat.graph.nodes.llm_call import _to_langchain_messages
+
+        assert [m.content for m in _to_langchain_messages(self._messages())][:2] == [
+            "big paste",
+            "small",
+        ]
+        plain = [{"role": "user", "content": "hi", "metadata": {}}]
+        assert _to_langchain_messages(plain, artifact_markers=True)[0].content == "hi"
+
+    @pytest.mark.parametrize(
+        "enabled,tools,supports,expected",
+        [
+            (True, ["read_content_range", "grep_content"], True, True),
+            (False, ["read_content_range"], True, False),
+            (True, ["other"], True, False),
+            (True, [], True, False),
+            (True, ["read_content_range"], False, False),
+        ],
+    )
+    def test_markers_only_when_artifact_tools_are_bound(self, enabled, tools, supports, expected):
+        from autolangchat.graph.nodes import llm_call
+
+        config = SimpleNamespace(
+            artifact_enabled=enabled,
+            langchain_tools=[SimpleNamespace(name=n) for n in tools],
+        )
+        with patch.object(llm_call, "supports_tool_calling", return_value=supports):
+            assert llm_call._artifact_tools_bound(config, "model") is expected
+
+
+@pytest.mark.asyncio
+async def test_model_reads_archived_paste_using_only_the_handle_marker():
+    from autolangchat.graph.tools.artifact_tools import build_artifact_tools
+    from autolangchat.graph.tools.manager import ToolManager
+
+    store, scope = _store()
+    config = ChatConfig().model_copy(update={"context_budget_safety_fraction": 0, "enable_ai_summarization": False})
+    manager = ToolManager(generated_tools={}, config=config, internal_tools=build_artifact_tools())
+    paste = "\n".join(f"line {i} " + ("ERROR code=XYZ-42 disk full" if i == 7 else "ok") for i in range(1, 21))
+    seen = []
+
+    async def invoke(messages, *args, **kwargs):
+        seen.append(messages)
+        if len(seen) == 1:
+            marker = re.search(r"artifact handle ([0-9a-f-]{36})", messages[-1].content)
+            assert marker, "the model was never told the handle"
+            call = {"id": "call_1", "name": "grep_content", "args": {"handle": marker.group(1), "pattern": "ERROR"}}
+            return AIMessage(content="", tool_calls=[call])
+        return AIMessage(content="found it")
+
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(side_effect=invoke)
+    runnable = {
+        "configurable": {
+            "thread_id": "thread",
+            "chat_config": config,
+            "tool_manager": manager,
+            "artifact_store": store,
+            "artifact_scope": scope,
+        }
+    }
+    with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+        result = await build_chat_graph(config, tool_manager=manager).ainvoke({"user_message": paste}, config=runnable)
+
+    assert result["messages"][-1]["content"] == "found it"
+    tool_message = next(m for m in result["messages"] if m["role"] == "tool")
+    assert "7: line 7 ERROR code=XYZ-42 disk full" in json.dumps(tool_message["tool_results"][0]["result"])
+    assert paste in next(m for m in result["messages"] if m["role"] == "user")["content"]

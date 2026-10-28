@@ -11,7 +11,9 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Deque, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterator, List, Optional, Protocol, Tuple
+
+import re2
 
 from .defaults import (
     ARTIFACT_READ_MAX_BYTES,
@@ -145,7 +147,49 @@ def _char_at_byte(text: str, byte_offset: int) -> Tuple[int, int]:
     return chars, consumed
 
 
-def _clip_line(line: str, hit: Optional[re.Match]) -> Tuple[str, bool]:
+class _Hit(Protocol):
+    """The part of a match object that both ``re`` and ``re2`` provide."""
+
+    def start(self) -> int:
+        """Return the index of the first matched character."""
+        raise NotImplementedError
+
+    def end(self) -> int:
+        """Return the index after the last matched character."""
+        raise NotImplementedError
+
+
+class _Matcher(Protocol):
+    """The part of a compiled pattern that both ``re`` and ``re2`` provide."""
+
+    def search(self, text: str, pos: int = 0, endpos: Optional[int] = None) -> Optional[_Hit]:
+        """Return the first match in ``text[pos:endpos]``, or ``None``."""
+        raise NotImplementedError
+
+
+def _compile_search_pattern(pattern: str, *, regex: bool, ignore_case: bool) -> _Matcher:
+    """Compile a literal with ``re`` and a regex with RE2.
+
+    RE2 runs in time linear in the input, so a caller-supplied expression such
+    as ``(a+)+$`` cannot backtrack catastrophically or hold the GIL for long.
+    The cost is that RE2 rejects backreferences and lookaround, which is
+    reported like any other invalid expression.
+    """
+    if not regex:
+        return re.compile(re.escape(pattern), re.IGNORECASE if ignore_case else 0)
+    options = re2.Options()
+    options.case_sensitive = not ignore_case
+    options.log_errors = False
+    try:
+        return re2.compile(pattern, options)
+    except re2.error as error:
+        detail = error.args[0] if error.args else error
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", errors="replace")
+        raise ValueError(f"Invalid regular expression: {detail}") from None
+
+
+def _clip_line(line: str, hit: Optional[_Hit]) -> Tuple[str, bool]:
     """Bound a long line to a window that keeps the match visible when it fits."""
     if len(line) <= ARTIFACT_SEARCH_MAX_LINE_CHARS:
         return line, False
@@ -409,10 +453,12 @@ class ArtifactStore:
     ) -> Dict[str, Any]:
         """Find matching lines internally; this is not an assistant tool.
 
-        ``pattern`` is literal unless ``regex`` is set. Each line is matched on
-        its own, without its terminator, so a match never spans lines. A regex
-        only sees the first ``ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS`` characters
-        of a longer line, to bound backtracking; ``partially_searched_lines``
+        ``pattern`` is literal unless ``regex`` is set, in which case it uses
+        RE2 syntax (linear-time; no backreferences or lookaround). Each line is
+        matched on its own, without its terminator, so a match never spans
+        lines. A regex only sees the first
+        ``ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS`` characters of a longer line, to
+        bound the work per line; ``partially_searched_lines``
         counts those lines. ``lines`` holds 1-based matching and context lines
         in order, without duplicates. Long lines are clipped to a window around
         the first match, and the output is capped at ``max_bytes``.
@@ -428,10 +474,7 @@ class ArtifactStore:
             raise ValueError(f"Expected 1 <= max_matches <= {ARTIFACT_SEARCH_MAX_MATCHES}")
         if not 1 <= max_bytes <= ARTIFACT_READ_MAX_BYTES:
             raise ValueError(f"Expected 1 <= max_bytes <= {ARTIFACT_READ_MAX_BYTES}")
-        try:
-            compiled = re.compile(pattern if regex else re.escape(pattern), re.IGNORECASE if ignore_case else 0)
-        except re.error as error:
-            raise ValueError(f"Invalid regular expression: {error}") from None
+        compiled = _compile_search_pattern(pattern, regex=regex, ignore_case=ignore_case)
 
         with self._lock:
             artifact = self._owned(scope, handle)
@@ -445,7 +488,7 @@ class ArtifactStore:
         partially_searched = 0
         truncated = False
 
-        def emit(number: int, line: str, hit: Optional[re.Match] = None) -> bool:
+        def emit(number: int, line: str, hit: Optional[_Hit] = None) -> bool:
             nonlocal remaining
             clipped_text, clipped = _clip_line(line, hit)
             size = len(clipped_text.encode("utf-8"))

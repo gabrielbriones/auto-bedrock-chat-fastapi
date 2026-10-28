@@ -41,14 +41,7 @@ from ...defaults import (
     ARTIFACT_TOOL_DEFAULT_MAX_MATCHES,
     CONTEXT_BUDGET_KINDS,
 )
-from .internal import (
-    ARTIFACT_UNAVAILABLE,
-    CONTEXT_EXHAUSTED,
-    INVALID_ARGUMENTS,
-    InternalTool,
-    ToolContext,
-    tool_error,
-)
+from .internal import ARTIFACT_UNAVAILABLE, CONTEXT_EXHAUSTED, INVALID_ARGUMENTS, InternalTool, ToolContext, tool_error
 
 READ_CONTENT_RANGE = "read_content_range"
 GREP_CONTENT = "grep_content"
@@ -426,8 +419,9 @@ GREP_CONTENT_DESC: Dict[str, Any] = {
     "name": GREP_CONTENT,
     "description": (
         "Search an archived artifact for lines containing a pattern. Matching is a case-insensitive literal "
-        "substring by default; set regex=true for a regular expression (matched one line at a time, at most "
-        f"{ARTIFACT_SEARCH_MAX_PATTERN_CHARS} characters). Returns grep-style lines ('12: match', '12- context', "
+        "substring by default; set regex=true for an RE2 regular expression (no backreferences or lookaround; "
+        f"matched one line at a time, at most {ARTIFACT_SEARCH_MAX_PATTERN_CHARS} characters). Returns grep-style "
+        "lines ('12: match', '12- context', "
         "'--' between groups); use read_content_range to read around a match."
     ),
     "parameters": {

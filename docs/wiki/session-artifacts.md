@@ -151,8 +151,20 @@ archiving and log that no live artifact scope is available. A caller wanting
 archiving must explicitly register and activate its own scope and arrange
 its cleanup; it must not borrow another session's scope.
 
-Assistant-facing marker replacement (spilling oversized tool results to a
-handle) remains follow-up work.
+### Handle marker in model input
+
+When the artifact tools are bound to the model (artifacts enabled, a
+tool-calling model, and `read_content_range` registered), each message that
+carries `metadata.artifact_handle` gets a trailing note in the model input:
+`[Archived: the full message is stored as artifact handle <uuid>. ...]`
+(`tool output of this step` for tool results, repeated on each result of that
+step). The note is added when the model input is built, after truncation, so it
+is never truncated away and stored/checkpointed content is unchanged. This is
+how the model learns the handle to pass to the [assistant tools](#assistant-tools).
+
+The original content is still sent to the model; replacing oversized content
+with a preview plus handle (spilling it out of the context window) remains
+follow-up work.
 
 ## Assistant tools
 
@@ -199,10 +211,13 @@ any JSON string.
 | `max_matches`   | `50`    | 1–200                                      |
 | `regex`         | `false` | Opt-in; patterns of at most 200 characters |
 
-Matching is a case-insensitive literal substring by default. Regexes are
-matched one line at a time and only against the first 8,192 characters of each
-line, which bounds backtracking; `partially_searched_lines` and a `hint`
-report lines that were longer. The result has grep-style `text` (`12: match`,
+Matching is a case-insensitive literal substring by default. Regexes use
+[RE2](https://github.com/google/re2/wiki/Syntax) syntax (via `google-re2`), so
+they run in linear time and cannot backtrack catastrophically; backreferences
+and lookaround are rejected as invalid. Regexes are matched one line at a time
+and only against the first 8,192 characters of each line;
+`partially_searched_lines` and a `hint` report lines that were longer. The
+result has grep-style `text` (`12: match`,
 `12- context`, `--` between groups), `match_count`, `total_lines` and
 `truncated` (more matches exist than were returned).
 
