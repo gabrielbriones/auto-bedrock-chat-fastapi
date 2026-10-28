@@ -9,6 +9,9 @@ Deliberately thin: no static per-tool registration, no code generation. The
 tool set exposed here is exactly whatever ``ToolsGenerator`` already compiled
 from the configured OpenAPI spec — the same tools available to the
 LangGraph/Bedrock chat loop, just reachable via a different transport.
+Session-bound internal tools (``read_content_range`` / ``grep_content`` and
+their aliases) are the exception: MCP has no live chat session or artifact
+scope, so they are never listed and ``tools/call`` rejects them.
 
 The LangGraph/Bedrock orchestration loop (``graph/graph.py``) is
 intentionally NOT reused here: MCP clients bring their own LLM and
@@ -25,7 +28,7 @@ True; see ``AutoLangChatPlugin._setup_mcp_routes`` and ``_do_startup``)::
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional
 
 from ..exceptions import ToolError
 from ..graph.tools.generator import ToolsGenerator
@@ -44,13 +47,29 @@ except ImportError as _exc:  # pragma: no cover
     ) from _exc
 
 
-def _build_mcp_tool_list(tools_generator: ToolsGenerator) -> List["types.Tool"]:
+def _session_bound_tool_names(tool_manager: Optional[ToolManager]) -> FrozenSet[str]:
+    """Internal tools (including hidden aliases) that need a live chat session.
+
+    MCP is a stateless tool provider with no chat session or artifact scope,
+    so these are never listed and ``tools/call`` rejects them.
+    """
+    internal_tools = getattr(tool_manager, "internal_tools", None)
+    if not isinstance(internal_tools, Mapping):
+        return frozenset()
+    return frozenset(name for name, tool in internal_tools.items() if tool.requires_session)
+
+
+def _build_mcp_tool_list(
+    tools_generator: ToolsGenerator, tool_manager: Optional[ToolManager] = None
+) -> List["types.Tool"]:
     """Convert ``ToolsGenerator.tools_desc`` into MCP ``Tool`` schema objects.
 
     Split out from ``build_mcp_server`` so the OpenAPI-derived-schema ->
     MCP-schema mapping can be unit tested without going through the full
-    ``Server`` request-dispatch machinery.
+    ``Server`` request-dispatch machinery. Session-bound internal tools
+    registered on ``tool_manager`` are excluded.
     """
+    excluded = _session_bound_tool_names(tool_manager)
     functions = tools_generator.tools_desc.get("functions", [])
     return [
         types.Tool(
@@ -59,6 +78,7 @@ def _build_mcp_tool_list(tools_generator: ToolsGenerator) -> List["types.Tool"]:
             inputSchema=fn.get("parameters") or {"type": "object", "properties": {}},
         )
         for fn in functions
+        if fn["name"] not in excluded
     ]
 
 
@@ -98,13 +118,17 @@ def build_mcp_server(
             MCP ``isError`` result) instead of executing unauthenticated.
     """
     server = Server(name)
+    session_bound = _session_bound_tool_names(tool_manager)
 
     @server.list_tools()
     async def _list_tools() -> List["types.Tool"]:
-        return _build_mcp_tool_list(tools_generator)
+        return _build_mcp_tool_list(tools_generator, tool_manager)
 
     @server.call_tool()
     async def _call_tool(tool_name: str, arguments: Dict[str, Any]) -> Any:
+        if tool_name in session_bound:
+            raise ToolError(f"Tool {tool_name} is only available inside a chat session, not over MCP.")
+
         auth_info = None
         try:
             request = server.request_context.request

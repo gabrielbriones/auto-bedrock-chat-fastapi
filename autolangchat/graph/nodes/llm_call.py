@@ -43,6 +43,7 @@ from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
 from ..state import ChatState
+from ..tools.artifact_tools import GREP_CONTENT, READ_CONTENT_RANGE
 from .preprocess import prepare_message_artifacts
 
 logger = logging.getLogger(__name__)
@@ -277,8 +278,33 @@ def _wrap_model_invocation_error(model_id: str, exc: Exception, chat_config: Any
     return ModelInvocationError(message, model_id=model_id, reason=reason)
 
 
-def _to_langchain_messages(message_dicts: List[Dict]) -> List[Any]:
-    """Convert internal dict messages to LangChain BaseMessage objects."""
+def _artifact_tools_bound(chat_config: Any, model_id: str) -> bool:
+    """Whether the artifact tools are bound to the model, so handles are worth advertising."""
+    if not getattr(chat_config, "artifact_enabled", True) or not supports_tool_calling(model_id):
+        return False
+    bound = {getattr(t, "name", None) for t in (getattr(chat_config, "langchain_tools", None) or [])}
+    return READ_CONTENT_RANGE in bound
+
+
+def _artifact_marker(msg: Dict, what: str) -> str:
+    """Text telling the model which handle holds this message's archived copy."""
+    handle = (msg.get("metadata") or {}).get("artifact_handle")
+    if not isinstance(handle, str) or not handle:
+        return ""
+    return (
+        f"\n\n[Archived: the full {what} is stored as artifact handle {handle}. "
+        f"To read exact parts of it, call {READ_CONTENT_RANGE} or {GREP_CONTENT} with this handle. "
+        "If they report artifact_unavailable, the copy has expired.]"
+    )
+
+
+def _to_langchain_messages(message_dicts: List[Dict], *, artifact_markers: bool = False) -> List[Any]:
+    """Convert internal dict messages to LangChain BaseMessage objects.
+
+    With ``artifact_markers``, messages archived under a handle get a trailing
+    note naming it. The note is added here, after any truncation, so it never
+    changes the stored or checkpointed content and cannot be truncated away.
+    """
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     lc_messages = []
@@ -290,16 +316,19 @@ def _to_langchain_messages(message_dicts: List[Dict]) -> List[Any]:
         if role == "system":
             lc_messages.append(SystemMessage(content=content))
         elif role == "user":
+            if artifact_markers and isinstance(content, str):
+                content += _artifact_marker(msg, "message")
             lc_messages.append(HumanMessage(content=content))
         elif role == "assistant":
             tool_calls = msg.get("tool_calls") or []
             lc_messages.append(AIMessage(content=content, tool_calls=tool_calls))
         elif role == "tool":
             tool_results = msg.get("tool_results") or []
+            marker = _artifact_marker(msg, "tool output of this step") if artifact_markers else ""
             for tr in tool_results:
                 lc_messages.append(
                     ToolMessage(
-                        content=str(tr.get("result") or tr.get("error", "")),
+                        content=str(tr.get("result") or tr.get("error", "")) + marker,
                         tool_call_id=tr.get("tool_call_id", ""),
                         name=tr.get("name", ""),
                     )
@@ -596,8 +625,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     if chat_config is None:
         raise RuntimeError("llm_call_node: chat_config not found in configurable")
 
-    lc_messages = _to_langchain_messages(messages)
     primary_model = chat_config.model_id
+    lc_messages = _to_langchain_messages(messages, artifact_markers=_artifact_tools_bound(chat_config, primary_model))
     fallback_model = getattr(chat_config, "fallback_model", None)
 
     _log_conversation(messages, "LLM call — conversation state", provider=provider_for_model(primary_model))
@@ -638,7 +667,13 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 retruncated, metadata["message_context_budget"] = prepare_message_artifacts(
                     retruncated, chat_config, config
                 )
-                ai_msg = await _invoke_with_streaming(llm, _to_langchain_messages(retruncated), on_progress)
+                ai_msg = await _invoke_with_streaming(
+                    llm,
+                    _to_langchain_messages(
+                        retruncated, artifact_markers=_artifact_tools_bound(chat_config, primary_model)
+                    ),
+                    on_progress,
+                )
                 metadata["fallback_model_used"] = False
             except ArtifactError:
                 raise

@@ -198,7 +198,7 @@ class TestToolsExecutionNode:
             received.append(msg)
 
         # Make execute_tool_calls actually invoke the on_progress callback
-        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None):
+        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None, tool_context=None):
             if on_progress:
                 await on_progress("Calling fn... (1/1)")
             return [{"tool_call_id": "c1", "name": "fn", "result": {}}]
@@ -383,7 +383,7 @@ class TestGraphToolLoop:
         tool_exec_count = {"n": 0}
         tm = MagicMock()
 
-        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None):
+        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None, tool_context=None):
             tool_exec_count["n"] += 1
             return results_1 if tool_exec_count["n"] == 1 else results_2
 
@@ -427,7 +427,7 @@ class TestGraphToolLoop:
         call_kwargs: List = []
         tm = MagicMock()
 
-        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None):
+        async def _exec(calls, auth_info=None, on_progress=None, on_tool_event=None, tool_context=None):
             call_kwargs.append({"auth_info": auth_info})
             return [{"tool_call_id": "c1", "name": "get_jobs", "result": {}}]
 
@@ -455,6 +455,107 @@ class TestGraphToolLoop:
 
         assert len(call_kwargs) == 1
         assert call_kwargs[0]["auth_info"] is fake_auth
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: paging a session artifact through the internal tools
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactPagingEndToEnd:
+    @pytest.mark.asyncio
+    async def test_model_pages_through_artifact(self):
+        """llm → read_content_range (page 1) → llm → page 2 → llm → final, using the real stack."""
+        from autolangchat.artifacts import ArtifactStore
+        from autolangchat.config import ChatConfig
+        from autolangchat.graph.tools.artifact_tools import READ_CONTENT_RANGE, build_artifact_tools
+        from autolangchat.graph.tools.manager import ToolManager
+
+        chat_config = ChatConfig(model_id=_FakeChatConfig.model_id, excluded_paths=[])
+        tm = ToolManager(generated_tools={}, config=chat_config, internal_tools=build_artifact_tools())
+        store = ArtifactStore()
+        store.register_connection("conn", "alice")
+        scope = store.activate("conn", "thread-paging", "alice")
+        handle = store.put(scope, "".join(f"row {n}\n" for n in range(1, 6)), {"source": "tool_result"})
+
+        def _read(call_id, start_line):
+            return {
+                "name": READ_CONTENT_RANGE,
+                "args": {"handle": handle, "start_line": start_line, "max_lines": 3},
+                "id": call_id,
+                "type": "tool_call",
+            }
+
+        replies = [
+            _make_ai_message_with_tools([_read("p1", 1)]),
+            _make_ai_message_with_tools([_read("p2", 4)]),
+            _make_ai_message_plain("The artifact has 5 rows."),
+        ]
+        bound_tools: List[Any] = []
+
+        def llm_factory(*args, **kwargs):
+            inst = MagicMock()
+
+            def _bind(tools, **_):
+                bound_tools.append([t.name for t in tools])
+                return inst
+
+            inst.bind_tools.side_effect = _bind
+            inst.ainvoke = AsyncMock(return_value=replies.pop(0))
+            inst.astream = _make_empty_astream()
+            return inst
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse", side_effect=llm_factory):
+            graph = build_chat_graph(chat_config, tool_manager=tm)
+            result = await graph.ainvoke(
+                {"user_message": "summarise the artifact"},
+                config={
+                    "configurable": {
+                        "thread_id": "thread-paging",
+                        "artifact_store": store,
+                        "artifact_scope": scope,
+                    }
+                },
+            )
+
+        pages = [m["tool_results"][0]["result"] for m in result["messages"] if m["role"] == "tool"]
+        assert [p["text"] for p in pages] == ["1: row 1\n2: row 2\n3: row 3", "4: row 4\n5: row 5"]
+        assert [p["has_more"] for p in pages] == [True, False]
+        assert [p["next_start_line"] for p in pages] == [4, None]
+        assert all(p["total_lines"] == 5 for p in pages)
+        assert result["messages"][-1]["content"] == "The artifact has 5 rows."
+        assert result["metadata"]["tool_call_rounds"] == 2
+        # The internal tool is bound to the model; hidden aliases are not.
+        assert bound_tools and all(READ_CONTENT_RANGE in names for names in bound_tools)
+        assert not any("read_artifact_range" in names for names in bound_tools)
+
+    @pytest.mark.asyncio
+    async def test_direct_ainvoke_without_scope_gets_tool_unavailable(self):
+        from autolangchat.config import ChatConfig
+        from autolangchat.graph.tools.artifact_tools import READ_CONTENT_RANGE, build_artifact_tools
+        from autolangchat.graph.tools.internal import TOOL_UNAVAILABLE
+        from autolangchat.graph.tools.manager import ToolManager
+
+        chat_config = ChatConfig(model_id=_FakeChatConfig.model_id, excluded_paths=[])
+        tm = ToolManager(generated_tools={}, config=chat_config, internal_tools=build_artifact_tools())
+        call = {"name": READ_CONTENT_RANGE, "args": {"handle": "art_x"}, "id": "c1", "type": "tool_call"}
+        replies = [_make_ai_message_with_tools([call]), _make_ai_message_plain("no access")]
+
+        def llm_factory(*args, **kwargs):
+            inst = MagicMock()
+            inst.bind_tools.return_value = inst
+            inst.ainvoke = AsyncMock(return_value=replies.pop(0))
+            inst.astream = _make_empty_astream()
+            return inst
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse", side_effect=llm_factory):
+            graph = build_chat_graph(chat_config, tool_manager=tm)
+            result = await graph.ainvoke(
+                {"user_message": "read it"}, config={"configurable": {"thread_id": "thread-no-scope"}}
+            )
+
+        [tool_message] = [m for m in result["messages"] if m["role"] == "tool"]
+        assert tool_message["tool_results"][0]["result"]["error"] == TOOL_UNAVAILABLE
 
 
 # ---------------------------------------------------------------------------

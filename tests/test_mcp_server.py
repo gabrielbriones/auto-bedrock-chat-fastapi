@@ -135,6 +135,83 @@ class TestBuildMcpServer:
         assert "Unknown tool" in result.root.content[0].text
 
 
+class TestSessionBoundInternalTools:
+    """Session-bound internal tools (artifact readers) never reach MCP."""
+
+    _COLLIDING_SPEC: Dict[str, Any] = {
+        **_SPEC,
+        "paths": {
+            **_SPEC["paths"],
+            "/read": {
+                "get": {
+                    "operationId": "read_content_range",
+                    "summary": "Unreserved operation with an internal tool's name",
+                    "responses": {"200": {"description": "OK"}},
+                }
+            },
+        },
+    }
+
+    def _manager(self, generator: ToolsGenerator):
+        from autolangchat.graph.tools.artifact_tools import build_artifact_tools
+        from autolangchat.graph.tools.manager import ToolManager
+
+        return ToolManager(
+            generated_tools=generator._generated_tools,
+            config=generator.config,
+            base_url="http://test-api",
+            internal_tools=build_artifact_tools(),
+        )
+
+    def test_internal_tools_are_not_listed(self):
+        generator = _make_generator()
+        manager = self._manager(generator)
+
+        names = {t.name for t in _build_mcp_tool_list(generator, manager)}
+
+        assert names == {"list_jobs", "get_job"}
+        # The chat loop still binds them.
+        assert {"read_content_range", "grep_content"} <= {f["name"] for f in manager._config.tools_desc["functions"]}
+
+    def test_listing_excludes_colliding_generated_name(self):
+        # Even if a generator was built without reserved names, MCP must not
+        # advertise a name the tool manager routes to an internal tool.
+        generator = ToolsGenerator(
+            openapi_spec=self._COLLIDING_SPEC, config=ChatConfig(model_id="test-model", excluded_paths=[])
+        )
+        assert "read_content_range" in {f["name"] for f in generator.tools_desc["functions"]}
+
+        names = {t.name for t in _build_mcp_tool_list(generator, self._manager(generator))}
+
+        assert "read_content_range" not in names
+
+    @pytest.mark.asyncio
+    async def test_list_tools_handler_excludes_internal_tools(self):
+        generator = _make_generator()
+        server = build_mcp_server(generator, self._manager(generator))
+
+        result = await server.request_handlers[types.ListToolsRequest](types.ListToolsRequest())
+
+        assert {t.name for t in result.root.tools} == {"list_jobs", "get_job"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["read_content_range", "grep_content", "read_artifact_range", "grep_artifact"])
+    async def test_call_tool_rejects_internal_tools(self, name):
+        generator = _make_generator()
+        manager = self._manager(generator)
+        manager.call_tool = AsyncMock()
+        server = build_mcp_server(generator, manager)
+
+        request = types.CallToolRequest(
+            params=types.CallToolRequestParams(name=name, arguments={"handle": "art_x", "pattern": "x"})
+        )
+        result = await server.request_handlers[types.CallToolRequest](request)
+
+        assert result.root.isError is True
+        assert "only available inside a chat session" in result.root.content[0].text
+        manager.call_tool.assert_not_awaited()
+
+
 class TestCallToolTruncatedResponse:
     @pytest.mark.asyncio
     async def test_oversized_response_returns_truncated_flagged_text_result(self):

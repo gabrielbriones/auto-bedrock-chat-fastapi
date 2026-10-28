@@ -186,6 +186,81 @@ class TestGenerateToolsDesc:
 
 
 # ---------------------------------------------------------------------------
+# ToolsGenerator reserved_names — internal tool name reservation
+# ---------------------------------------------------------------------------
+
+
+def _make_reserving_generator(spec: Dict, reserved) -> ToolsGenerator:
+    from autolangchat.config import ChatConfig
+
+    config = ChatConfig(model_id="test-model", excluded_paths=[])
+    return ToolsGenerator(openapi_spec=spec, config=config, reserved_names=reserved)
+
+
+class TestReservedToolNames:
+    def test_no_reservations_by_default(self):
+        gen = _make_generator(_GET_SPEC)
+        assert gen.reserved_names == frozenset()
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs", "get_job"}
+
+    def test_colliding_operation_is_logged_and_skipped(self, caplog):
+        with caplog.at_level("WARNING", logger="autolangchat.graph.tools.generator"):
+            gen = _make_reserving_generator(_GET_SPEC, ["get_job"])
+
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs"}
+        assert gen.get_tool_metadata("get_job") is None
+        assert "GET /jobs/{job_id}" in caplog.text
+        assert "'get_job' is reserved by an internal tool" in caplog.text
+
+    def test_reservation_matches_cleaned_name(self):
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Test API", "version": "1.0.0"},
+            "paths": {
+                "/grep": {"get": {"operationId": "grep-content", "responses": {"200": {"description": "OK"}}}},
+                "/read": {"get": {"responses": {"200": {"description": "OK"}}}},
+            },
+        }
+        gen = _make_reserving_generator(spec, {"grep_content", "get_read"})
+        assert gen.tools_desc["functions"] == []
+
+    def test_unrelated_reservations_do_not_affect_output(self):
+        gen = _make_reserving_generator(_GET_SPEC, {"read_content_range", "grep_content"})
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs", "get_job"}
+
+    def test_reservations_survive_invalidate_cache(self):
+        gen = _make_reserving_generator(_GET_SPEC, ("get_job",))
+        gen.invalidate_cache()
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs"}
+
+    def test_manager_never_sees_reserved_operation(self, caplog):
+        from autolangchat.config import ChatConfig
+        from autolangchat.graph.tools.internal import InternalTool
+
+        caplog.set_level("WARNING")
+        internal = InternalTool(
+            name="get_job",
+            function_desc={"name": "get_job", "description": "internal", "parameters": {"type": "object"}},
+            handler=AsyncMock(return_value="ok"),
+        )
+        config = ChatConfig(model_id="test-model", excluded_paths=[])
+        gen = ToolsGenerator(openapi_spec=_GET_SPEC, config=config, reserved_names=[internal.name])
+        manager = ToolManager(
+            generated_tools=gen._generated_tools,
+            config=config,
+            base_url="http://test-api",
+            internal_tools=[internal],
+        )
+
+        get_job_descs = [f for f in config.tools_desc["functions"] if f["name"] == "get_job"]
+        assert get_job_descs == [internal.function_desc]
+        assert manager.get_statistics()["total_tools_available"] == 1
+        # Dropped at generation time, so the manager's fallback filter has nothing to skip.
+        manager_logs = [r for r in caplog.records if r.name == "autolangchat.graph.tools.manager"]
+        assert not [r for r in manager_logs if "reserved" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
 # ToolManager.generate_langchain_tools
 # ---------------------------------------------------------------------------
 

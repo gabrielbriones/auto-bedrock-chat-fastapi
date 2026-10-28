@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .auth_handler import DEFAULT_SUPPORTED_AUTH_TYPES
 from .defaults import (
+    ARTIFACT_READ_MAX_BYTES,
+    ARTIFACT_READ_MAX_LINES,
     DEFAULT_ARTIFACT_MAX_AGE_SECONDS,
     DEFAULT_ARTIFACT_MAX_BYTES,
     DEFAULT_ARTIFACT_MAX_BYTES_PER_SESSION,
@@ -488,6 +490,20 @@ class ChatConfig(BaseSettings):
         default=DEFAULT_ARTIFACT_MAX_ITEMS_PER_SESSION, alias="AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION", gt=0
     )
     artifact_max_bytes: int = Field(default=DEFAULT_ARTIFACT_MAX_BYTES, alias="AUTOCHAT_ARTIFACT_MAX_BYTES", gt=0)
+    artifact_read_max_lines: int = Field(
+        default=ARTIFACT_READ_MAX_LINES,
+        alias="AUTOCHAT_ARTIFACT_READ_MAX_LINES",
+        gt=0,
+        le=ARTIFACT_READ_MAX_LINES,
+        description="Maximum lines one read_content_range call may return",
+    )
+    artifact_read_max_bytes: int = Field(
+        default=ARTIFACT_READ_MAX_BYTES,
+        alias="AUTOCHAT_ARTIFACT_READ_MAX_BYTES",
+        ge=4,
+        le=ARTIFACT_READ_MAX_BYTES,
+        description="Maximum UTF-8 bytes of artifact text one read_content_range or grep_content call may return",
+    )
 
     # WebSocket Configuration
     max_sessions: int = Field(

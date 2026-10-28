@@ -87,6 +87,8 @@ A tool response over `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` is not parsed: reading s
 | `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `201326592` | UTF-8 payload-byte quota per live connection (192 MiB)                      |
 | `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Artifact-count quota per live connection, across its conversations          |
 | `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `536870912` | Total UTF-8 payload-byte quota per store/process (512 MiB)                  |
+| `AUTOCHAT_ARTIFACT_READ_MAX_LINES`        | `1000`      | Maximum lines one `read_content_range` call may return (at most 1000)       |
+| `AUTOCHAT_ARTIFACT_READ_MAX_BYTES`        | `65536`     | Maximum UTF-8 bytes one artifact read or search may return (at most 65536)  |
 
 All numeric limits must be positive. There is no separate per-item cap.
 Quotas exclude Python object overhead, transient serialization and existing
@@ -200,7 +202,7 @@ constraints and the aggregate counters exposed under `sessions.artifacts` at
 | `AUTOCHAT_MCP_ENABLED`  | `false`     | Master switch for the MCP Streamable HTTP endpoint. Requires the optional `[mcp]` extra (`pip install autolangchat[mcp]`) |
 | `AUTOCHAT_MCP_ENDPOINT` | `/chat/mcp` | Endpoint path for the MCP server, mounted when `AUTOCHAT_MCP_ENABLED` is true                                             |
 
-Exposes the same OpenAPI-derived tools already available to the LangGraph/Bedrock chat loop to MCP clients (Claude Desktop, VS Code Copilot, etc.) as a pure `tools/list`/`tools/call` provider — MCP clients bring their own LLM and tool-calling loop, so the chat loop itself is not reused for this endpoint.
+Exposes the same OpenAPI-derived tools already available to the LangGraph/Bedrock chat loop to MCP clients (Claude Desktop, VS Code Copilot, etc.) as a pure `tools/list`/`tools/call` provider — MCP clients bring their own LLM and tool-calling loop, so the chat loop itself is not reused for this endpoint. Session-bound internal tools such as the [artifact readers](session-artifacts.md#assistant-tools) are not exposed over MCP: they are left out of `tools/list` and rejected by `tools/call`.
 
 **Auth** is extracted per-request from the incoming HTTP headers (no separate env vars — it mirrors `AUTOCHAT_SUPPORTED_AUTH_TYPES`), detected in this order:
 
