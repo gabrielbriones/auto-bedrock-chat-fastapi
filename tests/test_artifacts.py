@@ -343,7 +343,9 @@ def test_line_boundaries_match_splitlines_for_every_code_point():
     assert [start for start, _, _ in artifacts_module._line_spans(text)] == [0] + ends[:-1]
 
 
-@pytest.mark.parametrize("text", ["a\n" * 500_000, "\u20ac" * 1_000_000])
+@pytest.mark.parametrize(
+    "text", ["a\n" * 500_000, "\u20ac" * 1_000_000], ids=["many-short-lines", "one-long-multibyte-line"]
+)
 def test_region_read_temporary_allocations_are_bounded(text):
     store, scope = _store()
     handle = store.put(scope, text, {})

@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 import autolangchat.artifacts as artifacts_module
@@ -32,6 +33,7 @@ from autolangchat.graph.tools.internal import (
     ToolContext,
     tool_error,
 )
+from tests.http_stubs import stub_http
 
 
 def _desc(name="echo"):
@@ -152,8 +154,13 @@ def _manager(internal_tools=(), spec=None):
         base_url="http://test-api",
         internal_tools=internal_tools,
     )
-    manager._http_client.request = AsyncMock(side_effect=AssertionError("internal tools must not hit HTTP"))
+    # Fail loudly instead of reaching the network; tests that need HTTP install stub_http.
+    manager._http_client = httpx.AsyncClient(transport=httpx.MockTransport(_no_http))
     return manager, config
+
+
+def _no_http(request):
+    raise AssertionError(f"internal tools must not hit HTTP: {request.method} {request.url}")
 
 
 def _tool(name="echo", handler=None, **kwargs):
@@ -207,6 +214,7 @@ class TestToolManagerInternalTools:
     async def test_execute_tool_calls_dispatches_internal_with_context(self):
         handler = AsyncMock(return_value={"lines": "1: hi"})
         manager, _ = _manager([_tool("echo", handler)])
+        requests = stub_http(manager, (200, {}))
         ctx = _ctx(store=ArtifactStore(), scope=_scope())
 
         results = await manager.execute_tool_calls(
@@ -215,7 +223,7 @@ class TestToolManagerInternalTools:
 
         assert results == [{"tool_call_id": "c1", "name": "echo", "result": {"lines": "1: hi"}}]
         handler.assert_awaited_once_with({"text": "hi"}, ctx)
-        manager._http_client.request.assert_not_called()
+        assert requests == []
 
     async def test_execute_tool_calls_without_context_is_unavailable(self):
         handler = AsyncMock()
@@ -252,10 +260,7 @@ class TestToolManagerInternalTools:
 
     async def test_execute_tool_calls_mixes_internal_and_http(self):
         manager, _ = _manager([_tool("read_content_range", requires_session=False)])
-        response = AsyncMock()
-        response.status_code = 200
-        response.json = lambda: {"jobs": []}
-        manager._http_client.request = AsyncMock(return_value=response)
+        requests = stub_http(manager, (200, {"jobs": []}))
 
         results = await manager.execute_tool_calls(
             [
@@ -265,7 +270,7 @@ class TestToolManagerInternalTools:
         )
 
         assert [r["result"] for r in results] == [{"jobs": []}, "ok"]
-        manager._http_client.request.assert_awaited_once()
+        assert [r.url.path for r in requests] == ["/jobs"]
 
     async def test_execute_tool_calls_dispatches_hidden_alias(self):
         handler = AsyncMock(return_value="alias-ok")
@@ -289,11 +294,12 @@ class TestToolManagerInternalTools:
     async def test_call_tool_dispatches_internal(self):
         handler = AsyncMock(return_value="ok")
         manager, _ = _manager([_tool("echo", handler)])
+        requests = stub_http(manager, (200, {}))
         ctx = _ctx(store=ArtifactStore(), scope=_scope())
 
         assert await manager.call_tool("echo", {"text": "hi"}, tool_context=ctx) == "ok"
         handler.assert_awaited_once_with({"text": "hi"}, ctx)
-        manager._http_client.request.assert_not_called()
+        assert requests == []
 
     async def test_call_tool_without_context_is_unavailable(self):
         manager, _ = _manager([_tool("echo")])
@@ -420,9 +426,7 @@ class TestToolsExecutionNodeContext:
         for_turn = MagicMock()
         monkeypatch.setattr(tool_node.ContextBudget, "for_turn", for_turn)
         manager, chat_config = _manager([_tool("read_content_range")])
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"jobs": []}
-        manager._http_client.request = AsyncMock(return_value=response)
+        stub_http(manager, (200, {"jobs": []}))
 
         results = await _run_node(manager, chat_config, "list_jobs")
 
@@ -853,6 +857,12 @@ class TestArtifactToolAliases:
 
 
 def _plugin(artifact_enabled):
+    """A bare plugin with only the tool wiring from ``__init__``.
+
+    Like the other plugin tests, this skips the full constructor, which
+    validates AWS credentials and builds Bedrock clients and stores that tool
+    registration does not need.
+    """
     from fastapi import FastAPI
 
     from autolangchat.config import ChatConfig
@@ -868,8 +878,13 @@ def _plugin(artifact_enabled):
     def colliding_read():
         return []
 
-    config = ChatConfig(model_id="test-model", AUTOCHAT_ENABLE_UI=False, AUTOCHAT_ARTIFACT_ENABLED=artifact_enabled)
-    return AutoLangChatPlugin(app, config=config)
+    plugin = object.__new__(AutoLangChatPlugin)
+    plugin.app = app
+    plugin.config = ChatConfig(
+        model_id="test-model", AUTOCHAT_ENABLE_UI=False, AUTOCHAT_ARTIFACT_ENABLED=artifact_enabled
+    )
+    plugin._init_tools()
+    return plugin
 
 
 def _bound_names(plugin):
