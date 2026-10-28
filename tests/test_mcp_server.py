@@ -210,7 +210,8 @@ class TestSessionBoundInternalTools:
         assert result.root.isError is True
         assert "only available inside a chat session" in result.root.content[0].text
         manager.call_tool.assert_not_awaited()
-        
+
+
 class TestCallToolTruncatedResponse:
     @pytest.mark.asyncio
     async def test_oversized_response_returns_truncated_flagged_text_result(self):

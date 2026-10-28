@@ -25,8 +25,8 @@ import httpx
 from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
 from ...exceptions import ToolError, ToolHTTPError
-from .internal import InternalTool, ToolContext
 from .bounded_decoding import ACCEPT_ENCODING, iter_decoded_chunks
+from .internal import InternalTool, ToolContext
 
 logger = logging.getLogger(__name__)
 

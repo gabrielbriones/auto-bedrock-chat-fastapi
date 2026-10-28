@@ -9,11 +9,7 @@ import pytest
 
 import autolangchat.artifacts as artifacts_module
 from autolangchat.artifacts import ArtifactScope, ArtifactStore
-from autolangchat.defaults import (
-    ARTIFACT_READ_MAX_BYTES,
-    ARTIFACT_READ_MAX_LINES,
-    ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS,
-)
+from autolangchat.defaults import ARTIFACT_READ_MAX_BYTES, ARTIFACT_READ_MAX_LINES, ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS
 from autolangchat.graph.tools.artifact_tools import (
     GREP_ARTIFACT_ALIAS,
     GREP_CONTENT,
