@@ -127,7 +127,7 @@ def _char_cost(char: str) -> int:
     code = ord(char)
     if char in '"\\\b\f\n\r\t':
         return 2
-    if 0x20 <= code < 0x80:
+    if 0x20 <= code < 0x7F:
         return 1
     return 12 if code > 0xFFFF else 6
 
