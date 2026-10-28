@@ -349,6 +349,8 @@ async def grep_content(arguments: Dict[str, Any], ctx: ToolContext) -> Dict[str,
         parts.append(f"{entry['line']}{marker} {entry['text']}{suffix}")
         cost = sum(_escaped_len(part) + 2 for part in parts)
         if room is not None and used + cost > room:
+            if not matches:
+                return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
             truncated = truncated or any(later["match"] for later in entries[index:])
             break
         rendered.extend(parts)
