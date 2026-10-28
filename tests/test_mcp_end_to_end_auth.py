@@ -12,6 +12,7 @@ request headers sent to the tool's target API. Only the underlying
 
 import base64
 import time
+from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,6 +27,7 @@ from autolangchat.config import ChatConfig  # noqa: E402
 from autolangchat.graph.tools.generator import ToolsGenerator  # noqa: E402
 from autolangchat.graph.tools.manager import ToolManager  # noqa: E402
 from autolangchat.mcp.server import build_mcp_server  # noqa: E402
+from tests.http_stubs import stub_http  # noqa: E402
 
 _SPEC: Dict[str, Any] = {
     "openapi": "3.0.0",
@@ -100,8 +102,12 @@ def _fake_response(json_body=None, status_code=200):
     return response
 
 
-async def _call_list_jobs_with_headers(server, headers, mock_request):
-    """Invoke the real tools/call handler with a simulated request context."""
+async def _call_list_jobs_with_headers(server, headers, requests):
+    """Invoke the real tools/call handler with a simulated request context.
+
+    ``requests`` is the list returned by ``stub_http``; the outbound request's
+    headers are exposed as ``.kwargs["headers"]`` on the returned object.
+    """
     handler = server.request_handlers[types.CallToolRequest]
     call_request = types.CallToolRequest(params=types.CallToolRequestParams(name="list_jobs", arguments={}))
 
@@ -120,7 +126,7 @@ async def _call_list_jobs_with_headers(server, headers, mock_request):
         request_ctx.reset(token)
 
     assert result.root.isError is False, result.root.content
-    return mock_request.call_args
+    return SimpleNamespace(kwargs={"headers": requests[-1].headers})
 
 
 class TestEndToEndAuthPaths:
@@ -129,25 +135,21 @@ class TestEndToEndAuthPaths:
     @pytest.mark.asyncio
     async def test_bearer_token(self):
         generator, tool_manager = _make_generator_and_manager()
-        tool_manager._http_client.request = AsyncMock(return_value=_fake_response())
+        requests = stub_http(tool_manager, (200, {}))
         server = build_mcp_server(generator, tool_manager)
 
-        call = await _call_list_jobs_with_headers(
-            server, {"Authorization": "Bearer tok123"}, tool_manager._http_client.request
-        )
+        call = await _call_list_jobs_with_headers(server, {"Authorization": "Bearer tok123"}, requests)
 
         assert call.kwargs["headers"]["Authorization"] == "Bearer tok123"
 
     @pytest.mark.asyncio
     async def test_basic_auth(self):
         generator, tool_manager = _make_generator_and_manager()
-        tool_manager._http_client.request = AsyncMock(return_value=_fake_response())
+        requests = stub_http(tool_manager, (200, {}))
         server = build_mcp_server(generator, tool_manager)
         encoded = base64.b64encode(b"alice:s3cret").decode()
 
-        call = await _call_list_jobs_with_headers(
-            server, {"Authorization": f"Basic {encoded}"}, tool_manager._http_client.request
-        )
+        call = await _call_list_jobs_with_headers(server, {"Authorization": f"Basic {encoded}"}, requests)
 
         expected = base64.b64encode(b"alice:s3cret").decode()
         assert call.kwargs["headers"]["Authorization"] == f"Basic {expected}"
@@ -155,23 +157,23 @@ class TestEndToEndAuthPaths:
     @pytest.mark.asyncio
     async def test_api_key(self):
         generator, tool_manager = _make_generator_and_manager()
-        tool_manager._http_client.request = AsyncMock(return_value=_fake_response())
+        requests = stub_http(tool_manager, (200, {}))
         server = build_mcp_server(generator, tool_manager)
 
-        call = await _call_list_jobs_with_headers(server, {"X-API-Key": "key-abc"}, tool_manager._http_client.request)
+        call = await _call_list_jobs_with_headers(server, {"X-API-Key": "key-abc"}, requests)
 
         assert call.kwargs["headers"]["X-API-Key"] == "key-abc"
 
     @pytest.mark.asyncio
     async def test_custom_headers(self):
         generator, tool_manager = _make_generator_and_manager()
-        tool_manager._http_client.request = AsyncMock(return_value=_fake_response())
+        requests = stub_http(tool_manager, (200, {}))
         server = build_mcp_server(generator, tool_manager)
 
         call = await _call_list_jobs_with_headers(
             server,
             {"X-Forward-Tenant-Id": "acme", "X-Forward-Region": "us-east"},
-            tool_manager._http_client.request,
+            requests,
         )
 
         assert call.kwargs["headers"]["Tenant-Id"] == "acme"
@@ -180,7 +182,7 @@ class TestEndToEndAuthPaths:
     @pytest.mark.asyncio
     async def test_oauth2_client_credentials(self):
         generator, tool_manager = _make_generator_and_manager()
-        tool_manager._http_client.request = AsyncMock(return_value=_fake_response())
+        requests = stub_http(tool_manager, (200, {}))
         tool_manager._http_client.post = AsyncMock(
             return_value=_fake_response({"access_token": "minted-tok", "expires_in": 3600})
         )
@@ -193,7 +195,7 @@ class TestEndToEndAuthPaths:
                 "X-OAuth2-Client-Secret": "secret-1",
                 "X-OAuth2-Token-Url": "https://idp.example.com/token",
             },
-            tool_manager._http_client.request,
+            requests,
         )
 
         tool_manager._http_client.post.assert_awaited_once()
@@ -204,7 +206,7 @@ class TestEndToEndAuthPaths:
     @pytest.mark.asyncio
     async def test_sso_session_token(self):
         generator, tool_manager = _make_generator_and_manager()
-        tool_manager._http_client.request = AsyncMock(return_value=_fake_response())
+        requests = stub_http(tool_manager, (200, {}))
         sso_session_store = _FakeSSOSessionStore()
         sso_session_store.create_session("sess-1", access_token="idp-access-tok")
         session_token = sso_session_store.generate_session_token("sess-1")
@@ -216,9 +218,7 @@ class TestEndToEndAuthPaths:
             sso_session_secret=sso_session_store._SECRET,
         )
 
-        call = await _call_list_jobs_with_headers(
-            server, {"Authorization": f"Bearer {session_token}"}, tool_manager._http_client.request
-        )
+        call = await _call_list_jobs_with_headers(server, {"Authorization": f"Bearer {session_token}"}, requests)
 
         # The IdP access token is forwarded for leg 2, not the opaque session_token.
         assert call.kwargs["headers"]["Authorization"] == "Bearer idp-access-tok"

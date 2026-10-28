@@ -24,6 +24,7 @@ from .defaults import (
     DEFAULT_PRESERVE_SYSTEM_MESSAGE,
     DEFAULT_SESSION_TIMEOUT,
     DEFAULT_TIMEOUT,
+    DEFAULT_TOOL_RESPONSE_MAX_BYTES,
     HISTORY_MSG_LENGTH_THRESHOLD_FRACTION,
     HISTORY_MSG_TRUNCATION_TARGET_FRACTION,
     HISTORY_TOTAL_LENGTH_THRESHOLD_FRACTION,
@@ -368,6 +369,16 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_MAX_TOOL_CALLS",
         gt=0,
         description="Maximum tool calls per conversation turn (None = unlimited)",
+    )
+
+    tool_response_max_bytes: int = Field(
+        default=DEFAULT_TOOL_RESPONSE_MAX_BYTES,
+        alias="AUTOCHAT_TOOL_RESPONSE_MAX_BYTES",
+        gt=0,
+        description=(
+            "Hard cap, in decoded bytes, on an HTTP tool response body. Reading stops at the cap and "
+            "the result is flagged as truncated. Default: 64 MiB."
+        ),
     )
 
     # Conversation History Management

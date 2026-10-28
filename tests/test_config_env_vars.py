@@ -255,6 +255,23 @@ class TestContextBudgetEnvVars:
             _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION=value)
 
 
+class TestToolResponseMaxBytesEnvVar:
+    def test_default_is_64_mib(self):
+        assert _load_config().tool_response_max_bytes == 64 * 1024 * 1024
+
+    def test_default_artifact_quotas_fit_an_archived_truncated_response(self):
+        """The preprocess archive pass serializes a tool message's tool_results and its
+        content mirror (about 2.1x the body for log text), so a capped response must fit."""
+        config = _load_config()
+        assert config.artifact_max_bytes_per_session >= 3 * config.tool_response_max_bytes
+        assert config.artifact_max_bytes >= 2 * config.artifact_max_bytes_per_session
+
+    def test_configurable_and_must_be_positive(self):
+        assert _load_config(AUTOCHAT_TOOL_RESPONSE_MAX_BYTES="123").tool_response_max_bytes == 123
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_TOOL_RESPONSE_MAX_BYTES="0")
+
+
 class TestArtifactEnvVars:
     def test_enabled_by_default_and_can_be_disabled(self):
         assert _load_config().artifact_enabled is True
