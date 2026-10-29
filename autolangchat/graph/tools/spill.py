@@ -27,8 +27,6 @@ logger = logging.getLogger(__name__)
 
 MARKER_SOURCE = "tool_response"
 USER_MESSAGE_SOURCE = "user_message"
-# Key set on a ``tool_results`` entry whose ``result`` is an artifact marker, and on a user message that is one.
-MARKER_ENTRY_KEY = ARTIFACT_MARKER_ENTRY_KEY
 READ_HINT = "Call read_content_range(handle, start_line, max_lines) or grep_content(handle, pattern)"
 
 _PLACEHOLDER_HANDLE = "0" * 36  # same length as a store handle (uuid4)
@@ -79,7 +77,7 @@ def _entries(message: Dict[str, Any]) -> List[Dict[str, Any]]:
     if role == "tool":
         return list(message.get("tool_results") or [])
     content = message.get("content")
-    if role == "user" and isinstance(content, str) and content and not message.get(MARKER_ENTRY_KEY):
+    if role == "user" and isinstance(content, str) and content and not message.get(ARTIFACT_MARKER_ENTRY_KEY):
         return [{"result": content}]
     return []
 
@@ -91,11 +89,11 @@ def _rebuild(message: Dict[str, Any], entries: List[Dict[str, Any]]) -> Dict[str
             [e.get("result", e.get("error")) if isinstance(e, dict) else e for e in entries], default=str
         )
         return {**message, "content": mirror, "tool_results": entries}
-    return {**message, "content": str(entries[0]["result"]), MARKER_ENTRY_KEY: True}
+    return {**message, "content": str(entries[0]["result"]), ARTIFACT_MARKER_ENTRY_KEY: True}
 
 
 def _is_spillable(entry: Any, exempt_tools: Collection[str]) -> bool:
-    if not isinstance(entry, dict) or entry.get(MARKER_ENTRY_KEY) or "error" in entry:
+    if not isinstance(entry, dict) or entry.get(ARTIFACT_MARKER_ENTRY_KEY) or "error" in entry:
         return False
     if entry.get("name") in exempt_tools:
         return False
@@ -233,7 +231,7 @@ def _replacement(
     if store is not None and scope is not None:
         # Size the marker with an approximate size first, so nothing is stored when it would not shrink the result.
         draft = _artifact_marker(payload, len(text), _PLACEHOLDER_HANDLE, store, read_hint, **origin)
-        marker_cost = _entry_tokens(role, {**entry, "result": draft, MARKER_ENTRY_KEY: True}, provider)
+        marker_cost = _entry_tokens(role, {**entry, "result": draft, ARTIFACT_MARKER_ENTRY_KEY: True}, provider)
         if marker_cost >= cost:
             return None, False, cost
         try:
@@ -249,7 +247,7 @@ def _replacement(
             )
         else:
             marker = _artifact_marker(payload, stored["size_bytes"], handle, store, read_hint, **origin)
-            return {**entry, "result": marker, MARKER_ENTRY_KEY: True}, True, marker_cost
+            return {**entry, "result": marker, ARTIFACT_MARKER_ENTRY_KEY: True}, True, marker_cost
 
     if not is_tool:
         return None, False, cost

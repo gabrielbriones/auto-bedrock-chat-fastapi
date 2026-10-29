@@ -36,8 +36,6 @@ ARTIFACT_TOOL_DEFAULT_MAX_MATCHES = 50
 ARTIFACT_MARKER_PREVIEW_MAX_CHARS = 1000
 # Flag on a ``tool_results`` entry, or on a user message, replaced by an artifact marker; it is never truncated.
 ARTIFACT_MARKER_ENTRY_KEY = "artifact_marker"
-# Characters of each string field of an internal tool result that its DEBUG log line shows.
-INTERNAL_TOOL_LOG_PREVIEW_CHARS = 500
 
 # ── AI Summarization ────────────────────────────────────────────────────
 DEFAULT_ENABLE_AI_SUMMARIZATION = False

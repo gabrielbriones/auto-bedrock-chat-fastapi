@@ -14,8 +14,9 @@ import pytest
 
 from autolangchat.artifacts import ArtifactError, ArtifactStore
 from autolangchat.context_budget import ContextBudget, estimate_message_parts, provider_for_model
+from autolangchat.defaults import ARTIFACT_MARKER_ENTRY_KEY
 from autolangchat.graph.tools import artifact_tools
-from autolangchat.graph.tools.spill import MARKER_ENTRY_KEY, READ_HINT, replace_oversized_message
+from autolangchat.graph.tools.spill import READ_HINT, replace_oversized_message
 
 CLAUDE = "us.anthropic.claude-sonnet-5"
 QWEN = "qwen.qwen3-32b-v1:0"
@@ -161,7 +162,7 @@ class TestSpillDecision:
 
         assert outcome.spilled == 1
         stray, replaced = outcome.message["tool_results"]
-        assert stray == "stray text" and replaced[MARKER_ENTRY_KEY] is True
+        assert stray == "stray text" and replaced[ARTIFACT_MARKER_ENTRY_KEY] is True
         assert json.loads(outcome.message["content"]) == ["stray text", replaced["result"]]
 
     def test_message_over_threshold_replaces_the_largest_results_first(self, caplog):
@@ -176,7 +177,7 @@ class TestSpillDecision:
         with caplog.at_level("DEBUG", logger="autolangchat"):
             outcome = _spill(entries, configurable=_configurable(store, scope), threshold=threshold)
 
-        assert [bool(r.get(MARKER_ENTRY_KEY)) for r in _results(outcome)] == [False, True, True, False]
+        assert [bool(r.get(ARTIFACT_MARKER_ENTRY_KEY)) for r in _results(outcome)] == [False, True, True, False]
         assert outcome.spilled == 2
         assert sum(_costs(_results(outcome))) <= threshold
         spills = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Spilled tool result")]
@@ -217,7 +218,7 @@ class TestMarkerShape:
         entry = _results(outcome)[0]
         marker = entry["result"]
         assert (entry["tool_call_id"], entry["name"], entry["status_code"]) == ("abc", "get_report", 200)
-        assert entry[MARKER_ENTRY_KEY] is True
+        assert entry[ARTIFACT_MARKER_ENTRY_KEY] is True
         assert marker["source"] == "tool_response"
         assert marker["tool_name"] == "get_report"
         assert marker["content_type"] == "application/json"
@@ -318,7 +319,7 @@ class TestNeverSpilled:
         ]
         outcome = _spill(entries, configurable=_configurable(store, scope))
         results = _results(outcome)
-        assert [bool(r.get(MARKER_ENTRY_KEY)) for r in results] == [False, True, False]
+        assert [bool(r.get(ARTIFACT_MARKER_ENTRY_KEY)) for r in results] == [False, True, False]
         assert results[0] == entries[0] and results[2] == entries[2]
 
 
@@ -341,7 +342,7 @@ class TestFlaggedPreviewFallback:
         assert outcome.truncated == 1 and outcome.spilled == 0
         assert entry["result"]["truncated"] is True
         assert "artifact_handle" not in entry["result"]
-        assert MARKER_ENTRY_KEY not in entry
+        assert ARTIFACT_MARKER_ENTRY_KEY not in entry
         assert entry["tool_call_id"] == "c1"
         assert len(str(entry["result"])) < 5000
 
@@ -378,7 +379,7 @@ class TestExemptTools:
         )
         results = _results(outcome)
         assert results[0]["result"] == exempt_page
-        assert results[1].get(MARKER_ENTRY_KEY) is True
+        assert results[1].get(ARTIFACT_MARKER_ENTRY_KEY) is True
 
 
 def _file_text(lines: int = 2000) -> str:
@@ -570,7 +571,7 @@ class TestUserMessageReplacement:
         assert outcome.changed and outcome.spilled == 1 and outcome.truncated == 0
         replaced = outcome.message
         marker = _marker_of(replaced)
-        assert replaced[MARKER_ENTRY_KEY] is True and replaced["role"] == "user"
+        assert replaced[ARTIFACT_MARKER_ENTRY_KEY] is True and replaced["role"] == "user"
         # The marker names the handle itself, so the message carries none in its metadata.
         assert replaced["metadata"] == message["metadata"]
         # The model receives it the way it receives a tool result's marker: as str(marker).
@@ -638,7 +639,7 @@ class TestUserMessageReplacement:
             {"role": "user", "content": ""},
             {"role": "user", "content": [{"type": "text", "text": "x" * 50_000}]},
             {"role": "assistant", "content": "x" * 50_000},
-            {"role": "user", "content": "x" * 50_000, MARKER_ENTRY_KEY: True},
+            {"role": "user", "content": "x" * 50_000, ARTIFACT_MARKER_ENTRY_KEY: True},
         ],
         ids=["empty", "list-content", "assistant", "already-a-marker"],
     )

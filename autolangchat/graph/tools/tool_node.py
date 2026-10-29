@@ -57,11 +57,12 @@ from langchain_core.runnables import RunnableConfig
 from ...artifacts import ArtifactScope, ArtifactStore
 from ...auth_handler import can_refresh
 from ...context_budget import ContextBudget
-from ...defaults import INTERNAL_TOOL_LOG_PREVIEW_CHARS
 from ..state import ChatState
 from .internal import ToolContext
 
 logger = logging.getLogger(__name__)
+
+_INTERNAL_TOOL_LOG_PREVIEW_CHARS = 500
 
 
 def _clip_strings(value: Any, limit: int) -> Any:
@@ -78,7 +79,7 @@ def _clip_strings(value: Any, limit: int) -> Any:
 def _result_preview(entry: Dict[str, Any]) -> str:
     """The result (or error) of a ``tool_results`` entry as JSON, with long strings clipped."""
     payload = entry.get("result", entry.get("error"))
-    return json.dumps(_clip_strings(payload, INTERNAL_TOOL_LOG_PREVIEW_CHARS), ensure_ascii=False, default=str)
+    return json.dumps(_clip_strings(payload, _INTERNAL_TOOL_LOG_PREVIEW_CHARS), ensure_ascii=False, default=str)
 
 
 def _build_tool_context(
