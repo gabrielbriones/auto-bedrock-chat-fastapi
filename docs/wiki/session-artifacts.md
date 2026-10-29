@@ -255,7 +255,8 @@ searched by line:
 
 - A string result is stored as is.
 - An object with one long string (at least 4,096 characters) and otherwise only
-  short scalar fields (at most 15 of them, strings up to 512 characters) is
+  short scalar fields (at most 15 of them, strings up to 512 characters), with
+  every field name a string of at most 128 characters, is
   stored as that string, raw and with its real line breaks. This is the shape of
   a file download such as `{"file_content": "..."}`. The marker then names the
   field (`content_field`), lists the remaining fields (`other_fields`), and

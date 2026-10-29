@@ -414,6 +414,45 @@ class TestTextEnvelope:
         assert marker["content_field"] == "text"
         assert marker["other_fields"] == {"truncated": True, "bytes_read": 123, "content_type": "text/plain", "x": None}
 
+    @pytest.mark.parametrize("long_field", ["content", "sibling"])
+    @pytest.mark.parametrize("key_length", [129, 200_000])
+    @pytest.mark.parametrize("with_store", [False, True])
+    def test_long_field_names_use_json_instead_of_inflating_the_marker(self, long_field, key_length, with_store):
+        store, scope = _store_and_scope()
+        key = "k" * key_length
+        text = _file_text()
+        result = {key: text} if long_field == "content" else {"text": text, key: "short"}
+        expected = json.dumps(result, ensure_ascii=False, indent=2)
+
+        outcome = _spill(
+            [_entry(result=result)],
+            configurable=_configurable(store, scope) if with_store else None,
+        )
+
+        marker = _results(outcome)[0]["result"]
+        assert marker["content_type"] == "application/json"
+        assert "content_field" not in marker and "other_fields" not in marker
+        assert len(str(marker)) < 3000
+        assert marker["size_bytes"] == len(expected.encode())
+        if with_store:
+            # Deduplication proves the artifact contains the complete object, including its original key.
+            assert store.put(scope, expected, {"source": "tool_response", "content_type": "application/json"}) == (
+                marker["artifact_handle"]
+            )
+            assert store.statistics()["puts"] == 1
+        else:
+            assert marker["truncated"] is True and "artifact_handle" not in marker
+
+    def test_field_names_at_the_limit_still_use_the_text_envelope(self):
+        store, scope = _store_and_scope()
+        content_key, sibling_key = "c" * 128, "s" * 128
+        result = {content_key: _file_text(), sibling_key: "short"}
+
+        marker = _results(_spill([_entry(result=result)], configurable=_configurable(store, scope)))[0]["result"]
+
+        assert marker["content_type"] == "text/plain"
+        assert marker["content_field"] == content_key and marker["other_fields"] == {sibling_key: "short"}
+
     def test_multibyte_text_reports_utf8_size(self):
         store, scope = _store_and_scope()
         text = "ñandú ✓ 日本語 line\n" * 3000

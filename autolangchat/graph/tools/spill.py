@@ -39,6 +39,7 @@ _PLACEHOLDER_HANDLE = "0" * 36  # same length as a store handle (uuid4)
 _ENVELOPE_MIN_TEXT_CHARS = 4096
 _ENVELOPE_MAX_OTHER_FIELDS = 15
 _ENVELOPE_MAX_OTHER_STRING_CHARS = 512
+_ENVELOPE_MAX_FIELD_NAME_CHARS = 128
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,8 @@ def _is_short_scalar(value: Any) -> bool:
 def _text_envelope(result: Any) -> Optional[_Payload]:
     """Split ``{"<field>": "<long text>", <short scalar fields>}`` into the text and the other fields."""
     if not isinstance(result, dict) or not 1 <= len(result) <= _ENVELOPE_MAX_OTHER_FIELDS + 1:
+        return None
+    if any(not isinstance(key, str) or len(key) > _ENVELOPE_MAX_FIELD_NAME_CHARS for key in result):
         return None
     strings = [(key, value) for key, value in result.items() if isinstance(value, str)]
     if not strings:
