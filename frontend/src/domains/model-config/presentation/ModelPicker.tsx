@@ -60,6 +60,35 @@ function FamilyModels({ family, defaultRegion, selectedModelId, onSelect }: Fami
   )
 }
 
+type FamilySubmenuProps = Pick<FamilyModelsProps, 'family' | 'onSelect'> & {
+  readonly catalog: ModelCatalog
+  readonly selectedBaseId: string | null
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+}
+
+function FamilySubmenu({ family, catalog, selectedBaseId, open, onOpenChange, onSelect }: FamilySubmenuProps) {
+  return (
+    <DropdownMenuSub open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuSubTrigger>{family.provider}</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent
+        sideOffset={10}
+        // Grow upward from the family row: the picker lives at the bottom of the viewport.
+        align="end"
+        className="max-h-[min(70vh,36rem)] max-w-[calc(100vw-1rem)] overflow-y-auto"
+      >
+        <FamilyModels
+          family={family}
+          defaultRegion={catalog.defaultRegion ?? null}
+          selectedModelId={selectedBaseId}
+          // A region-less entry stands for the model's "Default" region: send its concrete variant.
+          onSelect={(id) => onSelect(withDefaultRegion(catalog, id))}
+        />
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
+
 const DEFAULT_TRIGGER = <Button type="button" variant="outline" />
 
 // FR-CFG-003/003a/003b/016/017: a two-level family → model menu on Base UI's `Menu`
@@ -92,29 +121,17 @@ export function ModelPicker({
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-auto min-w-48">
         {(selectable ? catalog.families : []).map((family) => (
-          <DropdownMenuSub
+          <FamilySubmenu
             key={family.provider}
+            family={family}
+            catalog={catalog}
+            selectedBaseId={selectedBaseId}
             open={openFamily === family.provider}
             onOpenChange={(open) => {
               setOpenFamily((prev) => (open ? family.provider : prev === family.provider ? null : prev))
             }}
-          >
-            <DropdownMenuSubTrigger>{family.provider}</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent
-              sideOffset={10}
-              // Grow upward from the family row: the picker lives at the bottom of the viewport.
-              align="end"
-              className="max-h-[min(70vh,36rem)] max-w-[calc(100vw-1rem)] overflow-y-auto"
-            >
-              <FamilyModels
-                family={family}
-                defaultRegion={catalog.defaultRegion ?? null}
-                selectedModelId={selectedBaseId}
-                // A region-less entry stands for the model's "Default" region: send its concrete variant.
-                onSelect={(id) => onSelect(withDefaultRegion(catalog, id))}
-              />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+            onSelect={onSelect}
+          />
         ))}
         {footer}
       </DropdownMenuContent>
