@@ -208,6 +208,17 @@ class TestChatMessageOverrides:
         assert effective_config.temperature == 0.7
         assert session.metadata.get("config_overrides", {}) == {}
 
+    def test_large_message_reaches_graph_unchanged(self):
+        handler, _ = _make_handler()
+        websocket = _websocket()
+        message = "\u00e9" * 1_048_577
+
+        asyncio.run(handler._handle_chat_message(websocket, {"message": message}))
+
+        handler.chat_graph.ainvoke.assert_awaited_once()
+        assert handler.chat_graph.ainvoke.call_args.args[0] == {"user_message": message}
+        assert not [frame for frame in _sent_messages(websocket) if frame.get("type") == "error"]
+
     def test_allowlist_restricts_overridable_params(self):
         handler, _ = _make_handler(allowed_dynamic_overrides=["temperature"])
         websocket = _websocket()
@@ -277,6 +288,21 @@ class TestMalformedOverridePayloads:
 
 
 class TestConfigUpdateMessage:
+    def test_default_region_model_id_resolves_instead_of_erroring(self):
+        # XMGPLAT-12046: the sidebar's "Default" region sends a bare model id.
+        handler, session = _make_handler()
+        handler.config = handler.config.model_copy(update={"default_region": "us"})
+        websocket = _websocket()
+
+        asyncio.run(
+            handler._handle_config_update(websocket, {"config_overrides": {"model_id": "anthropic.claude-sonnet-5"}})
+        )
+
+        assert session.metadata["config_overrides"] == {"model_id": "us.anthropic.claude-sonnet-5"}
+        sent = _sent_messages(websocket)
+        assert sent[-1]["active_overrides"] == {"model_id": "us.anthropic.claude-sonnet-5"}
+        assert sent[-1]["rejected_overrides"] == []
+
     def test_config_update_persists_session_overrides_by_default(self):
         handler, session = _make_handler()
         websocket = _websocket()

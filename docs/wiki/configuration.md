@@ -35,16 +35,17 @@ autolangchat_plugin = add_autolangchat(
 
 ### AWS / Bedrock
 
-| Env Variable             | Default                        | Description                      |
-| ------------------------ | ------------------------------ | -------------------------------- |
-| `AWS_REGION`             | `us-east-1`                    | AWS region                       |
-| `AWS_ACCESS_KEY_ID`      | —                              | AWS access key (or use IAM role) |
-| `AWS_SECRET_ACCESS_KEY`  | —                              | AWS secret key                   |
-| `AUTOCHAT_MODEL_ID`      | `us.anthropic.claude-sonnet-5` | Model identifier                 |
-| `AUTOCHAT_TEMPERATURE`   | `0.7`                          | Response randomness (0.0–1.0)    |
-| `AUTOCHAT_MAX_TOKENS`    | `4096`                         | Max tokens in model response     |
-| `AUTOCHAT_TOP_P`         | `0.9`                          | Top-p sampling parameter         |
-| `AUTOCHAT_SYSTEM_PROMPT` | `None`                         | Custom system prompt             |
+| Env Variable              | Default                            | Description                                                                                                                                                        |
+| ------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AWS_REGION`              | `us-east-1`                        | AWS region                                                                                                                                                         |
+| `AWS_ACCESS_KEY_ID`       | —                                  | AWS access key (or use IAM role)                                                                                                                                   |
+| `AWS_SECRET_ACCESS_KEY`   | —                                  | AWS secret key                                                                                                                                                     |
+| `AUTOCHAT_MODEL_ID`       | `global.anthropic.claude-sonnet-5` | Model identifier                                                                                                                                                   |
+| `AUTOCHAT_DEFAULT_REGION` | `global`                           | Inference-profile prefix (`us`, `eu`, `au`, `jp`, `global`) applied to bare model ids, including the settings sidebar's "Default" region, when that profile exists |
+| `AUTOCHAT_TEMPERATURE`    | `0.7`                              | Response randomness (0.0–1.0)                                                                                                                                      |
+| `AUTOCHAT_MAX_TOKENS`     | `4096`                             | Max tokens in model response                                                                                                                                       |
+| `AUTOCHAT_TOP_P`          | `0.9`                              | Top-p sampling parameter                                                                                                                                           |
+| `AUTOCHAT_SYSTEM_PROMPT`  | `None`                             | Custom system prompt                                                                                                                                               |
 
 > **Per-model capabilities.** `AUTOCHAT_TEMPERATURE`, `AUTOCHAT_TOP_P` and
 > `AUTOCHAT_MAX_TOKENS` are applied according to what the selected model
@@ -68,10 +69,41 @@ autolangchat_plugin = add_autolangchat(
 
 ### Tool Calling
 
-| Env Variable                 | Default       | Description                                                |
-| ---------------------------- | ------------- | ---------------------------------------------------------- |
-| `AUTOCHAT_MAX_TOOL_CALLS`    | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit) |
-| `AUTOCHAT_OPENAPI_SPEC_FILE` | `None`        | Path to external OpenAPI spec file                         |
+| Env Variable                       | Default       | Description                                                       |
+| ---------------------------------- | ------------- | ----------------------------------------------------------------- |
+| `AUTOCHAT_MAX_TOOL_CALLS`          | _(unlimited)_ | Max tool calls per turn (omit or leave unset for no limit)        |
+| `AUTOCHAT_OPENAPI_SPEC_FILE`       | `None`        | Path to external OpenAPI spec file                                |
+| `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` | `67108864`    | Max bytes (64 MiB) of an HTTP tool response; over it is truncated |
+
+A tool response over `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` is not parsed: reading stops and the tool returns a flagged
+`truncated` result. See [Tool Calling — Response Size Limit](tool-calling.md#response-size-limit).
+
+### Session Artifacts
+
+| Env Variable                              | Default     | Description                                                                 |
+| ----------------------------------------- | ----------- | --------------------------------------------------------------------------- |
+| `AUTOCHAT_ARTIFACT_ENABLED`               | `true`      | Enable automatic archiving of oversized messages for WebSocket graph turns  |
+| `AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS`       | `86400`     | Maximum payload lifetime in seconds, including while the connection is open |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` | `201326592` | UTF-8 payload-byte quota per live connection (192 MiB)                      |
+| `AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION` | `128`       | Artifact-count quota per live connection, across its conversations          |
+| `AUTOCHAT_ARTIFACT_MAX_BYTES`             | `536870912` | Total UTF-8 payload-byte quota per store/process (512 MiB)                  |
+| `AUTOCHAT_ARTIFACT_READ_MAX_LINES`        | `1000`      | Maximum lines one `read_content_range` call may return (at most 1000)       |
+| `AUTOCHAT_ARTIFACT_READ_MAX_BYTES`        | `65536`     | Maximum UTF-8 bytes one artifact read or search may return (at most 65536)  |
+
+All numeric limits must be positive. There is no separate per-item cap.
+Quotas exclude Python object overhead, transient serialization and existing
+checkpoint copies; allow additional memory for those. Quota exhaustion fails
+archiving explicitly rather than silently evicting content. Disabling artifacts
+preserves ordinary message processing.
+
+Archiving a tool result stores its text once (a text result as is, structured JSON pretty-printed, so a little
+larger than its compact form), so keep `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` at least 3x
+`AUTOCHAT_TOOL_RESPONSE_MAX_BYTES`; the defaults satisfy this. A user message is stored once as well.
+
+Storage and quotas are worker-local, not shared across replicas. See
+[Session artifacts](session-artifacts.md) for lifetime, ownership, deployment
+constraints and the aggregate counters exposed under `sessions.artifacts` at
+`GET {chat_endpoint}/stats` (admin only; see `AUTOCHAT_ADMIN_ENABLED`).
 
 ### Dynamic Parameter Overrides
 
@@ -170,7 +202,7 @@ autolangchat_plugin = add_autolangchat(
 | `AUTOCHAT_MCP_ENABLED`  | `false`     | Master switch for the MCP Streamable HTTP endpoint. Requires the optional `[mcp]` extra (`pip install autolangchat[mcp]`) |
 | `AUTOCHAT_MCP_ENDPOINT` | `/chat/mcp` | Endpoint path for the MCP server, mounted when `AUTOCHAT_MCP_ENABLED` is true                                             |
 
-Exposes the same OpenAPI-derived tools already available to the LangGraph/Bedrock chat loop to MCP clients (Claude Desktop, VS Code Copilot, etc.) as a pure `tools/list`/`tools/call` provider — MCP clients bring their own LLM and tool-calling loop, so the chat loop itself is not reused for this endpoint.
+Exposes the same OpenAPI-derived tools already available to the LangGraph/Bedrock chat loop to MCP clients (Claude Desktop, VS Code Copilot, etc.) as a pure `tools/list`/`tools/call` provider — MCP clients bring their own LLM and tool-calling loop, so the chat loop itself is not reused for this endpoint. Session-bound internal tools such as the [artifact readers](session-artifacts.md#assistant-tools) are not exposed over MCP: they are left out of `tools/list` and rejected by `tools/call`.
 
 **Auth** is extracted per-request from the incoming HTTP headers (no separate env vars — it mirrors `AUTOCHAT_SUPPORTED_AUTH_TYPES`), detected in this order:
 

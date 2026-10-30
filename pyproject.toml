@@ -59,6 +59,7 @@ langgraph = ">=0.2.0"
 # `model_id` validator then rejects at startup.
 langchain-aws = ">=1.6.2"
 langchain-core = ">=0.3.0"
+google-re2 = "^1.1"
 
 [tool.semantic_release]
 # Keep the version in sync in the Poetry table.

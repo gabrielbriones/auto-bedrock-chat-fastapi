@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
+from .artifacts import ArtifactStore
 from .auth_handler import AuthenticationHandler, Credentials
 from .config import ChatConfig
 from .exceptions import SessionError
@@ -76,6 +77,12 @@ class ChatSessionManager:
 
     def __init__(self, config: ChatConfig):
         self.config = config
+        self.artifact_store = ArtifactStore(
+            max_age_seconds=config.artifact_max_age_seconds,
+            max_bytes_per_session=config.artifact_max_bytes_per_session,
+            max_items_per_session=config.artifact_max_items_per_session,
+            max_bytes=config.artifact_max_bytes,
+        )
         self._sessions: Dict[str, ChatSession] = {}
         self._websocket_to_session: Dict[WebSocket, str] = {}
         # user_id -> session_ids
@@ -204,6 +211,7 @@ class ChatSessionManager:
         )
 
         # Store session mappings
+        self.artifact_store.register_connection(session.connection_id, session.user_id)
         self._sessions[session_id] = session
         self._websocket_to_session[websocket] = session_id
 
@@ -280,6 +288,9 @@ class ChatSessionManager:
             return False
 
         old_user_id = session.user_id
+        if old_user_id != user_id or session.is_authenticated != is_authenticated:
+            self.artifact_store.delete_session(session.connection_id)
+            self.artifact_store.register_connection(session.connection_id, user_id)
 
         # Remove from old user's session list if needed
         if old_user_id and old_user_id in self._user_sessions:
@@ -329,6 +340,7 @@ class ChatSessionManager:
             return None
 
         del self._sessions[session_id]
+        self.artifact_store.delete_session(session.connection_id)
 
         # Remove from user sessions
         if session.user_id and session.user_id in self._user_sessions:
@@ -371,6 +383,7 @@ class ChatSessionManager:
 
         # Remove session
         del self._sessions[session_id]
+        self.artifact_store.delete_session(session.connection_id)
 
         # Remove from user sessions
         if session.user_id and session.user_id in self._user_sessions:
@@ -402,6 +415,7 @@ class ChatSessionManager:
             "unique_users": len(self._user_sessions),
             "max_sessions": self.config.max_sessions,
             "session_timeout": self.config.session_timeout,
+            "artifacts": self.artifact_store.statistics(),
         }
 
     async def _close_websocket_quietly(self, websocket: WebSocket, session_id: str) -> None:
@@ -421,6 +435,7 @@ class ChatSessionManager:
         while True:
             try:
                 await asyncio.sleep(300)  # Check every 5 minutes
+                self.artifact_store.expire()
 
                 expired_sessions = []
 
@@ -477,6 +492,7 @@ class ChatSessionManager:
                 logger.error(f"Error closing WebSocket for session {session.session_id}: {str(e)}")
 
         # Clear all sessions
+        self.artifact_store.close()
         self._sessions.clear()
         self._websocket_to_session.clear()
         self._user_sessions.clear()

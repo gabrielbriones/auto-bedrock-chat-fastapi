@@ -12,13 +12,14 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from fastapi import FastAPI, Query, Request, WebSocket
+from fastapi import Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .config import ChatConfig, load_config, validate_config
 from .exceptions import AutoLangChatError
 from .graph.graph import build_chat_graph
+from .graph.tools.artifact_tools import build_artifact_tools
 from .graph.tools.generator import ToolsGenerator
 from .graph.tools.manager import ToolManager
 from .model_capabilities import build_bedrock_kwargs
@@ -194,6 +195,7 @@ def _build_bootstrap_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         "supportedAuthTypes": context["supported_auth_types"],
         "defaultAuthType": context["default_auth_type"],
         "modelId": context["model_id"],
+        "defaultRegion": context["default_region"],
         "presetPrompts": context["preset_prompts"],
         "variables": context["preset_variables"],
         "ssoEnabled": context["sso_enabled"],
@@ -278,15 +280,7 @@ class AutoLangChatPlugin:
         self.session_manager = ChatSessionManager(self.config)
         self.embedding_client = BedrockEmbeddingClient(self.config)
 
-        # Build tool manager: generator parses the OpenAPI spec and produces
-        # execution metadata; manager uses that metadata for HTTP dispatch only.
-        tools_generator = ToolsGenerator(app=self.app, config=self.config)
-        self._tools_generator = tools_generator  # retained for update_tools()
-        self.tool_manager = ToolManager(
-            generated_tools=tools_generator._generated_tools,
-            config=self.config,
-            base_url=tools_generator.get_api_base_url(),
-        )
+        self._init_tools()
         self.app_base_url = self.tool_manager.base_url
 
         # Token-usage store. Constructed eagerly (before build_chat_graph()
@@ -339,7 +333,7 @@ class AutoLangChatPlugin:
         if self.config.mcp_enabled:
             _load_mcp_imports()
             self._mcp_server = build_mcp_server(
-                tools_generator,
+                self._tools_generator,
                 self.tool_manager,
                 sso_session_store=self.sso_session_store,
                 sso_session_secret=self.config.sso_session_secret,
@@ -452,6 +446,27 @@ class AutoLangChatPlugin:
         self._setup_shutdown()
 
         logger.info(f"AutoLangChat Plugin initialized with model: {self.config.model_id}")
+
+    def _init_tools(self) -> None:
+        """Build the tools generator and tool manager from ``self.app`` and ``self.config``.
+
+        The generator parses the OpenAPI spec and produces execution metadata;
+        the manager dispatches those over HTTP and the in-process internal
+        tools (session artifacts) by name. Internal names are reserved so a
+        colliding OpenAPI operation is skipped.
+        """
+        internal_tools = build_artifact_tools() if self.config.artifact_enabled else []
+        self._tools_generator = ToolsGenerator(  # retained for update_tools()
+            app=self.app,
+            config=self.config,
+            reserved_names=[tool.name for tool in internal_tools],
+        )
+        self.tool_manager = ToolManager(
+            generated_tools=self._tools_generator._generated_tools,
+            config=self.config,
+            base_url=self._tools_generator.get_api_base_url(),
+            internal_tools=internal_tools,
+        )
 
     def _infer_variables_from_templates(self) -> list:
         """Infer variable definitions from ``{{PLACEHOLDER}}`` patterns in preset prompt templates.
@@ -603,6 +618,7 @@ class AutoLangChatPlugin:
             "default_auth_type": self.config.default_auth_type or "",
             "ui_title": self.config.ui_title,
             "model_id": self.config.model_id,
+            "default_region": self.config.default_region,
             "model_display_name": self.config.get_model_display_name(),
             "ui_welcome_message": self.config.ui_welcome_message,
             "app_title": self.app.title or "API",
@@ -700,12 +716,10 @@ class AutoLangChatPlugin:
                     "model": self.config.model_id,
                     "region": self.config.aws_region,
                 }
-                stats = await self.websocket_handler.get_statistics()
                 return JSONResponse(
                     {
                         "status": "degraded",
                         "llm": llm_status,
-                        "statistics": stats,
                         "config": {
                             "model_id": self.config.model_id,
                             "region": self.config.aws_region,
@@ -715,12 +729,10 @@ class AutoLangChatPlugin:
                     }
                 )
 
-            stats = await self.websocket_handler.get_statistics()
             return JSONResponse(
                 {
                     "status": "healthy",
                     "llm": llm_status,
-                    "statistics": stats,
                     "config": {
                         "model_id": self.config.model_id,
                         "region": self.config.aws_region,
@@ -769,17 +781,8 @@ class AutoLangChatPlugin:
                 self._apply_new_sso_cookie(response, request, new_sso_session_token)
                 return response
 
-        # Statistics endpoint
-        @self.app.get(f"{self.config.chat_endpoint}/stats")
-        async def chat_statistics():
-            """Get chat statistics"""
-
-            try:
-                stats = await self.websocket_handler.get_statistics()
-                return JSONResponse(stats)
-            except Exception as e:
-                logger.error(f"Failed to get statistics: {str(e)}")
-                return JSONResponse({"error": str(e)}, status_code=500)
+        # Statistics endpoint is registered after the admin block, where
+        # ``require_admin`` exists, so its security schemes reach OpenAPI.
 
         # Tools information endpoint
         @self.app.get(f"{self.config.chat_endpoint}/tools")
@@ -906,6 +909,7 @@ class AutoLangChatPlugin:
                 chat_graph=self.chat_graph,
                 require_conversation_user=self._build_require_conversation_user(),
                 in_progress=self.websocket_handler.in_progress,
+                artifact_store=self.session_manager.artifact_store,
             )
         else:
             logger.info(
@@ -917,6 +921,19 @@ class AutoLangChatPlugin:
         # registered here so unknown subpaths get a clean 404.
         if self.config.admin_enabled:
             self._setup_admin_routes()
+
+            # Admin only; unregistered (404) when the admin API is disabled,
+            # matching the ``/admin/*`` block.
+            @self.app.get(f"{self.config.chat_endpoint}/stats")
+            async def chat_statistics(identity=Depends(self._require_admin)):  # noqa: B008
+                """Get chat statistics"""
+
+                try:
+                    stats = await self.websocket_handler.get_statistics()
+                    return JSONResponse(stats)
+                except Exception as e:
+                    logger.error(f"Failed to get statistics: {str(e)}")
+                    return JSONResponse({"error": str(e)}, status_code=500)
 
         logger.info("Chat routes setup complete:")
         logger.info(f"  WebSocket: {self.config.websocket_endpoint}")
@@ -2611,7 +2628,12 @@ class AutoLangChatPlugin:
             pass
 
     async def update_tools(self):
-        """Update tools description from current FastAPI routes"""
+        """Update tools description from current FastAPI routes.
+
+        Internal tools stay registered on the manager, so ``_sync_config``
+        adds their schemas back next to the regenerated OpenAPI tools; the
+        generator keeps their names reserved across the rebuild.
+        """
 
         try:
             # Rebuild generator cache, sync manager dict and config

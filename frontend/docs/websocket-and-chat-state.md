@@ -76,7 +76,9 @@ Examples of mapping:
 | `ai_response` | `answered` | Resolves the pending optimistic turn |
 | `ai_response` with `error` | `failed` | Fails the pending turn |
 | `error` | `failed` | Fails the pending turn or shows a transient |
-| `typing` | `typing` | Currently observes/logs the first frame only; streaming is a later phase |
+| `typing` | `typing` | Applies the cumulative streamed text (or tool-progress notice) to the pending turn |
+| `tool_call_start` | `tool-started` | Adds a running tool call to the pending turn's live tool list |
+| `tool_call_end` | `tool-finished` | Marks that call succeeded/failed with its duration |
 
 Invalid frames are rejected by `MessageBus` and do not reach the store.
 

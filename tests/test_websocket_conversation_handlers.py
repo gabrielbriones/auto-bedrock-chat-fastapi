@@ -48,6 +48,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from autolangchat import websocket_handler
+from autolangchat.artifacts import ArtifactError
+from autolangchat.config import ChatConfig
 from autolangchat.history import TOOL_LOOP_LEASE
 from autolangchat.session_manager import ChatSessionManager
 from autolangchat.websocket_handler import WebSocketChatHandler
@@ -62,6 +64,10 @@ def _make_config(**overrides):
     config.feedback_allow_anonymous = False
     config.conversation_persistence_enabled = True
     config.conversation_title_model_id = None
+    config.artifact_max_age_seconds = 86400
+    config.artifact_max_bytes_per_session = 16 * 1024 * 1024
+    config.artifact_max_items_per_session = 128
+    config.artifact_max_bytes = 128 * 1024 * 1024
     for key, value in overrides.items():
         setattr(config, key, value)
     return config
@@ -147,6 +153,86 @@ async def _make_store():
     store = SQLiteConversationStore(db_path=":memory:")
     await store.open()
     return store
+
+
+@pytest.mark.parametrize("deleted_thread", ["first", "second"])
+async def test_conversation_switch_retains_artifacts_and_delete_purges_only_owned_thread(deleted_thread):
+    conversations = await _make_store()
+    config = ChatConfig().model_copy(update={"conversation_persistence_enabled": True})
+    manager = ChatSessionManager(config)
+    ws = _new_ws()
+    ws.close = AsyncMock()
+    handler = WebSocketChatHandler(
+        session_manager=manager, config=config, chat_graph=_make_chat_graph(), conversation_store=conversations
+    )
+    try:
+        await manager.create_session(ws, user_id="alice", is_authenticated=True)
+        session = await manager.get_session(ws)
+        artifacts = manager.artifact_store
+        for thread in ("first", "second"):
+            await conversations.create_conversation(thread, "alice")
+
+        await handler._handle_conversation_load(ws, {"conversation_id": "first"})
+        assert _sent(ws)[-1]["type"] == "conversation_loaded"
+        first = artifacts.activate(session.connection_id, session.metadata["conversation_id"], session.user_id)
+        first_handle = artifacts.put(first, "first payload", {})
+
+        await handler._handle_conversation_load(ws, {"conversation_id": "second"})
+        assert session.metadata["conversation_id"] == "second"
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(first, first_handle)
+        second = artifacts.activate(session.connection_id, session.metadata["conversation_id"], session.user_id)
+        second_handle = artifacts.put(second, "second payload", {})
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(second, first_handle)
+
+        await handler._handle_conversation_new(ws, {})
+        assert session.metadata["conversation_id"] is None
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(second, second_handle)
+        assert artifacts.statistics()["active_artifacts"] == 2
+
+        for thread, handle in (("second", second_handle), ("first", first_handle)):
+            await handler._handle_conversation_load(ws, {"conversation_id": thread})
+            restored = artifacts.activate(session.connection_id, session.metadata["conversation_id"], session.user_id)
+            assert artifacts.read_region(restored, handle)["text"] == f"{thread} payload"
+        active_first = restored
+
+        remote_scopes = {}
+        for connection, user in (("another-alice", "alice"), ("bob", "bob")):
+            artifacts.register_connection(connection, user)
+            remote = artifacts.activate(connection, deleted_thread, user)
+            remote_scopes[user] = (remote, artifacts.put(remote, "remote payload", {}))
+
+        await handler._handle_conversation_delete(ws, {"conversation_id": deleted_thread})
+        assert _sent(ws)[-1]["type"] == "conversation_deleted"
+        assert await conversations.get_conversation(deleted_thread) is None
+        assert artifacts.statistics()["active_artifacts"] == 2
+        bob_scope, bob_handle = remote_scopes["bob"]
+        assert artifacts.read_region(bob_scope, bob_handle)["text"] == "remote payload"
+        alice_scope, alice_handle = remote_scopes["alice"]
+        with pytest.raises(ArtifactError):
+            artifacts.read_region(alice_scope, alice_handle)
+        alice_scope = artifacts.activate(alice_scope.connection_id, deleted_thread, "alice")
+        assert not artifacts.contains(alice_scope, alice_handle)
+
+        if deleted_thread == "first":
+            assert session.metadata["conversation_id"] is None
+            with pytest.raises(ArtifactError):
+                artifacts.read_region(active_first, first_handle)
+            await handler._handle_conversation_load(ws, {"conversation_id": "second"})
+            remaining_thread, remaining_handle = "second", second_handle
+        else:
+            assert session.metadata["conversation_id"] == "first"
+            assert artifacts.read_region(active_first, first_handle)["text"] == "first payload"
+            remaining_thread, remaining_handle = "first", first_handle
+        remaining = artifacts.activate(session.connection_id, remaining_thread, "alice")
+        assert artifacts.read_region(remaining, remaining_handle)["text"] == f"{remaining_thread} payload"
+        deleted = artifacts.activate(session.connection_id, deleted_thread, "alice")
+        assert not artifacts.contains(deleted, first_handle if deleted_thread == "first" else second_handle)
+    finally:
+        await handler.shutdown()
+        await conversations.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1091,6 +1177,131 @@ async def test_titling_failure_is_swallowed_and_does_not_affect_chat_delivery():
         # only a raise from generate_conversation_title itself, or from the
         # store/send afterward, would be swallowed here).
         assert any(m["type"] == "ai_response" for m in sent)
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Regression (XMGPLAT-12043): a manual rename must never be overwritten by an
+# in-flight auto-title.
+# ---------------------------------------------------------------------------
+
+
+class _GatedTitleLLM:
+    """Title LLM that blocks until ``release`` is set, so a test can rename mid-generation."""
+
+    def __init__(self, title="A Generated Title"):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+        self._title = title
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return SimpleNamespace(content=self._title)
+
+
+async def _start_conversation_with_gated_title(handler, llm):
+    handler._build_title_llm_client = lambda: llm
+    ws = _new_ws()
+    await handler._handle_chat_message(ws, {"message": "hello"})
+    conv_id = next(m["conversation_id"] for m in _sent(ws) if m["type"] == "conversation_created")
+    return ws, conv_id
+
+
+async def test_ws_rename_during_title_generation_cancels_auto_title():
+    store = await _make_store()
+    try:
+        handler = _make_handler(_make_session(), conversation_store=store)
+        llm = _GatedTitleLLM()
+        ws, conv_id = await _start_conversation_with_gated_title(handler, llm)
+        await asyncio.wait_for(llm.started.wait(), timeout=1)
+        title_task = handler._pending_title_tasks[conv_id]
+
+        await handler._handle_conversation_rename(ws, {"conversation_id": conv_id, "title": "My Title"})
+        llm.release.set()
+        await asyncio.gather(*handler._background_tasks, return_exceptions=True)
+
+        assert title_task.cancelled()
+        assert conv_id not in handler._pending_title_tasks
+        assert len(handler._background_tasks) == 0
+        assert (await store.get_conversation(conv_id))["title"] == "My Title"
+        types = [m["type"] for m in _sent(ws)]
+        assert "conversation_renamed" in types
+        assert "conversation_titled" not in types
+    finally:
+        await store.close()
+
+
+async def test_rename_from_elsewhere_during_title_generation_is_kept():
+    """A rename this handler can't cancel (REST PATCH, another worker) is
+    still protected by the conditional write."""
+    store = await _make_store()
+    try:
+        handler = _make_handler(_make_session(), conversation_store=store)
+        llm = _GatedTitleLLM()
+        ws, conv_id = await _start_conversation_with_gated_title(handler, llm)
+        await asyncio.wait_for(llm.started.wait(), timeout=1)
+
+        await store.update_conversation(conv_id, title="My Title")
+        llm.release.set()
+        await asyncio.gather(*handler._background_tasks)
+
+        assert (await store.get_conversation(conv_id))["title"] == "My Title"
+        assert "conversation_titled" not in [m["type"] for m in _sent(ws)]
+    finally:
+        await store.close()
+
+
+async def test_auto_title_skipped_when_conversation_already_titled():
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice", title="My Title")
+        handler = _make_handler(_make_session(), conversation_store=store)
+        llm = _GatedTitleLLM()
+        llm.release.set()
+        handler._build_title_llm_client = lambda: llm
+
+        ws = _new_ws()
+        await handler._generate_and_apply_title(ws, "conv-1", [{"role": "user", "content": "hello"}])
+
+        assert llm.calls == 0
+        assert (await store.get_conversation("conv-1"))["title"] == "My Title"
+        assert _sent(ws) == []
+    finally:
+        await store.close()
+
+
+async def test_rename_of_conversation_without_pending_title_is_unaffected():
+    store = await _make_store()
+    try:
+        await store.create_conversation("conv-1", "alice")
+        handler = _make_handler(_make_session(), conversation_store=store)
+
+        ws = _new_ws()
+        await handler._handle_conversation_rename(ws, {"conversation_id": "conv-1", "title": "My Title"})
+
+        assert _sent(ws)[0]["type"] == "conversation_renamed"
+        assert (await store.get_conversation("conv-1"))["title"] == "My Title"
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("initial_title", [None, ""])
+async def test_set_title_if_unset_writes_only_untitled_conversations(initial_title):
+    store = await _make_store()
+    try:
+        await store.create_conversation("untitled", "alice", title=initial_title)
+        await store.create_conversation("titled", "alice", title="Manual")
+
+        assert await store.set_title_if_unset("untitled", "Auto") is True
+        assert await store.set_title_if_unset("titled", "Auto") is False
+        assert await store.set_title_if_unset("missing", "Auto") is False
+
+        assert (await store.get_conversation("untitled"))["title"] == "Auto"
+        assert (await store.get_conversation("titled"))["title"] == "Manual"
     finally:
         await store.close()
 

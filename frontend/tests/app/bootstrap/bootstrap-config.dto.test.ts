@@ -110,6 +110,17 @@ describe('toChatBootstrap', () => {
     expect(isOk(result) && result.value.ssoSessionRenewalIntervalSeconds).toBe(3600);
   });
 
+  it('carries the server default region and defaults it to null when an older bootstrap omits it', () => {
+    const current = toChatBootstrap(bootstrapConfig);
+    expect(isOk(current) && current.value.defaultRegion).toBe('global');
+
+    const legacyConfig = { ...bootstrapConfig };
+    delete legacyConfig.defaultRegion;
+    const legacy = toChatBootstrap(legacyConfig);
+
+    expect(isOk(legacy) && legacy.value.defaultRegion).toBeNull();
+  });
+
   it.each([0, -5, 1.5, 2_147_484])('rejects an invalid SSO session renewal interval (%s)', (interval) => {
     const result = toChatBootstrap({ ...bootstrapConfig, ssoSessionRenewalIntervalSeconds: interval });
 

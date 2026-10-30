@@ -178,6 +178,30 @@ def classify_content(text: Any) -> str:
     return CONTEXT_BUDGET_KIND_PROSE
 
 
+@dataclass(frozen=True)
+class TextEstimate:
+    """Estimated tokens for some text, with the inputs the estimate was made from."""
+
+    tokens: int
+    chars: int
+    kind: str
+    chars_per_token: float
+    # Which piece of a message this is, for logs: a tool result's tool name, ``content`` or ``tool_calls``.
+    label: str = ""
+
+
+def estimate_text(text: Any, kind: Optional[str] = None, provider: Optional[str] = None) -> TextEstimate:
+    """Like :func:`estimate_tokens`, but also reports the characters, content kind and ratio it used."""
+    text = _as_text(text)
+    if not text:
+        kind = kind or CONTEXT_BUDGET_KIND_PROSE
+        return TextEstimate(0, 0, kind, chars_per_token(kind, provider))
+    if kind is None:
+        kind = classify_content(text)
+    ratio = chars_per_token(kind, provider)
+    return TextEstimate(math.ceil(len(text) / ratio), len(text), kind, ratio)
+
+
 def estimate_tokens(text: Any, kind: Optional[str] = None, provider: Optional[str] = None) -> int:
     """Estimated input tokens for ``text`` (rounded up).
 
@@ -185,12 +209,7 @@ def estimate_tokens(text: Any, kind: Optional[str] = None, provider: Optional[st
     provider key (see :func:`provider_for_model`), ``None`` for the
     conservative fallback ratios. Non-string payloads are JSON-serialized.
     """
-    text = _as_text(text)
-    if not text:
-        return 0
-    if kind is None:
-        kind = classify_content(text)
-    return math.ceil(len(text) / chars_per_token(kind, provider))
+    return estimate_text(text, kind, provider).tokens
 
 
 def _tool_call_ids(tool_calls: Any) -> Set[str]:
@@ -199,67 +218,95 @@ def _tool_call_ids(tool_calls: Any) -> Set[str]:
     return {tc["id"] for tc in tool_calls if isinstance(tc, dict) and isinstance(tc.get("id"), str)}
 
 
-def _content_tokens(content: Any, provider: Optional[str], skip_tool_use_ids: Optional[Set[str]] = None) -> int:
+def _labelled(estimate: TextEstimate, label: str, extra_tokens: int = 0) -> TextEstimate:
+    return TextEstimate(estimate.tokens + extra_tokens, estimate.chars, estimate.kind, estimate.chars_per_token, label)
+
+
+def _content_parts(
+    content: Any, provider: Optional[str], skip_tool_use_ids: Optional[Set[str]] = None
+) -> List[TextEstimate]:
     if content is None or content == "":
-        return 0
-    if isinstance(content, list):
-        total = 0
-        for block in content:
-            if (
-                skip_tool_use_ids
-                and isinstance(block, dict)
-                and block.get("type") == "tool_use"
-                and block.get("id") in skip_tool_use_ids
-            ):
-                # Bedrock merges tool_use blocks with tool_calls by id, so the
-                # call is sent once and is already charged via tool_calls.
-                continue
-            if isinstance(block, str):
-                total += estimate_tokens(block, provider=provider)
-            elif isinstance(block, dict) and isinstance(block.get("text"), str) and len(block) <= 3:
-                # Plain text blocks: {"type": "text", "text": ..., ["index": n]}
-                total += estimate_tokens(block["text"], provider=provider)
-            else:
-                total += estimate_tokens(block, kind=CONTEXT_BUDGET_KIND_JSON, provider=provider)
-        return total
-    return estimate_tokens(content, provider=provider)
+        return []
+    if not isinstance(content, list):
+        return [_labelled(estimate_text(content, provider=provider), "content")]
+    parts: List[TextEstimate] = []
+    for index, block in enumerate(content):
+        if (
+            skip_tool_use_ids
+            and isinstance(block, dict)
+            and block.get("type") == "tool_use"
+            and block.get("id") in skip_tool_use_ids
+        ):
+            # Bedrock merges tool_use blocks with tool_calls by id, so the
+            # call is sent once and is already charged via tool_calls.
+            continue
+        if isinstance(block, str):
+            text = estimate_text(block, provider=provider)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str) and len(block) <= 3:
+            # Plain text blocks: {"type": "text", "text": ..., ["index": n]}
+            text = estimate_text(block["text"], provider=provider)
+        else:
+            text = estimate_text(block, kind=CONTEXT_BUDGET_KIND_JSON, provider=provider)
+        parts.append(_labelled(text, f"content[{index}]"))
+    return parts
 
 
-def estimate_message_tokens(message: Any, provider: Optional[str] = None) -> int:
-    """Estimated input tokens for one message, including per-message overhead.
-
-    Accepts the graph's internal message dicts (``role``/``content``/
-    ``tool_calls``/``tool_results``) or LangChain ``BaseMessage`` objects.
-    An internal ``tool`` message expands into one ``ToolMessage`` per
-    result (as in ``llm_call._to_langchain_messages``), so each result is
-    charged its own overhead.
-    """
+def _tool_result_parts(message: Dict[str, Any], provider: Optional[str]) -> List[TextEstimate]:
     overhead = CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS
+    parts: List[TextEstimate] = []
+    for tr in message.get("tool_results") or []:
+        if not isinstance(tr, dict):
+            parts.append(_labelled(estimate_text(tr, provider=provider), "result", overhead))
+            continue
+        text = estimate_text(str(tr.get("result") or tr.get("error", "")), provider=provider)
+        name_and_id = estimate_tokens(
+            f"{tr.get('name', '')}{tr.get('tool_call_id', '')}", kind=CONTEXT_BUDGET_KIND_JSON, provider=provider
+        )
+        parts.append(_labelled(text, str(tr.get("name") or "result"), overhead + name_and_id))
+    return parts
+
+
+def estimate_message_parts(message: Any, provider: Optional[str] = None) -> List[TextEstimate]:
+    """Estimates for each part of one message, in order. Their tokens add up to :func:`estimate_message_tokens`.
+
+    A part is a piece of text the model receives. For an internal ``tool`` message, each result is a part: it is sent
+    as its own ``ToolMessage`` (as in ``llm_call._to_langchain_messages``), so it is charged its own framing and its
+    name/id. For any other message the parts are its content (one part, or one per block of a list content) and its
+    ``tool_calls``; the framing of the message is charged to its first part, and an empty message is a single empty part.
+
+    ``tokens`` is the part's total. ``chars``, ``kind`` and ``chars_per_token`` describe its text, and ``label`` says
+    which piece it is: a tool result's name, ``content`` (``content[i]`` for a block) or ``tool_calls``.
+
+    Accepts the graph's internal message dicts (``role``/``content``/``tool_calls``/``tool_results``) or LangChain
+    ``BaseMessage`` objects.
+    """
     if isinstance(message, dict):
         if message.get("role") == "tool":
-            total = 0
-            for tr in message.get("tool_results") or []:
-                if not isinstance(tr, dict):
-                    total += overhead + estimate_tokens(tr, provider=provider)
-                    continue
-                result = str(tr.get("result") or tr.get("error", ""))
-                total += overhead + estimate_tokens(result, provider=provider)
-                total += estimate_tokens(
-                    f"{tr.get('name', '')}{tr.get('tool_call_id', '')}",
-                    kind=CONTEXT_BUDGET_KIND_JSON,
-                    provider=provider,
-                )
-            return total
+            return _tool_result_parts(message, provider)
         content = message.get("content")
         tool_calls = message.get("tool_calls")
     else:
         content = getattr(message, "content", message)
         tool_calls = getattr(message, "tool_calls", None)
 
-    total = overhead + _content_tokens(content, provider, _tool_call_ids(tool_calls))
+    parts = _content_parts(content, provider, _tool_call_ids(tool_calls))
     if tool_calls:
-        total += estimate_tokens(tool_calls, kind=CONTEXT_BUDGET_KIND_JSON, provider=provider)
-    return total
+        parts.append(
+            _labelled(estimate_text(tool_calls, kind=CONTEXT_BUDGET_KIND_JSON, provider=provider), "tool_calls")
+        )
+    if not parts:
+        parts.append(_labelled(estimate_text("", provider=provider), "content"))
+    parts[0] = _labelled(parts[0], parts[0].label, CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS)
+    return parts
+
+
+def estimate_message_tokens(message: Any, provider: Optional[str] = None) -> int:
+    """Estimated input tokens for one message, including per-message overhead.
+
+    The sum of :func:`estimate_message_parts`: an internal ``tool`` message expands into one ``ToolMessage`` per
+    result, so each result is charged its own overhead.
+    """
+    return sum(part.tokens for part in estimate_message_parts(message, provider))
 
 
 def estimate_messages_tokens(messages: Optional[Iterable[Any]], provider: Optional[str] = None) -> int:
@@ -433,8 +480,11 @@ __all__: List[str] = [
     "ContextBudget",
     "chars_per_token",
     "classify_content",
+    "TextEstimate",
+    "estimate_message_parts",
     "estimate_message_tokens",
     "estimate_messages_tokens",
+    "estimate_text",
     "estimate_tokens",
     "estimate_tool_schema_tokens",
     "provider_for_model",

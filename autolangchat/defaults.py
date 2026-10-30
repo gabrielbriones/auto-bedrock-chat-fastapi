@@ -8,10 +8,34 @@ from this module instead of hardcoding values.
 
 # ── Tool Call Limits ─────────────────────────────────────────────────────
 DEFAULT_MAX_TOOL_CALLS = None  # None = unlimited
+DEFAULT_TOOL_RESPONSE_MAX_BYTES = 64 * 1024 * 1024
 
 # ── Conversation History ─────────────────────────────────────────────────
 DEFAULT_MAX_CONVERSATION_MESSAGES = 20
 DEFAULT_PRESERVE_SYSTEM_MESSAGE = True
+
+# ── Session Artifacts ────────────────────────────────────────────────────
+DEFAULT_ARTIFACT_MAX_AGE_SECONDS = 86400
+DEFAULT_ARTIFACT_MAX_BYTES_PER_SESSION = 192 * 1024 * 1024
+DEFAULT_ARTIFACT_MAX_ITEMS_PER_SESSION = 128
+DEFAULT_ARTIFACT_MAX_BYTES = 512 * 1024 * 1024
+ARTIFACT_READ_MAX_BYTES = 65536
+ARTIFACT_READ_MAX_LINES = 1000
+ARTIFACT_SEARCH_MAX_PATTERN_CHARS = 200
+ARTIFACT_SEARCH_MAX_MATCHES = 200
+ARTIFACT_SEARCH_MAX_CONTEXT_LINES = 20
+# Longer lines are returned as a window around the first match.
+ARTIFACT_SEARCH_MAX_LINE_CHARS = 500
+# Regex searches only match the first characters of longer lines, bounding
+# backtracking on giant single-line payloads (literal search scans them fully).
+ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS = 8192
+# Model-facing defaults for the read_content_range / grep_content tools.
+ARTIFACT_TOOL_DEFAULT_MAX_LINES = 200
+ARTIFACT_TOOL_DEFAULT_MAX_MATCHES = 50
+# The preview embedded in an artifact marker is the first this many characters of the stored text.
+ARTIFACT_MARKER_PREVIEW_MAX_CHARS = 1000
+# Flag on a ``tool_results`` entry, or on a user message, replaced by an artifact marker; it is never truncated.
+ARTIFACT_MARKER_ENTRY_KEY = "artifact_marker"
 
 # ── AI Summarization ────────────────────────────────────────────────────
 DEFAULT_ENABLE_AI_SUMMARIZATION = False

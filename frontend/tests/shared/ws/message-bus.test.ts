@@ -283,6 +283,8 @@ describe('ServerFrameSchema', () => {
       auth_expired: 'iam',
       logout_success: 'iam',
       typing: 'messaging',
+      tool_call_start: 'messaging',
+      tool_call_end: 'messaging',
       ai_response: 'messaging',
       error: 'messaging',
       pong: 'messaging',

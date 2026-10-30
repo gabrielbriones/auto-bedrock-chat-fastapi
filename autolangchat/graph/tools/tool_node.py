@@ -33,6 +33,16 @@ updates ``auth_info.credentials.bearer_token``, and retries only the failed
 calls once. If refresh isn't possible (e.g. manual bearer token) or fails,
 ``metadata["auth_expired"]`` is set so ``_handle_chat_message`` can send the
 ``auth_expired`` WebSocket message after the graph turn completes.
+
+Internal tools
+--------------
+In-process tools (``InternalTool``) get a ``ToolContext`` built here from
+``config["configurable"]``: ``artifact_store`` / ``artifact_scope`` (injected by
+the WebSocket handler when ``artifact_enabled``), ``chat_config``, and a
+``ContextBudget`` for the current state messages. The budget is only computed
+when the round calls an internal tool. Without a valid store and scope (MCP,
+direct ``chat_graph.ainvoke`` callers, artifacts disabled) the context carries
+none, so session-bound tools fail closed with ``tool_unavailable``.
 """
 
 from __future__ import annotations
@@ -40,14 +50,69 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 from langchain_core.runnables import RunnableConfig
 
+from ...artifacts import ArtifactScope, ArtifactStore
 from ...auth_handler import can_refresh
+from ...context_budget import ContextBudget
 from ..state import ChatState
+from .internal import ToolContext
 
 logger = logging.getLogger(__name__)
+
+_INTERNAL_TOOL_LOG_PREVIEW_CHARS = 500
+
+
+def _clip_strings(value: Any, limit: int) -> Any:
+    """Copy of ``value`` with every string longer than ``limit`` cut short, so a log line stays readable."""
+    if isinstance(value, str):
+        return value if len(value) <= limit else f"{value[:limit]}...(+{len(value) - limit:,} chars)"
+    if isinstance(value, dict):
+        return {key: _clip_strings(item, limit) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clip_strings(item, limit) for item in value]
+    return value
+
+
+def _result_preview(entry: Dict[str, Any]) -> str:
+    """The result (or error) of a ``tool_results`` entry as JSON, with long strings clipped."""
+    payload = entry.get("result", entry.get("error"))
+    return json.dumps(_clip_strings(payload, _INTERNAL_TOOL_LOG_PREVIEW_CHARS), ensure_ascii=False, default=str)
+
+
+def _build_tool_context(
+    configurable: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+    *,
+    needs_budget: bool,
+) -> ToolContext:
+    """Build the per-turn ``ToolContext`` for internal tools from ``configurable``.
+
+    The store and scope are passed through only when both are valid and
+    artifacts are enabled; otherwise both are ``None`` so session-bound tools
+    return ``tool_unavailable`` instead of touching another scope.
+    """
+    chat_config = configurable.get("chat_config")
+    store = configurable.get("artifact_store")
+    scope = configurable.get("artifact_scope")
+
+    if not getattr(chat_config, "artifact_enabled", True):
+        store = scope = None
+    elif not (isinstance(store, ArtifactStore) and isinstance(scope, ArtifactScope)):
+        if store is not None or scope is not None:
+            logger.warning("Ignoring incomplete artifact context: both artifact_store and artifact_scope are required")
+        store = scope = None
+
+    budget = None
+    if needs_budget and chat_config is not None:
+        try:
+            budget = ContextBudget.for_turn(chat_config, messages)
+        except Exception:
+            logger.warning("Could not compute the context budget for internal tools", exc_info=True)
+
+    return ToolContext(artifact_store=store, artifact_scope=scope, context_budget=budget, chat_config=chat_config)
 
 
 async def _handle_reactive_auth_expiration(
@@ -113,8 +178,9 @@ async def _handle_reactive_auth_expiration(
 async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     """Execute tool calls from the last assistant message and append results.
 
-    Reads ``tool_manager``, ``auth_info``, and ``on_progress`` from
-    ``config["configurable"]``.  If ``tool_manager`` is absent (e.g. during
+    Reads ``tool_manager``, ``auth_info``, ``on_progress`` and the artifact
+    context (see ``_build_tool_context``) from ``config["configurable"]``.
+    If ``tool_manager`` is absent (e.g. during
     unit tests that don't inject one), the node returns an error result
     without raising so the graph can continue.
 
@@ -123,6 +189,10 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
     - ``metadata``: updated ``tool_call_rounds``/``total_tool_calls`` counters,
       plus ``auth_expired`` when reactive-mode refresh-and-retry didn't recover
       a 401.
+
+    Results are passed on as the tools returned them. Oversized ones are
+    replaced by artifact markers in the preprocessing node, the single place
+    that estimates the context budget (see ``spill.py``).
     """
     configurable: Dict[str, Any] = config.get("configurable") or {}
     tool_manager = configurable.get("tool_manager")
@@ -132,6 +202,8 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
 
     messages: List[Dict[str, Any]] = list(state.get("messages") or [])
     metadata: Dict[str, Any] = dict(state.get("metadata") or {})
+    # Without a tool_manager every result is an error and there are no internal tools.
+    internal_tools: Mapping[str, Any] = {}
 
     last_msg = messages[-1] if messages else {}
     raw_tool_calls: List[Dict[str, Any]] = last_msg.get("tool_calls") or []
@@ -175,6 +247,21 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
                 except Exception:
                     pass
 
+        # Structured per-call start/end events, so a client can show each call live.
+        async def _tool_event(event: Dict[str, Any]) -> None:
+            if on_progress_raw is not None:
+                try:
+                    await on_progress_raw({**event, "timestamp": datetime.now().isoformat()})
+                except Exception:
+                    pass
+
+        internal_tools = getattr(tool_manager, "internal_tools", None) or {}
+        tool_context = _build_tool_context(
+            configurable,
+            messages,
+            needs_budget=any(c["name"] in internal_tools for c in normalized_calls),
+        )
+
         logger.debug(
             "Executing %d tool call(s): %s",
             len(normalized_calls),
@@ -184,6 +271,8 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
             normalized_calls,
             auth_info=auth_info,
             on_progress=_tool_progress if on_progress_raw is not None else None,
+            on_tool_event=_tool_event if on_progress_raw is not None else None,
+            tool_context=tool_context,
         )
 
         auth_expiration_behaviour = getattr(chat_config, "auth_expiration_behaviour", "none")
@@ -214,6 +303,18 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
     ]
     logger.info("Tool result sizes: %s", [{"name": r["name"], "bytes": r["bytes"]} for r in tool_result_sizes])
     metadata["tool_result_sizes"] = metadata.get("tool_result_sizes", []) + tool_result_sizes
+
+    # The bounded pages the model asked for from an artifact; HTTP tool results are only logged by size above.
+    if logger.isEnabledFor(logging.DEBUG):
+        for entry, size in zip(tool_results, tool_result_sizes):
+            if entry.get("name") in internal_tools:
+                logger.debug(
+                    "Internal tool result %s (call %s, %s bytes): %s",
+                    entry.get("name"),
+                    entry.get("tool_call_id"),
+                    f"{size['bytes']:,}",
+                    _result_preview(entry),
+                )
 
     logger.debug(
         "Tool execution complete: %d result(s), round %d",

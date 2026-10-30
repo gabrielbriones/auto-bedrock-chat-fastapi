@@ -57,6 +57,7 @@ Optional RAG Components:
 | `tool_manager.py`         | Converts OpenAPI spec to AI tools; executes tool calls                      |
 | `auth_handler.py`         | Authentication types and credential management                              |
 | `session_manager.py`      | In-memory session lifecycle management                                      |
+| `artifacts.py`            | Scoped in-memory session artifacts with TTL, quotas and statistics          |
 | `message_preprocessor.py` | Two-stage token budget management (truncation + summarization)              |
 | `rag/`                    | Web and local file crawler, chunking, and embedding generation              |
 | `db/`                     | SQLite / Postgres stores for KB + feedback                                  |
@@ -74,6 +75,31 @@ Optional RAG Components:
 7. **If the model returns tool calls** → `ToolManager` executes HTTP requests to your API, results are appended, and the loop repeats (up to `max_tool_call_rounds`; individual-turn call count is unlimited by default but can be capped via `max_tool_calls`).
 8. **citation_boost / token_usage nodes** run once the turn's final answer is ready — optional, config-gated post-turn bookkeeping (KB credibility boost, per-turn token-usage recording) that runs for every graph caller, not just the WebSocket handler.
 9. **Final response** is streamed back to the client via WebSocket.
+
+---
+
+## Session Artifact Storage
+
+`ChatSessionManager` owns a concrete, process-local `ArtifactStore`.
+The WebSocket handler passes the store and a server-issued scope through
+LangGraph's runtime `configurable` values; the store itself is never
+checkpointed or placed in session metadata. Oversized tool results and user
+messages are stored and replaced, in the checkpoint and the model input, by a
+marker with a bounded preview (see Session artifacts); other oversized messages
+are copied before preprocessing, without replacing the original message.
+
+Artifacts are isolated by live connection and conversation, with reads
+restricted to the active scope. TTL, quotas and lifecycle cleanup bound their
+lifetime and payload bytes. Aggregate counters appear under `sessions.artifacts`
+in `GET {chat_endpoint}/stats` (admin only), without handles, payloads or ownership identifiers.
+
+Each live socket must stay on its owning worker. Stores are not shared across
+workers or replicas, and reconnecting does not restore artifacts. Shared-backend
+support, if needed, will be a separate future ticket; no backend abstraction is
+required by the current implementation.
+
+See [Session artifacts](session-artifacts.md) for configuration, cleanup rules,
+counter semantics and deployment limitations.
 
 ---
 

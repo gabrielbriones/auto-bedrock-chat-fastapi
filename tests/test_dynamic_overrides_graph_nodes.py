@@ -40,7 +40,7 @@ class TestPreprocessNodeAiSummarizationToggle:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         config = {"configurable": {"chat_config": chat_config}}
 
-        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+        with patch("autolangchat.graph.nodes.llm_call._build_llm") as mock_build_llm:
             mock_build_llm.return_value = MagicMock()
             await preprocess_node(state, config)
 
@@ -57,7 +57,7 @@ class TestPreprocessNodeAiSummarizationToggle:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         config = {"configurable": {"chat_config": chat_config}}
 
-        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+        with patch("autolangchat.graph.nodes.llm_call._build_llm") as mock_build_llm:
             await preprocess_node(state, config)
 
         mock_build_llm.assert_not_called()
@@ -91,7 +91,7 @@ class TestPreprocessNodeSummarizationParams:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         config = {"configurable": {"chat_config": chat_config}}
 
-        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+        with patch("autolangchat.graph.nodes.llm_call._build_llm") as mock_build_llm:
             mock_build_llm.return_value = MagicMock()
             await preprocess_node(state, config)
 
@@ -115,7 +115,7 @@ class TestPreprocessNodeSummarizationParams:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         config = {"configurable": {"chat_config": chat_config}}
 
-        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+        with patch("autolangchat.graph.nodes.llm_call._build_llm") as mock_build_llm:
             mock_build_llm.return_value = MagicMock()
             await preprocess_node(state, config)
 
@@ -136,7 +136,7 @@ class TestPreprocessNodeSummarizationParams:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         config = {"configurable": {"chat_config": chat_config}}
 
-        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+        with patch("autolangchat.graph.nodes.llm_call._build_llm") as mock_build_llm:
             mock_build_llm.return_value = MagicMock()
             await preprocess_node(state, config)
 
@@ -156,7 +156,7 @@ class TestPreprocessNodeSummarizationParams:
         state = {"messages": [{"role": "user", "content": "hi"}], "metadata": {}}
         config = {"configurable": {"chat_config": chat_config}}
 
-        with patch("autolangchat.graph.nodes.preprocess._build_llm") as mock_build_llm:
+        with patch("autolangchat.graph.nodes.llm_call._build_llm") as mock_build_llm:
             mock_build_llm.return_value = MagicMock()
             await preprocess_node(state, config)
 

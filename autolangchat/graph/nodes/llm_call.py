@@ -36,11 +36,15 @@ except ImportError:  # pragma: no cover
 
 from langchain_core.runnables import RunnableConfig
 
-from ...config import MODEL_ID_REGION_PREFIXES, split_model_id
+from ...artifacts import ArtifactError
+from ...config import MODEL_ID_REGION_PREFIXES, resolve_model_region, split_model_id
+from ...context_budget import estimate_message_tokens, provider_for_model
 from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
 from ..state import ChatState
+from ..tools.artifact_tools import GREP_CONTENT, READ_CONTENT_RANGE, artifact_tools_bound
+from .preprocess import prepare_message_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +154,14 @@ def _retry_model_id_with_inference_profile(model_id: str, chat_config: Any) -> O
     """Return a region-prefixed retry id for ``model_id`` (e.g.
     "meta.llama3-3-70b-instruct-v1:0" -> "us.meta.llama3-3-70b-instruct-v1:0"),
     or ``None`` if ``model_id`` already carries a recognized region prefix
-    (nothing left to retry with)."""
+    (nothing left to retry with). Prefers the configured ``default_region``
+    when that profile exists, else infers one from ``aws_region``."""
     region_prefix, _provider_key = split_model_id(model_id)
     if region_prefix in MODEL_ID_REGION_PREFIXES:
         return None
+    resolved = resolve_model_region(model_id, getattr(chat_config, "default_region", None))
+    if resolved != model_id:
+        return resolved
     prefix = _infer_profile_prefix_for_region(getattr(chat_config, "aws_region", None))
     return f"{prefix}.{model_id}"
 
@@ -270,8 +278,25 @@ def _wrap_model_invocation_error(model_id: str, exc: Exception, chat_config: Any
     return ModelInvocationError(message, model_id=model_id, reason=reason)
 
 
-def _to_langchain_messages(message_dicts: List[Dict]) -> List[Any]:
-    """Convert internal dict messages to LangChain BaseMessage objects."""
+def _artifact_marker(msg: Dict, what: str) -> str:
+    """Text telling the model which handle holds this message's archived copy."""
+    handle = (msg.get("metadata") or {}).get("artifact_handle")
+    if not isinstance(handle, str) or not handle:
+        return ""
+    return (
+        f"\n\n[Archived: the full {what} is stored as artifact handle {handle}. "
+        f"To read exact parts of it, call {READ_CONTENT_RANGE} or {GREP_CONTENT} with this handle. "
+        "If they report artifact_unavailable, the copy has expired.]"
+    )
+
+
+def _to_langchain_messages(message_dicts: List[Dict], *, artifact_markers: bool = False) -> List[Any]:
+    """Convert internal dict messages to LangChain BaseMessage objects.
+
+    With ``artifact_markers``, messages archived under a handle get a trailing
+    note naming it. The note is added here, after any truncation, so it never
+    changes the stored or checkpointed content and cannot be truncated away.
+    """
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     lc_messages = []
@@ -283,16 +308,19 @@ def _to_langchain_messages(message_dicts: List[Dict]) -> List[Any]:
         if role == "system":
             lc_messages.append(SystemMessage(content=content))
         elif role == "user":
+            if artifact_markers and isinstance(content, str):
+                content += _artifact_marker(msg, "message")
             lc_messages.append(HumanMessage(content=content))
         elif role == "assistant":
             tool_calls = msg.get("tool_calls") or []
             lc_messages.append(AIMessage(content=content, tool_calls=tool_calls))
         elif role == "tool":
             tool_results = msg.get("tool_results") or []
+            marker = _artifact_marker(msg, "tool output of this step") if artifact_markers else ""
             for tr in tool_results:
                 lc_messages.append(
                     ToolMessage(
-                        content=str(tr.get("result") or tr.get("error", "")),
+                        content=str(tr.get("result") or tr.get("error", "")) + marker,
                         tool_call_id=tr.get("tool_call_id", ""),
                         name=tr.get("name", ""),
                     )
@@ -467,38 +495,63 @@ def _generate_message_preview(content: Any, max_preview_len: int = 100) -> tuple
     return content_len, preview
 
 
-def _log_conversation(messages: List[Dict], label: str) -> None:
-    """Log message states at DEBUG level — role, sizes, tool call/result counts."""
+def _log_conversation(messages: List[Dict], label: str, provider: Optional[str] = None) -> None:
+    """Log roles, sizes, token counts/estimates, and role-specific tool details."""
     if not logger.isEnabledFor(logging.DEBUG):
         return
     logger.debug("%s: %d messages", label, len(messages))
     for i, msg in enumerate(messages):
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
-        tool_calls = msg.get("tool_calls") or []
-        tool_results = msg.get("tool_results") or []
         content_len, preview = _generate_message_preview(content)
-        role_label = f"{role} [system prompt]" if role == "system" else role
-        logger.debug(
-            "  [%d] %s (%s chars, tool_calls=%d, tool_results=%d): %s",
-            i,
-            role_label,
-            f"{content_len:,}",
-            len(tool_calls),
-            len(tool_results),
-            preview,
-        )
-        for j, tr in enumerate(tool_results):
-            if not isinstance(tr, dict):
-                continue
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            metadata = msg.get("metadata")
+            usage = metadata.get("usage") if isinstance(metadata, dict) else None
+            usage = usage if isinstance(usage, dict) else {}
             logger.debug(
-                "      - tool_result[%d] name=%s tool_call_id=%s",
-                j,
-                tr.get("name"),
-                tr.get("tool_call_id") or tr.get("tool_use_id"),
+                "  [%d] %s (%s chars, input_tokens=%s, output_tokens=%s, tool_calls=%d): %s",
+                i,
+                role,
+                f"{content_len:,}",
+                usage.get("input_tokens", "unknown"),
+                usage.get("output_tokens", "unknown"),
+                len(tool_calls),
+                preview,
             )
-        for j, tc in enumerate(tool_calls):
-            logger.debug("      - tool_call[%d] id=%s name=%s", j, tc.get("id"), tc.get("name"))
+            for j, tc in enumerate(tool_calls):
+                logger.debug("      - tool_call[%d] id=%s name=%s", j, tc.get("id"), tc.get("name"))
+        elif role == "tool":
+            tool_results = msg.get("tool_results") or []
+            logger.debug(
+                "  [%d] %s (%s chars, estimated_tokens=%d, tool_results=%d): %s",
+                i,
+                role,
+                f"{content_len:,}",
+                estimate_message_tokens(msg, provider=provider),
+                len(tool_results),
+                preview,
+            )
+            for j, tr in enumerate(tool_results):
+                if not isinstance(tr, dict):
+                    continue
+                logger.debug(
+                    "      - tool_result[%d] name=%s tool_call_id=%s",
+                    j,
+                    tr.get("name"),
+                    tr.get("tool_call_id") or tr.get("tool_use_id"),
+                )
+        elif role == "user":
+            logger.debug(
+                "  [%d] %s (%s chars, estimated_tokens=%d): %s",
+                i,
+                role,
+                f"{content_len:,}",
+                estimate_message_tokens(msg, provider=provider),
+                preview,
+            )
+        else:
+            logger.debug("  [%d] %s (%s chars): %s", i, role, f"{content_len:,}", preview)
 
 
 async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
@@ -529,6 +582,17 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         Surfaced from ``AIMessage.usage_metadata`` into
         ``metadata["usage"]``.
 
+    Context estimates:
+        Preprocessing estimates messages since the last assistant message
+        (or system prompt for a new conversation) before primary invocations.
+        Retries re-evaluate here because they bypass the preprocessing node.
+        Per-message estimates are recorded in ``metadata["message_context_budget"]``.
+        Messages above the per-message threshold are handled in the same pass:
+        oversized tool results and user messages are replaced by artifact
+        markers (see ``graph/tools/spill.py``), and with a live artifact scope
+        any other message is copied into the store and tagged with a handle
+        without replacing its content.
+
     Stop reason:
         Bedrock Converse's ``response_metadata["stopReason"]`` (e.g.
         ``end_turn``, ``max_tokens``, ``tool_use``) is surfaced into the
@@ -556,17 +620,19 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     if chat_config is None:
         raise RuntimeError("llm_call_node: chat_config not found in configurable")
 
-    lc_messages = _to_langchain_messages(messages)
     primary_model = chat_config.model_id
+    lc_messages = _to_langchain_messages(messages, artifact_markers=artifact_tools_bound(chat_config, primary_model))
     fallback_model = getattr(chat_config, "fallback_model", None)
 
-    _log_conversation(messages, "LLM call — conversation state")
+    _log_conversation(messages, "LLM call — conversation state", provider=provider_for_model(primary_model))
 
     # --- Primary call ---
     try:
         llm = _build_llm(primary_model, chat_config)
         ai_msg = await _invoke_with_streaming(llm, lc_messages, on_progress)
         metadata["fallback_model_used"] = False
+    except ArtifactError:
+        raise
     except Exception as exc:
         if _is_context_window_error(exc):
             # --- Safety net 1: emergency re-truncation, same model ---
@@ -579,6 +645,9 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 _EMERGENCY_TRUNCATION_THRESHOLD_FACTOR,
             )
             try:
+                # Renew expired handles on the original history before making
+                # the retry-only truncated copy, so checkpoint metadata survives.
+                messages, metadata["message_context_budget"] = prepare_message_artifacts(messages, chat_config, config)
                 retruncated = await MessagePreprocessor(config=chat_config).preprocess_messages(
                     messages=list(messages),
                     on_progress=on_progress,
@@ -590,8 +659,19 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 # through this path, which callers need to be able to observe).
                 metadata["emergency_retruncation_applied"] = True
                 llm = _build_llm(primary_model, chat_config)
-                ai_msg = await _invoke_with_streaming(llm, _to_langchain_messages(retruncated), on_progress)
+                retruncated, metadata["message_context_budget"] = prepare_message_artifacts(
+                    retruncated, chat_config, config
+                )
+                ai_msg = await _invoke_with_streaming(
+                    llm,
+                    _to_langchain_messages(
+                        retruncated, artifact_markers=artifact_tools_bound(chat_config, primary_model)
+                    ),
+                    on_progress,
+                )
                 metadata["fallback_model_used"] = False
+            except ArtifactError:
+                raise
             except Exception as retry_exc:
                 if not (fallback_model and _is_context_window_error(retry_exc)):
                     raise ContextWindowExceededError(
@@ -606,9 +686,20 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 )
                 try:
                     llm_fb = _build_llm(fallback_model, chat_config)
-                    ai_msg = await _invoke_with_streaming(llm_fb, lc_messages, on_progress)
+                    messages, metadata["message_context_budget"] = prepare_message_artifacts(
+                        messages, chat_config.model_copy(update={"model_id": fallback_model}), config
+                    )
+                    ai_msg = await _invoke_with_streaming(
+                        llm_fb,
+                        _to_langchain_messages(
+                            messages, artifact_markers=artifact_tools_bound(chat_config, fallback_model)
+                        ),
+                        on_progress,
+                    )
                     metadata["fallback_model_used"] = True
                     metadata["fallback_model"] = fallback_model
+                except ArtifactError:
+                    raise
                 except Exception as fb_exc:
                     raise ContextWindowExceededError(
                         f"Primary ({primary_model}), emergency re-truncation, and fallback "
@@ -629,9 +720,14 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             )
             try:
                 llm_profile = _build_llm(profile_model_id, chat_config)
+                messages, metadata["message_context_budget"] = prepare_message_artifacts(
+                    messages, chat_config.model_copy(update={"model_id": profile_model_id}), config
+                )
                 ai_msg = await _invoke_with_streaming(llm_profile, lc_messages, on_progress)
                 metadata["fallback_model_used"] = False
                 metadata["inference_profile_model_id"] = profile_model_id
+            except ArtifactError:
+                raise
             except Exception as profile_exc:
                 logger.error(
                     "Inference-profile retry also failed for %s (tried %s): %s",
@@ -676,11 +772,14 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             metadata["recovered_text_tool_calls"] = metadata.get("recovered_text_tool_calls", 0) + len(recovered)
 
     if logger.isEnabledFor(logging.DEBUG):
-        content_len, preview = _generate_message_preview(response_dict.get("content", ""))
+        content_len, preview = _generate_message_preview(response_dict.get("content", ""), max_preview_len=300)
         tool_calls = response_dict.get("tool_calls") or []
+        usage = response_dict.get("metadata", {}).get("usage", {})
         logger.debug(
-            "LLM response — assistant (%s chars, tool_calls=%d): %s",
+            "LLM response — assistant (%s chars, input_tokens=%s, output_tokens=%s, tool_calls=%d): %s",
             f"{content_len:,}",
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
             len(tool_calls),
             preview,
         )
@@ -698,6 +797,12 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     if usage:
         metadata["input_tokens"] = (metadata.get("input_tokens") or 0) + (usage.get("input_tokens") or 0)
         metadata["output_tokens"] = (metadata.get("output_tokens") or 0) + (usage.get("output_tokens") or 0)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "LLM response — cumulative token usage (input_tokens=%s, output_tokens=%s)",
+            metadata.get("input_tokens", 0),
+            metadata.get("output_tokens", 0),
+        )
 
     # Update model_id with the actual model used (may differ if fallback was triggered)
     metadata["model_id"] = response_dict.get("metadata", {}).get("model_id") or primary_model

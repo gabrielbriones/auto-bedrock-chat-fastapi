@@ -231,6 +231,25 @@ class SQLiteConversationStore(BaseConversationStore):
         if not found:
             raise ConversationNotFoundError(f"conversation {conversation_id} not found")
 
+    async def set_title_if_unset(self, conversation_id: str, title: str) -> bool:
+        return await asyncio.to_thread(self._set_title_if_unset_sync, conversation_id, title)
+
+    def _set_title_if_unset_sync(self, conversation_id: str, title: str) -> bool:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "UPDATE conversations SET title = ?, updated_at = ? "
+                    "WHERE id = ? AND (title IS NULL OR title = '')",
+                    (title, _now_iso(), conversation_id),
+                )
+                self._conn.commit()
+                return cur.rowcount > 0
+            except Exception:
+                self._conn.rollback()
+                raise
+
     async def record_turn(self, conversation_id: str) -> None:
         await asyncio.to_thread(self._record_turn_sync, conversation_id)
 

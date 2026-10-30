@@ -12,7 +12,9 @@ import {
   classifyTypingFrame,
   createTurn,
   failTurn,
+  finishLiveTool,
   isUnresolved,
+  startLiveTool,
   type Turn,
   type TurnStatus,
 } from '@/domains/messaging/domain/turn'
@@ -155,6 +157,52 @@ describe('Turn', () => {
 
       expect(resumed.toolProgress).toBeNull()
       expect(resumed.streamText).toBe('Job 42 uses 2.1 IPC')
+    })
+
+    it('tracks each live tool call from start to finish, in start order', () => {
+      const started = unwrap(startLiveTool(aTurn(), { id: 'a', name: 'get_jobs', arguments: { q: 1 } }))
+      const both = unwrap(startLiveTool(started, { id: 'b', name: 'get_job', arguments: {} }))
+      const finished = unwrap(finishLiveTool(both, 'b', 'HTTP 404', 12))
+
+      expect(finished.status).toBe('streaming')
+      expect(finished.liveTools).toEqual([
+        { id: 'a', name: 'get_jobs', arguments: { q: 1 }, status: 'running', error: null, durationMs: null },
+        { id: 'b', name: 'get_job', arguments: {}, status: 'failed', error: 'HTTP 404', durationMs: 12 },
+      ])
+    })
+
+    it('keeps the watched durations on the answer\'s activity', () => {
+      const started = unwrap(startLiveTool(aTurn(), { id: 'a', name: 'get_jobs', arguments: {} }))
+      const done = unwrap(finishLiveTool(started, 'a', null, 250))
+      const answered = unwrap(answerTurn(done, aResponse()))
+
+      expect(answered.activity.toolDurationsMs).toEqual({ a: 250 })
+    })
+
+    it('ignores a duplicate start frame for a call it already tracks', () => {
+      const started = unwrap(startLiveTool(aTurn(), { id: 'a', name: 'get_jobs', arguments: {} }))
+      const done = unwrap(finishLiveTool(started, 'a', null, 5))
+      const replay = unwrap(startLiveTool(done, { id: 'a', name: 'get_jobs', arguments: {} }))
+
+      expect(replay.liveTools).toEqual(done.liveTools)
+    })
+
+    it('resets the text baseline when a tool round starts, so the next round can stream from empty', () => {
+      const preamble = unwrap(applyStreamingSnapshot(aTurn(), 'Let me look that up for you.', 'text'))
+      const tool = unwrap(startLiveTool(preamble, { id: 'a', name: 'get_jobs', arguments: {} }))
+      const next = unwrap(applyStreamingSnapshot(tool, 'Two', 'text'))
+
+      expect(tool.streamText).toBeNull()
+      expect(next.streamText).toBe('Two')
+    })
+
+    it('drops the legacy "Calling…" notice once tool calls are tracked individually', () => {
+      const notice = unwrap(applyStreamingSnapshot(aTurn(), 'Calling get_jobs... (1/2)', 'tool-progress'))
+      const tool = unwrap(startLiveTool(notice, { id: 'a', name: 'get_jobs', arguments: {} }))
+      const second = unwrap(applyStreamingSnapshot(tool, 'Calling get_job... (2/2)', 'tool-progress'))
+
+      expect(tool.toolProgress).toBeNull()
+      expect(second.toolProgress).toBeNull()
     })
 
     it('rejects a snapshot for a turn outside {sent, streaming} (I4)', () => {

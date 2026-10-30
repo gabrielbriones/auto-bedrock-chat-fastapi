@@ -156,6 +156,29 @@ const citations = (
     score: source.score,
   }))
 
+type ToolFrame = Extract<ServerFrame, { type: 'tool_call_start' | 'tool_call_end' }>
+
+const toolEvent = (frame: ToolFrame): MessagingEvent | null => {
+  if (frame.type === 'tool_call_start') {
+    return {
+      kind: 'tool-started',
+      id: frame.tool_call_id ?? `tool-call-${frame.position}`,
+      name: stringOr(frame.name, MESSAGING_COPY.transcript.unknownTool),
+      arguments: frame.arguments ?? {},
+    }
+  }
+
+  // An end without an id cannot be matched to the row its start created.
+  return frame.tool_call_id === null
+    ? null
+    : {
+        kind: 'tool-finished',
+        id: frame.tool_call_id,
+        error: frame.status === 'error' ? (frame.error ?? MESSAGING_COPY.transcript.failed) : null,
+        durationMs: frame.duration_ms ?? null,
+      }
+}
+
 // CONTRACT-001 §2.2. Overrides and the heartbeat join this frame in Phase 4 (`T-080`).
 const toChatFrame = (text: string): object => ({ type: 'chat', message: text })
 
@@ -165,6 +188,9 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
       return { kind: 'session-established', sessionId: frame.session_id }
     case 'typing':
       return { kind: 'typing', text: frame.message }
+    case 'tool_call_start':
+    case 'tool_call_end':
+      return toolEvent(frame)
     case 'ai_response':
       // The error variant carries only `message`; everything else is absent by contract.
       return frame.error === true
@@ -208,6 +234,8 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
 const conversationOf = (frame: ServerFrame): string | null => {
   switch (frame.type) {
     case 'typing':
+    case 'tool_call_start':
+    case 'tool_call_end':
     case 'ai_response':
     case 'conversation_loaded':
     case 'conversation_error':

@@ -77,6 +77,100 @@ Tool results go back into the model's context, so large ones count against
 its input-token limit. See
 [Token Management — How Oversize Is Decided](token-management.md#how-oversize-is-decided)
 for how the input budget and the size of a result are estimated per model.
+An oversized successful result is replaced by a small marker before it reaches
+the model (by the preprocessing node, which is where the context budget is
+estimated), with the original stored as a
+[session artifact](session-artifacts.md#tool-result-markers) the model can read
+back in pages.
+
+### Response Size Limit
+
+Each tool response body is streamed and capped at `tool_response_max_bytes` (default 64 MiB, counted on decoded bytes,
+so a compressed body is limited by its decompressed size). This protects the server's memory from a huge or endless
+response; it is a safety net. What keeps normal large results out of the model's context is the
+[tool result spill](session-artifacts.md#tool-result-markers).
+
+Compressed responses are decoded in bounded steps (at most 1 MiB per decompression call, per encoding layer), so a
+small high-ratio body cannot allocate far beyond the cap. Requests advertise `Accept-Encoding: gzip, deflate`, and a
+response using any other `Content-Encoding` (for example `br` or `zstd`) fails with a `ToolError`.
+
+- **At or below the cap**: the body is parsed as before (JSON, else plain text) and the result shape is unchanged.
+- **Over the cap**: reading stops, the connection is closed, the body is **not** parsed, and the tool returns a flagged
+  result holding the text read so far:
+
+  ```json
+  {
+    "truncated": true,
+    "message": "Response exceeded the 67108864-byte limit and was truncated; only the first 67108864 bytes are included.",
+    "bytes_read": 67108864,
+    "limit_bytes": 67108864,
+    "content_type": "text/plain",
+    "text": "..."
+  }
+  ```
+
+  The same result is returned on the chat (graph) path, through MCP `tools/call`, and to direct LangChain
+  `StructuredTool` use. On the chat path with a live artifact scope it is then
+  [stored as an artifact](session-artifacts.md#tool-result-markers) (its `text` kept as plain text, line by line)
+  and replaced by a marker.
+
+- **HTTP errors (>= 400)**: only a small bounded part of the body is read; `ToolHTTPError.details` keeps its first 500
+  characters.
+
+Raise or lower the cap with `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES` (see [Configuration](configuration.md#tool-calling)).
+
+---
+
+## Internal Tools
+
+Besides the OpenAPI-generated tools, `ToolManager` can dispatch **internal
+tools**: Python handlers that run in-process instead of over HTTP. The plugin
+uses this seam for the [session artifact readers](session-artifacts.md#assistant-tools)
+(`read_content_range`, `grep_content`), which are registered only when
+`AUTOCHAT_ARTIFACT_ENABLED` is true.
+
+An `InternalTool` (`autolangchat/graph/tools/internal.py`) has:
+
+| Field              | Meaning                                                                    |
+| ------------------ | -------------------------------------------------------------------------- |
+| `name`             | Dispatch name; must equal `function_desc["name"]`                          |
+| `function_desc`    | Same shape as `ToolsGenerator` output: `name`, `description`, `parameters` |
+| `handler`          | `async handler(arguments, ctx)`                                            |
+| `requires_session` | Needs a live chat session (default `True`)                                 |
+| `exposed`          | Bound to the model (default `True`); `False` for hidden aliases            |
+
+`ctx` is a `ToolContext` with `artifact_store`, `artifact_scope`,
+`context_budget` and `chat_config`. `tools_execution_node` builds it each round
+from `config["configurable"]`, computing a `ContextBudget` from the current
+messages only when the round calls an internal tool.
+
+How the seam fits in:
+
+- **Dispatch.** `execute_tool_calls` and `call_tool` match internal tools by
+  name before HTTP tools. Hidden aliases can be dispatched but are never bound.
+- **Binding.** `_sync_config` and `generate_langchain_tools` add the exposed
+  internal schemas to `config.tools_desc` and `config.langchain_tools`, so
+  `bind_tools` sees them. `AutoLangChatPlugin.update_tools()` keeps them after
+  regenerating the OpenAPI tools.
+- **Reserved names.** Internal names, including aliases, are reserved. An
+  OpenAPI operation with the same cleaned name is logged and skipped by
+  `ToolsGenerator(reserved_names=...)`, with `ToolManager` as a fallback filter.
+- **No session.** Session-bound tools called without a store and scope (direct
+  `chat_graph.ainvoke` callers, or LangChain tools invoked outside the graph)
+  return `{"error": "tool_unavailable", ...}`.
+- **MCP.** Session-bound internal tools are left out of the MCP `tools/list`
+  and rejected by `tools/call`, because MCP has no live chat session.
+- **Errors.** Handlers return expected failures as
+  `{"error": code, "message": ...}`. Unexpected exceptions are reported like
+  any other failed tool call.
+- **Logging.** At DEBUG, each internal tool result is logged with its strings clipped to 500 characters
+  (`Internal tool result <tool> (call <id>, <bytes> bytes): ...`); see
+  [Reading the logs](session-artifacts.md#tool-result-markers).
+- **Never replaced.** Results of internal tools are not replaced by an
+  [artifact marker](session-artifacts.md#tool-result-markers), even when large:
+  their output is already sized to the turn's context budget, and replacing it
+  would make the model chase its own handle. They still count toward the
+  message total when the other results of the same round are sized.
 
 ---
 

@@ -253,3 +253,54 @@ class TestContextBudgetEnvVars:
     def test_safety_fraction_out_of_range_rejected(self, value):
         with pytest.raises(ValidationError):
             _load_config(AUTOCHAT_CONTEXT_BUDGET_SAFETY_FRACTION=value)
+
+
+class TestToolResponseMaxBytesEnvVar:
+    def test_default_is_64_mib(self):
+        assert _load_config().tool_response_max_bytes == 64 * 1024 * 1024
+
+    def test_default_artifact_quotas_fit_an_archived_truncated_response(self):
+        """The preprocess archive pass serializes a tool message's tool_results and its
+        content mirror (about 2.1x the body for log text), so a capped response must fit."""
+        config = _load_config()
+        assert config.artifact_max_bytes_per_session >= 3 * config.tool_response_max_bytes
+        assert config.artifact_max_bytes >= 2 * config.artifact_max_bytes_per_session
+
+    def test_configurable_and_must_be_positive(self):
+        assert _load_config(AUTOCHAT_TOOL_RESPONSE_MAX_BYTES="123").tool_response_max_bytes == 123
+        with pytest.raises(ValidationError):
+            _load_config(AUTOCHAT_TOOL_RESPONSE_MAX_BYTES="0")
+
+
+class TestArtifactEnvVars:
+    def test_enabled_by_default_and_can_be_disabled(self):
+        assert _load_config().artifact_enabled is True
+        assert _load_config(AUTOCHAT_ARTIFACT_ENABLED="false").artifact_enabled is False
+
+    @pytest.mark.parametrize(
+        "name,field",
+        [
+            ("AUTOCHAT_ARTIFACT_MAX_AGE_SECONDS", "artifact_max_age_seconds"),
+            ("AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION", "artifact_max_bytes_per_session"),
+            ("AUTOCHAT_ARTIFACT_MAX_ITEMS_PER_SESSION", "artifact_max_items_per_session"),
+            ("AUTOCHAT_ARTIFACT_MAX_BYTES", "artifact_max_bytes"),
+        ],
+    )
+    def test_positive_limits_are_configurable(self, name, field):
+        assert getattr(_load_config(**{name: "123"}), field) == 123
+        with pytest.raises(ValidationError):
+            _load_config(**{name: "0"})
+
+    @pytest.mark.parametrize(
+        "name,field,ceiling",
+        [
+            ("AUTOCHAT_ARTIFACT_READ_MAX_LINES", "artifact_read_max_lines", 1000),
+            ("AUTOCHAT_ARTIFACT_READ_MAX_BYTES", "artifact_read_max_bytes", 65536),
+        ],
+    )
+    def test_read_caps_default_to_and_cannot_exceed_the_store_limits(self, name, field, ceiling):
+        assert getattr(_load_config(), field) == ceiling
+        assert getattr(_load_config(**{name: "50"}), field) == 50
+        for value in ("0", str(ceiling + 1)):
+            with pytest.raises(ValidationError):
+                _load_config(**{name: value})

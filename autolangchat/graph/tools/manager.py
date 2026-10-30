@@ -1,28 +1,55 @@
-"""Tool Manager — owns tool execution via HTTP.
+"""Tool Manager — owns tool execution via HTTP and in-process internal tools.
 
 This module provides:
 
 - **Tool execution**: ``ToolManager`` executes tool calls via HTTP, applying
-  authentication from an ``AuthInfo`` dataclass.
+  authentication from an ``AuthInfo`` dataclass.  Calls whose name matches a
+  registered ``InternalTool`` are dispatched to its in-process handler instead.
 - **Authentication**: ``AuthInfo`` dataclass for transport-agnostic auth state.
 
 Tool generation (OpenAPI spec parsing, LangChain wrapping) is handled by
 ``ToolsGenerator`` in ``generator.py``.  ``ToolManager`` receives the parsed
-tool metadata dict and only concerns itself with HTTP dispatch.
+tool metadata dict and only concerns itself with dispatch.
 """
 
 import asyncio
+import json
 import logging
+import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from types import MappingProxyType
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 
 import httpx
 
 from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
 from ...exceptions import ToolError, ToolHTTPError
+from .bounded_decoding import ACCEPT_ENCODING, iter_decoded_chunks
+from .internal import InternalTool, ToolContext
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on how much of an HTTP error body is read; only the first 500
+# characters end up in ToolHTTPError.details.
+_ERROR_BODY_READ_MAX_BYTES = 4096
+
+
+@dataclass
+class _RawResponse:
+    """A fully-read (possibly size-capped) HTTP response body."""
+
+    status_code: int
+    content_type: str
+    encoding: str
+    body: bytes
+    truncated: bool
+
+    def text(self) -> str:
+        try:
+            return self.body.decode(self.encoding, errors="replace")
+        except LookupError:
+            return self.body.decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +104,12 @@ class ToolManager:
             function_desc}}`` produced by ``ToolsGenerator._generated_tools``.
         config: Application configuration (``ChatConfig`` instance).
         base_url: Resolved API base URL for HTTP calls.
+        internal_tools: In-process tools dispatched by name before HTTP.
+            Their names are reserved: a generated tool with the same name is
+            logged and left out of the bound schemas. Pass the same names as
+            ``ToolsGenerator(reserved_names=...)`` so collisions are dropped at
+            generation time and never reach MCP either. Tools with
+            ``exposed=False`` (aliases) can be dispatched but are never bound.
 
     Example::
 
@@ -95,14 +128,24 @@ class ToolManager:
         generated_tools: Dict[str, Any],
         config: Optional[ChatConfig] = None,
         base_url: str = "http://localhost:8000",
+        internal_tools: Optional[Iterable[InternalTool]] = None,
     ):
         self._generated_tools = generated_tools
+        self._internal_tools: Dict[str, InternalTool] = {}
+        for tool in internal_tools or ():
+            if tool.name in self._internal_tools:
+                raise ValueError(f"Duplicate internal tool name: {tool.name!r}")
+            self._internal_tools[tool.name] = tool
         self._config = config or ChatConfig()
         self._base_url = base_url.rstrip("/")
         self._http_client = httpx.AsyncClient(timeout=self._config.timeout)
         self._langchain_tools: Optional[List[Any]] = None
         self._total_tool_calls_executed: int = 0
-        logger.info("ToolManager ready: %d tools", len(generated_tools))
+        logger.info(
+            "ToolManager ready: %d tools, %d internal tools",
+            len(generated_tools),
+            len(self._internal_tools),
+        )
         self._sync_config()
 
     # ------------------------------------------------------------------
@@ -113,6 +156,27 @@ class ToolManager:
     def base_url(self) -> str:
         """The resolved API base URL."""
         return self._base_url
+
+    @property
+    def internal_tools(self) -> Mapping[str, InternalTool]:
+        """Read-only view of registered internal tools (including hidden aliases), by name."""
+        return MappingProxyType(self._internal_tools)
+
+    def _http_tools(self, *, log_collisions: bool = False) -> Dict[str, Any]:
+        """Generated HTTP tools, minus any whose name is reserved by an internal tool."""
+        if not self._internal_tools:
+            return self._generated_tools
+        tools: Dict[str, Any] = {}
+        for name, meta in self._generated_tools.items():
+            if name in self._internal_tools:
+                if log_collisions:
+                    logger.warning("Skipping generated tool %r: name is reserved by an internal tool", name)
+                continue
+            tools[name] = meta
+        return tools
+
+    def _exposed_internal_tools(self) -> List[InternalTool]:
+        return [t for t in self._internal_tools.values() if t.exposed]
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -151,7 +215,7 @@ class ToolManager:
             "object": dict,
         }
 
-        def _make_tool(func_name: str, tool_meta: Dict, fn_desc: Dict) -> Any:
+        def _make_tool(func_name: str, fn_desc: Dict, invoke: Callable[[Dict[str, Any]], Awaitable[Any]]) -> Any:
             parameters = fn_desc.get("parameters", {})
             properties = parameters.get("properties", {})
             required_params = set(parameters.get("required", []))
@@ -168,10 +232,9 @@ class ToolManager:
                     field_defs[p_name] = (_Optional[py_type], Field(None, description=desc))
 
             args_model = create_model(f"{func_name}_args", **field_defs)
-            mgr = self
 
             async def _invoke(**kwargs: Any) -> str:
-                result = await mgr._execute_single_tool_call(tool_meta, kwargs, auth_info=None)
+                result = await invoke(kwargs)
                 if isinstance(result, str):
                     return result
                 return _json.dumps(result)
@@ -183,18 +246,30 @@ class ToolManager:
                 args_schema=args_model,
             )
 
+        def _http_invoker(tool_meta: Dict[str, Any]) -> Callable[[Dict[str, Any]], Awaitable[Any]]:
+            return lambda kwargs: self._execute_single_tool_call(tool_meta, kwargs, auth_info=None)
+
+        def _internal_invoker(tool: InternalTool) -> Callable[[Dict[str, Any]], Awaitable[Any]]:
+            # Invoked outside the graph there is no per-turn context, so
+            # session-bound tools fail closed with tool_unavailable.
+            return lambda kwargs: tool.invoke(kwargs, _empty_tool_context(self._config))
+
         self._langchain_tools = [
-            _make_tool(func_name, tool_meta, tool_meta["function_desc"])
-            for func_name, tool_meta in self._generated_tools.items()
-        ]
+            _make_tool(func_name, tool_meta["function_desc"], _http_invoker(tool_meta))
+            for func_name, tool_meta in self._http_tools().items()
+        ] + [_make_tool(t.name, t.function_desc, _internal_invoker(t)) for t in self._exposed_internal_tools()]
         logger.info("Generated %d LangChain tools", len(self._langchain_tools))
         return self._langchain_tools
 
     def _sync_config(self) -> None:
-        """Populate ``config.tools_desc`` and ``config.langchain_tools`` from current state."""
+        """Populate ``config.tools_desc`` and ``config.langchain_tools`` from current state.
+
+        Includes the schemas of exposed internal tools so ``bind_tools`` sees them.
+        """
         tools_desc = {
             "type": "function",
-            "functions": [t["function_desc"] for t in self._generated_tools.values()],
+            "functions": [t["function_desc"] for t in self._http_tools(log_collisions=True).values()]
+            + [t.function_desc for t in self._exposed_internal_tools()],
         }
         self._config.tools_desc = tools_desc
         self._config.langchain_tools = self.generate_langchain_tools()
@@ -204,6 +279,7 @@ class ToolManager:
         name: str,
         arguments: Dict[str, Any],
         auth_info: Optional[AuthInfo] = None,
+        tool_context: Optional[ToolContext] = None,
     ) -> Any:
         """Execute a single named tool call and return its raw result.
 
@@ -217,30 +293,44 @@ class ToolManager:
         exceptions propagate so callers can map them to their own error
         format (e.g. a JSON-RPC error response).
 
+        Internal tools (including hidden aliases) are matched by name before
+        the HTTP tools and run in-process with ``tool_context``.
+
         Args:
-            name: Registered tool name (a key in ``_generated_tools``).
+            name: Registered tool name (an internal tool or a key in
+                ``_generated_tools``).
             arguments: Arguments for the tool call.
             auth_info: Optional authentication data for the HTTP request.
+            tool_context: Per-call context for internal tools. When omitted,
+                session-bound internal tools return ``tool_unavailable``.
 
         Returns:
             The parsed response (JSON dict, list, or string) from the tool's
-            HTTP endpoint.
+            HTTP endpoint. A response over ``config.tool_response_max_bytes``
+            is returned as a flagged ``{"truncated": True, ...}`` dict with the
+            text read so far (see ``_execute_single_tool_call``).
 
         Raises:
             ToolError: If ``name`` is not a registered tool, or required
                 arguments are missing.
         """
-        tool_metadata = self._generated_tools.get(name)
-        if not tool_metadata:
-            raise ToolError(f"Unknown tool: {name}")
+        internal_tool = self._internal_tools.get(name)
+        if internal_tool is not None:
+            fn_desc = internal_tool.function_desc
+        else:
+            tool_metadata = self._generated_tools.get(name)
+            if not tool_metadata:
+                raise ToolError(f"Unknown tool: {name}")
+            fn_desc = tool_metadata.get("function_desc", {})
 
-        fn_desc = tool_metadata.get("function_desc", {})
         required = fn_desc.get("parameters", {}).get("required", [])
         missing = [p for p in required if p not in arguments]
         if missing:
             raise ToolError(f"Missing required arguments for tool {name}: {missing}")
 
         self._total_tool_calls_executed += 1
+        if internal_tool is not None:
+            return await internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config))
         return await self._execute_single_tool_call(tool_metadata, arguments, auth_info)
 
     async def execute_tool_calls(
@@ -248,12 +338,15 @@ class ToolManager:
         tool_calls: List[Dict[str, Any]],
         auth_info: Optional[AuthInfo] = None,
         on_progress: Optional[Callable] = None,
+        on_tool_event: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        tool_context: Optional[ToolContext] = None,
     ) -> List[Dict[str, Any]]:
-        """Execute a list of tool calls concurrently by making HTTP requests.
+        """Execute a list of tool calls concurrently.
 
         Each tool call is validated, then (if valid) dispatched concurrently
-        as an HTTP request to the appropriate API endpoint via
-        ``asyncio.gather()``. Authentication headers are applied from
+        via ``asyncio.gather()``: internal tools run their in-process handler
+        with ``tool_context``; all others become an HTTP request to the
+        appropriate API endpoint. Authentication headers are applied from
         ``auth_info`` when provided.
 
         Args:
@@ -263,6 +356,11 @@ class ToolManager:
             on_progress: Optional async callback ``(message: str) -> None``
                 invoked for each valid tool call, before execution starts,
                 for progress reporting.
+            on_tool_event: Optional async callback receiving structured
+                ``tool_call_start`` / ``tool_call_end`` event dicts, so a client
+                can render each call live as it starts and as it finishes.
+            tool_context: Per-turn context for internal tools. When omitted,
+                session-bound internal tools return ``tool_unavailable``.
 
         Returns:
             List of result dicts (in the original ``tool_calls`` order), each
@@ -291,25 +389,77 @@ class ToolManager:
         pending_indices: List[int] = []
         pending_coros: List[Any] = []
 
+        async def _emit(event: Dict[str, Any]) -> None:
+            if on_tool_event is None:
+                return
+            try:
+                await on_tool_event(event)
+            except Exception as e:
+                logger.error(f"Error in on_tool_event callback for {event.get('name')}: {e}")
+
+        async def _emit_start(tool_call: Dict[str, Any], position: int) -> None:
+            await _emit(
+                {
+                    "type": "tool_call_start",
+                    "tool_call_id": tool_call.get("id"),
+                    "name": tool_call.get("name"),
+                    "arguments": tool_call.get("arguments", {}),
+                    "position": position,
+                    "total": len(tool_calls),
+                }
+            )
+
+        async def _emit_end(tool_call: Dict[str, Any], error: Optional[str], started: float) -> None:
+            await _emit(
+                {
+                    "type": "tool_call_end",
+                    "tool_call_id": tool_call.get("id"),
+                    "name": tool_call.get("name"),
+                    "status": "success" if error is None else "error",
+                    "error": error,
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+            )
+
+        async def _run_and_report(tool_call: Dict[str, Any], coro: Awaitable[Any]) -> Any:
+            # Equivalent to gather(return_exceptions=True) for this call, but reports
+            # each call's completion as soon as it lands instead of once all have.
+            started = time.monotonic()
+            try:
+                outcome = await coro
+            except asyncio.CancelledError as e:
+                await _emit_end(tool_call, str(e) or "Cancelled", started)
+                raise
+            except Exception as e:
+                await _emit_end(tool_call, str(e) or type(e).__name__, started)
+                raise
+            await _emit_end(tool_call, None, started)
+            return outcome
+
         for i, tool_call in enumerate(capped_calls):
             position = i + 1
             function_name = tool_call.get("name")
             self._total_tool_calls_executed += 1
 
-            # Validate: tool exists
-            tool_metadata = self._generated_tools.get(function_name)
-            if not tool_metadata:
+            # Validate: tool exists (internal tools take precedence over HTTP)
+            internal_tool = self._internal_tools.get(function_name)
+            tool_metadata = None if internal_tool is not None else self._generated_tools.get(function_name)
+            if internal_tool is None and not tool_metadata:
                 logger.warning(f"Unknown tool requested: {function_name}")
                 results[i] = {
                     "tool_call_id": tool_call.get("id"),
                     "name": function_name,
                     "error": f"Unknown tool: {function_name}",
                 }
+                await _emit_start(tool_call, position)
+                await _emit_end(tool_call, results[i]["error"], time.monotonic())
                 continue
 
             # Validate: required arguments present
             arguments = tool_call.get("arguments", {})
-            fn_desc = tool_metadata.get("function_desc", {})
+            fn_desc = (
+                internal_tool.function_desc if internal_tool is not None else tool_metadata.get("function_desc", {})
+            )
             required = fn_desc.get("parameters", {}).get("required", [])
             missing = [p for p in required if p not in arguments]
             if missing:
@@ -319,6 +469,8 @@ class ToolManager:
                     "name": function_name,
                     "error": f"Missing required arguments: {missing}",
                 }
+                await _emit_start(tool_call, position)
+                await _emit_end(tool_call, results[i]["error"], time.monotonic())
                 continue
 
             logger.debug(f"Executing tool call {position}/{total_tools}: {tool_call}")
@@ -332,8 +484,13 @@ class ToolManager:
                 except Exception as e:
                     logger.error(f"Error in on_progress callback for {function_name}: {e}")
 
+            await _emit_start(tool_call, position)
             pending_indices.append(i)
-            pending_coros.append(self._execute_single_tool_call(tool_metadata, arguments, auth_info))
+            if internal_tool is not None:
+                coro = internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config))
+            else:
+                coro = self._execute_single_tool_call(tool_metadata, arguments, auth_info)
+            pending_coros.append(_run_and_report(tool_call, coro))
 
         if pending_coros:
             outcomes = await asyncio.gather(*pending_coros, return_exceptions=True)
@@ -374,7 +531,7 @@ class ToolManager:
 
         # Return stub errors for tool calls that were dropped by the cap so that
         # every tool_call ID in the assistant message has a matching toolResult.
-        for skipped in skipped_calls:
+        for offset, skipped in enumerate(skipped_calls):
             tc_id = skipped.get("id", "")
             tc_name = skipped.get("name", "")
             if not tc_id:
@@ -383,16 +540,19 @@ class ToolManager:
                     "Bedrock's toolUse contract. Check upstream tool call normalization."
                 )
                 continue
+            skipped_error = (
+                f"Tool call skipped: exceeded max_tool_calls limit "
+                f"({limit}). Reduce the number of tool calls in a single turn."
+            )
             final_results.append(
                 {
                     "tool_call_id": tc_id,
                     "name": tc_name,
-                    "error": (
-                        f"Tool call skipped: exceeded max_tool_calls limit "
-                        f"({limit}). Reduce the number of tool calls in a single turn."
-                    ),
+                    "error": skipped_error,
                 }
             )
+            await _emit_start(skipped, total_tools + offset + 1)
+            await _emit_end(skipped, skipped_error, time.monotonic())
 
         return final_results
 
@@ -412,7 +572,8 @@ class ToolManager:
         """Return tool execution statistics."""
         return {
             "total_tool_calls_executed": self._total_tool_calls_executed,
-            "total_tools_available": len(self._generated_tools),
+            "total_tools_available": len(self._http_tools()),
+            "internal_tools_available": len(self._exposed_internal_tools()),
         }
 
     # ------------------------------------------------------------------
@@ -434,10 +595,14 @@ class ToolManager:
 
         Returns:
             The parsed successful response (JSON dict/list, or plain text if
-            not JSON-decodable).
+            not JSON-decodable). If the body exceeds
+            ``config.tool_response_max_bytes`` it is not parsed; a flagged dict
+            ``{"truncated": True, "message", "bytes_read", "limit_bytes",
+            "content_type", "text"}`` holding the text read so far is returned.
 
         Raises:
-            ToolHTTPError: If the response status is >=400.
+            ToolHTTPError: If the response status is >=400 (``details`` is the
+                first 500 characters of a size-bounded read of the body).
             Exception: Network-level failures (connection, timeout, etc.)
                 propagate as raised by the underlying HTTP client.
         """
@@ -462,38 +627,97 @@ class ToolManager:
         if auth_info and auth_info.auth_handler and auth_info.credentials:
             headers = await auth_info.auth_handler.apply_auth_to_headers(headers)
 
-        # Make HTTP request. Only the request itself is wrapped -- a raised
-        # ToolHTTPError below must propagate to the caller (execute_tool_calls()'s
-        # gather, or call_tool()'s direct await), not get swallowed here too.
+        # Only advertise encodings that bounded_decoding can decode with a capped output.
+        if not any(name.lower() == "accept-encoding" for name in headers):
+            headers["Accept-Encoding"] = ACCEPT_ENCODING
+
+        if method in ["GET", "DELETE"]:
+            request = self._http_client.build_request(method=method, url=url, params=query_params, headers=headers)
+        else:  # POST, PUT, PATCH
+            request = self._http_client.build_request(
+                method=method,
+                url=url,
+                params=query_params,
+                json=query_params if query_params else None,
+                headers=headers,
+            )
+
+        # Only the request/read itself is wrapped -- a raised ToolHTTPError
+        # below must propagate to the caller (execute_tool_calls()'s gather, or
+        # call_tool()'s direct await), not get swallowed here too.
         try:
-            if method in ["GET", "DELETE"]:
-                response = await self._http_client.request(
-                    method=method,
-                    url=url,
-                    params=query_params,
-                    headers=headers,
-                )
-            else:  # POST, PUT, PATCH
-                response = await self._http_client.request(
-                    method=method,
-                    url=url,
-                    params=query_params,
-                    json=query_params if query_params else None,
-                    headers=headers,
-                )
+            raw = await self._read_capped_response(request)
         except Exception as e:
             logger.error(f"Error executing HTTP request to {url}: {str(e)}")
             raise
 
-        if response.status_code >= 400:
-            raise ToolHTTPError(response.status_code, response.text[:500])
+        if raw.status_code >= 400:
+            raise ToolHTTPError(raw.status_code, raw.text()[:500])
+
+        if raw.truncated:
+            limit = self._config.tool_response_max_bytes
+            logger.warning(
+                "Tool response from %s exceeded tool_response_max_bytes (%d); returning truncated result", url, limit
+            )
+            return {
+                "truncated": True,
+                "message": f"Response exceeded the {limit}-byte limit and was truncated; only the first {limit} bytes are included.",
+                "bytes_read": len(raw.body),
+                "limit_bytes": limit,
+                "content_type": raw.content_type,
+                "text": raw.text(),
+            }
 
         try:
-            return response.json()
+            return json.loads(raw.body)
         except Exception:
-            return response.text
+            return raw.text()
+
+    async def _read_capped_response(self, request: httpx.Request) -> _RawResponse:
+        """Send ``request`` and read at most the configured number of body bytes.
+
+        The cap counts decoded bytes (so a compressed body is limited by its
+        decompressed size) and is lower for error responses. Decompression is
+        done here in bounded steps (see ``bounded_decoding``), never by httpx,
+        so a highly compressed body cannot allocate far beyond the cap. Reading
+        stops as soon as the cap is exceeded, and the response is always closed.
+
+        Raises:
+            ToolError: If the response uses a ``Content-Encoding`` other than
+                identity, gzip or deflate.
+        """
+        response = await self._http_client.send(request, stream=True)
+        try:
+            limit = self._config.tool_response_max_bytes
+            if response.status_code >= 400:
+                limit = min(limit, _ERROR_BODY_READ_MAX_BYTES)
+
+            buf = bytearray()
+            truncated = False
+            async for chunk in iter_decoded_chunks(response):
+                remaining = limit - len(buf)
+                if len(chunk) > remaining:
+                    buf += chunk[:remaining]
+                    truncated = True
+                    break
+                buf += chunk
+
+            return _RawResponse(
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+                encoding=response.encoding or "utf-8",
+                body=bytes(buf),
+                truncated=truncated,
+            )
+        finally:
+            await response.aclose()
 
 
 # ---------------------------------------------------------------------------
 # Utility function
 # ---------------------------------------------------------------------------
+
+
+def _empty_tool_context(config: Any) -> ToolContext:
+    """Context for internal calls made without a live session (session-bound tools fail closed)."""
+    return ToolContext(artifact_store=None, artifact_scope=None, context_budget=None, chat_config=config)

@@ -229,6 +229,7 @@ conversation's history when it is reloaded.
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
     "total_tool_calls": 2,
+    "spilled_artifacts": 0,
     "preprocessing_applied": false,
     "input_tokens": 120,
     "output_tokens": 240,
@@ -259,6 +260,7 @@ final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
 | `timestamp`             | `string` (ISO 8601)      | Timestamp of the final LLM call.                                                                                                                                                           |
 | `tool_call_rounds`      | `int` (default `0`)      | Number of tool-call loop iterations for this turn.                                                                                                                                         |
 | `total_tool_calls`      | `int` (default `0`)      | Total individual tool calls executed across all rounds.                                                                                                                                    |
+| `spilled_artifacts`     | `int` (default `0`)      | Oversized tool results replaced by a [session artifact marker](session-artifacts.md#tool-result-markers) this turn (a replaced user message is not counted).                               |
 | `preprocessing_applied` | `bool` (default `false`) | Whether message preprocessing ran on the user input.                                                                                                                                       |
 
 **Conditional — token totals (only when the model returns usage):**
@@ -329,6 +331,19 @@ Use it, not the shape of `messages`, to decide whether to show a
 { "type": "typing", "message": "AI is thinking...", "timestamp": "..." }
 { "type": "typing", "message": "Calling get_jobs... (1/1)", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 ```
+
+**Tool call progress:** sent alongside the `typing` notices above, one frame as each
+tool call starts and one as it finishes (calls in a round run concurrently, so ends
+can arrive in any order). Lets a client list each call live with its status.
+Outputs are not repeated here; they arrive with `ai_response.tool_results`.
+
+```json
+{ "type": "tool_call_start", "tool_call_id": "tooluse_8f2c1a", "name": "get_jobs", "arguments": { "status": "running" }, "position": 1, "total": 2, "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+{ "type": "tool_call_end", "tool_call_id": "tooluse_8f2c1a", "name": "get_jobs", "status": "success", "error": null, "duration_ms": 184, "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+```
+
+`status` is `"error"` (with `error` set) for a failed call, an unknown tool, missing
+required arguments, or a call skipped by `max_tool_calls`.
 
 **Auth response:**
 

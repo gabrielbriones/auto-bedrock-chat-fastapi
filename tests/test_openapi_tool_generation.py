@@ -19,6 +19,7 @@ import pytest
 
 from autolangchat.graph.tools.generator import ToolsGenerator
 from autolangchat.graph.tools.manager import ToolManager
+from tests.http_stubs import stub_http
 
 # ---------------------------------------------------------------------------
 # Minimal inline OpenAPI spec for testing
@@ -185,6 +186,81 @@ class TestGenerateToolsDesc:
 
 
 # ---------------------------------------------------------------------------
+# ToolsGenerator reserved_names — internal tool name reservation
+# ---------------------------------------------------------------------------
+
+
+def _make_reserving_generator(spec: Dict, reserved) -> ToolsGenerator:
+    from autolangchat.config import ChatConfig
+
+    config = ChatConfig(model_id="test-model", excluded_paths=[])
+    return ToolsGenerator(openapi_spec=spec, config=config, reserved_names=reserved)
+
+
+class TestReservedToolNames:
+    def test_no_reservations_by_default(self):
+        gen = _make_generator(_GET_SPEC)
+        assert gen.reserved_names == frozenset()
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs", "get_job"}
+
+    def test_colliding_operation_is_logged_and_skipped(self, caplog):
+        with caplog.at_level("WARNING", logger="autolangchat.graph.tools.generator"):
+            gen = _make_reserving_generator(_GET_SPEC, ["get_job"])
+
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs"}
+        assert gen.get_tool_metadata("get_job") is None
+        assert "GET /jobs/{job_id}" in caplog.text
+        assert "'get_job' is reserved by an internal tool" in caplog.text
+
+    def test_reservation_matches_cleaned_name(self):
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Test API", "version": "1.0.0"},
+            "paths": {
+                "/grep": {"get": {"operationId": "grep-content", "responses": {"200": {"description": "OK"}}}},
+                "/read": {"get": {"responses": {"200": {"description": "OK"}}}},
+            },
+        }
+        gen = _make_reserving_generator(spec, {"grep_content", "get_read"})
+        assert gen.tools_desc["functions"] == []
+
+    def test_unrelated_reservations_do_not_affect_output(self):
+        gen = _make_reserving_generator(_GET_SPEC, {"read_content_range", "grep_content"})
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs", "get_job"}
+
+    def test_reservations_survive_invalidate_cache(self):
+        gen = _make_reserving_generator(_GET_SPEC, ("get_job",))
+        gen.invalidate_cache()
+        assert {f["name"] for f in gen.tools_desc["functions"]} == {"list_jobs"}
+
+    def test_manager_never_sees_reserved_operation(self, caplog):
+        from autolangchat.config import ChatConfig
+        from autolangchat.graph.tools.internal import InternalTool
+
+        caplog.set_level("WARNING")
+        internal = InternalTool(
+            name="get_job",
+            function_desc={"name": "get_job", "description": "internal", "parameters": {"type": "object"}},
+            handler=AsyncMock(return_value="ok"),
+        )
+        config = ChatConfig(model_id="test-model", excluded_paths=[])
+        gen = ToolsGenerator(openapi_spec=_GET_SPEC, config=config, reserved_names=[internal.name])
+        manager = ToolManager(
+            generated_tools=gen._generated_tools,
+            config=config,
+            base_url="http://test-api",
+            internal_tools=[internal],
+        )
+
+        get_job_descs = [f for f in config.tools_desc["functions"] if f["name"] == "get_job"]
+        assert get_job_descs == [internal.function_desc]
+        assert manager.get_statistics()["total_tools_available"] == 1
+        # Dropped at generation time, so the manager's fallback filter has nothing to skip.
+        manager_logs = [r for r in caplog.records if r.name == "autolangchat.graph.tools.manager"]
+        assert not [r for r in manager_logs if "reserved" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
 # ToolManager.generate_langchain_tools
 # ---------------------------------------------------------------------------
 
@@ -208,13 +284,7 @@ class TestToolManagerGenerateLangchainTools:
         tools = manager.generate_langchain_tools()
         tool_map = {t.name: t for t in tools}
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"jobs": [{"id": 1}]}
-        fake_response.text = json.dumps({"jobs": [{"id": 1}]})
-
-        # Patch the HTTP client request method on the manager
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {"jobs": [{"id": 1}]}))
 
         result = await tool_map["list_jobs"].ainvoke({"status": "running"})
         data = json.loads(result)
@@ -252,29 +322,19 @@ class TestToolManagerExecuteCap:
     async def test_unlimited_executes_all_calls(self):
         """max_tool_calls=None must execute every call — no skipping."""
         manager = _make_manager_with_limit(None)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {}))
 
         calls = _make_calls(5)
         results = await manager.execute_tool_calls(calls)
 
         assert len(results) == 5
-        assert manager._http_client.request.await_count == 5
+        assert len(requests) == 5
 
     @pytest.mark.asyncio
     async def test_cap_produces_one_result_per_call(self):
         """With a cap of 2 and 5 calls the result list must still have 5 entries."""
         manager = _make_manager_with_limit(2)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {}))
 
         calls = _make_calls(5)
         results = await manager.execute_tool_calls(calls)
@@ -285,28 +345,18 @@ class TestToolManagerExecuteCap:
     async def test_cap_only_executes_capped_calls_via_http(self):
         """HTTP must be called only for the first *max_tool_calls* entries."""
         manager = _make_manager_with_limit(3)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {}))
 
         calls = _make_calls(6)
         await manager.execute_tool_calls(calls)
 
-        assert manager._http_client.request.await_count == 3
+        assert len(requests) == 3
 
     @pytest.mark.asyncio
     async def test_skipped_calls_return_stub_errors(self):
         """Calls beyond the cap must come back as error results (not successes)."""
         manager = _make_manager_with_limit(2)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {}))
 
         calls = _make_calls(4)
         results = await manager.execute_tool_calls(calls)
@@ -320,12 +370,7 @@ class TestToolManagerExecuteCap:
     async def test_result_tool_call_ids_match_inputs(self):
         """Every result tool_call_id must match the id of the corresponding input call."""
         manager = _make_manager_with_limit(2)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {}))
 
         calls = _make_calls(5)
         results = await manager.execute_tool_calls(calls)
@@ -346,11 +391,7 @@ class TestToolManagerExecuteCap:
         this feature existed (PR #150 round 6 review -- status_code must not
         leak into the nested legacy dict)."""
         manager = _make_manager_with_limit(None)
-
-        fake_response = MagicMock()
-        fake_response.status_code = 401
-        fake_response.text = "Unauthorized"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (401, "Unauthorized"))
 
         results = await manager.execute_tool_calls(_make_calls(1))
 
@@ -367,10 +408,7 @@ class TestToolManagerExecuteCap:
         result, not flattened into a tool failure (PR #150 round 2 review)."""
         manager = _make_manager_with_limit(None)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"error": None, "data": {"jobs": []}}
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {"error": None, "data": {"jobs": []}}))
 
         results = await manager.execute_tool_calls(_make_calls(1))
 
@@ -388,10 +426,7 @@ class TestToolManagerExecuteCap:
         (PR #150 round 4 review)."""
         manager = _make_manager_with_limit(None)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"status_code": 200, "data": {"jobs": []}}
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (200, {"status_code": 200, "data": {"jobs": []}}))
 
         results = await manager.execute_tool_calls(_make_calls(1))
 
@@ -410,10 +445,7 @@ class TestToolManagerExecuteCap:
 
         manager = _make_manager_with_limit(None)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 401
-        fake_response.text = "Unauthorized"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        stub_http(manager, (401, "Unauthorized"))
 
         with pytest.raises(ToolHTTPError) as exc_info:
             await manager.call_tool("list_jobs", {})
@@ -519,6 +551,83 @@ class TestToolManagerExecuteConcurrency:
         ]
 
     @pytest.mark.asyncio
+    async def test_tool_events_report_each_call_start_and_end(self):
+        """on_tool_event gets a start per call up front and an end as each call lands."""
+        manager = _make_manager_with_limit(None)
+
+        async def _execute(tool_metadata, arguments, auth_info=None):
+            index = arguments["index"]
+            if index == 1:
+                raise RuntimeError("boom")
+            # The first call is the slowest, so ends arrive out of call order.
+            await asyncio.sleep((3 - index) * 0.02)
+            return {"index": index}
+
+        manager._execute_single_tool_call = _execute
+
+        events = []
+
+        async def on_tool_event(event):
+            events.append(event)
+
+        calls = [{"id": f"call_{i}", "name": "list_jobs", "arguments": {"index": i}} for i in range(3)]
+        calls.append({"id": "call_unknown", "name": "nope", "arguments": {}})
+        await manager.execute_tool_calls(calls, on_tool_event=on_tool_event)
+
+        starts = [e for e in events if e["type"] == "tool_call_start"]
+        ends = {e["tool_call_id"]: e for e in events if e["type"] == "tool_call_end"}
+
+        assert [(e["tool_call_id"], e["position"], e["total"]) for e in starts] == [
+            ("call_0", 1, 4),
+            ("call_1", 2, 4),
+            ("call_2", 3, 4),
+            ("call_unknown", 4, 4),
+        ]
+        assert starts[0]["arguments"] == {"index": 0}
+        assert ends["call_0"]["status"] == "success" and ends["call_0"]["error"] is None
+        assert ends["call_1"]["status"] == "error" and "boom" in ends["call_1"]["error"]
+        assert ends["call_unknown"]["status"] == "error"
+        assert all(isinstance(e["duration_ms"], int) for e in ends.values())
+        end_order = [e["tool_call_id"] for e in events if e["type"] == "tool_call_end"]
+        assert end_order.index("call_2") < end_order.index("call_0")
+
+    @pytest.mark.asyncio
+    async def test_tool_events_cover_calls_skipped_by_the_cap(self):
+        manager = _make_manager_with_limit(1)
+
+        async def _execute(tool_metadata, arguments, auth_info=None):
+            return {"ok": True}
+
+        manager._execute_single_tool_call = _execute
+
+        events = []
+
+        async def on_tool_event(event):
+            events.append(event)
+
+        await manager.execute_tool_calls(_make_calls(2), on_tool_event=on_tool_event)
+
+        ends = [e for e in events if e["type"] == "tool_call_end"]
+        assert [e["status"] for e in ends] == ["success", "error"]
+        assert "max_tool_calls" in ends[1]["error"]
+
+    @pytest.mark.asyncio
+    async def test_failing_tool_event_callback_does_not_break_execution(self):
+        manager = _make_manager_with_limit(None)
+
+        async def _execute(tool_metadata, arguments, auth_info=None):
+            return {"ok": True}
+
+        manager._execute_single_tool_call = _execute
+
+        async def on_tool_event(event):
+            raise RuntimeError("socket closed")
+
+        results = await manager.execute_tool_calls(_make_calls(2), on_tool_event=on_tool_event)
+
+        assert all(r["result"] == {"ok": True} for r in results)
+
+    @pytest.mark.asyncio
     async def test_total_tool_calls_executed_counter_correct(self):
         """The counter must increment once per attempted call, matching prior behavior."""
         manager = _make_manager_with_limit(None)
@@ -546,16 +655,12 @@ class TestToolManagerCallTool:
     async def test_returns_raw_result_for_known_tool(self):
         manager = _make_manager(_GET_SPEC)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {"jobs": []}
-        fake_response.text = '{"jobs": []}'
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {"jobs": []}))
 
         result = await manager.call_tool("list_jobs", {})
 
         assert result == {"jobs": []}
-        manager._http_client.request.assert_awaited_once()
+        assert len(requests) == 1
 
     @pytest.mark.asyncio
     async def test_unknown_tool_raises_tool_error(self):
@@ -613,13 +718,9 @@ class TestToolManagerCallTool:
         auth_handler = AuthenticationHandler(credentials=credentials)
         auth_info = AuthInfo(credentials=credentials, auth_handler=auth_handler)
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {}
-        fake_response.text = "{}"
-        manager._http_client.request = AsyncMock(return_value=fake_response)
+        requests = stub_http(manager, (200, {}))
 
         await manager.call_tool("list_jobs", {}, auth_info=auth_info)
 
-        _, kwargs = manager._http_client.request.call_args
+        kwargs = {"headers": requests[0].headers}
         assert kwargs["headers"].get("Authorization") == "Bearer tok123"

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .config import ChatConfig
 
 from .defaults import (
+    ARTIFACT_MARKER_ENTRY_KEY,
     DEFAULT_ENABLE_AI_SUMMARIZATION,
     DEFAULT_MAX_TRUNCATION_RECURSION,
     DEFAULT_SUMMARIZATION_MIN_CHUNKS,
@@ -84,6 +85,26 @@ def is_user_message(msg: dict) -> bool:
         return False
     # User message but not a tool result
     return msg.get("role") == "user" and not is_tool_message(msg)
+
+
+def is_artifact_marker_entry(tr: Any) -> bool:
+    """Whether a ``tool_results`` entry holds an artifact marker (its handle must never be truncated)."""
+    return isinstance(tr, dict) and tr.get(ARTIFACT_MARKER_ENTRY_KEY) is True
+
+
+def is_artifact_marker_message(msg: Any) -> bool:
+    """Whether a user message is itself an artifact marker, i.e. it replaced an oversized message."""
+    return isinstance(msg, dict) and msg.get("role") == "user" and msg.get(ARTIFACT_MARKER_ENTRY_KEY) is True
+
+
+def has_artifact_markers(msg: Any) -> bool:
+    """Whether a message is an artifact marker (user message) or carries at least one marker entry (tool message)."""
+    if is_artifact_marker_message(msg):
+        return True
+    if not isinstance(msg, dict) or msg.get("role") != "tool":
+        return False
+    tool_results = msg.get("tool_results")
+    return isinstance(tool_results, list) and any(is_artifact_marker_entry(tr) for tr in tool_results)
 
 
 def _get_tool_result_payload(tr: dict) -> tuple[str, str]:
@@ -1039,8 +1060,13 @@ class MessagePreprocessor:
             target: Maximum content size in characters.
 
         Returns:
-            A new message dict with truncated/summarized content.
+            A new message dict with truncated/summarized content. A user
+            message that is an artifact marker is returned unchanged, so its
+            handle survives every stage.
         """
+        if is_artifact_marker_message(msg):
+            return msg
+
         # Tool result messages: payload is in tool_results, not content
         tool_results_list = msg.get("tool_results")
         if msg.get("role") == "tool" and tool_results_list and isinstance(tool_results_list, list):
@@ -1095,7 +1121,9 @@ class MessagePreprocessor:
 
         Each entry's budget is proportional to its current size, so that
         small results are left alone and large results absorb most of the
-        reduction.
+        reduction. Entries flagged as artifact markers are never truncated or
+        summarized (their size is subtracted from *target* first), so their
+        handle survives in both stages.
 
         Args:
             msg: The tool message dict.
@@ -1108,11 +1136,16 @@ class MessagePreprocessor:
         """
         tool_calls_list = msg.get("tool_calls", [])
 
-        # Measure each entry's payload size
+        # Measure each entry's payload size. Artifact markers are exempt: truncating or
+        # summarizing one would drop its handle, so they only reduce the budget left for the rest.
         entries: List[tuple] = []  # (index, payload_key, payload_str, size)
         total_payload_size = 0
+        marker_size = 0
         for j, tr in enumerate(tool_results_list):
-            if isinstance(tr, dict):
+            if is_artifact_marker_entry(tr):
+                marker_size += len(_get_tool_result_payload(tr)[1])
+                entries.append((j, "", "", 0))
+            elif isinstance(tr, dict):
                 key, payload = _get_tool_result_payload(tr)
                 entries.append((j, key, payload, len(payload)))
                 total_payload_size += len(payload)
@@ -1121,6 +1154,7 @@ class MessagePreprocessor:
 
         if total_payload_size == 0:
             return msg
+        target = max(target - marker_size, 1)
 
         new_tool_results = list(tool_results_list)  # shallow copy
         any_changed = False

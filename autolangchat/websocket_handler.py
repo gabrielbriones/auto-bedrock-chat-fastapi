@@ -16,6 +16,7 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from .artifacts import ArtifactError, ArtifactStore
 from .auth_handler import AuthenticationHandler, AuthType, Credentials, can_refresh
 from .config import ChatConfig
 from .conversation_titler import generate_conversation_title
@@ -37,8 +38,10 @@ from .exceptions import (
     UnauthorizedFeedbackError,
     WebSocketError,
 )
+from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo
 from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
+from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
@@ -98,6 +101,30 @@ def _close_dangling_tool_loop(messages: List[Dict[str, Any]]) -> Optional[List[D
         }
     )
     return closed
+
+
+def _collect_turn_tool_activity(messages: List[Dict[str, Any]]) -> Tuple[List[Any], List[Any]]:
+    """Return the tool calls and results made since the turn's user message.
+
+    The graph stores each tool round as its own assistant/tool messages ahead of the
+    answering message, so the final message alone carries none of them. This mirrors how
+    a reloaded conversation folds those rounds into the answer.
+    """
+    start = 0
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") == "user":
+            start = index + 1
+            break
+
+    tool_calls: List[Any] = []
+    tool_results: List[Any] = []
+    for message in messages[start:]:
+        role = message.get("role")
+        if role == "assistant":
+            tool_calls.extend(message.get("tool_calls") or [])
+        elif role == "tool":
+            tool_results.extend(message.get("tool_results") or [])
+    return tool_calls, tool_results
 
 
 def _get_sso_session_store_class():
@@ -165,6 +192,9 @@ class WebSocketChatHandler:
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
         self._background_tasks: set = set()
+        # conversation_id -> in-flight auto-title task, so a manual rename can
+        # cancel it. Entries remove themselves on completion.
+        self._pending_title_tasks: Dict[str, "asyncio.Task[Any]"] = {}
         # thread_id -> number of chat_graph.ainvoke calls currently running
         # for it. Per-process: another uvicorn worker won't see these.
         self._in_flight_threads: Dict[str, int] = {}
@@ -465,6 +495,19 @@ class WebSocketChatHandler:
             await self._send_error(websocket, "Session not found")
             return
 
+        user_message = data.get("message", "")
+        if not isinstance(user_message, str):
+            await self._send_message(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "invalid_message",
+                    "message": "Chat message must be a string.",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+            return
+
         # SSO session expiry check
         if session.credentials and session.credentials.auth_type == AuthType.SSO and self.sso_session_store:
             session_token = session.credentials.session_token
@@ -477,6 +520,7 @@ class WebSocketChatHandler:
                     # SSO session expired — notify client and clear credentials
                     session.credentials = None
                     session.auth_handler = None
+                    self._reset_artifacts(session)
                     await self._send_message(
                         websocket,
                         {
@@ -509,6 +553,7 @@ class WebSocketChatHandler:
                         if refreshed_session is None:
                             session.credentials = None
                             session.auth_handler = None
+                            self._reset_artifacts(session)
                             await self._send_message(
                                 websocket,
                                 {
@@ -528,7 +573,6 @@ class WebSocketChatHandler:
                             sso_session_secret=self.config.sso_session_secret,
                         )
 
-        user_message = data.get("message", "")
         if not user_message.strip():
             await self._send_error(websocket, "Empty message")
             return
@@ -547,8 +591,9 @@ class WebSocketChatHandler:
                     )
                     return
 
-            logger.info("Received user message (%d chars)", len(user_message))
-            logger.debug("Received user message: %s", user_message)
+            content_len, preview = _generate_message_preview(user_message, max_preview_len=500)
+            logger.info("Received user message (%d chars)", content_len)
+            logger.debug("Received user message: %s", preview)
 
             # Send typing indicator
             await self._send_message(
@@ -683,6 +728,14 @@ class WebSocketChatHandler:
             else:
                 thread_id = session.session_id
 
+            artifact_config: Dict[str, Any] = {}
+            artifact_store = getattr(self.session_manager, "artifact_store", None)
+            if isinstance(artifact_store, ArtifactStore) and self.config.artifact_enabled:
+                artifact_config = {
+                    "artifact_store": artifact_store,
+                    "artifact_scope": artifact_store.activate(session.connection_id, thread_id, session.user_id),
+                }
+
             # ------------------------------------------------------------------
             # Delegate entirely to LangGraph.
             # Pass only ``user_message`` — the ``init_turn`` node prepends it
@@ -710,6 +763,7 @@ class WebSocketChatHandler:
                             "token_usage_store": self.token_usage_store,
                             "session_id": session.session_id,
                             "user_id": session.user_id,
+                            **artifact_config,
                         }
                     },
                 )
@@ -728,8 +782,7 @@ class WebSocketChatHandler:
             # Graph messages are dicts: {"role": "assistant", "content": "...", ...}
             content = final_msg.get("content") or ""
             final_response = final_msg
-            logger.info("Chat response (%s chars)", f"{len(content):,}")
-            logger.debug("Chat response preview: %s", content[:100])
+            turn_tool_calls, turn_tool_results = _collect_turn_tool_activity(graph_messages)
 
             response_metadata = final_response.get("metadata", {}).copy()
             response_metadata["model_id"] = effective_config.model_id
@@ -740,6 +793,9 @@ class WebSocketChatHandler:
             response_metadata["model_name"] = effective_config.get_model_display_name()
             response_metadata["tool_call_rounds"] = graph_metadata.get("tool_call_rounds", 0)
             response_metadata["total_tool_calls"] = graph_metadata.get("total_tool_calls", 0)
+            response_metadata["spilled_artifacts"] = sum(
+                1 for result in turn_tool_results if is_artifact_marker_entry(result)
+            )
             response_metadata["preprocessing_applied"] = graph_metadata.get("preprocessing_applied", False)
             if graph_metadata.get("tool_result_sizes"):
                 response_metadata["tool_result_sizes"] = graph_metadata["tool_result_sizes"]
@@ -777,6 +833,15 @@ class WebSocketChatHandler:
                 "kb_sources": response_metadata.get("kb_sources", []),
             }
 
+            content_len, preview = _generate_message_preview(content, max_preview_len=500)
+            logger.info(
+                "Chat response (%s chars, input_tokens=%s, output_tokens=%s)",
+                f"{content_len:,}",
+                response_metadata.get("input_tokens"),
+                response_metadata.get("output_tokens"),
+            )
+            logger.debug("Chat response preview: %s", preview)
+
             # Send response to client. This can fail if the connection has
             # dropped mid-turn (e.g. a network/proxy reconnect while the
             # multi-round tool-calling loop was running) — the turn's
@@ -793,8 +858,8 @@ class WebSocketChatHandler:
                         "type": "ai_response",
                         "message_id": message_id,
                         "message": final_response.get("content") or "",
-                        "tool_calls": final_response.get("tool_calls", []),
-                        "tool_results": final_response.get("tool_results", []),
+                        "tool_calls": turn_tool_calls,
+                        "tool_results": turn_tool_results,
                         "timestamp": datetime.now().isoformat(),
                         "metadata": response_metadata,
                         "conversation_id": conversation_id,
@@ -820,6 +885,7 @@ class WebSocketChatHandler:
             if graph_metadata.get("auth_expired"):
                 session.credentials = None
                 session.auth_handler = None
+                self._reset_artifacts(session)
                 try:
                     await self._send_message(
                         websocket,
@@ -848,15 +914,13 @@ class WebSocketChatHandler:
             # just sent above. Fires once per conversation (only on the turn
             # that created it).
             if conversation_just_created and conversation_id is not None:
-                self._spawn_background_task(
-                    self._generate_and_apply_title(
-                        websocket,
-                        conversation_id,
-                        [
-                            {"role": "user", "content": user_message},
-                            {"role": "assistant", "content": content},
-                        ],
-                    )
+                self._spawn_title_task(
+                    websocket,
+                    conversation_id,
+                    [
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": content},
+                    ],
                 )
 
             # Token usage is now recorded inside the graph itself by
@@ -885,7 +949,7 @@ class WebSocketChatHandler:
             # Please try again in a moment."), which hides exactly the detail
             # (e.g. "requires a cross-region inference profile ID") a user
             # picking a model from the settings sidebar needs to see.
-            if isinstance(e, ModelInvocationError):
+            if isinstance(e, (ModelInvocationError, ArtifactError)):
                 error_response = f"⚠️ {e}"
             else:
                 error_response = self._create_error_response(str(e))
@@ -1320,6 +1384,7 @@ class WebSocketChatHandler:
                 )
                 return
             await self.chat_graph.aupdate_state(cfg, {"messages": [], "metadata": {}})
+            self._purge_thread_artifacts(thread_id, session.user_id)
         # Clear in-memory feedback metadata for this session too
         session.metadata.pop("feedback_meta", None)
 
@@ -1335,6 +1400,22 @@ class WebSocketChatHandler:
     # ------------------------------------------------------------------
     # Dynamic parameter overrides
     # ------------------------------------------------------------------
+
+    def _purge_thread_artifacts(self, thread_id: str, user_id: Optional[str]) -> None:
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.delete_thread(thread_id, user_id)
+
+    def _deactivate_artifacts(self, session: ChatSession) -> None:
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.deactivate(session.connection_id)
+
+    def _reset_artifacts(self, session: ChatSession) -> None:
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.delete_session(session.connection_id)
+            store.register_connection(session.connection_id, session.user_id)
 
     def _apply_config_overrides(
         self, session: ChatSession, raw_overrides: Any, override_mode: Any
@@ -1638,8 +1719,8 @@ class WebSocketChatHandler:
 
         return session
 
-    def _spawn_background_task(self, coro: Any) -> None:
-        """Schedule ``coro`` as a fire-and-forget task.
+    def _spawn_background_task(self, coro: Any) -> "asyncio.Task[Any]":
+        """Schedule ``coro`` as a fire-and-forget task and return it.
 
         Keeps a strong reference in ``self._background_tasks`` until the
         task completes (removed via a done-callback) so it isn't
@@ -1662,6 +1743,29 @@ class WebSocketChatHandler:
                 logger.error("Background task failed", exc_info=exc)
 
         task.add_done_callback(_on_done)
+        return task
+
+    def _spawn_title_task(self, websocket: WebSocket, conversation_id: str, messages: List[Dict[str, Any]]) -> None:
+        """Start auto-titling for ``conversation_id``, tracked so a rename can cancel it."""
+        task = self._spawn_background_task(self._generate_and_apply_title(websocket, conversation_id, messages))
+        self._pending_title_tasks[conversation_id] = task
+
+        def _forget(t: "asyncio.Task[Any]") -> None:
+            if self._pending_title_tasks.get(conversation_id) is t:
+                del self._pending_title_tasks[conversation_id]
+
+        task.add_done_callback(_forget)
+
+    def _cancel_pending_title(self, conversation_id: str) -> None:
+        """Cancel an in-flight auto-title task for ``conversation_id``, if any.
+
+        Only reaches tasks in this process; the conditional write in
+        ``_generate_and_apply_title`` covers renames from other workers or
+        the REST API.
+        """
+        task = self._pending_title_tasks.pop(conversation_id, None)
+        if task is not None and not task.done():
+            task.cancel()
 
     def _build_title_llm_client(self) -> Optional[Any]:
         """Build a lightweight LLM client for conversation-title generation.
@@ -1708,11 +1812,26 @@ class WebSocketChatHandler:
         logged and otherwise swallowed — an untitled conversation is a
         cosmetic issue, not a hard failure, and the client already has a
         working conversation either way.
+
+        A manual rename always wins: generation is skipped if the
+        conversation already has a title, the write only lands if the title
+        is still unset, and ``conversation_titled`` is not sent otherwise.
+        ``asyncio.CancelledError`` (from ``_cancel_pending_title``)
+        propagates so the task ends as cancelled.
         """
         try:
+            conversation = await self.conversation_store.get_conversation(conversation_id)
+            if conversation is None or conversation.get("title"):
+                return
             llm_client = self._build_title_llm_client()
             title = await generate_conversation_title(llm_client, messages)
-            await self.conversation_store.update_conversation(conversation_id, title=title)
+            applied = await self.conversation_store.set_title_if_unset(conversation_id, title)
+            if not applied:
+                logger.debug(
+                    "Skipping auto-title for conversation_id=%s: title was set while generating",
+                    conversation_id,
+                )
+                return
             await self._send_message(
                 websocket,
                 {
@@ -1789,6 +1908,7 @@ class WebSocketChatHandler:
         if session is None:
             return
 
+        self._deactivate_artifacts(session)
         session.metadata["conversation_id"] = None
         # Stale per-turn feedback cache from the previous conversation no
         # longer applies once we've detached from it.
@@ -1858,6 +1978,7 @@ class WebSocketChatHandler:
 
         history = self._format_history_messages(raw_messages)
 
+        self._deactivate_artifacts(session)
         session.metadata["conversation_id"] = conversation_id
         # Switching conversations invalidates the per-turn feedback cache
         # collected against the previously active thread.
@@ -1896,6 +2017,7 @@ class WebSocketChatHandler:
             return
 
         await self.conversation_store.delete_conversation(conversation_id)
+        self._purge_thread_artifacts(conversation_id, session.user_id)
         if session.metadata.get("conversation_id") == conversation_id:
             session.metadata["conversation_id"] = None
             session.metadata.pop("feedback_meta", None)
@@ -1945,6 +2067,8 @@ class WebSocketChatHandler:
             return
 
         deleted_ids = await self.conversation_store.delete_conversations(session.user_id, unique_ids)
+        for deleted_id in deleted_ids:
+            self._purge_thread_artifacts(deleted_id, session.user_id)
 
         active_conversation_id = session.metadata.get("conversation_id")
         active_conversation_deleted = active_conversation_id in deleted_ids
@@ -1969,6 +2093,9 @@ class WebSocketChatHandler:
             return
 
         deleted_count = await self.conversation_store.delete_all_conversations(session.user_id)
+        store = getattr(self.session_manager, "artifact_store", None)
+        if isinstance(store, ArtifactStore):
+            store.delete_user(session.user_id)
         session.metadata["conversation_id"] = None
         session.metadata.pop("feedback_meta", None)
 
@@ -2008,6 +2135,10 @@ class WebSocketChatHandler:
                 websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
             )
             return
+
+        # Stop any in-flight auto-title before writing, so it can't land
+        # (or notify the client) after the user's chosen title.
+        self._cancel_pending_title(conversation_id)
 
         try:
             await self.conversation_store.update_conversation(conversation_id, title=title)
@@ -2308,6 +2439,7 @@ class WebSocketChatHandler:
 
         try:
             # If SSO session, also delete the server-side SSO session
+            self._reset_artifacts(session)
             if (
                 session.credentials
                 and session.credentials.auth_type == AuthType.SSO
@@ -2527,8 +2659,8 @@ class WebSocketChatHandler:
 
         try:
             # Mirrors Starlette's send_json serialization so the logged size matches the frame size.
-            payload_bytes = len(json.dumps(message, separators=(",", ":"), ensure_ascii=False, default=str).encode())
-            logger.info(f"WS send: type={message.get('type')} size={payload_bytes} bytes")
+            # payload_bytes = len(json.dumps(message, separators=(",", ":"), ensure_ascii=False, default=str).encode())
+            # logger.info(f"WS send: type={message.get('type')} size={payload_bytes} bytes")
             await websocket.send_json(message)
         except Exception as e:
             if log_errors:

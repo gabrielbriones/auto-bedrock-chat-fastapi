@@ -147,6 +147,25 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
                     chat_config.kb_similarity_threshold,
                 )
                 logger.info("Top result score: %.4f", results[0]["similarity_score"])
+                for i, r in enumerate(results):
+                    preview = r.get("content", "")[:50]  # first 50 chars as a preview
+                    semantic_score = r.get("semantic_component", 0.0)
+                    keyword_score = r.get("keyword_component", 0.0)
+                    semantic_contribution = semantic_score * chat_config.kb_semantic_weight
+                    keyword_contribution = keyword_score * chat_config.kb_keyword_weight
+                    logger.debug(
+                        "  - result[%d] score=%.4f " "(semantic=%.4f x %.2f=%.4f, keyword=%.4f x %.2f=%.4f) [%s]: %s",
+                        i,
+                        r.get("similarity_score"),
+                        semantic_score,
+                        chat_config.kb_semantic_weight,
+                        semantic_contribution,
+                        keyword_score,
+                        chat_config.kb_keyword_weight,
+                        keyword_contribution,
+                        r.get("chunk_id"),
+                        preview,
+                    )
             else:
                 logger.debug("RAG retrieval: no results (threshold=%.2f)", chat_config.kb_similarity_threshold)
             kb_results = results or []

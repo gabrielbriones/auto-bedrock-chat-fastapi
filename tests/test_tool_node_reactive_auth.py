@@ -16,6 +16,7 @@ from autolangchat.config import ChatConfig
 from autolangchat.graph.tools.generator import ToolsGenerator
 from autolangchat.graph.tools.manager import AuthInfo, ToolManager
 from autolangchat.graph.tools.tool_node import tools_execution_node
+from tests.http_stubs import stub_http
 
 _GET_JOBS_SPEC = {
     "openapi": "3.0.0",
@@ -278,10 +279,7 @@ class TestEndToEndWithRealToolManager:
     @pytest.mark.asyncio
     async def test_real_401_response_triggers_refresh_and_retry(self):
         tm = _make_real_tool_manager()
-        ok_response = MagicMock(status_code=200)
-        ok_response.json.return_value = {"jobs": []}
-        unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
-        tm._http_client.request = AsyncMock(side_effect=[unauthorized_response, ok_response])
+        requests = stub_http(tm, (401, "Unauthorized"), (200, {"jobs": []}))
 
         sso_session_store = MagicMock()
         sso_session_store.get_session.return_value = {"refresh_token": "rt", "access_token": "old_access_token"}
@@ -302,7 +300,7 @@ class TestEndToEndWithRealToolManager:
             }
             result = await tools_execution_node(_make_state_with_tool_call(name="get_jobs"), config)
 
-        assert tm._http_client.request.await_count == 2
+        assert len(requests) == 2
         assert "auth_expired" not in result["metadata"]
         tool_results = result["messages"][-1]["tool_results"]
         assert tool_results[0]["result"] == {"jobs": []}
@@ -317,8 +315,7 @@ class TestEndToEndWithRealToolManager:
         regression caught after round 4, then status_code leaking into the
         nested dict caught after round 5)."""
         tm = _make_real_tool_manager()
-        unauthorized_response = MagicMock(status_code=401, text="Unauthorized")
-        tm._http_client.request = AsyncMock(return_value=unauthorized_response)
+        stub_http(tm, (401, "Unauthorized"))
 
         config = {
             "configurable": {
@@ -337,3 +334,109 @@ class TestEndToEndWithRealToolManager:
         # nested "result" dict, not the bare error string.
         tool_msg = result["messages"][-1]
         assert json.loads(tool_msg["content"]) == [{"error": "HTTP 401", "details": "Unauthorized"}]
+
+
+# ---------------------------------------------------------------------------
+# Oversized results (XMGPLAT-11846): the tools node, after reactive auth, passes them on untouched;
+# the preprocessing node replaces them.
+# ---------------------------------------------------------------------------
+
+_SMALL_CAP_MODEL = "qwen.qwen3-32b-v1:0"
+
+
+def _oversized_result():
+    return {"rows": [{"id": i, "name": f"item-{i}", "value": i * 3} for i in range(2500)]}
+
+
+def _spill_configurable(behaviour, **extra):
+    from autolangchat.artifacts import ArtifactStore
+
+    store = ArtifactStore()
+    store.register_connection("conn", "alice")
+    scope = store.activate("conn", "thread", "alice")
+    chat_config = SimpleNamespace(auth_expiration_behaviour=behaviour, model_id=_SMALL_CAP_MODEL)
+    return store, {"chat_config": chat_config, "artifact_store": store, "artifact_scope": scope, **extra}
+
+
+def _state_with_calls(*call_ids):
+    return {
+        "messages": [
+            {"role": "user", "content": "list jobs"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"name": "get_jobs", "args": {}, "id": cid, "type": "tool_call"} for cid in call_ids],
+            },
+        ],
+        "metadata": {},
+    }
+
+
+class TestOversizedResultsAfterReactiveAuth:
+    @pytest.mark.asyncio
+    async def test_retried_result_is_the_one_that_gets_replaced(self):
+        """A 401 is retried first; the node passes the recovered (oversized) outcome on, preprocessing replaces it."""
+        from autolangchat.graph.nodes.preprocess import prepare_message_artifacts
+
+        tm = MagicMock()
+        tm.execute_tool_calls = AsyncMock(
+            side_effect=[
+                [{"tool_call_id": "call_1", "name": "get_jobs", "error": "HTTP 401", "status_code": 401}],
+                [{"tool_call_id": "call_1", "name": "get_jobs", "result": _oversized_result()}],
+            ]
+        )
+        sso_session_store = MagicMock()
+        sso_session_store.get_session.return_value = {"refresh_token": "rt", "access_token": "old_access_token"}
+        store, configurable = _spill_configurable(
+            "reactive", tool_manager=tm, auth_info=_make_sso_auth_info(), sso_session_store=sso_session_store
+        )
+        configurable["sso_provider"] = MagicMock()
+
+        with patch(
+            "autolangchat.sso.sso_session_store.refresh_sso_session_if_needed",
+            new=AsyncMock(return_value={"access_token": "new_access_token", "refresh_token": "rt"}),
+        ):
+            result = await tools_execution_node(_state_with_calls("call_1"), {"configurable": configurable})
+
+        assert tm.execute_tool_calls.await_count == 2
+        entry = result["messages"][-1]["tool_results"][0]
+        assert entry["result"] == _oversized_result() and "artifact_marker" not in entry
+        assert "auth_expired" not in result["metadata"]
+        assert store.statistics()["puts"] == 0
+
+        processed, _ = prepare_message_artifacts(
+            result["messages"], configurable["chat_config"], {"configurable": configurable}
+        )
+
+        replaced = processed[-1]["tool_results"][0]
+        assert replaced["artifact_marker"] is True and replaced["tool_call_id"] == "call_1"
+        assert store.statistics()["puts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_unrecovered_401_stays_intact_next_to_a_replaced_sibling(self):
+        from autolangchat.graph.nodes.preprocess import prepare_message_artifacts
+
+        unauthorized = {
+            "tool_call_id": "call_1",
+            "name": "get_jobs",
+            "result": {"error": "HTTP 401", "details": "Unauthorized"},
+            "status_code": 401,
+        }
+        sibling = {"tool_call_id": "call_2", "name": "get_jobs", "result": _oversized_result()}
+        tm = MagicMock()
+        tm.execute_tool_calls = AsyncMock(return_value=[unauthorized, sibling])
+        store, configurable = _spill_configurable("reactive", tool_manager=tm, auth_info=_make_bearer_auth_info())
+
+        result = await tools_execution_node(_state_with_calls("call_1", "call_2"), {"configurable": configurable})
+
+        assert result["metadata"]["auth_expired"] is True
+        assert result["messages"][-1]["tool_results"] == [unauthorized, sibling]
+        tm.execute_tool_calls.assert_awaited_once()
+
+        processed, _ = prepare_message_artifacts(
+            result["messages"], configurable["chat_config"], {"configurable": configurable}
+        )
+
+        entries = processed[-1]["tool_results"]
+        assert entries[0] == unauthorized
+        assert entries[1]["artifact_marker"] is True

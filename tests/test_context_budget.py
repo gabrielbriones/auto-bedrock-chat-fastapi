@@ -18,8 +18,10 @@ from autolangchat.context_budget import (
     ContextBudget,
     chars_per_token,
     classify_content,
+    estimate_message_parts,
     estimate_message_tokens,
     estimate_messages_tokens,
+    estimate_text,
     estimate_tokens,
     estimate_tool_schema_tokens,
     provider_for_model,
@@ -330,6 +332,137 @@ class TestEstimateTokens:
 
         assert estimate_tool_schema_tokens([lookup_job], "anthropic") > 0
         assert estimate_tool_schema_tokens(None) == 0
+
+
+# ── Estimate details ────────────────────────────────────
+
+
+class TestEstimateDetails:
+    @pytest.mark.parametrize("text", ["", "plain prose " * 50, '{"a": [1, 2, 3]}' * 40, "2026-10-29 INFO 12 34\n" * 80])
+    def test_estimate_text_matches_estimate_tokens_and_reports_its_inputs(self, text):
+        estimate = estimate_text(text, provider="anthropic")
+
+        assert estimate.tokens == estimate_tokens(text, provider="anthropic")
+        assert estimate.chars == len(text)
+        assert estimate.kind == (classify_content(text) if text else CONTEXT_BUDGET_KIND_PROSE)
+        assert estimate.chars_per_token == chars_per_token(estimate.kind, "anthropic")
+
+    def test_estimate_text_honours_an_explicit_kind(self):
+        estimate = estimate_text("word " * 100, kind=CONTEXT_BUDGET_KIND_JSON, provider="qwen")
+
+        assert estimate.kind == CONTEXT_BUDGET_KIND_JSON
+        assert estimate.chars_per_token == chars_per_token(CONTEXT_BUDGET_KIND_JSON, "qwen")
+
+    def test_tool_message_has_one_part_per_result_labelled_by_tool_name(self):
+        message = {
+            "role": "tool",
+            "content": "[]",
+            "tool_results": [
+                {"tool_call_id": "c1", "name": "get_job", "result": {"job": "x" * 5000}},
+                {"tool_call_id": "c2", "name": "boom", "error": "failed"},
+                "not a dict",
+                {"tool_call_id": "c3", "result": "unnamed"},
+            ],
+        }
+
+        parts = estimate_message_parts(message, "anthropic")
+
+        assert [part.label for part in parts] == ["get_job", "boom", "result", "result"]
+        assert sum(part.tokens for part in parts) == estimate_message_tokens(message, "anthropic")
+        # The characters and kind describe the text the model receives, as in estimate_message_tokens.
+        assert parts[0].chars == len(str(message["tool_results"][0]["result"]))
+        assert parts[0].kind == CONTEXT_BUDGET_KIND_JSON
+        assert parts[1].chars == len("failed")
+        assert parts[0].tokens > parts[1].tokens
+
+    def test_tool_message_without_results_has_no_parts(self):
+        assert estimate_message_parts({"role": "tool", "content": "x"}) == []
+        assert estimate_message_parts({"role": "tool", "tool_results": []}) == []
+        assert estimate_message_tokens({"role": "tool", "content": "x"}) == 0
+
+    @pytest.mark.parametrize(
+        "text", ["plain prose " * 400, '{"a": [1, 2, 3]}' * 400, "stat name,core 0,core 1\n" * 400]
+    )
+    def test_user_message_is_one_content_part_describing_its_text(self, text):
+        parts = estimate_message_parts({"role": "user", "content": text}, "anthropic")
+        text_estimate = estimate_text(text, provider="anthropic")
+
+        assert len(parts) == 1
+        [part] = parts
+        assert part.label == "content"
+        assert (part.chars, part.kind, part.chars_per_token) == (
+            len(text),
+            text_estimate.kind,
+            text_estimate.chars_per_token,
+        )
+        # The framing of the message is charged to its first (here only) part.
+        assert part.tokens == OVERHEAD + text_estimate.tokens
+        assert estimate_message_tokens({"role": "user", "content": text}, "anthropic") == part.tokens
+
+    def test_assistant_message_parts_are_its_content_and_its_tool_calls(self):
+        tool_calls = [{"id": "t1", "name": "get_jobs", "args": {"limit": 5}}]
+        message = {"role": "assistant", "content": "Let me look. " * 20, "tool_calls": tool_calls}
+
+        content, calls = estimate_message_parts(message, "anthropic")
+
+        calls_estimate = estimate_text(tool_calls, kind=CONTEXT_BUDGET_KIND_JSON, provider="anthropic")
+        assert (content.label, calls.label) == ("content", "tool_calls")
+        assert content.tokens == OVERHEAD + estimate_text(message["content"], provider="anthropic").tokens
+        assert (calls.chars, calls.kind, calls.tokens) == (
+            calls_estimate.chars,
+            CONTEXT_BUDGET_KIND_JSON,
+            calls_estimate.tokens,
+        )
+        assert content.tokens + calls.tokens == estimate_message_tokens(message, "anthropic")
+
+    def test_framing_is_charged_to_the_first_part_even_when_the_content_is_empty(self):
+        tool_calls = [{"id": "t1", "name": "get_jobs", "args": {}}]
+
+        [calls] = estimate_message_parts({"role": "assistant", "content": "", "tool_calls": tool_calls}, "anthropic")
+
+        assert calls.label == "tool_calls"
+        assert (
+            calls.tokens
+            == OVERHEAD + estimate_text(tool_calls, kind=CONTEXT_BUDGET_KIND_JSON, provider="anthropic").tokens
+        )
+
+    def test_block_content_has_a_part_per_block_and_skips_tool_use_blocks_of_the_tool_calls(self):
+        tool_calls = [{"id": "t1", "name": "lookup", "args": {"q": "x"}}]
+        message = {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "plain " * 50},
+                {"type": "tool_use", "id": "t1", "name": "lookup", "input": {"q": "x"}},
+                {"type": "image", "source": {"data": "abc"}},
+            ],
+            "tool_calls": tool_calls,
+        }
+
+        parts = estimate_message_parts(message, "anthropic")
+
+        # The tool_use block is charged once, through tool_calls, as Bedrock merges them by id.
+        assert [part.label for part in parts] == ["content[0]", "content[2]", "tool_calls"]
+        assert parts[0].kind == classify_content("plain " * 50)
+        assert parts[1].kind == CONTEXT_BUDGET_KIND_JSON
+        assert sum(part.tokens for part in parts) == estimate_message_tokens(message, "anthropic")
+
+    @pytest.mark.parametrize(
+        "message", [{"role": "user"}, {"role": "user", "content": None}, {"role": "user", "content": ""}]
+    )
+    def test_empty_message_is_a_single_empty_part_that_only_costs_its_framing(self, message):
+        [part] = estimate_message_parts(message, "anthropic")
+
+        assert (part.label, part.chars, part.tokens) == ("content", 0, OVERHEAD)
+
+    def test_langchain_messages_have_the_same_parts_as_their_dicts(self):
+        text = "hello world " * 30
+
+        human = estimate_message_parts(HumanMessage(content=text), "anthropic")
+
+        assert human == estimate_message_parts({"role": "user", "content": text}, "anthropic")
+        call = {"id": "t1", "name": "f", "args": {}}
+        ai = estimate_message_parts(AIMessage(content=text, tool_calls=[call]), "anthropic")
+        assert [part.label for part in ai] == ["content", "tool_calls"]
 
 
 # ── ContextBudget ───────────────────────────────────────
