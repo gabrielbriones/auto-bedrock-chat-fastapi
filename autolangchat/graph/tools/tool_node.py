@@ -50,7 +50,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 from langchain_core.runnables import RunnableConfig
 
@@ -61,6 +61,25 @@ from ..state import ChatState
 from .internal import ToolContext
 
 logger = logging.getLogger(__name__)
+
+_INTERNAL_TOOL_LOG_PREVIEW_CHARS = 500
+
+
+def _clip_strings(value: Any, limit: int) -> Any:
+    """Copy of ``value`` with every string longer than ``limit`` cut short, so a log line stays readable."""
+    if isinstance(value, str):
+        return value if len(value) <= limit else f"{value[:limit]}...(+{len(value) - limit:,} chars)"
+    if isinstance(value, dict):
+        return {key: _clip_strings(item, limit) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clip_strings(item, limit) for item in value]
+    return value
+
+
+def _result_preview(entry: Dict[str, Any]) -> str:
+    """The result (or error) of a ``tool_results`` entry as JSON, with long strings clipped."""
+    payload = entry.get("result", entry.get("error"))
+    return json.dumps(_clip_strings(payload, _INTERNAL_TOOL_LOG_PREVIEW_CHARS), ensure_ascii=False, default=str)
 
 
 def _build_tool_context(
@@ -170,6 +189,10 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
     - ``metadata``: updated ``tool_call_rounds``/``total_tool_calls`` counters,
       plus ``auth_expired`` when reactive-mode refresh-and-retry didn't recover
       a 401.
+
+    Results are passed on as the tools returned them. Oversized ones are
+    replaced by artifact markers in the preprocessing node, the single place
+    that estimates the context budget (see ``spill.py``).
     """
     configurable: Dict[str, Any] = config.get("configurable") or {}
     tool_manager = configurable.get("tool_manager")
@@ -179,6 +202,8 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
 
     messages: List[Dict[str, Any]] = list(state.get("messages") or [])
     metadata: Dict[str, Any] = dict(state.get("metadata") or {})
+    # Without a tool_manager every result is an error and there are no internal tools.
+    internal_tools: Mapping[str, Any] = {}
 
     last_msg = messages[-1] if messages else {}
     raw_tool_calls: List[Dict[str, Any]] = last_msg.get("tool_calls") or []
@@ -278,6 +303,18 @@ async def tools_execution_node(state: ChatState, config: RunnableConfig) -> Dict
     ]
     logger.info("Tool result sizes: %s", [{"name": r["name"], "bytes": r["bytes"]} for r in tool_result_sizes])
     metadata["tool_result_sizes"] = metadata.get("tool_result_sizes", []) + tool_result_sizes
+
+    # The bounded pages the model asked for from an artifact; HTTP tool results are only logged by size above.
+    if logger.isEnabledFor(logging.DEBUG):
+        for entry, size in zip(tool_results, tool_result_sizes):
+            if entry.get("name") in internal_tools:
+                logger.debug(
+                    "Internal tool result %s (call %s, %s bytes): %s",
+                    entry.get("name"),
+                    entry.get("tool_call_id"),
+                    f"{size['bytes']:,}",
+                    _result_preview(entry),
+                )
 
     logger.debug(
         "Tool execution complete: %d result(s), round %d",

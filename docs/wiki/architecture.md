@@ -83,9 +83,10 @@ Optional RAG Components:
 `ChatSessionManager` owns a concrete, process-local `ArtifactStore`.
 The WebSocket handler passes the store and a server-issued scope through
 LangGraph's runtime `configurable` values; the store itself is never
-checkpointed or placed in session metadata. Oversized messages are copied
-before preprocessing, without replacing the original message in the normal
-checkpoint and model-input paths.
+checkpointed or placed in session metadata. Oversized tool results and user
+messages are stored and replaced, in the checkpoint and the model input, by a
+marker with a bounded preview (see Session artifacts); other oversized messages
+are copied before preprocessing, without replacing the original message.
 
 Artifacts are isolated by live connection and conversation, with reads
 restricted to the active scope. TTL, quotas and lifecycle cleanup bound their

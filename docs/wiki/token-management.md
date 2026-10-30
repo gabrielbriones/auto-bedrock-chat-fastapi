@@ -96,6 +96,8 @@ The LangGraph preprocessing node builds `ContextBudget.for_turn` before
 each primary model invocation, including tool-loop calls. The primary LLM
 call reuses its estimates without repeating estimation or archiving.
 Recovery retries bypass that node and re-evaluate inside the LLM node.
+The fallback invocation rebuilds its model input from the prepared messages,
+so any markers created for the fallback model's threshold reach that model.
 It estimates each message **after the most recent assistant message**, or
 after the system prompt for a new conversation. An assistant tool-call
 message is also a boundary: the next call evaluates the new tool results.
@@ -109,10 +111,30 @@ budget. Retries use the model and messages actually being submitted.
 
 The latest attempt's estimates are stored in graph metadata under
 `message_context_budget`, with the model ID, threshold, and per-message
-indices, token estimates, and `exceeds_threshold` flags. With a live artifact
-scope, oversized messages are copied to the [session artifact store](session-artifacts.md)
-and tagged with a handle, without replacing their content. Archiving happens
-before preprocessing truncation to preserve original payloads.
+indices, token estimates, and `exceeds_threshold` flags. Each message also
+lists the estimate of the parts it is made of (`parts`): one per result of a
+tool message, the text of a user message. With a live artifact
+scope, an oversized user message is replaced by the same
+[marker](session-artifacts.md#user-message-markers) a tool result gets (so the
+preprocessor does not truncate it), and any other oversized message
+that is not a tool result is copied to the
+[session artifact store](session-artifacts.md) and tagged with a handle,
+without replacing its content. Both happen before preprocessing
+truncation to preserve original payloads.
+
+#### Tool results are replaced in the same pass
+
+The estimate above is the only one: an oversized tool message is not estimated
+a second time anywhere else. From the per-part estimates, the pass replaces
+each successful result that alone exceeds the threshold with a
+[marker](session-artifacts.md#tool-result-markers), and, if the message as a
+whole still exceeds it, the largest remaining results until it fits. Errors,
+HTTP error results and results of internal tools are never replaced. This
+happens before preprocessing truncation, so the preprocessor only sees the
+marker; the archive step skips marker messages. The `Message context estimate`
+debug line lists each part's tokens, characters, content kind and chars/token
+ratio, for a user message as well as a tool message, and appears before the
+artifact is stored.
 
 There is no application-level WebSocket input-message size cap. Deployment
 WebSocket server/proxy limits still apply independently, and the existing

@@ -229,6 +229,7 @@ conversation's history when it is reloaded.
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
     "total_tool_calls": 2,
+    "spilled_artifacts": 0,
     "preprocessing_applied": false,
     "input_tokens": 120,
     "output_tokens": 240,
@@ -259,6 +260,7 @@ final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
 | `timestamp`             | `string` (ISO 8601)      | Timestamp of the final LLM call.                                                                                                                                                           |
 | `tool_call_rounds`      | `int` (default `0`)      | Number of tool-call loop iterations for this turn.                                                                                                                                         |
 | `total_tool_calls`      | `int` (default `0`)      | Total individual tool calls executed across all rounds.                                                                                                                                    |
+| `spilled_artifacts`     | `int` (default `0`)      | Oversized tool results replaced by a [session artifact marker](session-artifacts.md#tool-result-markers) this turn (a replaced user message is not counted).                               |
 | `preprocessing_applied` | `bool` (default `false`) | Whether message preprocessing ran on the user input.                                                                                                                                       |
 
 **Conditional — token totals (only when the model returns usage):**

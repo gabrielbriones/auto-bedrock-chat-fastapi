@@ -41,12 +41,22 @@ from ...defaults import (
     ARTIFACT_TOOL_DEFAULT_MAX_MATCHES,
     CONTEXT_BUDGET_KINDS,
 )
+from ...model_capabilities import supports_tool_calling
 from .internal import ARTIFACT_UNAVAILABLE, CONTEXT_EXHAUSTED, INVALID_ARGUMENTS, InternalTool, ToolContext, tool_error
 
 READ_CONTENT_RANGE = "read_content_range"
 GREP_CONTENT = "grep_content"
 READ_ARTIFACT_RANGE_ALIAS = "read_artifact_range"
 GREP_ARTIFACT_ALIAS = "grep_artifact"
+
+
+def artifact_tools_bound(chat_config: Any, model_id: str) -> bool:
+    """Whether the artifact tools are bound to the model, so handles are worth advertising."""
+    if not getattr(chat_config, "artifact_enabled", True) or not supports_tool_calling(model_id):
+        return False
+    bound = {getattr(t, "name", None) for t in (getattr(chat_config, "langchain_tools", None) or [])}
+    return READ_CONTENT_RANGE in bound
+
 
 # Escaped characters held back for the result's other fields (numbers, flags, hint).
 _ENVELOPE_RESERVE_CHARS = 512

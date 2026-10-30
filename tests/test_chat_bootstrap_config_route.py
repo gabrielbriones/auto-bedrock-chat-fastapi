@@ -102,7 +102,6 @@ async def test_stats_route_surfaces_aggregate_artifacts_without_private_data(cha
                 "failed_reads": 0,
             }
             handle = store.put(scope, "private-payload", {"source": "private-metadata"})
-            private_values.append(handle)
             assert store.put(scope, "private-payload", {"source": "private-metadata"}) == handle
             with pytest.raises(ArtifactError, match="quota"):
                 store.put(scope, "rejected", {})
@@ -123,9 +122,13 @@ async def test_stats_route_surfaces_aggregate_artifacts_without_private_data(cha
             assert response.json()["sessions"]["artifacts"] == expected
             assert response.json()["websocket"] == {"total_messages_handled": 0, "total_errors": 0}
             assert response.json()["tools"] == {}
-            for private in private_values:
+            for private in [*private_values, handle]:
                 assert private not in response.text
+            # The store logs the id of a new artifact at DEBUG so it can be located, and nothing private about it.
+            for private in private_values:
                 assert private not in caplog.text
+            assert f"Stored artifact, size 15 bytes, id {handle}" in caplog.text
+            assert caplog.text.count(handle) == 1  # a deduplicated put creates nothing and logs nothing
 
             clock[0] = 10
             expired = client.get(f"{chat_endpoint}/stats").json()["sessions"]["artifacts"]

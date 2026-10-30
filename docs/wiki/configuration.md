@@ -96,9 +96,9 @@ checkpoint copies; allow additional memory for those. Quota exhaustion fails
 archiving explicitly rather than silently evicting content. Disabling artifacts
 preserves ordinary message processing.
 
-Archiving a tool message stores both its `tool_results` and its `content` mirror (about 2x the result for log text),
-so keep `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` at least 3x `AUTOCHAT_TOOL_RESPONSE_MAX_BYTES`; the defaults satisfy
-this.
+Archiving a tool result stores its text once (a text result as is, structured JSON pretty-printed, so a little
+larger than its compact form), so keep `AUTOCHAT_ARTIFACT_MAX_BYTES_PER_SESSION` at least 3x
+`AUTOCHAT_TOOL_RESPONSE_MAX_BYTES`; the defaults satisfy this. A user message is stored once as well.
 
 Storage and quotas are worker-local, not shared across replicas. See
 [Session artifacts](session-artifacts.md) for lifetime, ownership, deployment

@@ -326,7 +326,7 @@ class ArtifactStore:
                 scope, text, dict(metadata), digest, size, line_count, time.monotonic() + self.max_age_seconds
             )
             self._puts += 1
-            logger.debug("Stored artifact, size %d bytes", size)
+            logger.debug("Stored artifact, size %d bytes, id %s", size, handle)
             return handle
 
     def read_region(

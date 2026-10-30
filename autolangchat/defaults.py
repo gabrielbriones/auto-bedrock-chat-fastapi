@@ -32,6 +32,10 @@ ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS = 8192
 # Model-facing defaults for the read_content_range / grep_content tools.
 ARTIFACT_TOOL_DEFAULT_MAX_LINES = 200
 ARTIFACT_TOOL_DEFAULT_MAX_MATCHES = 50
+# The preview embedded in an artifact marker is the first this many characters of the stored text.
+ARTIFACT_MARKER_PREVIEW_MAX_CHARS = 1000
+# Flag on a ``tool_results`` entry, or on a user message, replaced by an artifact marker; it is never truncated.
+ARTIFACT_MARKER_ENTRY_KEY = "artifact_marker"
 
 # ── AI Summarization ────────────────────────────────────────────────────
 DEFAULT_ENABLE_AI_SUMMARIZATION = False

@@ -103,6 +103,7 @@ _ALWAYS_KEYS = {
     "timestamp",
     "tool_call_rounds",
     "total_tool_calls",
+    "spilled_artifacts",
     "preprocessing_applied",
 }
 _TOKEN_TOTAL_KEYS = {"input_tokens", "output_tokens"}
@@ -133,6 +134,36 @@ def test_metadata_non_kb_path():
     # Top-level totals come from the accumulated graph metadata.
     assert metadata["input_tokens"] == 120
     assert metadata["output_tokens"] == 240
+
+
+def test_spilled_artifacts_counts_this_turns_marker_results_and_defaults_to_zero():
+    """Spilled results are counted from the markers in this turn's tool results, not from earlier turns,
+    and a flagged preview (no artifact) is not a spilled artifact."""
+
+    def marker(call_id):
+        return {"tool_call_id": call_id, "name": "get_job", "result": {"artifact_handle": "h"}, "artifact_marker": True}
+
+    previous_turn = {"role": "tool", "content": "[]", "tool_results": [marker("old")]}
+    this_turn = {
+        "role": "tool",
+        "content": "[]",
+        "tool_results": [
+            marker("a"),
+            {"tool_call_id": "b", "name": "get_job", "result": {"truncated": True, "preview": "x"}},
+            marker("c"),
+            {"tool_call_id": "d", "name": "get_job", "result": "small"},
+        ],
+    }
+
+    def metadata_for(*messages):
+        graph_state = {"messages": list(messages), "metadata": _graph_metadata(), "kb_results": []}
+        return _run_and_get_ai_response(graph_state)["metadata"]
+
+    history = [{"role": "user", "content": "earlier"}, previous_turn, _assistant_message()]
+    turn = [{"role": "user", "content": "hello"}, this_turn, _assistant_message()]
+    assert metadata_for(*history, *turn)["spilled_artifacts"] == 2
+    assert metadata_for(*history, {"role": "user", "content": "hello"}, _assistant_message())["spilled_artifacts"] == 0
+    assert metadata_for(_assistant_message())["spilled_artifacts"] == 0
 
 
 def test_metadata_kb_path():
