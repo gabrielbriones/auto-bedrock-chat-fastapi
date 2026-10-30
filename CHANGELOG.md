@@ -2,6 +2,97 @@
 
 <!-- version list -->
 
+## v4.2.0 (2026-10-30)
+
+### Bug Fixes
+
+- Bound text-envelope field names in artifact markers
+  ([`838d9e9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/838d9e9c1a3a03b0c89caf8db4ca5a95da78bc23))
+
+- **artifacts**: Keep statistics admin-only and advertise stats security
+  ([`10e0eb6`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/10e0eb6955e3a201be41b71370c08f7ce5607428))
+
+- **chat**: Bound artifact reads and preserve retry handles
+  ([`324317e`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/324317e5841d11d117f9529b4d89846359031cca))
+
+- **conversation**: Never let auto-title overwrite a manual rename
+  ([`8b9384c`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8b9384cfdb482995ed1781ce5c7ad383499bafcc))
+
+- **logging**: Improve chat and RAG diagnostics while reducing log noise
+  ([`959a066`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/959a066c3d6f2b253f1663f655bba6d03c45a8c2))
+
+- **manager**: Emit tool_call_end for both exceptions and cancellations
+  ([`8035c0a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/8035c0ae9507898b599b993028d365009b12bea5))
+
+- **model-config**: Resolve Default region to configured default_region
+  ([`88e706a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/88e706ac65a02d628069f7e9c269b00e554282ad))
+
+- **tools**: Bound decompression output and size artifact quotas for capped responses (PR #207
+  review)
+  ([`c10f5ff`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c10f5ff6d2121068854e910440ab736fb4717945))
+
+### Chores
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`6a5194a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/6a5194a6b58393d033c0e52bbb2b8ab24cd42b5a))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`7ff7202`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7ff720227f4444c70a4dcf4f65bbeb3730ed2264))
+
+- **deps**: Update dependency express to v5.3.0
+  ([`67bd54f`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/67bd54f9b83590ec3d54b4195db1a9474d171c14))
+
+- **deps**: Update frontend-minor-patch
+  ([`1def7dd`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1def7dd00522f1c904d385f2d1fdfcd14d220cb2))
+
+- **deps**: Update python-minor-patch
+  ([`429e2a7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/429e2a74f3183ceb0b3c70748e15fca6df09af90))
+
+- **deps**: Update python-minor-patch
+  ([`bfc6f82`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/bfc6f82b15bf46a2d0738189cb150c3413ad4539))
+
+### Code Style
+
+- Sort imports and fix test formatting
+  ([`1508d28`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1508d28d640cf895cc6480963bcfd4c70cf123c9))
+
+### Features
+
+- **artifacts**: Expose aggregate session artifact statistics
+  ([`7b918e3`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7b918e3fbcbbfb760fed9952bd491ca1f60d3dcc))
+
+- **artifacts**: Replace oversized messages with session markers (XMGPLAT-11846)
+  ([`7248ef7`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7248ef7d82bafeb91a44fc38b91d759f2cc44bf7))
+
+- **artifacts**: Use RE2 for regex grep and advertise artifact handles to the model
+  ([`94f4499`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/94f449981dc677996bfe6e36b39b769bb0aadb5a))
+
+- **chat**: Archive oversized messages as scoped session artifacts
+  ([`af688ed`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/af688eddaab0b21a5cacdab68a0ed3e033126165))
+
+- **tools**: Add internal artifact read and grep tools
+  ([`2b036b0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2b036b0d885d9480fc76b7208ad6b01b2986e9be))
+
+- **tools**: Stream and size-cap HTTP tool responses (XMGPLAT-11844)
+  ([`a2790b3`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a2790b3e66d10e34df2585d65199f414d94e64e8))
+
+- **tools**: Stream per-tool-call start/end events to the chat UI
+  ([`a3c3f73`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/a3c3f73ce23c48cd0c045fa9945a3c1120c487bb))
+
+### Refactoring
+
+- **artifacts**: Simplify marker and debug logging constants
+  ([`f5d1f85`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f5d1f85b8337752e23452231c083f1cd2cdd1766))
+
+- **plugin**: Extract tool setup into _init_tools and harden tests
+  ([`5c793b9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5c793b9cb8f35c7986072b96ca25e70b6601a800))
+
+### Testing
+
+- **artifacts**: Patch health route names without a dotted module path
+  ([`2789347`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2789347735bf4a6bf5f9bcfad30b09ac03b352a6))
+
+
 ## v4.1.0 (2026-10-16)
 
 ### Bug Fixes
