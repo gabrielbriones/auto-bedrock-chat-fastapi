@@ -15,11 +15,7 @@ import { browserUrlNavigator } from '@/app/browser-location'
 import type { ChatBootstrap } from '@/app/bootstrap/chat-bootstrap'
 import { toAuthPolicy, type AuthPolicy } from '@/domains/iam/domain/auth-policy'
 import { IdentityStore } from '@/domains/iam/application/identity.store'
-import type {
-  AuthGateway,
-  CapabilityProbe,
-  SsoGateway,
-} from '@/domains/iam/application/ports'
+import type { AuthGateway, CapabilityProbe, SsoGateway } from '@/domains/iam/application/ports'
 import { CapabilityHttpProbe } from '@/domains/iam/infrastructure/capability-http.probe'
 import { IntervalSessionRenewalScheduler } from '@/domains/iam/infrastructure/interval-session-renewal.scheduler'
 import { SsoHttpGateway, type LoginNavigation } from '@/domains/iam/infrastructure/sso-http.gateway'
@@ -53,6 +49,7 @@ import type { TelemetryGateway } from '@/domains/telemetry/application/ports'
 import type { TelemetryStore } from '@/domains/telemetry/application/telemetry.store'
 import { createAdminStores } from '@/app/bootstrap/admin-stores'
 import { notifyOnSessionExpiry } from '@/app/bootstrap/session-expiry-notice'
+import { createReplyNotifications, type ReplyNotificationDependencies } from '@/app/bootstrap/reply-notifications'
 
 // ADR-003 / DESIGN-002 §3: the single typed record of every adapter/port the app owns, built
 // once after bootstrap resolves and reached only through `useContainer` — never a service
@@ -76,6 +73,8 @@ export type Container = {
   readonly identity: IdentityStore
   readonly messagingGateway: MessagingGateway
   readonly chatSession: ChatSessionStore
+  // FR-MSG-032: OS notifications for replies that land while the user is looking elsewhere.
+  readonly replyNotifications: ReturnType<typeof createReplyNotifications>
   readonly conversationGateway: ConversationGateway
   readonly conversations: ConversationStore
   readonly promptCatalog: PromptCatalogStore
@@ -97,7 +96,7 @@ export type Container = {
   readonly bootstrap: ChatBootstrap
 }
 
-export type ContainerDependencies = {
+export type ContainerDependencies = ReplyNotificationDependencies & {
   readonly httpClient?: HttpClient
   readonly logger?: Logger
   readonly clock?: Clock
@@ -344,6 +343,7 @@ export const createContainer = (
     authPolicy,
     identity,
     ...chatStores,
+    replyNotifications: createReplyNotifications(bootstrap, chatStores, deps),
     promptCatalog: createPromptCatalog(bootstrap, chatStores.chatSession, deps.urlNavigator ?? browserUrlNavigator, logger),
     ...modelConfig,
     ...feedback,

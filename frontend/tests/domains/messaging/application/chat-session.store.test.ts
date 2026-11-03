@@ -271,6 +271,60 @@ describe('ChatSessionStore', () => {
     })
   })
 
+  describe('settled replies (FR-MSG-032)', () => {
+    it('announces an answered turn with its text and conversation', () => {
+      const { store, emit } = createHarness()
+      const listener = jest.fn()
+      store.onReplySettled(listener)
+      store.send('hi')
+
+      emit(answered('hello'))
+
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(listener).toHaveBeenCalledWith({ outcome: 'answered', text: 'hello', conversationId: 'c-1' })
+    })
+
+    it('announces a failed turn', () => {
+      const { store, emit } = createHarness()
+      const listener = jest.fn()
+      store.onReplySettled(listener)
+      store.send('hi')
+
+      emit({ kind: 'failed', text: 'model unavailable' })
+
+      expect(listener).toHaveBeenCalledWith({ outcome: 'failed', text: 'model unavailable', conversationId: null })
+    })
+
+    it('stays silent for transients, abandoned turns and loaded history', () => {
+      const { store, emit, changeConnection } = createHarness()
+      const listener = jest.fn()
+      store.onReplySettled(listener)
+
+      emit(answered('late duplicate'))
+      emit({ kind: 'failed', text: 'session expired' })
+      store.send('hi')
+      changeConnection(state('reconnecting', 1))
+      emit({ kind: 'history-loaded', conversationId: 'c-1', messages: [] })
+
+      expect(listener).not.toHaveBeenCalled()
+    })
+
+    it('stops announcing after unsubscribe or dispose', () => {
+      const { store, emit } = createHarness()
+      const unsubscribed = jest.fn()
+      const disposed = jest.fn()
+      store.onReplySettled(unsubscribed)()
+      store.onReplySettled(disposed)
+      store.send('hi')
+      store.dispose()
+
+      emit(answered('hello'))
+
+      expect(unsubscribed).not.toHaveBeenCalled()
+      expect(disposed).not.toHaveBeenCalled()
+    })
+  })
+
   describe('loading conversation history (FR-CONV-003)', () => {
     it('replaces the current transcript with the selected conversation', () => {
       const { store, emit } = createHarness()

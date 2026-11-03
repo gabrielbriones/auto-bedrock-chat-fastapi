@@ -61,7 +61,10 @@ auto-bedrock-chat-fastapi/frontend/          # Co-located with the FastAPI packa
 │   │   ├── search-params.ts            # Reusable Zod schemas for URL search parameters.
 │   │   ├── adapters/                    # Browser/library implementations of the shared UI ports.
 │   │   │   ├── browser-connectivity-port.ts # Adapts browser online/offline events.
+│   │   │   ├── browser-system-notification-port.ts # Wraps the browser Notifications API.
 │   │   │   ├── confirmation-controller.ts # Promise-based confirmation state controller.
+│   │   │   ├── document-attention-port.ts # Reports tab visibility plus window focus.
+│   │   │   ├── local-preference-storage.ts # Failure-tolerant localStorage preferences.
 │   │   │   └── sonner-notification-port.ts # Implements notifications with Sonner toasts.
 │   │   ├── bootstrap/                   # Startup boundary: validates config and builds dependencies.
 │   │   │   ├── BootstrapProvider.tsx   # Loads bootstrap data and exposes the dependency container.
@@ -69,13 +72,15 @@ auto-bedrock-chat-fastapi/frontend/          # Co-located with the FastAPI packa
 │   │   │   ├── chat-bootstrap.ts       # Protocol-free bootstrap configuration types.
 │   │   │   ├── container-context.ts    # React context, fail-fast useContainer, and useContainerStore.
 │   │   │   ├── container.ts            # Composition root that constructs adapters and stores.
-│   │   │   └── loadBootstrap.ts        # Fetches and parses the backend bootstrap endpoint.
+│   │   │   ├── loadBootstrap.ts        # Fetches and parses the backend bootstrap endpoint.
+│   │   │   └── reply-notifications.ts  # Joins settled replies with roster titles for OS notifications.
 │   │   ├── chat/                        # Chat-screen glue composing conversation, messaging, and prompt UI.
 │   │   ├── layouts/                     # Route-level chat and admin page frames.
 │   │   │   ├── AdminLayout.tsx         # Admin shell, navigation, access handling, and boundary.
 │   │   │   ├── AppShell.tsx            # Shared responsive application frame.
 │   │   │   ├── ChatLayout.tsx          # Chat shell, header, sidebar, and route boundary.
 │   │   │   └── use-document-title.ts   # Document-title hook used by both layouts.
+│   │   ├── notifications/               # OS reply notifications (FR-MSG-032): store, toggle, click-through.
 │   │   ├── providers/                   # React owners of application-wide resource lifecycles.
 │   │   │   ├── ChatSocketProvider.tsx  # Connects and disposes the app-wide WebSocket.
 │   │   │   ├── ConfirmationHost.tsx    # Renders queued application confirmation requests.
@@ -220,7 +225,10 @@ auto-bedrock-chat-fastapi/frontend/          # Co-located with the FastAPI packa
 │       ├── ports/                       # Context-neutral UI service contracts.
 │       │   ├── confirmation-port.ts    # Confirmation and prompt request interface.
 │       │   ├── connectivity-port.ts    # Online/offline status interface.
-│       │   └── notification-port.ts    # Transient notification interface.
+│       │   ├── notification-port.ts    # Transient notification interface.
+│       │   ├── page-attention-port.ts  # Whether the user is looking at the app.
+│       │   ├── preference-storage-port.ts # Per-browser user preference storage.
+│       │   └── system-notification-port.ts # OS-level notification interface.
 │       └── ws/                          # Protocol-neutral socket transport and frame bus.
 │           ├── message-bus.ts          # Parses, validates, owns, and publishes server frames.
 │           ├── reconnect-policy.ts     # Bounded reconnect backoff with jitter.
@@ -274,7 +282,7 @@ contexts described by `specs/`; their routes remain placeholders until those sli
 | `src/assets/` | Images imported by source modules. | Assets processed, hashed, and referenced by the bundler. |
 | `src/app/` | Providers, layouts, routing, and concrete dependency assembly. | Application shell and composition root; coordinates contexts without owning business rules. |
 | `src/app/bootstrap/` | Config DTO, loader, provider, container, and context. | Startup boundary that validates backend configuration, constructs dependencies, and exposes only a ready container. `useContainerStore(key)` is the one subscription hook for every store in it. |
-| `src/app/adapters/` | Browser connectivity, Sonner notification, and confirmation-controller adapters. | Production implementations of the `src/shared/ports/` contracts, wired by the container. |
+| `src/app/adapters/` | Browser connectivity, Sonner notification, OS notification, page-attention, preference-storage, and confirmation-controller adapters. | Production implementations of the `src/shared/ports/` contracts, wired by the container. |
 | `src/app/chat/` | Chat-screen composition: conversation view, drawer, prompt-catalog area, route sync. | Glue that composes several contexts' presentation for the chat routes; owns no business rules. |
 | `src/app/layouts/` | App shell, chat and admin shells, document-title hook. | Route-level framing shared by pages in each application area. |
 | `src/app/providers/` | Socket, theme, and confirmation-host providers. | React ownership boundary for long-lived application resources and global overlays. |
@@ -304,7 +312,7 @@ contexts described by `specs/`; their routes remain placeholders until those sli
 | `src/shared/kernel/` | Results, identifiers, time, events, and curation values. | Minimal stable language that bounded contexts may share. |
 | `src/shared/logging/` | Logger port and console adapter. | Structured observability without direct `console` dependencies elsewhere. |
 | `src/shared/markdown/` | Markdown renderer and sanitization schema. | Single safe rendering boundary for backend or model-authored content. |
-| `src/shared/ports/` | Confirmation, connectivity, and notification ports. | Context-neutral UI service contracts implemented in `src/app/adapters/`. |
+| `src/shared/ports/` | Confirmation, connectivity, notification, OS notification, page-attention, and preference-storage ports. | Context-neutral UI service contracts implemented in `src/app/adapters/`. |
 | `src/shared/ws/` | Socket client, frame bus, and reconnect policy. | Protocol-neutral WebSocket lifecycle and validation dispatch. |
 
 ## Core terms in this application

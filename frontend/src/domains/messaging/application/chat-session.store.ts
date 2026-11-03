@@ -1,4 +1,4 @@
-import { conversationId, messageId, turnId } from '@/shared/kernel/branded'
+import { conversationId, messageId, turnId, type ConversationId } from '@/shared/kernel/branded'
 import type { Clock } from '@/shared/kernel/instant'
 import { isOk } from '@/shared/kernel/result'
 import type { Logger } from '@/shared/logging/logger'
@@ -46,6 +46,13 @@ export type ChatSessionSnapshot = {
 
 export type SendOutcome = 'sent' | 'empty' | 'refused' | 'dropped-closed'
 
+/** FR-MSG-032: a turn this session sent has just resolved with a reply the user can read. */
+export type SettledReply = {
+  readonly outcome: 'answered' | 'failed'
+  readonly text: string
+  readonly conversationId: ConversationId | null
+}
+
 export type ChatSessionStoreOptions = {
   readonly gateway: MessagingGateway
   readonly connection: ConnectionSource
@@ -68,6 +75,7 @@ export class ChatSessionStore {
   readonly #listeners = new Set<() => void>()
   readonly #logger: Logger
   readonly #newId: () => string
+  readonly #replyListeners = new Set<(reply: SettledReply) => void>()
   #seq = 0
   #sessionId: string | null = null
   #snapshot: ChatSessionSnapshot
@@ -104,6 +112,16 @@ export class ChatSessionStore {
 
   /** Identity-stable between emissions, as `useSyncExternalStore` requires. */
   getSnapshot = (): ChatSessionSnapshot => this.#snapshot
+
+  // FR-MSG-032. Only a pending turn settling counts: transients, abandoned turns and loaded
+  // history are not a reply the user is waiting on.
+  onReplySettled = (listener: (reply: SettledReply) => void): Unsubscribe => {
+    this.#replyListeners.add(listener)
+
+    return () => {
+      this.#replyListeners.delete(listener)
+    }
+  }
 
   // FR-MSG-013 / FR-MSG-025 / FR-MSG-009: trim, refuse an empty or concurrent send without a
   // network call, then echo optimistically before the server has said anything.
@@ -148,6 +166,7 @@ export class ChatSessionStore {
 
     this.#subscriptions = []
     this.#listeners.clear()
+    this.#replyListeners.clear()
   }
 
   #handleEvent(event: MessagingEvent): void {
@@ -218,6 +237,7 @@ export class ChatSessionStore {
         },
       ),
     )
+    this.#announceSettled(pending.id)
   }
 
   // FR-MSG-007a: an `error` frame with no turn to fail is still worth showing, as a transient.
@@ -230,6 +250,24 @@ export class ChatSessionStore {
     }
 
     this.#resolve(pending.id, (turn) => failTurn(turn, this.#message('assistant', text)))
+    this.#announceSettled(pending.id)
+  }
+
+  #announceSettled(id: Turn['id']): void {
+    const turn = this.#turns.find((candidate) => candidate.id === id)
+    if (turn === undefined || turn.response === null || (turn.status !== 'answered' && turn.status !== 'failed')) {
+      return
+    }
+
+    const reply: SettledReply = {
+      outcome: turn.status,
+      text: turn.response.raw,
+      conversationId: turn.conversationId,
+    }
+
+    for (const listener of this.#replyListeners) {
+      listener(reply)
+    }
   }
 
   // T-071 / FR-MSG-006 / ADR-008: a `typing` frame carries a cumulative snapshot, discriminated
