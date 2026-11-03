@@ -27,6 +27,10 @@ const metadataSchema = z
         // Bedrock's usage_metadata is read with `.get()`, so either count can arrive as null.
         input_tokens: z.number().nullable().optional(),
         output_tokens: z.number().nullable().optional(),
+        // Prompt-caching subsets of input_tokens (XMGPLAT-11867); this object is `.strict()`, so
+        // they must be listed or every cached answer would be dropped.
+        cache_read_tokens: z.number().nullable().optional(),
+        cache_write_tokens: z.number().nullable().optional(),
       })
       .strict()
       .optional(),
@@ -39,6 +43,8 @@ const metadataSchema = z
     rejected_overrides: z.record(z.string(), z.unknown()).optional(),
     input_tokens: z.number().optional(),
     output_tokens: z.number().optional(),
+    cache_read_tokens: z.number().optional(),
+    cache_write_tokens: z.number().optional(),
     // Null whenever Bedrock's response_metadata carries no stopReason.
     stop_reason: z.string().nullable().optional(),
     kb_used: z.boolean().optional(),

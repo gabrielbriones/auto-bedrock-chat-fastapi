@@ -35,8 +35,22 @@ CREATE TABLE IF NOT EXISTS token_usage (
     input_tokens        INTEGER     NOT NULL CHECK (input_tokens >= 0),
     output_tokens       INTEGER     NOT NULL CHECK (output_tokens >= 0),
 
-    turn_ts             TIMESTAMPTZ NOT NULL DEFAULT now()
+    turn_ts             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- Prompt-cache token counts. Both are SUBSETS of input_tokens (which is
+    -- the total prompt-token count including cached tokens), so uncached
+    -- input = input_tokens - cache_read_tokens - cache_write_tokens.
+    cache_read_tokens   INTEGER     NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
+    cache_write_tokens  INTEGER     NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0)
 );
+
+-- Migration: add prompt-cache columns to tables created before they existed
+-- (idempotent; no-op on fresh deployments).
+ALTER TABLE token_usage
+ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0);
+
+ALTER TABLE token_usage
+ADD COLUMN IF NOT EXISTS cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0);
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_turn_ts
     ON token_usage (turn_ts DESC);

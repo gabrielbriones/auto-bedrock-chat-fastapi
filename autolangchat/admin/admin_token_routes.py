@@ -13,6 +13,12 @@ Endpoints
 * ``GET /admin/tokens/top-users`` — top users ranked by combined token
   usage.
 
+Every row also carries ``cache_read_tokens`` and ``cache_write_tokens``
+(summed for the aggregate routes): prompt tokens read from / written to the
+provider's prompt cache. Both are subsets of ``input_tokens``, which remains
+the total prompt-token count, so rankings on ``input_tokens + output_tokens``
+already include cached tokens.
+
 These routes only ever read from :class:`BaseTokenUsageStore`; they never
 write, so there is no audit-log entry to emit (unlike the feedback PATCH
 endpoint).

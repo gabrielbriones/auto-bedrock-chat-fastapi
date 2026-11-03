@@ -474,6 +474,12 @@ class TokenSummaryItem(BaseModel):
     model_id: str
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
+    cache_read_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens served from the prompt cache (subset of input_tokens)"
+    )
+    cache_write_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
+    )
     turn_count: int = Field(ge=0)
 
 
@@ -497,6 +503,12 @@ class TokenByUserItem(BaseModel):
     model_id: str
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
+    cache_read_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens served from the prompt cache (subset of input_tokens)"
+    )
+    cache_write_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
+    )
     turn_ts: str
 
 
@@ -520,6 +532,12 @@ class TokenByDayItem(BaseModel):
     date: str
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
+    cache_read_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens served from the prompt cache (subset of input_tokens)"
+    )
+    cache_write_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
+    )
     turn_count: int = Field(ge=0)
 
 
@@ -539,6 +557,12 @@ class TokenTopUserItem(BaseModel):
     user_id: str
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
+    cache_read_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens served from the prompt cache (subset of input_tokens)"
+    )
+    cache_write_tokens: int = Field(
+        default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
+    )
 
 
 class TokenTopUsersResponse(BaseModel):

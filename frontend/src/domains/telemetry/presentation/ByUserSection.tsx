@@ -29,6 +29,8 @@ const sessionColumns: readonly DataTableColumn<SessionUsageRow>[] = [
   { id: 'model', header: TELEMETRY_COPY.byUser.model, cell: (row) => row.modelId || '—' },
   { id: 'input', header: TELEMETRY_COPY.byUser.input, cell: (row) => formatUsageNumber(row.tokens.input) },
   { id: 'output', header: TELEMETRY_COPY.byUser.output, cell: (row) => formatUsageNumber(row.tokens.output) },
+  { id: 'cache-read', header: TELEMETRY_COPY.byUser.cacheRead, cell: (row) => formatUsageNumber(row.tokens.cacheRead) },
+  { id: 'cache-write', header: TELEMETRY_COPY.byUser.cacheWrite, cell: (row) => formatUsageNumber(row.tokens.cacheWrite) },
   { id: 'timestamp', header: TELEMETRY_COPY.byUser.timestamp, cell: (row) => formatUsageInstant(row.turnAt.epochMilliseconds) },
 ]
 

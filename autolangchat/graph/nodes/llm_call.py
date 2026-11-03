@@ -42,6 +42,7 @@ from ...context_budget import estimate_message_tokens, provider_for_model
 from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
+from ...prompt_caching import apply_cache_points, prompt_caching_active, system_prefix_chars
 from ..state import ChatState
 from ..tools.artifact_tools import GREP_CONTENT, READ_CONTENT_RANGE, artifact_tools_bound
 from .preprocess import prepare_message_artifacts
@@ -328,6 +329,47 @@ def _to_langchain_messages(message_dicts: List[Dict], *, artifact_markers: bool 
     return lc_messages
 
 
+def _prepare_lc_messages(message_dicts: List[Dict], chat_config: Any, model_id: str) -> List[Any]:
+    """LangChain messages for one call to ``model_id``, with prompt-cache
+    checkpoints when caching is active for that model (unchanged otherwise)."""
+    lc_messages = _to_langchain_messages(message_dicts, artifact_markers=artifact_tools_bound(chat_config, model_id))
+    if prompt_caching_active(chat_config, model_id):
+        apply_cache_points(
+            lc_messages,
+            model_id=model_id,
+            ttl=getattr(chat_config, "prompt_cache_ttl", None),
+            system_prefix=system_prefix_chars(message_dicts),
+            tools=getattr(chat_config, "langchain_tools", None),
+        )
+    return lc_messages
+
+
+def _cache_usage(usage_metadata: Any) -> Dict[str, int]:
+    """Prompt-cache token counts from ``usage_metadata["input_token_details"]``.
+
+    langchain-aws already folds Bedrock's ``cacheReadInputTokens`` and
+    ``cacheWriteInputTokens`` into ``input_tokens``, so these are subsets of
+    it, not additions. Cache writes are reported either as ``cache_creation``
+    or, when Bedrock breaks them down by TTL, as ``ephemeral_5m/1h_input_tokens``
+    (with ``cache_creation`` then zeroed), so all three are summed. Returns
+    ``{}`` when the provider reported no input-token details.
+    """
+    details = usage_metadata.get("input_token_details") if isinstance(usage_metadata, dict) else None
+    if not isinstance(details, dict) or not details:
+        return {}
+
+    def _count(key: str) -> int:
+        value = details.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    return {
+        "cache_read_tokens": _count("cache_read"),
+        "cache_write_tokens": _count("cache_creation")
+        + _count("ephemeral_5m_input_tokens")
+        + _count("ephemeral_1h_input_tokens"),
+    }
+
+
 def _from_langchain_message(ai_msg: Any) -> Dict:
     """Convert an AIMessage back to internal dict format.
 
@@ -357,6 +399,7 @@ def _from_langchain_message(ai_msg: Any) -> Dict:
             "input_tokens": ai_msg.usage_metadata.get("input_tokens"),
             "output_tokens": ai_msg.usage_metadata.get("output_tokens"),
         }
+        usage.update(_cache_usage(ai_msg.usage_metadata))
 
     response_metadata = getattr(ai_msg, "response_metadata", {}) or {}
 
@@ -580,7 +623,17 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
 
     Token usage:
         Surfaced from ``AIMessage.usage_metadata`` into
-        ``metadata["usage"]``.
+        ``metadata["usage"]``. ``input_tokens`` includes cached prompt
+        tokens; ``cache_read_tokens``/``cache_write_tokens`` (subsets of it,
+        from ``input_token_details``) are added when the provider reports
+        them, and all four are summed into the top-level turn metadata
+        across tool-call rounds.
+
+    Prompt caching:
+        When ``chat_config.prompt_caching_enabled`` is on and the model
+        supports it, cachePoint blocks are added to the system prompt and the
+        newest request boundaries (see :mod:`autolangchat.prompt_caching`).
+        Otherwise the request is unchanged.
 
     Context estimates:
         Preprocessing estimates messages since the last assistant message
@@ -621,7 +674,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
         raise RuntimeError("llm_call_node: chat_config not found in configurable")
 
     primary_model = chat_config.model_id
-    lc_messages = _to_langchain_messages(messages, artifact_markers=artifact_tools_bound(chat_config, primary_model))
+    lc_messages = _prepare_lc_messages(messages, chat_config, primary_model)
     fallback_model = getattr(chat_config, "fallback_model", None)
 
     _log_conversation(messages, "LLM call — conversation state", provider=provider_for_model(primary_model))
@@ -664,9 +717,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                 )
                 ai_msg = await _invoke_with_streaming(
                     llm,
-                    _to_langchain_messages(
-                        retruncated, artifact_markers=artifact_tools_bound(chat_config, primary_model)
-                    ),
+                    _prepare_lc_messages(retruncated, chat_config, primary_model),
                     on_progress,
                 )
                 metadata["fallback_model_used"] = False
@@ -691,9 +742,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                     )
                     ai_msg = await _invoke_with_streaming(
                         llm_fb,
-                        _to_langchain_messages(
-                            messages, artifact_markers=artifact_tools_bound(chat_config, fallback_model)
-                        ),
+                        _prepare_lc_messages(messages, chat_config, fallback_model),
                         on_progress,
                     )
                     metadata["fallback_model_used"] = True
@@ -797,11 +846,17 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     if usage:
         metadata["input_tokens"] = (metadata.get("input_tokens") or 0) + (usage.get("input_tokens") or 0)
         metadata["output_tokens"] = (metadata.get("output_tokens") or 0) + (usage.get("output_tokens") or 0)
+        for cache_key in ("cache_read_tokens", "cache_write_tokens"):
+            if cache_key in usage:
+                metadata[cache_key] = (metadata.get(cache_key) or 0) + (usage.get(cache_key) or 0)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            "LLM response — cumulative token usage (input_tokens=%s, output_tokens=%s)",
+            "LLM response — cumulative token usage (input_tokens=%s, output_tokens=%s, "
+            "cache_read_tokens=%s, cache_write_tokens=%s)",
             metadata.get("input_tokens", 0),
             metadata.get("output_tokens", 0),
+            metadata.get("cache_read_tokens", 0),
+            metadata.get("cache_write_tokens", 0),
         )
 
     # Update model_id with the actual model used (may differ if fallback was triggered)

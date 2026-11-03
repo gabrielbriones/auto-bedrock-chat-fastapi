@@ -9,6 +9,7 @@ import type {
   DailyUsageRow,
   ModelUsageRow,
   SessionUsageRow,
+  TokenCount,
   UserUsageRow,
 } from '@/domains/telemetry/domain/public'
 import { createTokenCount } from '@/domains/telemetry/domain/public'
@@ -16,7 +17,20 @@ import { createTokenCount } from '@/domains/telemetry/domain/public'
 const tokenCountFields = {
   input_tokens: z.number().int().min(0),
   output_tokens: z.number().int().min(0),
+  // Subsets of input_tokens; defaulted so a backend that predates prompt caching still parses.
+  cache_read_tokens: z.number().int().min(0).default(0),
+  cache_write_tokens: z.number().int().min(0).default(0),
 } as const
+
+type TokenCountItem = {
+  readonly input_tokens: number
+  readonly output_tokens: number
+  readonly cache_read_tokens: number
+  readonly cache_write_tokens: number
+}
+
+const toTokenCount = (item: TokenCountItem): TokenCount =>
+  createTokenCount(item.input_tokens, item.output_tokens, item.cache_read_tokens, item.cache_write_tokens)
 
 const modelUsageItemSchema = z.object({
   model_id: z.string(),
@@ -63,25 +77,25 @@ type SessionUsageItem = z.output<typeof sessionUsageItemSchema>
 
 const toModelUsageRow = (item: ModelUsageItem): ModelUsageRow => ({
   modelId: item.model_id,
-  tokens: createTokenCount(item.input_tokens, item.output_tokens),
+  tokens: toTokenCount(item),
   turnCount: item.turn_count,
 })
 
 const toUserUsageRow = (item: TopUserItem): UserUsageRow => ({
   userId: item.user_id,
-  tokens: createTokenCount(item.input_tokens, item.output_tokens),
+  tokens: toTokenCount(item),
 })
 
 const toDailyUsageRow = (item: DailyUsageItem): DailyUsageRow => ({
   date: item.date,
-  tokens: createTokenCount(item.input_tokens, item.output_tokens),
+  tokens: toTokenCount(item),
   turnCount: item.turn_count,
 })
 
 const toSessionUsageRow = (item: SessionUsageItem): SessionUsageRow => ({
   sessionId: item.session_id,
   modelId: item.model_id,
-  tokens: createTokenCount(item.input_tokens, item.output_tokens),
+  tokens: toTokenCount(item),
   turnAt: item.turn_ts,
 })
 
