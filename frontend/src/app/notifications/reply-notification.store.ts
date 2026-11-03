@@ -33,7 +33,7 @@ export type ReplyContext = {
 }
 
 export type ReplyNotificationStoreOptions = {
-  readonly chatSession: Pick<ChatSessionStore, 'onReplySettled' | 'subscribe' | 'getSnapshot'>
+  readonly chatSession: Pick<ChatSessionStore, 'onReplySettled'>
   readonly system: SystemNotificationPort
   readonly attention: PageAttentionPort
   readonly storage: PreferenceStoragePort
@@ -44,11 +44,12 @@ export type ReplyNotificationStoreOptions = {
 // permission on load: only on the user's first send, or when they switch the control on.
 export class ReplyNotificationStore {
   readonly #activateListeners = new Set<(id: ConversationId | null) => void>()
-  #awaiting: boolean
   #enabled: boolean
   readonly #listeners = new Set<() => void>()
   readonly #options: ReplyNotificationStoreOptions
   #permission: SystemNotificationPermission
+  // Held in memory too, so a storage failure cannot turn "ask once" into "ask on every send".
+  #prompted: boolean
   #snapshot: ReplyNotificationSnapshot
   #subscriptions: readonly Unsubscribe[]
   #unread = 0
@@ -56,16 +57,13 @@ export class ReplyNotificationStore {
   constructor(options: ReplyNotificationStoreOptions) {
     this.#options = options
     this.#enabled = options.storage.read(REPLY_NOTIFICATIONS_ENABLED_KEY) !== 'false'
+    this.#prompted = options.storage.read(REPLY_NOTIFICATIONS_PROMPTED_KEY) === 'true'
     this.#permission = options.system.permission()
-    this.#awaiting = options.chatSession.getSnapshot().awaitingResponse
     this.#snapshot = this.#build()
 
     this.#subscriptions = [
       options.chatSession.onReplySettled((reply) => {
         this.#notify(reply)
-      }),
-      options.chatSession.subscribe(() => {
-        this.#observeSend()
       }),
       options.attention.subscribe((attended) => {
         this.#observeAttention(attended)
@@ -106,6 +104,19 @@ export class ReplyNotificationStore {
     this.#setEnabled(false)
   }
 
+  /**
+   * Call from the handler of a send the user made (composer or preset click), never from an
+   * automatic one such as a deep-link autosend: the first such send in this browser is the user
+   * gesture the permission prompt piggybacks on, once.
+   */
+  userSent(): void {
+    if (this.#prompted || !this.#enabled || this.#permission !== 'default') {
+      return
+    }
+
+    void this.#requestPermission()
+  }
+
   dispose(): void {
     for (const unsubscribe of this.#subscriptions) {
       unsubscribe()
@@ -142,23 +153,6 @@ export class ReplyNotificationStore {
     })
   }
 
-  // The first send in this browser is the one user gesture we piggyback on to ask, once.
-  #observeSend(): void {
-    const awaiting = this.#options.chatSession.getSnapshot().awaitingResponse
-    const started = awaiting && !this.#awaiting
-    this.#awaiting = awaiting
-
-    if (!started || !this.#enabled || this.#permission !== 'default') {
-      return
-    }
-
-    if (this.#options.storage.read(REPLY_NOTIFICATIONS_PROMPTED_KEY) === 'true') {
-      return
-    }
-
-    void this.#requestPermission()
-  }
-
   #observeAttention(attended: boolean): void {
     this.#syncPermission()
 
@@ -180,6 +174,7 @@ export class ReplyNotificationStore {
   }
 
   async #requestPermission(): Promise<void> {
+    this.#prompted = true
     this.#options.storage.write(REPLY_NOTIFICATIONS_PROMPTED_KEY, 'true')
     this.#permission = await this.#options.system.requestPermission()
     this.#emit()

@@ -187,7 +187,7 @@ auto-bedrock-chat-fastapi/frontend/          # Co-located with the FastAPI packa
 │   ├── lib/                              # shadcn CLI defaults only.
 │   │   └── utils.ts                    # shadcn class-name merge helper.
 │   ├── routes/                         # Thin file-based URL adapters for TanStack Router.
-│   │   ├── __root.tsx                  # Root route context, boundaries, and not-found view.
+│   │   ├── __root.tsx                  # Root route context, boundaries, not-found view, and notification click-through.
 │   │   ├── index.tsx                   # New-chat route at /chat/ui/.
 │   │   ├── c.$conversationId.tsx       # Conversation route; currently a placeholder.
 │   │   └── admin/                       # Lazy-loaded, capability-guarded admin route subtree.

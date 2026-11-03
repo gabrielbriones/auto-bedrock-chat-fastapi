@@ -233,11 +233,13 @@ describe('ReplyNotificationStore (FR-MSG-032)', () => {
       expect(system.requests).toBe(0)
     })
 
-    it('asks once on the first send and remembers that it asked', async () => {
+    it('asks once on the first user send and remembers that it asked', async () => {
       const { system, store, storage, reply } = createHarness({ permission: 'default' })
 
+      store.userSent()
       reply()
       await flush()
+      store.userSent()
       reply()
 
       expect(system.requests).toBe(1)
@@ -245,24 +247,49 @@ describe('ReplyNotificationStore (FR-MSG-032)', () => {
       expect(store.getSnapshot().active).toBe(true)
     })
 
+    it('does not ask for a send the user did not make, such as a deep-link autosend', () => {
+      const { system, store, storage, chatSession } = createHarness({ permission: 'default' })
+
+      chatSession.send('autosent preset')
+
+      expect(system.requests).toBe(0)
+      expect(storage.read(REPLY_NOTIFICATIONS_PROMPTED_KEY)).toBeNull()
+
+      store.userSent()
+      expect(system.requests).toBe(1)
+    })
+
+    it('asks only once even when storage cannot remember it', async () => {
+      const { system, store, storage } = createHarness({ permission: 'default' })
+      // A dismissed prompt leaves the permission undecided.
+      system.answer = 'default'
+      storage.write = () => {}
+
+      store.userSent()
+      await flush()
+      store.userSent()
+
+      expect(system.requests).toBe(1)
+    })
+
     it('does not ask on send if it already asked in an earlier visit', () => {
-      const { system, chatSession } = createHarness({
+      const { system, store } = createHarness({
         permission: 'default',
         stored: { [REPLY_NOTIFICATIONS_PROMPTED_KEY]: 'true' },
       })
 
-      chatSession.send('hi')
+      store.userSent()
 
       expect(system.requests).toBe(0)
     })
 
     it('does not ask on send when the user turned notifications off', () => {
-      const { system, chatSession } = createHarness({
+      const { system, store } = createHarness({
         permission: 'default',
         stored: { [REPLY_NOTIFICATIONS_ENABLED_KEY]: 'false' },
       })
 
-      chatSession.send('hi')
+      store.userSent()
 
       expect(system.requests).toBe(0)
     })

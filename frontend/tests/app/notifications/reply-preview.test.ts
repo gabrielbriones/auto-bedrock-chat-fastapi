@@ -25,6 +25,17 @@ describe('replyPreview (FR-MSG-032)', () => {
     expect(replyPreview('<reasoning>hidden</reasoning><b>Visible</b> text')).toBe('Visible text')
   })
 
+  it.each([
+    '<thinking>private chain</thinking>Visible answer',
+    '<think>private chain</think>Visible answer',
+    '<analysis>private chain</analysis>Visible answer',
+    '<scratchpad>private chain</scratchpad>Visible answer',
+    '<internal_reasoning>private chain</internal_reasoning>Visible answer',
+    '<thinking type="deep">private chain</thinking>Visible answer',
+  ])('hides every reasoning variant the transcript hides: %s', (reply) => {
+    expect(replyPreview(reply)).toBe('Visible answer')
+  })
+
   it('truncates long replies with an ellipsis', () => {
     const preview = replyPreview('word '.repeat(100), 20)
 

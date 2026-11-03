@@ -16,7 +16,7 @@ import { SHELL } from '@/shared/copy/shell'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
 import { useSidebarCollapsed } from '@/app/layouts/useSidebarCollapsed'
 import { ReplyNotificationToggle } from '@/app/notifications/ReplyNotificationToggle'
-import { useReplyNotifications } from '@/app/notifications/useReplyNotifications'
+import { useReplyNotificationTitle } from '@/app/notifications/useReplyNotifications'
 import { AuthStatusButton } from '@/domains/iam/presentation/AuthStatusButton'
 import { UserMenu } from '@/domains/iam/presentation/UserMenu'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
@@ -72,7 +72,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, toggleSidebarCollapsed] = useSidebarCollapsed()
 
-  useReplyNotifications(bootstrap.appTitle)
+  useReplyNotificationTitle(bootstrap.appTitle)
   useConversationVisibility()
   const { visible } = useContainerStore('conversations')
   const { connection } = useContainerStore('chatSession')

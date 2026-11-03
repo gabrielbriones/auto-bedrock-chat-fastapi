@@ -11,7 +11,7 @@ import { PresetVariablePanel } from '@/domains/prompt-catalog/presentation/Prese
 // `ConversationView` — neither context imports the other (DESIGN-002 §3). Self-contained so
 // `ConversationView` only has to render it as `ChatPanel`'s `presetArea`.
 export function PromptCatalogArea() {
-  const { bootstrap, promptCatalog } = useContainer()
+  const { bootstrap, promptCatalog, replyNotifications } = useContainer()
   const { inputEnabled } = useContainerStore('identity')
   const { connection, awaitingResponse } = useContainerStore('chatSession')
   const { bindings, detected } = useContainerStore('promptCatalog')
@@ -50,7 +50,10 @@ export function PromptCatalogArea() {
         lockedReason={availability.reason ?? ''}
         onActivate={(presetId) => {
           setShowValidationErrors(true)
-          promptCatalog.activatePreset(presetId)
+          // A preset click is a user send; the deep-link autosend above deliberately is not.
+          if (promptCatalog.activatePreset(presetId).kind === 'sent') {
+            replyNotifications.userSent()
+          }
         }}
       />
     </div>
