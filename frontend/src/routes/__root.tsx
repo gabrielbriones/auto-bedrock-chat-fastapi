@@ -3,6 +3,7 @@ import { Link, Outlet, createRootRouteWithContext, useRouter } from '@tanstack/r
 
 import type { Container } from '@/app/bootstrap/container';
 import { useContainer } from '@/app/bootstrap/container-context'
+import { useReplyNotificationNavigation } from '@/app/notifications/useReplyNotifications'
 import { EmptyState } from '@/components/ui/composed/empty-state';
 import { ErrorState } from '@/components/ui/composed/error-state';
 import { AdminAccessDeniedError } from '@/domains/iam/application/admin-access-denied'
@@ -33,10 +34,18 @@ function RootRouteError({ error, reset }: ErrorComponentProps) {
   return <ErrorState description={SHELL.error.appDescription} onRetry={reset} />
 }
 
+// FR-MSG-032: the notification click-through lives here, above both layouts, so it stays mounted
+// while the user is on the dashboard as well as in the chat.
+function RootComponent() {
+  useReplyNotificationNavigation()
+
+  return <Outlet />
+}
+
 // FR-SHELL-009: the outermost of the three boundaries. It renders the error itself rather than
 // through a layout, since a failure here may be the layout.
 export const Route = createRootRouteWithContext<RouterContext>()({
-  component: () => <Outlet />,
+  component: RootComponent,
   errorComponent: RootRouteError,
   notFoundComponent: () => (
     <EmptyState

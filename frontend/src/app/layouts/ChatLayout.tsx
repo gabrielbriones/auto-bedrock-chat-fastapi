@@ -14,8 +14,9 @@ import { RouteBoundary } from '@/components/ui/composed/error-boundaries'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { SHELL } from '@/shared/copy/shell'
 import { CONVERSATION_COPY } from '@/shared/copy/conversation'
-import { useDocumentTitle } from '@/app/layouts/use-document-title'
 import { useSidebarCollapsed } from '@/app/layouts/useSidebarCollapsed'
+import { ReplyNotificationToggle } from '@/app/notifications/ReplyNotificationToggle'
+import { useReplyNotificationTitle } from '@/app/notifications/useReplyNotifications'
 import { AuthStatusButton } from '@/domains/iam/presentation/AuthStatusButton'
 import { UserMenu } from '@/domains/iam/presentation/UserMenu'
 import { ConversationSidebar } from '@/domains/conversation/presentation/ConversationSidebar'
@@ -71,7 +72,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, toggleSidebarCollapsed] = useSidebarCollapsed()
 
-  useDocumentTitle(bootstrap.appTitle)
+  useReplyNotificationTitle(bootstrap.appTitle)
   useConversationVisibility()
   const { visible } = useContainerStore('conversations')
   const { connection } = useContainerStore('chatSession')
@@ -95,6 +96,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
             <h1 className="min-w-0 truncate font-bold text-foreground">{bootstrap.uiTitle}</h1>
             <div className="ms-auto flex shrink-0 items-center gap-1 md:gap-2">
               {visible ? null : <NewChatButton />}
+              <ReplyNotificationToggle />
               <AdminDashboardLink />
               <AuthStatusButton />
               <UserMenu />
