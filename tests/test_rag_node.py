@@ -2,6 +2,10 @@ import types
 
 import pytest
 
+# Imported for real before the stubs below are installed (it needs the real
+# langchain_core), then handed to rag.py as-is.
+import autolangchat.prompt_caching as _prompt_caching
+
 from ._autolangchat_imports import load_module
 
 _graph_pkg = types.ModuleType("autolangchat.graph")
@@ -25,6 +29,7 @@ rag_node = load_module(
         "autolangchat.graph.state": _state_mod,
         "langchain_core": _langchain_core_pkg,
         "langchain_core.runnables": _runnables_mod,
+        "autolangchat.prompt_caching": _prompt_caching,
     },
 ).rag_node
 
@@ -92,3 +97,70 @@ async def test_rag_node_preserves_user_message_when_injecting_context(caplog):
     )
     assert result["kb_results"]
     assert "score=0.6800 (semantic=0.8000 x 0.70=0.5600, keyword=0.4000 x 0.30=0.1200) [chunk-1]" in caplog.text
+
+
+class _CachingChatConfig(_DummyChatConfig):
+    model_id = "global.anthropic.claude-sonnet-5"
+    prompt_caching_enabled = True
+
+
+def _rag_config(chat_config, auth_context_text="AUTH CONTEXT"):
+    return {
+        "configurable": {
+            "chat_config": chat_config,
+            "kb_store": _DummyKBStore(),
+            "embedding_client": _DummyEmbeddingClient(),
+            "auth_context_text": auth_context_text,
+        }
+    }
+
+
+def _user_turn():
+    return {"messages": [{"role": "user", "content": "question"}], "metadata": {}}
+
+
+@pytest.mark.asyncio
+async def test_rag_node_puts_context_first_when_prompt_caching_is_off():
+    """Legacy order (pre-XMGPLAT-11867) is kept byte-for-byte when caching is off."""
+    result = await rag_node(_user_turn(), _rag_config(_DummyChatConfig()))
+
+    system = result["messages"][0]
+    assert system["content"].startswith("RELEVANT KNOWLEDGE BASE CONTEXT:")
+    assert system["content"].endswith("\n\nAUTH CONTEXT\n\nBASE PROMPT")
+    assert "metadata" not in system
+
+
+@pytest.mark.asyncio
+async def test_rag_node_puts_stable_prompt_first_when_prompt_caching_is_active():
+    """XMGPLAT-11867: stable base prompt first, then KB context, then auth context."""
+    result = await rag_node(_user_turn(), _rag_config(_CachingChatConfig()))
+
+    system = result["messages"][0]
+    content = system["content"]
+    assert content.startswith("BASE PROMPT\n\nRELEVANT KNOWLEDGE BASE CONTEXT:")
+    assert content.endswith("\n\nAUTH CONTEXT")
+    assert content.index("Relevant context") < content.index("AUTH CONTEXT")
+    assert system["metadata"] == {"cache_prefix_chars": len("BASE PROMPT")}
+    assert content[: system["metadata"]["cache_prefix_chars"]] == "BASE PROMPT"
+    assert [m["role"] for m in result["messages"]] == ["system", "user"]
+
+
+@pytest.mark.asyncio
+async def test_rag_node_marks_base_prompt_stable_without_context():
+    chat_config = _CachingChatConfig()
+    chat_config.enable_rag = False
+    result = await rag_node(_user_turn(), _rag_config(chat_config, auth_context_text=None))
+
+    system = result["messages"][0]
+    assert system["content"] == "BASE PROMPT"
+    assert system["metadata"] == {"cache_prefix_chars": len("BASE PROMPT")}
+
+
+@pytest.mark.asyncio
+async def test_rag_node_keeps_legacy_order_for_models_without_prompt_caching():
+    chat_config = _CachingChatConfig()
+    chat_config.model_id = "meta.llama3-3-70b-instruct-v1:0"
+    result = await rag_node(_user_turn(), _rag_config(chat_config))
+
+    assert result["messages"][0]["content"].endswith("BASE PROMPT")
+    assert "metadata" not in result["messages"][0]

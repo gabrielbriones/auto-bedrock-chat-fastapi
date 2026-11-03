@@ -8,6 +8,9 @@
 --     client-side by the caller (see `SQLiteTokenUsageStore.record_turn`).
 --   * `turn_ts` is a TEXT column holding an ISO-8601 UTC timestamp string,
 --     matching the `created_at` convention used by the `feedback` table.
+--   * SQLite lacks `ADD COLUMN IF NOT EXISTS`, so the migration that adds
+--     `cache_read_tokens`/`cache_write_tokens` to pre-existing tables lives
+--     in `SQLiteTokenUsageStore._migrate_columns_locked` instead of here.
 --
 -- All statements are idempotent (`IF NOT EXISTS`) and safe to re-run.
 -- ---------------------------------------------------------------------------
@@ -25,7 +28,14 @@ CREATE TABLE IF NOT EXISTS token_usage (
     output_tokens       INTEGER NOT NULL
                         CHECK (output_tokens >= 0),
 
-    turn_ts             TEXT NOT NULL
+    turn_ts             TEXT NOT NULL,
+
+    -- Prompt-cache token counts; SUBSETS of input_tokens (see
+    -- token_usage_schema.sql).
+    cache_read_tokens   INTEGER NOT NULL DEFAULT 0
+                        CHECK (cache_read_tokens >= 0),
+    cache_write_tokens  INTEGER NOT NULL DEFAULT 0
+                        CHECK (cache_write_tokens >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_turn_ts

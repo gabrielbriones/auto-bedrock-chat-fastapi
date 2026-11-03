@@ -43,6 +43,8 @@ const modelColumns = (modelName: (modelId: string) => string): readonly DataTabl
   { id: 'model', header: TELEMETRY_COPY.summary.model, cell: (row) => modelName(row.modelId) || '—', sortValue: (row) => modelName(row.modelId) },
   { id: 'input', header: TELEMETRY_COPY.summary.input, cell: (row) => formatUsageNumber(row.tokens.input), sortValue: (row) => row.tokens.input },
   { id: 'output', header: TELEMETRY_COPY.summary.output, cell: (row) => formatUsageNumber(row.tokens.output), sortValue: (row) => row.tokens.output },
+  { id: 'cache-read', header: TELEMETRY_COPY.summary.cacheRead, cell: (row) => formatUsageNumber(row.tokens.cacheRead), sortValue: (row) => row.tokens.cacheRead },
+  { id: 'cache-write', header: TELEMETRY_COPY.summary.cacheWrite, cell: (row) => formatUsageNumber(row.tokens.cacheWrite), sortValue: (row) => row.tokens.cacheWrite },
   { id: 'total', header: TELEMETRY_COPY.summary.totalTokens, cell: (row) => formatUsageNumber(row.tokens.total), sortValue: (row) => row.tokens.total },
   { id: 'turns', header: TELEMETRY_COPY.summary.turns, cell: (row) => formatUsageNumber(row.turnCount), sortValue: (row) => row.turnCount },
 ]
@@ -51,6 +53,8 @@ const topUserColumns: readonly DataTableColumn<UserUsageRow>[] = [
   { id: 'user', header: TELEMETRY_COPY.topUsers.user, cell: (row) => row.userId || '—' },
   { id: 'input', header: TELEMETRY_COPY.topUsers.input, cell: (row) => formatUsageNumber(row.tokens.input) },
   { id: 'output', header: TELEMETRY_COPY.topUsers.output, cell: (row) => formatUsageNumber(row.tokens.output) },
+  { id: 'cache-read', header: TELEMETRY_COPY.topUsers.cacheRead, cell: (row) => formatUsageNumber(row.tokens.cacheRead) },
+  { id: 'cache-write', header: TELEMETRY_COPY.topUsers.cacheWrite, cell: (row) => formatUsageNumber(row.tokens.cacheWrite) },
 ]
 
 function SectionCard({ title, children }: { readonly title: string; readonly children: ReactNode }) {

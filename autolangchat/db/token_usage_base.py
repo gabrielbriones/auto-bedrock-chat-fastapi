@@ -8,6 +8,16 @@ Concrete backends live in:
 
 Use :func:`autolangchat.db.create_token_usage_store` to build the
 backend selected by ``ChatConfig.token_usage_storage_type``.
+
+Token semantics
+---------------
+``input_tokens`` is the *total* prompt-token count for a turn, **including**
+any prompt-cache tokens. ``cache_read_tokens`` (prompt tokens served from
+the provider's prompt cache) and ``cache_write_tokens`` (prompt tokens
+written to the prompt cache) are *subsets* of ``input_tokens``, so the
+uncached input is ``input_tokens - cache_read_tokens - cache_write_tokens``.
+Rankings/totals based on ``input_tokens + output_tokens`` therefore already
+account for cached tokens.
 """
 
 from __future__ import annotations
@@ -43,8 +53,15 @@ class BaseTokenUsageStore(ABC):
         input_tokens: int,
         output_tokens: int,
         turn_ts: datetime,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
         """Persist one turn's token counts.
+
+        ``input_tokens`` is the total prompt-token count, including cache
+        tokens; ``cache_read_tokens`` / ``cache_write_tokens`` are subsets of
+        it (see the module docstring) and default to ``0`` for providers or
+        turns without prompt-cache information.
 
         Idempotent: a duplicate ``turn_id`` is silently ignored rather than
         raising, so callers may safely retry after a transient failure
@@ -61,8 +78,9 @@ class BaseTokenUsageStore(ABC):
         """Return per-turn token-usage rows for ``user_id``, newest first.
 
         Each row is a ``dict`` with keys ``session_id``, ``model_id``,
-        ``input_tokens``, ``output_tokens``, ``turn_ts`` (an ISO-8601
-        string). Pagination follows the same contract as
+        ``input_tokens``, ``output_tokens``, ``cache_read_tokens``,
+        ``cache_write_tokens``, ``turn_ts`` (an ISO-8601 string). The two
+        cache counters are subsets of ``input_tokens``. Pagination follows the same contract as
         :meth:`~autolangchat.db.feedback_base.BaseFeedbackStore.list_pending`:
         ``limit`` must be positive, ``offset`` non-negative.
         """
@@ -72,7 +90,9 @@ class BaseTokenUsageStore(ABC):
         """Return per-model aggregate token usage across all recorded turns.
 
         Each row is a ``dict`` with keys ``model_id``, ``input_tokens``
-        (summed), ``output_tokens`` (summed), ``turn_count``.
+        (summed), ``output_tokens`` (summed), ``cache_read_tokens`` (summed),
+        ``cache_write_tokens`` (summed), ``turn_count``. The cache counters
+        are subsets of ``input_tokens``.
         """
 
     @abstractmethod
@@ -89,8 +109,10 @@ class BaseTokenUsageStore(ABC):
         guarantee ``turn_ts`` is UTC-normalized on write; callers are
         expected to pass a UTC-aware ``datetime``. Each row is a ``dict``
         with keys ``date`` (an ``"YYYY-MM-DD"`` string), ``input_tokens``
-        (summed), ``output_tokens`` (summed), ``turn_count``. ``end`` must
-        be strictly after ``start``.
+        (summed), ``output_tokens`` (summed), ``cache_read_tokens`` (summed),
+        ``cache_write_tokens`` (summed), ``turn_count``. The cache counters
+        are subsets of ``input_tokens``. ``end`` must be strictly after
+        ``start``.
         """
 
     @abstractmethod
@@ -98,8 +120,10 @@ class BaseTokenUsageStore(ABC):
         """Return the top ``limit`` users ranked by combined token usage.
 
         Ranking key is ``input_tokens + output_tokens`` (summed across all
-        turns), descending. Rows with a ``NULL``/``None`` ``user_id``
+        turns), descending — ``input_tokens`` already includes cache tokens,
+        so they are not added again. Rows with a ``NULL``/``None`` ``user_id``
         (anonymous sessions) are excluded — there's no meaningful "user" to
         rank. Each row is a ``dict`` with keys ``user_id``, ``input_tokens``
-        (summed), ``output_tokens`` (summed). ``limit`` must be positive.
+        (summed), ``output_tokens`` (summed), ``cache_read_tokens`` (summed),
+        ``cache_write_tokens`` (summed). ``limit`` must be positive.
         """

@@ -30,12 +30,18 @@ def _state(
     output_tokens: Optional[int] = 240,
     model_id: Optional[str] = "from-llm",
     message_id: Optional[str] = "msg-abc",
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {"model_id": model_id}
     if input_tokens is not None:
         metadata["input_tokens"] = input_tokens
     if output_tokens is not None:
         metadata["output_tokens"] = output_tokens
+    if cache_read_tokens is not None:
+        metadata["cache_read_tokens"] = cache_read_tokens
+    if cache_write_tokens is not None:
+        metadata["cache_write_tokens"] = cache_write_tokens
     message_metadata = {"message_id": message_id} if message_id is not None else {}
     return {
         "messages": [{"role": "assistant", "content": "hi", "metadata": message_metadata}],
@@ -69,6 +75,45 @@ class TestTokenUsageNode:
         assert kwargs["model_id"] == "from-llm"
         assert kwargs["input_tokens"] == 120
         assert kwargs["output_tokens"] == 240
+        # No cache info in the turn metadata -> recorded as 0.
+        assert kwargs["cache_read_tokens"] == 0
+        assert kwargs["cache_write_tokens"] == 0
+
+    @pytest.mark.asyncio
+    async def test_forwards_cache_token_counts_from_metadata(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        await token_usage_node(
+            _state(input_tokens=1000, output_tokens=50, cache_read_tokens=800, cache_write_tokens=150), config
+        )
+
+        _, kwargs = store.record_turn.await_args
+        # input_tokens is the total (cache tokens included) and is passed
+        # through unchanged; the cache counters are forwarded as subsets.
+        assert kwargs["input_tokens"] == 1000
+        assert kwargs["cache_read_tokens"] == 800
+        assert kwargs["cache_write_tokens"] == 150
+
+    @pytest.mark.asyncio
+    async def test_null_cache_token_counts_are_recorded_as_zero(self):
+        store = MagicMock()
+        store.record_turn = AsyncMock()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+        state = _state()
+        state["metadata"]["cache_read_tokens"] = None
+        state["metadata"]["cache_write_tokens"] = None
+
+        await token_usage_node(state, config)
+
+        _, kwargs = store.record_turn.await_args
+        assert kwargs["cache_read_tokens"] == 0
+        assert kwargs["cache_write_tokens"] == 0
 
     @pytest.mark.asyncio
     async def test_does_not_fire_when_disabled(self):
