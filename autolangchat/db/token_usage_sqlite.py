@@ -144,15 +144,16 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
     @staticmethod
     def _migrate_columns_locked(conn: sqlite3.Connection) -> None:
         """Idempotently add columns missing from a pre-existing table."""
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
-        if not existing:
-            # Table not created yet (init_schema=False on a fresh DB).
-            return
-        for name, ddl in _ADDED_COLUMNS:
-            if name not in existing:
-                conn.execute(f"ALTER TABLE token_usage ADD COLUMN {name} {ddl}")
-                logger.info("Migrated token_usage table: added column %s", name)
-        conn.commit()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
+            if not existing:
+                # Table not created yet (init_schema=False on a fresh DB).
+                return
+            for name, ddl in _ADDED_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE token_usage ADD COLUMN {name} {ddl}")
+                    logger.info("Migrated token_usage table: added column %s", name)
 
     async def close(self) -> None:
         await asyncio.to_thread(self._close_sync)
