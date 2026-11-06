@@ -213,7 +213,9 @@ async def main(argv: List[str]) -> int:
     rows = await _run_mode(args, caching=True, stable_prompt=stable_prompt)
     if args.compare:
         # New nonce: the baseline must not benefit from the cached run's prefix.
-        rows += await _run_mode(args, caching=False, stable_prompt=_stable_prompt(len(stable_prompt) // 4))
+        rows += await _run_mode(
+            args, caching=False, stable_prompt=_stable_prompt(get_prompt_cache_min_tokens(args.model) or 1024)
+        )
 
     summaries = [_summary(rows, "cached")] + ([_summary(rows, "baseline")] if args.compare else [])
     print()
