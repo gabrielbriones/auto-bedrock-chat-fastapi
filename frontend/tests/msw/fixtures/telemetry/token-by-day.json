@@ -4,6 +4,8 @@
       "date": "2026-05-15",
       "input_tokens": 80,
       "output_tokens": 20,
+      "cache_read_tokens": 50,
+      "cache_write_tokens": 5,
       "turn_count": 3
     }
   ]

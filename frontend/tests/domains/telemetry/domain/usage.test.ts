@@ -19,7 +19,11 @@ const date = (value: string) => {
 
 describe('telemetry value objects', () => {
   it('derives total tokens from input and output', () => {
-    expect(createTokenCount(120, 30)).toEqual({ input: 120, output: 30, total: 150 })
+    expect(createTokenCount(120, 30)).toEqual({ input: 120, output: 30, cacheRead: 0, cacheWrite: 0, total: 150 })
+  })
+
+  it('keeps cache counts as subsets of input, never adding them to the total', () => {
+    expect(createTokenCount(120, 30, 90, 10)).toEqual({ input: 120, output: 30, cacheRead: 90, cacheWrite: 10, total: 150 })
   })
 
   it('accepts a strictly increasing date range', () => {

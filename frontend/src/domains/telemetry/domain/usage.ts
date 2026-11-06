@@ -4,12 +4,24 @@ import { err, ok, type Result } from '@/shared/kernel/result'
 export type TokenCount = {
   readonly input: number
   readonly output: number
+  /** Prompt tokens served from the prompt cache; a subset of `input`. */
+  readonly cacheRead: number
+  /** Prompt tokens written to the prompt cache; a subset of `input`. */
+  readonly cacheWrite: number
   readonly total: number
 }
 
-export const createTokenCount = (input: number, output: number): TokenCount => ({
+// Cache counts are already inside `input`, so they never add to the total.
+export const createTokenCount = (
+  input: number,
+  output: number,
+  cacheRead = 0,
+  cacheWrite = 0,
+): TokenCount => ({
   input,
   output,
+  cacheRead,
+  cacheWrite,
   total: input + output,
 })
 

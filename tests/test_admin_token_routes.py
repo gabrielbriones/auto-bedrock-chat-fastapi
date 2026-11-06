@@ -11,7 +11,9 @@ Covers:
       ``test_admin_openapi.py``'s pattern);
   (d) ``AutoLangChatPlugin._setup_admin_routes()`` does not register any
       ``/tokens/*`` route when ``_token_usage_store`` is ``None``, and does
-      register all four when it is configured.
+      register all four when it is configured;
+  (e) every route surfaces ``cache_read_tokens``/``cache_write_tokens``,
+      defaulting to 0 when a store row omits them.
 
 (a)-(c) use the lightweight ``load_module``-based import pattern (mirroring
 ``tests/test_admin_feedback_routes.py``) so these tests don't require the
@@ -59,18 +61,46 @@ class _FakeTokenUsageStore:
     read-only query methods the routes call are implemented."""
 
     def __init__(self):
-        self.summary = [{"model_id": "m1", "input_tokens": 10, "output_tokens": 20, "turn_count": 2}]
+        self.summary = [
+            {
+                "model_id": "m1",
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_read_tokens": 6,
+                "cache_write_tokens": 2,
+                "turn_count": 2,
+            }
+        ]
         self.by_user = [
             {
                 "session_id": "sess-1",
                 "model_id": "m1",
                 "input_tokens": 5,
                 "output_tokens": 5,
+                "cache_read_tokens": 3,
+                "cache_write_tokens": 1,
                 "turn_ts": "2026-01-15T00:00:00+00:00",
             }
         ]
-        self.by_day = [{"date": "2026-01-15", "input_tokens": 5, "output_tokens": 5, "turn_count": 1}]
-        self.top_users = [{"user_id": "alice", "input_tokens": 100, "output_tokens": 200}]
+        self.by_day = [
+            {
+                "date": "2026-01-15",
+                "input_tokens": 5,
+                "output_tokens": 5,
+                "cache_read_tokens": 3,
+                "cache_write_tokens": 1,
+                "turn_count": 1,
+            }
+        ]
+        self.top_users = [
+            {
+                "user_id": "alice",
+                "input_tokens": 100,
+                "output_tokens": 200,
+                "cache_read_tokens": 40,
+                "cache_write_tokens": 10,
+            }
+        ]
         self.list_by_user_calls = []
         self.aggregate_by_day_calls = []
         self.aggregate_by_user_calls = []
@@ -120,7 +150,7 @@ def test_tokens_summary_returns_expected_shape():
     client = _build_app()
     resp = client.get("/bedrock-chat/admin/tokens/summary")
     assert resp.status_code == 200
-    assert resp.json() == {"items": [{"model_id": "m1", "input_tokens": 10, "output_tokens": 20, "turn_count": 2}]}
+    assert resp.json() == {"items": _FakeTokenUsageStore().summary}
 
 
 def test_tokens_by_user_returns_expected_shape():
@@ -136,6 +166,8 @@ def test_tokens_by_user_returns_expected_shape():
                 "model_id": "m1",
                 "input_tokens": 5,
                 "output_tokens": 5,
+                "cache_read_tokens": 3,
+                "cache_write_tokens": 1,
                 "turn_ts": "2026-01-15T00:00:00+00:00",
             }
         ],
@@ -167,7 +199,7 @@ def test_tokens_by_day_returns_expected_shape():
         params={"start": "2026-01-01T00:00:00Z", "end": "2026-01-31T00:00:00Z"},
     )
     assert resp.status_code == 200
-    assert resp.json() == {"items": [{"date": "2026-01-15", "input_tokens": 5, "output_tokens": 5, "turn_count": 1}]}
+    assert resp.json() == {"items": _FakeTokenUsageStore().by_day}
 
 
 def test_tokens_by_day_invalid_range_returns_400():
@@ -214,7 +246,7 @@ def test_tokens_top_users_returns_expected_shape():
     client = _build_app(store)
     resp = client.get("/bedrock-chat/admin/tokens/top-users", params={"limit": 5})
     assert resp.status_code == 200
-    assert resp.json() == {"items": [{"user_id": "alice", "input_tokens": 100, "output_tokens": 200}]}
+    assert resp.json() == {"items": _FakeTokenUsageStore().top_users}
     assert store.aggregate_by_user_calls == [5]
 
 
@@ -224,6 +256,44 @@ def test_tokens_top_users_uses_default_limit_when_omitted():
     resp = client.get("/bedrock-chat/admin/tokens/top-users")
     assert resp.status_code == 200
     assert store.aggregate_by_user_calls == [10]
+
+
+def test_cache_token_fields_default_to_zero_when_store_rows_omit_them():
+    """Rows from stores/fakes that predate the cache-token columns must still
+    validate, reporting 0 for both counters."""
+    store = _FakeTokenUsageStore()
+    for rows in (store.summary, store.by_user, store.by_day, store.top_users):
+        for row in rows:
+            row.pop("cache_read_tokens")
+            row.pop("cache_write_tokens")
+    client = _build_app(store)
+
+    responses = [
+        client.get("/bedrock-chat/admin/tokens/summary"),
+        client.get("/bedrock-chat/admin/tokens/by-user", params={"user_id": "alice"}),
+        client.get(
+            "/bedrock-chat/admin/tokens/by-day",
+            params={"start": "2026-01-01T00:00:00Z", "end": "2026-01-31T00:00:00Z"},
+        ),
+        client.get("/bedrock-chat/admin/tokens/top-users"),
+    ]
+
+    for resp in responses:
+        assert resp.status_code == 200
+        (item,) = resp.json()["items"]
+        assert item["cache_read_tokens"] == 0
+        assert item["cache_write_tokens"] == 0
+
+
+def test_openapi_documents_cache_token_fields():
+    client = _build_app()
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    for name in ("TokenSummaryItem", "TokenByUserItem", "TokenByDayItem", "TokenTopUserItem"):
+        props = schemas[name]["properties"]
+        for field in ("cache_read_tokens", "cache_write_tokens"):
+            assert props[field]["type"] == "integer"
+            assert props[field]["minimum"] == 0
+            assert props[field]["default"] == 0
 
 
 # ---------------------------------------------------------------------------

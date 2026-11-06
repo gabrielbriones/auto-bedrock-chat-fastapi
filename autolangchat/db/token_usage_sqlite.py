@@ -26,6 +26,14 @@ from .token_usage_base import BaseTokenUsageStore
 
 logger = logging.getLogger(__name__)
 
+# Columns added after the initial ``token_usage`` schema shipped. SQLite lacks
+# ``ADD COLUMN IF NOT EXISTS``, so ``_migrate_columns_locked`` checks
+# ``PRAGMA table_info`` and only adds the ones that are missing.
+_ADDED_COLUMNS = (
+    ("cache_read_tokens", "INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0)"),
+    ("cache_write_tokens", "INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0)"),
+)
+
 
 def _dt_to_iso(value: datetime) -> str:
     """Serialize a datetime to a UTC ISO-8601 string.
@@ -57,6 +65,10 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
     init_schema:
         When True (default), apply ``token_usage_schema_sqlite.sql`` on
         :meth:`open`. The DDL uses ``IF NOT EXISTS`` so it's safe to re-run.
+        Independently of this flag, :meth:`open` adds any columns introduced
+        after the table was first created (e.g. ``cache_read_tokens``) to a
+        pre-existing ``token_usage`` table, mirroring
+        :class:`~.feedback_sqlite.SQLiteFeedbackStore`'s column migrations.
 
     Concurrency
     -----------
@@ -126,7 +138,22 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
             ddl = resources.files(self.SCHEMA_RESOURCE[0]).joinpath(self.SCHEMA_RESOURCE[1]).read_text(encoding="utf-8")
             conn.executescript(ddl)
             conn.commit()
+        self._migrate_columns_locked(conn)
         self._conn = conn
+
+    @staticmethod
+    def _migrate_columns_locked(conn: sqlite3.Connection) -> None:
+        """Idempotently add columns missing from a pre-existing table."""
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
+            if not existing:
+                # Table not created yet (init_schema=False on a fresh DB).
+                return
+            for name, ddl in _ADDED_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE token_usage ADD COLUMN {name} {ddl}")
+                    logger.info("Migrated token_usage table: added column %s", name)
 
     async def close(self) -> None:
         await asyncio.to_thread(self._close_sync)
@@ -150,11 +177,14 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         input_tokens: int,
         output_tokens: int,
         turn_ts: datetime,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
         sql = """
             INSERT OR IGNORE INTO token_usage
-                (id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,
+                 cache_read_tokens, cache_write_tokens)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             turn_id,
@@ -164,6 +194,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
             input_tokens,
             output_tokens,
             _dt_to_iso(turn_ts),
+            cache_read_tokens,
+            cache_write_tokens,
         )
         await asyncio.to_thread(self._execute_write, sql, params)
 
@@ -182,7 +214,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         if offset < 0:
             raise ValueError("offset must be non-negative")
         sql = """
-            SELECT session_id, model_id, input_tokens, output_tokens, turn_ts
+            SELECT session_id, model_id, input_tokens, output_tokens,
+                   cache_read_tokens, cache_write_tokens, turn_ts
             FROM token_usage
             WHERE user_id = ?
             ORDER BY turn_ts DESC, id ASC
@@ -195,14 +228,17 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "model_id": r[1],
                 "input_tokens": r[2],
                 "output_tokens": r[3],
-                "turn_ts": r[4],
+                "cache_read_tokens": r[4],
+                "cache_write_tokens": r[5],
+                "turn_ts": r[6],
             }
             for r in rows
         ]
 
     async def aggregate_by_model(self) -> List[Dict[str, Any]]:
         sql = """
-            SELECT model_id, SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            SELECT model_id, SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
             FROM token_usage
             GROUP BY model_id
             ORDER BY model_id ASC
@@ -213,7 +249,9 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "model_id": r[0],
                 "input_tokens": r[1],
                 "output_tokens": r[2],
-                "turn_count": r[3],
+                "cache_read_tokens": r[3],
+                "cache_write_tokens": r[4],
+                "turn_count": r[5],
             }
             for r in rows
         ]
@@ -226,7 +264,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         if end <= start:
             raise ValueError("end must be after start")
         sql = """
-            SELECT substr(turn_ts, 1, 10) AS day, SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            SELECT substr(turn_ts, 1, 10) AS day, SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
             FROM token_usage
             WHERE turn_ts >= ? AND turn_ts < ?
             GROUP BY day
@@ -238,7 +277,9 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "date": r[0],
                 "input_tokens": r[1],
                 "output_tokens": r[2],
-                "turn_count": r[3],
+                "cache_read_tokens": r[3],
+                "cache_write_tokens": r[4],
+                "turn_count": r[5],
             }
             for r in rows
         ]
@@ -247,7 +288,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         if limit <= 0:
             raise ValueError("limit must be positive")
         sql = """
-            SELECT user_id, SUM(input_tokens), SUM(output_tokens)
+            SELECT user_id, SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens)
             FROM token_usage
             WHERE user_id IS NOT NULL
             GROUP BY user_id
@@ -260,6 +302,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "user_id": r[0],
                 "input_tokens": r[1],
                 "output_tokens": r[2],
+                "cache_read_tokens": r[3],
+                "cache_write_tokens": r[4],
             }
             for r in rows
         ]

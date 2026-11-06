@@ -6,6 +6,8 @@
       "model_id": "claude-3",
       "input_tokens": 40,
       "output_tokens": 10,
+      "cache_read_tokens": 30,
+      "cache_write_tokens": 0,
       "turn_ts": "2026-05-15T12:00:00+00:00"
     }
   ]

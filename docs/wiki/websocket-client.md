@@ -225,7 +225,7 @@ conversation's history when it is reloaded.
   "metadata": {
     "message_id": "f1c2…",
     "model_id": "us.anthropic.claude-sonnet-5",
-    "usage": { "input_tokens": 120, "output_tokens": 240 },
+    "usage": { "input_tokens": 120, "output_tokens": 240, "cache_read_tokens": 0, "cache_write_tokens": 0 },
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
     "total_tool_calls": 2,
@@ -233,6 +233,8 @@ conversation's history when it is reloaded.
     "preprocessing_applied": false,
     "input_tokens": 120,
     "output_tokens": 240,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
     "stop_reason": "end_turn",
     "kb_used": true,
     "kb_chunks": 3,
@@ -256,7 +258,7 @@ final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
 | ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `message_id`            | `string` (UUID)          | Stable per-turn ID, also present at the top level of the `ai_response` payload.                                                                                                            |
 | `model_id`              | `string`                 | Active model ID. Written directly from server config and overwrites any value returned by the LLM.                                                                                         |
-| `usage`                 | `object`                 | Token usage for the **final** LLM call only: `{ "input_tokens": int\|null, "output_tokens": int\|null }`. For multi-round totals use the top-level `input_tokens` / `output_tokens` below. |
+| `usage`                 | `object`                 | Token usage for the **final** LLM call only: `{ "input_tokens": int\|null, "output_tokens": int\|null }`, plus `cache_read_tokens` / `cache_write_tokens` when the provider reports prompt-cache details. For multi-round totals use the top-level keys below. |
 | `timestamp`             | `string` (ISO 8601)      | Timestamp of the final LLM call.                                                                                                                                                           |
 | `tool_call_rounds`      | `int` (default `0`)      | Number of tool-call loop iterations for this turn.                                                                                                                                         |
 | `total_tool_calls`      | `int` (default `0`)      | Total individual tool calls executed across all rounds.                                                                                                                                    |
@@ -272,6 +274,8 @@ nested `usage` dict, which reflects only the final LLM call.
 | --------------- | ----- | ------------------------------------ | ---------------------------------------------------------------- |
 | `input_tokens`  | `int` | Present when the model returns usage | Total input tokens consumed across all LLM calls in this turn.   |
 | `output_tokens` | `int` | Present when the model returns usage | Total output tokens generated across all LLM calls in this turn. |
+| `cache_read_tokens`  | `int` | Present when the provider reports prompt-cache details | Input tokens read from the [prompt cache](configuration.md#prompt-caching) across all LLM calls. A subset of `input_tokens`. |
+| `cache_write_tokens` | `int` | Present when the provider reports prompt-cache details | Input tokens written to the prompt cache across all LLM calls. A subset of `input_tokens`. |
 
 **Conditional — stop reason (present whenever Bedrock returns a stopReason):**
 
