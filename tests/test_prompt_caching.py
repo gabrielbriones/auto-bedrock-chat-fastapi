@@ -83,8 +83,11 @@ def _tool_loop(rounds: int, text: str = "x"):
 
 class TestGating:
     def test_off_by_default(self):
-        assert chat_config(SONNET_5).prompt_caching_enabled is False
-        assert chat_config(SONNET_5).prompt_cache_ttl == "5m"
+        from autolangchat.config import ChatConfig
+
+        # Declared defaults, not ChatConfig(): that would read the env/.env.
+        assert ChatConfig.model_fields["prompt_caching_enabled"].default is False
+        assert ChatConfig.model_fields["prompt_cache_ttl"].default == "5m"
         assert not prompt_caching_active(chat_config(SONNET_5), SONNET_5)
 
     def test_needs_flag_and_supporting_model(self):

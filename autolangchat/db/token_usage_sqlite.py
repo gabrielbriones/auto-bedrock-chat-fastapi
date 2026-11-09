@@ -26,9 +26,9 @@ from .token_usage_base import BaseTokenUsageStore
 
 logger = logging.getLogger(__name__)
 
-# Columns added after the initial ``token_usage`` schema shipped. SQLite lacks
-# ``ADD COLUMN IF NOT EXISTS``, so ``_migrate_columns_locked`` checks
-# ``PRAGMA table_info`` and only adds the ones that are missing.
+# Single source of truth for columns added after ``token_usage`` first shipped;
+# they are intentionally absent from the .sql DDL. Cache counts are SUBSETS of
+# input_tokens (see token_usage_schema.sql).
 _ADDED_COLUMNS = (
     ("cache_read_tokens", "INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0)"),
     ("cache_write_tokens", "INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0)"),
@@ -65,9 +65,9 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
     init_schema:
         When True (default), apply ``token_usage_schema_sqlite.sql`` on
         :meth:`open`. The DDL uses ``IF NOT EXISTS`` so it's safe to re-run.
-        Independently of this flag, :meth:`open` adds any columns introduced
-        after the table was first created (e.g. ``cache_read_tokens``) to a
-        pre-existing ``token_usage`` table, mirroring
+        Independently of this flag, :meth:`open` then adds any columns from
+        ``_ADDED_COLUMNS`` (e.g. ``cache_read_tokens``) missing from an
+        existing ``token_usage`` table, mirroring
         :class:`~.feedback_sqlite.SQLiteFeedbackStore`'s column migrations.
 
     Concurrency
@@ -143,16 +143,19 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
 
     @staticmethod
     def _migrate_columns_locked(conn: sqlite3.Connection) -> None:
-        """Idempotently add columns missing from a pre-existing table."""
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
-        if not existing:
-            # Table not created yet (init_schema=False on a fresh DB).
-            return
-        for name, ddl in _ADDED_COLUMNS:
-            if name not in existing:
-                conn.execute(f"ALTER TABLE token_usage ADD COLUMN {name} {ddl}")
-                logger.info("Migrated token_usage table: added column %s", name)
-        conn.commit()
+        """Idempotently add ``_ADDED_COLUMNS`` missing from the table."""
+        # Write-lock before reading the schema so another process opening the same
+        # file can't add the same column in between (duplicate column name).
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
+            if not existing:
+                # Table not created yet (init_schema=False on a fresh DB).
+                return
+            for name, ddl in _ADDED_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE token_usage ADD COLUMN {name} {ddl}")
+                    logger.info("Migrated token_usage table: added column %s", name)
 
     async def close(self) -> None:
         await asyncio.to_thread(self._close_sync)

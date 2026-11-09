@@ -98,6 +98,8 @@ def chat_config(model_id: str, **overrides: Any) -> ChatConfig:
         "aws_region": "us-west-2",
         "aws_access_key_id": None,
         "aws_secret_access_key": None,
+        "prompt_caching_enabled": False,
+        "prompt_cache_ttl": "5m",
     }
     values.update(overrides)
     return ChatConfig().model_copy(update=values)
