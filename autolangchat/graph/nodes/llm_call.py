@@ -850,6 +850,22 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             if cache_key in usage:
                 metadata[cache_key] = (metadata.get(cache_key) or 0) + (usage.get(cache_key) or 0)
     if logger.isEnabledFor(logging.DEBUG):
+        # TEMP: per-call prompt-cache summary; remove once caching is verified.
+        _in = usage.get("input_tokens") or 0
+        _read = usage.get("cache_read_tokens") or 0
+        _write = usage.get("cache_write_tokens") or 0
+        _status = "HIT" if _read else ("WRITE" if _write else "MISS")
+        logger.debug(
+            "[CACHE %s] model=%s total_in=%d read=%d write=%d uncached=%d out=%s (%.0f%% of input from cache)",
+            _status,
+            response_dict.get("metadata", {}).get("model_id"),
+            _in,
+            _read,
+            _write,
+            max(_in - _read - _write, 0),
+            usage.get("output_tokens") or 0,
+            (100.0 * _read / _in) if _in else 0.0,
+        )
         logger.debug(
             "LLM response — cumulative token usage (input_tokens=%s, output_tokens=%s, "
             "cache_read_tokens=%s, cache_write_tokens=%s)",
