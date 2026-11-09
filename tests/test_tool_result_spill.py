@@ -14,7 +14,7 @@ import pytest
 
 from autolangchat.artifacts import ArtifactError, ArtifactStore
 from autolangchat.context_budget import ContextBudget, estimate_message_parts, provider_for_model
-from autolangchat.defaults import ARTIFACT_MARKER_ENTRY_KEY
+from autolangchat.defaults import ARTIFACT_MARKER_ENTRY_KEY, ARTIFACT_MARKER_ORIGINAL_KEY
 from autolangchat.graph.tools import artifact_tools
 from autolangchat.graph.tools.spill import READ_HINT, replace_oversized_message
 
@@ -586,6 +586,15 @@ class TestUserMessageReplacement:
         assert page["text"].startswith("analyze this:\ncpu0.counter_00000") and page["total_lines"] == 2002
         assert page["metadata"]["source"] == "user_message"
         assert store.get_meta(scope, handle)["size_bytes"] == len(text.encode()) == store.statistics()["bytes"]
+
+    def test_keeps_the_original_text_for_the_client_history(self):
+        store, scope = _store_and_scope()
+        text = "analyze this:\n" + _file_text()
+
+        replaced = _replace_user(_user_message(text), store, scope).message
+
+        assert replaced[ARTIFACT_MARKER_ORIGINAL_KEY] == text
+        assert text not in replaced["content"]
 
     def test_user_message_and_tool_result_markers_are_one_marker(self):
         store, scope = _store_and_scope()

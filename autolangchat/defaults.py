@@ -36,6 +36,8 @@ ARTIFACT_TOOL_DEFAULT_MAX_MATCHES = 50
 ARTIFACT_MARKER_PREVIEW_MAX_CHARS = 1000
 # Flag on a ``tool_results`` entry, or on a user message, replaced by an artifact marker; it is never truncated.
 ARTIFACT_MARKER_ENTRY_KEY = "artifact_marker"
+# The text a user message had before it was replaced by a marker; shown in the client's history, never to the model.
+ARTIFACT_MARKER_ORIGINAL_KEY = "original_content"
 
 # ── AI Summarization ────────────────────────────────────────────────────
 DEFAULT_ENABLE_AI_SUMMARIZATION = False
