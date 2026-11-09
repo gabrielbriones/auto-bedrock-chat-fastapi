@@ -24,6 +24,7 @@ from autolangchat.config import ChatConfig
 from autolangchat.context_budget import ContextBudget, estimate_message_tokens
 from autolangchat.exceptions import ContextWindowExceededError, ModelInvocationError
 from autolangchat.graph.nodes.llm_call import (
+    _from_langchain_message,
     _infer_profile_prefix_for_region,
     _requires_inference_profile,
     _retry_model_id_with_inference_profile,
@@ -454,9 +455,92 @@ class TestTokenUsageLogging:
                 result = await llm_call_node(state, _runnable_config(chat_config))
 
         assert "LLM response — assistant (5 chars, input_tokens=12, output_tokens=34" in caplog.text
-        assert "LLM response — cumulative token usage (input_tokens=17, output_tokens=40)" in caplog.text
+        assert (
+            "LLM response — cumulative token usage (input_tokens=17, output_tokens=40, "
+            "cache_read_tokens=0, cache_write_tokens=0)"
+        ) in caplog.text
         assert result["metadata"]["input_tokens"] == 17
         assert result["metadata"]["output_tokens"] == 40
+        # The mock reports no input_token_details, so no cache keys appear.
+        assert "cache_read_tokens" not in result["metadata"]
+        assert result["messages"][-1]["metadata"]["usage"] == {"input_tokens": 12, "output_tokens": 34}
+
+
+class TestCacheUsageParsing:
+    """XMGPLAT-11867: prompt-cache counts from ``usage_metadata["input_token_details"]``."""
+
+    def test_cache_read_and_creation_are_reported_as_subsets_of_input(self):
+        ai_message = _ai_message()
+        ai_message.usage_metadata = {
+            "input_tokens": 3040,
+            "output_tokens": 7,
+            "input_token_details": {"cache_read": 2500, "cache_creation": 500},
+        }
+        usage = _from_langchain_message(ai_message)["metadata"]["usage"]
+        assert usage == {
+            "input_tokens": 3040,
+            "output_tokens": 7,
+            "cache_read_tokens": 2500,
+            "cache_write_tokens": 500,
+        }
+
+    def test_ttl_breakdown_counts_as_cache_writes(self):
+        # langchain-aws zeroes cache_creation when Bedrock reports cacheDetails.
+        ai_message = _ai_message()
+        ai_message.usage_metadata = {
+            "input_tokens": 1200,
+            "output_tokens": 3,
+            "input_token_details": {
+                "cache_read": 0,
+                "cache_creation": 0,
+                "ephemeral_5m_input_tokens": 100,
+                "ephemeral_1h_input_tokens": 1000,
+            },
+        }
+        usage = _from_langchain_message(ai_message)["metadata"]["usage"]
+        assert usage["cache_read_tokens"] == 0
+        assert usage["cache_write_tokens"] == 1100
+
+    def test_missing_or_malformed_details_are_ignored(self):
+        for details in (None, {}, "nope"):
+            ai_message = _ai_message()
+            ai_message.usage_metadata = {"input_tokens": 1, "output_tokens": 2, "input_token_details": details}
+            assert _from_langchain_message(ai_message)["metadata"]["usage"] == {"input_tokens": 1, "output_tokens": 2}
+
+        ai_message = _ai_message()
+        ai_message.usage_metadata = {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "input_token_details": {"cache_read": None, "cache_creation": True},
+        }
+        usage = _from_langchain_message(ai_message)["metadata"]["usage"]
+        assert (usage["cache_read_tokens"], usage["cache_write_tokens"]) == (0, 0)
+
+    @pytest.mark.asyncio
+    async def test_cache_tokens_accumulate_across_tool_rounds(self):
+        chat_config = _config(model_id="us.anthropic.claude-sonnet-5")
+        llm = MagicMock()
+        ai_message = _ai_message()
+        ai_message.usage_metadata = {
+            "input_tokens": 2000,
+            "output_tokens": 10,
+            "input_token_details": {"cache_read": 1500, "cache_creation": 400},
+        }
+        llm.ainvoke = AsyncMock(return_value=ai_message)
+        state = _state()
+        state["metadata"] = {
+            "input_tokens": 1000,
+            "output_tokens": 5,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 900,
+        }
+
+        with patch("autolangchat.graph.nodes.llm_call._build_llm", return_value=llm):
+            result = await llm_call_node(state, _runnable_config(chat_config))
+
+        assert result["metadata"]["input_tokens"] == 3000
+        assert result["metadata"]["cache_read_tokens"] == 1500
+        assert result["metadata"]["cache_write_tokens"] == 1300
 
 
 class TestTruncatedEmptyResponseFallback:

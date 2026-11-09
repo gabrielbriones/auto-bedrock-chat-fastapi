@@ -67,12 +67,49 @@ For each chat turn, one row is written with:
 - `session_id`, `user_id` — turn context (`user_id` is `None` for anonymous sessions)
 - `model_id` — the model that actually produced the response (reflects fallback-model substitution, if triggered)
 - `input_tokens`, `output_tokens` — accumulated across all tool-call rounds for that turn
+- `cache_read_tokens`, `cache_write_tokens` — prompt-cache tokens for that turn (see [Prompt-cache tokens](#prompt-cache-tokens)); `0` when nothing was cached
 - `turn_ts` — when the turn completed
 
 Writes are idempotent (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` keyed on
 `id`), and persistence failures are logged and swallowed rather than
 propagated — a token-usage write failure never prevents the chat response
 from being delivered.
+
+## Prompt-cache tokens
+
+With [prompt caching](configuration.md#prompt-caching) enabled, part of a
+turn's input is read from or written to the Bedrock prompt cache, and each of
+those is billed at its own rate. Bedrock's Converse API reports them
+separately (`inputTokens` excludes cached tokens), while LangChain's
+`usage_metadata` folds all three into `input_tokens` and breaks the cached part
+out in `input_token_details`. The chat graph keeps that convention:
+
+| Field                | Meaning                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `input_tokens`       | **All** prompt tokens: uncached + cache read + cache write                         |
+| `cache_read_tokens`  | Prompt tokens served from the cache (`input_token_details.cache_read`)             |
+| `cache_write_tokens` | Prompt tokens written to the cache (`cache_creation`, or the per-TTL breakdown)    |
+| `output_tokens`      | Generated tokens                                                                   |
+
+So uncached input is `input_tokens - cache_read_tokens - cache_write_tokens`,
+and an estimated cost is:
+
+```text
+uncached × input price + cache_read × cache-read price
+  + cache_write × cache-write price + output_tokens × output price
+```
+
+Totals that add `input_tokens + output_tokens` (e.g. the top-users ranking)
+already include cached tokens, so the cache columns must not be added on top.
+The streaming and non-streaming paths report identical counts. The counts appear
+in the `ai_response` metadata (top-level totals and the per-call `usage` object,
+see [WebSocket Client](websocket-client.md)), in the stored rows, in every
+`/admin/tokens/*` response, and as separate **Cache read** / **Cache write**
+columns on the admin usage dashboard.
+
+Existing token-usage tables gain the two columns automatically (default `0`) the
+next time the store opens: SQLite always migrates on open; Postgres applies
+`ADD COLUMN IF NOT EXISTS` with the rest of its schema bootstrap.
 
 ## Recording mechanism
 

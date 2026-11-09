@@ -15,6 +15,13 @@ Returns a partial state update:
                   context is available.
     kb_results  — list of retrieved KB chunks (empty when RAG is disabled or
                   produced no results).
+
+System prompt order: with prompt caching active for the configured model
+(``ChatConfig.prompt_caching_enabled`` plus a supporting model), the stable
+base prompt comes first and the KB/auth context after it, with the split
+recorded in the message metadata so ``llm_call_node`` can put a cachePoint
+between them (see :mod:`autolangchat.prompt_caching`). Otherwise the context
+comes first, exactly as before caching existed.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.runnables import RunnableConfig
 
+from ...prompt_caching import build_system_message, prompt_caching_active
 from ..state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -183,6 +191,16 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     kb_context_text = _format_kb_context(kb_results) if kb_results else ""
 
     base_system_prompt = chat_config.get_system_prompt() if chat_config else ""
+
+    if prompt_caching_active(chat_config, getattr(chat_config, "model_id", None)) and (
+        base_system_prompt or kb_context_text or auth_context_text
+    ):
+        # Stable prompt first, per-turn context last: Bedrock caches prefixes,
+        # so the base prompt stays cacheable even when retrieval changes.
+        system_message = build_system_message(base_system_prompt, [kb_context_text, auth_context_text])
+        logger.debug("Cache-ordered system prompt length: %d chars", len(system_message["content"]))
+        preserved_messages = [msg for msg in messages if msg.get("role") != "system"]
+        return {"messages": [system_message] + preserved_messages, "kb_results": kb_results}
 
     if not kb_context_text and not auth_context_text:
         # No RAG/auth context to inject, but still need to ensure the

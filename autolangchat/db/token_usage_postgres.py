@@ -50,7 +50,10 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
     init_schema:
         When ``True`` (default), execute ``sql/token_usage_schema.sql``
         against the database on :meth:`open`. Set ``False`` if a separate
-        provisioning task owns the DDL lifecycle.
+        provisioning task owns the DDL lifecycle. The DDL also carries the
+        idempotent ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` migrations
+        (e.g. ``cache_read_tokens``/``cache_write_tokens``) for tables created
+        by earlier releases, so provisioning must re-apply it on upgrade.
     """
 
     SCHEMA_RESOURCE = ("autolangchat.db.sql", "token_usage_schema.sql")
@@ -109,11 +112,14 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         input_tokens: int,
         output_tokens: int,
         turn_ts: datetime,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
         sql = """
             INSERT INTO token_usage
-                (id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,
+                 cache_read_tokens, cache_write_tokens)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
         """
         params = (
@@ -124,6 +130,8 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
             input_tokens,
             output_tokens,
             turn_ts,
+            cache_read_tokens,
+            cache_write_tokens,
         )
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -145,7 +153,8 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         if offset < 0:
             raise ValueError("offset must be non-negative")
         sql = """
-            SELECT session_id, model_id, input_tokens, output_tokens, turn_ts
+            SELECT session_id, model_id, input_tokens, output_tokens,
+                   cache_read_tokens, cache_write_tokens, turn_ts
             FROM token_usage
             WHERE user_id = %s
             ORDER BY turn_ts DESC, id ASC
@@ -161,19 +170,22 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "model_id": r[1],
                 "input_tokens": r[2],
                 "output_tokens": r[3],
+                "cache_read_tokens": r[4],
+                "cache_write_tokens": r[5],
                 # Force UTC regardless of the connection's session timezone —
                 # TIMESTAMPTZ always persists the correct instant, but the
                 # *displayed* offset otherwise depends on session settings.
                 # Matches aggregate_by_day's explicit UTC bucketing and the
                 # SQLite backend's always-UTC TEXT storage.
-                "turn_ts": r[4].astimezone(timezone.utc).isoformat() if hasattr(r[4], "astimezone") else r[4],
+                "turn_ts": r[6].astimezone(timezone.utc).isoformat() if hasattr(r[6], "astimezone") else r[6],
             }
             for r in rows
         ]
 
     async def aggregate_by_model(self) -> List[Dict[str, Any]]:
         sql = """
-            SELECT model_id, SUM(input_tokens), SUM(output_tokens), COUNT(*)
+            SELECT model_id, SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
             FROM token_usage
             GROUP BY model_id
             ORDER BY model_id ASC
@@ -187,7 +199,9 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "model_id": r[0],
                 "input_tokens": r[1],
                 "output_tokens": r[2],
-                "turn_count": r[3],
+                "cache_read_tokens": r[3],
+                "cache_write_tokens": r[4],
+                "turn_count": r[5],
             }
             for r in rows
         ]
@@ -207,7 +221,8 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         # bucketing here, independent of DB session settings.
         sql = """
             SELECT (turn_ts AT TIME ZONE 'UTC')::date AS day,
-                   SUM(input_tokens), SUM(output_tokens), COUNT(*)
+                   SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
             FROM token_usage
             WHERE turn_ts >= %s AND turn_ts < %s
             GROUP BY day
@@ -222,7 +237,9 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "date": str(r[0]),
                 "input_tokens": r[1],
                 "output_tokens": r[2],
-                "turn_count": r[3],
+                "cache_read_tokens": r[3],
+                "cache_write_tokens": r[4],
+                "turn_count": r[5],
             }
             for r in rows
         ]
@@ -231,7 +248,8 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         if limit <= 0:
             raise ValueError("limit must be positive")
         sql = """
-            SELECT user_id, SUM(input_tokens), SUM(output_tokens)
+            SELECT user_id, SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_write_tokens)
             FROM token_usage
             WHERE user_id IS NOT NULL
             GROUP BY user_id
@@ -247,6 +265,8 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "user_id": r[0],
                 "input_tokens": r[1],
                 "output_tokens": r[2],
+                "cache_read_tokens": r[3],
+                "cache_write_tokens": r[4],
             }
             for r in rows
         ]

@@ -21,6 +21,11 @@ from autolangchat.model_capabilities import (
     clamp_max_tokens,
     get_max_output_tokens,
     get_model_profile,
+    get_prompt_cache_max_checkpoints,
+    get_prompt_cache_max_tokens,
+    get_prompt_cache_min_tokens,
+    supports_prompt_cache_ttl,
+    supports_prompt_caching,
     supports_temperature,
     supports_tool_calling,
 )
@@ -132,6 +137,52 @@ class TestClampMaxTokens:
 
     def test_none_passes_through(self):
         assert clamp_max_tokens(LLAMA_3_3, None) is None
+
+
+class TestPromptCachingCapabilities:
+    """XMGPLAT-11867 — explicit prompt-caching limits per model."""
+
+    def test_claude_limits_resolve_for_every_region_prefix(self):
+        for model_id in (SONNET_5, "global.anthropic.claude-sonnet-5", "anthropic.claude-sonnet-5"):
+            assert supports_prompt_caching(model_id)
+            assert get_prompt_cache_min_tokens(model_id) == 1024
+            assert get_prompt_cache_max_checkpoints(model_id) == 4
+            assert get_prompt_cache_max_tokens(model_id) is None
+            assert supports_prompt_cache_ttl(model_id, "1h")
+
+    def test_minimum_varies_by_model(self):
+        assert get_prompt_cache_min_tokens("us.anthropic.claude-opus-5") == 512
+        assert get_prompt_cache_min_tokens(OPUS_4_8) == 1024
+        assert get_prompt_cache_min_tokens("us.anthropic.claude-haiku-4-5-20251001-v1:0") == 4096
+
+    def test_nova_is_five_minute_only_and_size_limited(self):
+        nova = "us.amazon.nova-pro-v1:0"
+        assert supports_prompt_caching(nova)
+        assert supports_prompt_cache_ttl(nova, "5m")
+        assert not supports_prompt_cache_ttl(nova, "1h")
+        assert get_prompt_cache_max_tokens(nova) == 20000
+        assert get_model_profile(nova)["prompt_cache_tool_results"] is False
+
+    def test_unlisted_models_do_not_support_caching(self):
+        # Llama isn't cacheable; OpenAI models only cache outside Converse.
+        for model_id in (LLAMA_3_3, "openai.gpt-oss-120b-1:0", "nope.not-a-model"):
+            assert not supports_prompt_caching(model_id)
+            assert get_prompt_cache_min_tokens(model_id) is None
+            assert get_prompt_cache_max_checkpoints(model_id) == 0
+            assert not supports_prompt_cache_ttl(model_id, "5m")
+
+    def test_capability_overrides_win_over_cache_profiles(self):
+        with patch.dict(
+            "autolangchat.model_capabilities.CAPABILITY_OVERRIDES",
+            {"anthropic.claude-sonnet-5": {"supports_prompt_caching": False}},
+        ):
+            assert not supports_prompt_caching(SONNET_5)
+            assert get_prompt_cache_max_checkpoints(SONNET_5) == 0
+        with patch.dict(
+            "autolangchat.model_capabilities.CAPABILITY_OVERRIDES",
+            {"anthropic.claude-sonnet-5": {"prompt_cache_max_checkpoints": 2}},
+        ):
+            assert get_prompt_cache_max_checkpoints(SONNET_5) == 2
 
 
 class TestBuildBedrockKwargs:

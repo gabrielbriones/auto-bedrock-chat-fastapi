@@ -806,6 +806,10 @@ class WebSocketChatHandler:
                 response_metadata["input_tokens"] = graph_metadata["input_tokens"]
             if graph_metadata.get("output_tokens") is not None:
                 response_metadata["output_tokens"] = graph_metadata["output_tokens"]
+            # Prompt-cache counts are subsets of input_tokens, shown separately.
+            for cache_key in ("cache_read_tokens", "cache_write_tokens"):
+                if graph_metadata.get(cache_key) is not None:
+                    response_metadata[cache_key] = graph_metadata[cache_key]
             if graph_metadata.get("stop_reason") is not None:
                 response_metadata["stop_reason"] = graph_metadata["stop_reason"]
             if kb_results:
@@ -835,10 +839,13 @@ class WebSocketChatHandler:
 
             content_len, preview = _generate_message_preview(content, max_preview_len=500)
             logger.info(
-                "Chat response (%s chars, input_tokens=%s, output_tokens=%s)",
+                "Chat response (%s chars, input_tokens=%s, output_tokens=%s, cache_read_tokens=%s, "
+                "cache_write_tokens=%s)",
                 f"{content_len:,}",
                 response_metadata.get("input_tokens"),
                 response_metadata.get("output_tokens"),
+                response_metadata.get("cache_read_tokens"),
+                response_metadata.get("cache_write_tokens"),
             )
             logger.debug("Chat response preview: %s", preview)
 
