@@ -527,9 +527,12 @@ async def test_conversation_load_reports_in_progress_while_turn_is_running():
         ws_during = _new_ws()
         await handler._handle_conversation_load(ws_during, {"conversation_id": "conv-1"})
         assert _sent(ws_during)[0]["in_progress"] is True
+        assert _sent(ws_during)[0]["live"] is True
         assert handler.in_progress("conv-1")
+        # The running turn is not in the history: it follows as its own frames.
+        assert _sent(ws_during)[0]["messages"] == []
+        assert [f["type"] for f in _sent(ws_during)[1:]] == ["turn_started", "typing"]
         # A running turn's tool loop is not mistaken for a stuck one.
-        assert _sent(ws_during)[0]["messages"][-1]["role"] == "tool"
         chat_graph.aupdate_state.assert_not_awaited()
 
         release.set()
@@ -542,6 +545,298 @@ async def test_conversation_load_reports_in_progress_while_turn_is_running():
         # A completed turn is left untouched — no closing message.
         assert chat_graph._checkpoints["conv-1"][-1]["content"] == "done"
     finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Live turn: every tab of the user on the conversation follows a running turn
+# ---------------------------------------------------------------------------
+
+
+class _LiveTurnHarness:
+    """A real session manager with several connections, and a turn the test steps through."""
+
+    def __init__(self, store, chat_graph):
+        cfg = _make_config(max_sessions=100, session_timeout=3600)
+        self.manager = ChatSessionManager(cfg)
+        self.graph = chat_graph
+        self.handler = WebSocketChatHandler(
+            session_manager=self.manager, config=cfg, chat_graph=chat_graph, conversation_store=store
+        )
+        self.step = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def connect(self, user_id, conversation_id=None):
+        ws = _new_ws()
+        ws.close = AsyncMock()
+        await self.manager.create_session(ws, user_id=user_id, is_authenticated=True)
+        if conversation_id is not None:
+            (await self.manager.get_session(ws)).metadata["conversation_id"] = conversation_id
+        return ws
+
+    def script(self, frames):
+        """``ainvoke`` writes the user message, then emits each frame and waits for ``advance``."""
+
+        async def ainvoke(inputs, config):
+            msgs = self.graph._checkpoints.setdefault(config["configurable"]["thread_id"], [])
+            msgs.append({"role": "user", "content": inputs["user_message"], "metadata": {}})
+            on_progress = config["configurable"]["on_progress"]
+            for frame in frames:
+                await on_progress({**frame, "timestamp": datetime.now().isoformat()})
+                self.step.set()
+                await self.resume.wait()
+                self.resume.clear()
+            msgs.append({"role": "assistant", "content": "done", "metadata": {"message_id": "m-done"}})
+            return {"messages": msgs, "metadata": {}, "kb_results": []}
+
+        self.graph.ainvoke = AsyncMock(side_effect=ainvoke)
+
+    async def wait_step(self):
+        await self.step.wait()
+        self.step.clear()
+
+    def advance(self):
+        self.resume.set()
+
+
+_TOOL_START = {"type": "tool_call_start", "tool_call_id": "tc-1", "name": "get_job", "arguments": {}}
+_CALLING = {"type": "typing", "message": "Calling get_job... (1/1)"}
+
+
+def _types(ws):
+    return [f["type"] for f in _sent(ws)]
+
+
+async def test_running_turn_reaches_the_users_other_tabs_on_that_conversation_only():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        watcher = await harness.connect("alice", "conv-1")
+        elsewhere = await harness.connect("alice", "conv-2")
+        stranger = await harness.connect("bob", "conv-1")
+        harness.script([_CALLING, _TOOL_START])
+
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+        harness.advance()
+        await harness.wait_step()
+        harness.advance()
+        await turn
+
+        assert _types(watcher) == [
+            "turn_started",
+            "typing",
+            "typing",
+            "tool_call_start",
+            "ai_response",
+            "conversation_updated",
+        ]
+        started, thinking = _sent(watcher)[:2]
+        assert started["message"] == "validate job" and started["conversation_id"] == "conv-1"
+        assert thinking["message"] == "AI is thinking..."
+        assert _sent(watcher)[-2]["message"] == "done"
+        # The sender already shows its own message and gets each frame once.
+        assert "turn_started" not in _types(origin)
+        assert _types(origin).count("ai_response") == 1
+        # Another conversation's tab only hears that the list changed.
+        assert _types(elsewhere) == ["conversation_updated"]
+        assert _sent(stranger) == []
+        assert harness.handler._live_turns == {}
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_tab_opening_a_running_turn_is_caught_up_then_follows_it_live():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        harness.graph._checkpoints["conv-1"] = [
+            {"role": "user", "content": "earlier", "metadata": {}},
+            {"role": "assistant", "content": "earlier answer", "tool_calls": [], "metadata": {"message_id": "a1"}},
+        ]
+        origin = await harness.connect("alice", "conv-1")
+        harness.script([_CALLING, _TOOL_START])
+
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+
+        late = await harness.connect("alice")
+        await harness.handler._handle_conversation_load(late, {"conversation_id": "conv-1"})
+        loaded = _sent(late)[0]
+        assert loaded["live"] is True and loaded["in_progress"] is True
+        assert [m["content"] for m in loaded["messages"]] == ["earlier", "earlier answer"]
+        # The thinking notice was replaced by the later typing frame: only the latest status is replayed.
+        assert _types(late) == ["conversation_loaded", "turn_started", "typing"]
+        assert _sent(late)[2]["message"] == _CALLING["message"]
+
+        harness.advance()
+        await harness.wait_step()
+        harness.advance()
+        await turn
+
+        assert _types(late)[3:] == ["tool_call_start", "ai_response", "conversation_updated"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_tab_opening_an_answered_turn_gets_the_answer_from_history_only():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        harness.script([])
+        await harness.handler._handle_chat_message(origin, {"message": "validate job"})
+        assert harness.handler._live_turns == {}
+
+        # Between the graph returning and the ai_response going out, a load sees the answer already.
+        answered = websocket_handler._LiveTurn(
+            origin=origin, user_id="alice", user_message="validate job", started_at="t", answered=True
+        )
+        harness.handler._live_turns["conv-1"] = answered
+        late = await harness.connect("alice")
+        await harness.handler._handle_conversation_load(late, {"conversation_id": "conv-1"})
+        assert _sent(late)[0]["live"] is False
+        assert _sent(late)[0]["messages"][-1]["content"] == "done"
+        # So the ai_response still to come is not sent to it a second time.
+        assert harness.handler._turn_viewers(answered, "conv-1") == []
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_second_message_into_a_running_conversation_is_refused():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        other = await harness.connect("alice", "conv-1")
+        harness.script([_CALLING])
+
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+        await harness.handler._handle_chat_message(other, {"message": "and another"})
+
+        assert _sent(other)[-1]["type"] == "error"
+        assert "still running" in _sent(other)[-1]["message"]
+        assert harness.graph.ainvoke.await_count == 1
+
+        harness.advance()
+        await turn
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+def test_before_running_turn_keeps_an_earlier_unanswered_message():
+    failed = {"role": "user", "content": "failed earlier", "metadata": {}}
+    answered = {"role": "assistant", "content": "ok", "tool_calls": [], "metadata": {}}
+    running = {"role": "user", "content": "x", "original_content": "now", "artifact_marker": True}
+    tool_round = {"role": "assistant", "content": "", "tool_calls": [_TOOL_CALL], "metadata": {}}
+
+    cut = websocket_handler._before_running_turn
+    assert cut([answered, failed, running, tool_round], "now") == [answered, failed]
+    # Not checkpointed yet: nothing belongs to the running turn.
+    assert cut([answered, failed], "now") == [answered, failed]
+
+
+# ---------------------------------------------------------------------------
+# Conversation list: every tab of the user sees roster changes made in another
+# ---------------------------------------------------------------------------
+
+
+def _frames(ws, frame_type):
+    return [f for f in _sent(ws) if f["type"] == frame_type]
+
+
+async def test_new_conversation_and_its_turns_reach_the_users_other_tabs_without_activating_it():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        sender = await harness.connect("alice")
+        other_tab = await harness.connect("alice", "conv-old")
+        stranger = await harness.connect("bob")
+        harness.script([])
+
+        await harness.handler._handle_chat_message(sender, {"message": "hello"})
+
+        created = _frames(sender, "conversation_created")[0]["conversation_id"]
+        updates = _frames(other_tab, "conversation_updated")
+        # Once when created, once after the turn: the second carries the recorded turn.
+        assert [u["conversation"]["id"] for u in updates] == [created, created]
+        assert updates[0]["conversation"]["message_count"] == 0
+        assert updates[1]["conversation"]["message_count"] > 0
+        assert _frames(other_tab, "conversation_created") == []
+        assert (await harness.manager.get_session(other_tab)).metadata["conversation_id"] == "conv-old"
+        assert _frames(sender, "conversation_updated") == []
+        assert _sent(stranger) == []
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_title_and_rename_reach_every_tab_of_the_user():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        other_tab = await harness.connect("alice")
+        stranger = await harness.connect("bob")
+        harness.handler._build_title_llm_client = lambda: None
+
+        await harness.handler._generate_and_apply_title(sender, "conv-1", [{"role": "user", "content": "Tune L2"}])
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+
+        for ws in (sender, other_tab):
+            assert [f["type"] for f in _sent(ws)] == ["conversation_titled", "conversation_renamed"]
+            assert _sent(ws)[1]["title"] == "Mine"
+        assert _sent(stranger) == []
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("delete", ["one", "bulk", "all"])
+async def test_deletes_reach_every_tab_and_detach_those_on_a_deleted_conversation(delete):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        for conversation in ("conv-1", "conv-2"):
+            await store.create_conversation(conversation, "alice")
+        sender = await harness.connect("alice")
+        on_deleted = await harness.connect("alice", "conv-1")
+        on_kept = await harness.connect("alice", "conv-2")
+        stranger = await harness.connect("bob", "conv-1")
+
+        if delete == "one":
+            await harness.handler._handle_conversation_delete(sender, {"conversation_id": "conv-1"})
+            expected = "conversation_deleted"
+        elif delete == "bulk":
+            await harness.handler._handle_conversation_delete_bulk(sender, {"conversation_ids": ["conv-1"]})
+            expected = "conversation_bulk_deleted"
+        else:
+            await harness.handler._handle_conversation_delete_all(sender, {})
+            expected = "conversation_all_deleted"
+
+        for ws in (sender, on_deleted, on_kept):
+            assert [f["type"] for f in _sent(ws)] == [expected]
+        assert (await harness.manager.get_session(on_deleted)).metadata["conversation_id"] is None
+        kept = (await harness.manager.get_session(on_kept)).metadata["conversation_id"]
+        assert kept == (None if delete == "all" else "conv-2")
+        if delete == "bulk":
+            assert _sent(on_deleted)[0]["active_conversation_deleted"] is True
+            assert _sent(on_kept)[0]["active_conversation_deleted"] is False
+        assert _sent(stranger) == []
+        assert (await harness.manager.get_session(stranger)).metadata["conversation_id"] == "conv-1"
+    finally:
+        await harness.handler.shutdown()
         await store.close()
 
 

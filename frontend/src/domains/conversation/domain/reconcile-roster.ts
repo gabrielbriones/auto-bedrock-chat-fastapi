@@ -67,6 +67,13 @@ export const reconcileRoster = (
     case 'renamed':
       return upsert(roster, event.id, { title: event.title, updatedAt: at }, at)
 
+    // Listed, not opened: another tab's conversation must not take over this one. A missing title
+    // means "not titled yet", so it never clears one this tab already shows.
+    case 'updated': {
+      const { id, title, updatedAt, messageCount } = event.conversation
+      return upsert(roster, id, { updatedAt, messageCount, ...(title === null ? {} : { title }) }, at)
+    }
+
     // FR-CONV-016: a single page, so the list replaces rather than merges. FR-CONV-010 then adopts
     // the newest thread if a turn was sent before its id existed.
     case 'listed':

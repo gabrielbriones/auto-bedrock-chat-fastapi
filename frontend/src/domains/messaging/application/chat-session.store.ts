@@ -34,6 +34,7 @@ import type {
   MessagingEvent,
   MessagingGateway,
 } from '@/domains/messaging/application/ports'
+import { toHistory } from '@/domains/messaging/application/loaded-history'
 
 export type ChatSessionSnapshot = {
   readonly connection: ConnectionView
@@ -184,6 +185,9 @@ export class ChatSessionStore {
       case 'typing':
         this.#observeTyping(event.text)
         return
+      case 'turn-observed':
+        this.#observeTurn(event.text, event.conversationId)
+        return
       case 'tool-started':
         this.#updatePending((turn) => startLiveTool(turn, event))
         return
@@ -191,18 +195,7 @@ export class ChatSessionStore {
         this.#updatePending((turn) => finishLiveTool(turn, event.id, event.error, event.durationMs))
         return
       case 'history-loaded':
-        this.#history = event.messages.map((message, index) => ({
-          message: createMessage(
-            message.role,
-            message.text,
-            message.at,
-            index + 1,
-            message.id === null ? null : messageId(message.id),
-          ),
-          activity: message.activity,
-          interrupted: message.interrupted === true,
-          conversationId: event.conversationId,
-        }))
+        this.#history = toHistory(event)
         this.#seq = this.#history.length
         this.#turns = []
         this.#transient = []
@@ -267,6 +260,15 @@ export class ChatSessionStore {
 
     for (const listener of this.#replyListeners) {
       listener(reply)
+    }
+  }
+
+  // A turn another tab sent is followed from its first frame exactly like one sent here, and blocks
+  // this composer too: the server runs one turn per conversation at a time.
+  #observeTurn(text: string, conversation: string): void {
+    if (this.#pendingTurn() === undefined) {
+      this.#turns = [...this.#turns, createTurn(turnId(this.#newId()), this.#message('user', text), conversationId(conversation))]
+      this.#emit()
     }
   }
 

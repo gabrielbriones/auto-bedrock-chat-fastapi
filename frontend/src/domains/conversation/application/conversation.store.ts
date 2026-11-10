@@ -304,10 +304,13 @@ export class ConversationStore {
     }
 
     // FR-CONV-009 / P8: whether the server is still working is decided on every load — including
-    // the ones this watch itself issued.
+    // the ones this watch itself issued. A turn the server streams to this tab needs no polling.
     if (event.kind === 'loaded') {
       this.#unknownId = null
-      this.#pendingTurn.observe(event.id, isTurnInProgress(event.inProgress, event.messages))
+      this.#pendingTurn.observe(
+        event.id,
+        event.live !== true && isTurnInProgress(event.inProgress, event.messages),
+      )
     }
 
     this.#roster = reconcileRoster(this.#roster, event, this.#options.clock.now())

@@ -54,12 +54,15 @@ const toConversationEvent = (frame: ServerFrame): ConversationEvent | null => {
       return { kind: 'titled', id: conversationId(frame.conversation_id), title: frame.title }
     case 'conversation_list':
       return { kind: 'listed', items: frame.conversations.map(toSummary) }
+    case 'conversation_updated':
+      return { kind: 'updated', conversation: toSummary(frame.conversation) }
     case 'conversation_loaded':
       return {
         kind: 'loaded',
         id: conversationId(frame.conversation_id),
         messages: frame.messages.map(toLoadedMessage),
         inProgress: frame.in_progress ?? null,
+        live: frame.live === true,
       }
     case 'conversation_renamed':
       return { kind: 'renamed', id: conversationId(frame.conversation_id), title: frame.title }

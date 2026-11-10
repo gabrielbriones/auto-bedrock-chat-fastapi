@@ -188,6 +188,8 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
       return { kind: 'session-established', sessionId: frame.session_id }
     case 'typing':
       return { kind: 'typing', text: frame.message }
+    case 'turn_started':
+      return { kind: 'turn-observed', text: frame.message, conversationId: frame.conversation_id }
     case 'tool_call_start':
     case 'tool_call_end':
       return toolEvent(frame)
@@ -234,6 +236,7 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
 const conversationOf = (frame: ServerFrame): string | null => {
   switch (frame.type) {
     case 'typing':
+    case 'turn_started':
     case 'tool_call_start':
     case 'tool_call_end':
     case 'ai_response':

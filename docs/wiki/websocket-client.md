@@ -170,6 +170,12 @@ carry the turn's `conversation_id` (`null` without conversation persistence).
 Ignore those that don't match the conversation on screen; the answer is in that
 conversation's history when it is reloaded.
 
+Other connections of the same user that have the conversation open (another tab
+or window) follow the turn too: see
+[Running turns in other tabs](conversation-persistence#running-turns-in-other-tabs).
+A `chat` sent into a conversation whose turn is still running, from any of the
+user's connections, is refused with an `error` frame.
+
 **Authenticate session:**
 
 ```json
@@ -301,7 +307,9 @@ as `null`) when Bedrock doesn't return one.
 ```json
 { "type": "conversation_created", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 { "type": "conversation_list", "conversations": [ { "id": "...", "title": "...", "updated_at": "...", "message_count": 3 }, { "id": "...", "title": null, "updated_at": "...", "message_count": 1 } ], "timestamp": "..." }
-{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "in_progress": false, "timestamp": "..." }
+{ "type": "conversation_updated", "conversation": { "id": "...", "title": "", "updated_at": "...", "message_count": 2 }, "timestamp": "..." }
+{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "in_progress": false, "live": false, "timestamp": "..." }
+{ "type": "turn_started", "conversation_id": "b16d7f4e-…", "message": "What the user sent", "timestamp": "..." }
 { "type": "conversation_deleted", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 { "type": "conversation_all_deleted", "deleted_count": 3, "timestamp": "..." }
 { "type": "conversation_titled", "conversation_id": "b16d7f4e-…", "title": "Configuring Okta SSO", "timestamp": "..." }
@@ -324,6 +332,8 @@ tool-loop), including on another worker if its last checkpoint is recent.
 Use it, not the shape of `messages`, to decide whether to show a
 "still working" state and re-poll with `conversation_load` — see
 [Interrupted turns](conversation-persistence#in-progress-and-interrupted-turns).
+When `live` is `true` the turn's frames follow on this socket, so there is
+nothing to poll for.
 
 **Typing indicator:**
 

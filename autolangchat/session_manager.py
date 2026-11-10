@@ -264,6 +264,10 @@ class ChatSessionManager:
         """Get session by ID"""
         return self._sessions.get(session_id)
 
+    def sessions_for_user(self, user_id: str) -> List[ChatSession]:
+        """The live sessions of ``user_id``, one per connection."""
+        return [self._sessions[sid] for sid in self._user_sessions.get(user_id, []) if sid in self._sessions]
+
     async def update_session_user_id(self, session_id: str, user_id: str, is_authenticated: bool = True) -> bool:
         """Update the user_id for an existing session.
 

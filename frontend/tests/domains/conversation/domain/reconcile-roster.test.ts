@@ -34,6 +34,7 @@ const EVERY_EVENT: readonly ConversationEvent[] = [
   anEvent.created('a'),
   anEvent.titled('a', 'Job 42'),
   anEvent.listed([aConversation('a', 0), aConversation('b', 5)]),
+  anEvent.updated(aConversation('a', 7, 'Job 42', 2)),
   anEvent.loaded('a', ['user', 'assistant']),
   anEvent.renamed('a', 'Renamed'),
   anEvent.deleted('a'),
@@ -190,5 +191,27 @@ describe('reconcileRoster frame handling', () => {
 
     expect(roster.selection.has(id('b'))).toBe(true)
     expect(roster.items.find((item) => item.id === id('a'))?.title).toBe('Renamed')
+  })
+
+  // XMGPLAT-12228: another tab's conversation is listed, never opened here.
+  it('lists a conversation another tab created without making it active', () => {
+    const active = reduce(aSeededRoster(), anEvent.loaded('a'))
+
+    const roster = reduce(active, anEvent.updated(aConversation('elsewhere', 20)))
+
+    expect(roster.items[0]?.id).toBe(id('elsewhere'))
+    expect(roster.activeId).toBe(id('a'))
+  })
+
+  it('moves a conversation another tab used to the top with its new count and title', () => {
+    const roster = reduce(aSeededRoster(), anEvent.updated(aConversation('a', 20, 'Job 42 (cont.)', 4)))
+
+    expect(roster.items[0]).toEqual(aConversation('a', 20, 'Job 42 (cont.)', 4))
+  })
+
+  it('keeps the title it shows when an update carries none yet', () => {
+    const roster = reduce(aSeededRoster(), anEvent.updated(aConversation('a', 20)))
+
+    expect(roster.items[0]?.title).toBe('Job 42')
   })
 })

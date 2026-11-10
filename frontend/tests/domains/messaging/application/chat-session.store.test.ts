@@ -325,6 +325,51 @@ describe('ChatSessionStore', () => {
     })
   })
 
+  describe('a turn sent from another tab (XMGPLAT-12228)', () => {
+    const observed: MessagingEvent = { kind: 'turn-observed', text: 'validate job', conversationId: 'c-1' }
+
+    it('is followed live like a turn sent here', () => {
+      const watching = createHarness()
+      const sending = createHarness()
+      watching.emit(observed)
+      sending.store.send('validate job')
+      for (const { emit } of [watching, sending]) {
+        emit({ kind: 'typing', text: 'AI is thinking...' })
+        emit({ kind: 'tool-started', id: 'tc-1', name: 'get_job', arguments: {} })
+      }
+      const { store, emit } = watching
+
+      expect(store.getSnapshot().transcript).toEqual(sending.store.getSnapshot().transcript)
+      expect(store.getSnapshot().awaitingResponse).toBe(true)
+      expect(store.send('another')).toBe('refused')
+
+      emit(answered('done'))
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+      expect(store.getSnapshot().transcript.map((entry) => entry.message.raw)).toEqual(['validate job', 'done'])
+    })
+
+    // Its notification shares the sending tab's per-conversation tag, so the OS shows only one.
+    it('announces the reply with its conversation, as the sending tab does', () => {
+      const { store, emit } = createHarness()
+      const listener = jest.fn()
+      store.onReplySettled(listener)
+
+      emit(observed)
+      emit(answered('done'))
+
+      expect(listener).toHaveBeenCalledWith({ outcome: 'answered', text: 'done', conversationId: 'c-1' })
+    })
+
+    it('is ignored while a turn is already pending here', () => {
+      const { store, emit } = createHarness()
+      store.send('mine')
+
+      emit(observed)
+
+      expect(store.getSnapshot().transcript.filter((entry) => entry.message.role === 'user')).toHaveLength(1)
+    })
+  })
+
   describe('loading conversation history (FR-CONV-003)', () => {
     it('replaces the current transcript with the selected conversation', () => {
       const { store, emit } = createHarness()
