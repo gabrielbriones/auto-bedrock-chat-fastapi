@@ -831,7 +831,8 @@ class WebSocketChatHandler:
                 else:
                     self._in_flight_threads.pop(thread_id, None)
             if live_turn is not None:
-                live_turn.answered = True
+                async with self._thread_lock(thread_id):
+                    live_turn.answered = True
 
             # Extract the final assistant message from graph state
             graph_messages = graph_state.get("messages", [])
