@@ -759,7 +759,12 @@ async def test_tab_that_stops_reading_is_closed_instead_of_stalling_the_turn(mon
         await store.create_conversation("conv-1", "alice")
         origin = await harness.connect("alice", "conv-1")
         stalled = await harness.connect("alice", "conv-1")
-        stalled.send_json = AsyncMock(side_effect=asyncio.Event().wait)
+        never = asyncio.Event()
+
+        async def hang(frame):
+            await never.wait()
+
+        stalled.send_json = AsyncMock(side_effect=hang)
         harness.script([_CALLING])
 
         turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
