@@ -73,6 +73,7 @@ const toConversationEvent = (frame: ServerFrame): ConversationEvent | null => {
         kind: 'bulk-deleted',
         deletedIds: frame.deleted_ids.map(conversationId),
         activeDeleted: frame.active_conversation_deleted,
+        fromOtherTab: frame.from_other_connection === true,
       }
     case 'conversation_all_deleted':
       return { kind: 'all-deleted', count: frame.deleted_count }

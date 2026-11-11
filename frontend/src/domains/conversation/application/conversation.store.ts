@@ -294,7 +294,8 @@ export class ConversationStore {
       this.#applyError(event)
     }
 
-    if (event.kind === 'bulk-deleted') {
+    // Another tab's bulk delete says nothing about the ids this tab asked to delete.
+    if (event.kind === 'bulk-deleted' && event.fromOtherTab !== true) {
       reportPartialDelete(
         this.#roster.pendingBulkDelete,
         event.deletedIds,

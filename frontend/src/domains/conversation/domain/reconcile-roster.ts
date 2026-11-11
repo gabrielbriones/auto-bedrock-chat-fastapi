@@ -88,8 +88,13 @@ export const reconcileRoster = (
       return removeMany(roster, [event.id])
 
     // FR-CONV-006a / FR-CONV-006b.
+    // Another tab's bulk delete removes its ids and nothing else: a bulk delete this tab is waiting
+    // on stays guarded, and its selection stays, until its own reply arrives.
     case 'bulk-deleted': {
-      const next = completeBulkDelete(roster, event.deletedIds)
+      const next =
+        event.fromOtherTab === true
+          ? removeMany(roster, event.deletedIds)
+          : completeBulkDelete(roster, event.deletedIds)
       return event.activeDeleted ? clearActive(next) : next
     }
 

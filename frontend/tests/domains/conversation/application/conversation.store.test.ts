@@ -289,6 +289,23 @@ describe('ConversationStore bulk delete', () => {
     expect(harness.store.getSnapshot().bulkDeleteInFlight).toBe(false)
   })
 
+  // XMGPLAT-12228: two tabs bulk deleting at once must not settle each other's request.
+  it('neither reports nor settles its own bulk delete on another tab\'s', async () => {
+    const harness = createHarness({ answers: [true] })
+    seed(harness)
+    await harness.store.removeSelected()
+
+    harness.gateway.emit(anEvent.bulkDeletedElsewhere(['c']))
+
+    expect(harness.notifications.messages()).toEqual([])
+    expect(harness.store.getSnapshot().bulkDeleteInFlight).toBe(true)
+
+    harness.gateway.emit(anEvent.bulkDeleted(['a', 'b']))
+
+    expect(harness.notifications.messages()).toEqual([CONVERSATION_COPY.bulk.partial(1)])
+    expect(harness.store.getSnapshot().bulkDeleteInFlight).toBe(false)
+  })
+
   it('says nothing when every requested id was deleted', async () => {
     const harness = createHarness({ answers: [true] })
     seed(harness)

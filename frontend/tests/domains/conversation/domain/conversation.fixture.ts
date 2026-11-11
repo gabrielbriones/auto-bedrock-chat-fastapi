@@ -63,6 +63,12 @@ export const anEvent = {
     deletedIds: names.map(id),
     activeDeleted,
   }),
+  bulkDeletedElsewhere: (names: readonly string[], activeDeleted = false): ConversationEvent => ({
+    kind: 'bulk-deleted',
+    deletedIds: names.map(id),
+    activeDeleted,
+    fromOtherTab: true,
+  }),
   allDeleted: (count: number): ConversationEvent => ({ kind: 'all-deleted', count }),
   error: (code: string, message = 'nope', name: string | null = null): ConversationEvent => ({
     kind: 'error',

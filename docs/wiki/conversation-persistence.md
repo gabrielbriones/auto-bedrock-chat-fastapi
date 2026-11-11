@@ -150,7 +150,15 @@ turn exactly like the connection that sent the message:
 - The connection that sent the message gets no `turn_started`; it already shows
   its message.
 - A following connection that takes more than a few seconds to accept a frame is
-  closed rather than left to hold up the turn; the client reconnects and reloads.
+  closed (code `1013`) rather than left to hold up the turn; the client reconnects
+  and reloads. The connection that sent the message, and one that is being sent the
+  history it asked for, get longer (30 seconds) before the same happens to them.
+- Only a signed-in connection of the user is sent the frames of a turn it did not
+  start. Any other connection (a `user_id` that was never verified, a connection
+  that has signed out) loading the conversation mid-turn gets `live: false` with
+  what is checkpointed so far and polls, as it would for a turn on another worker.
+- If the connection that sent the message reloads the conversation after the answer
+  is checkpointed, the answer is in the history it gets and no `ai_response` follows.
 
 Only one turn runs per conversation: a `chat` into a conversation with a running
 turn is refused with an `error` frame, followed by `turn_started` and the turn's
@@ -174,6 +182,14 @@ them, so no tab needs a refresh:
   go to all of the user's connections. A connection that had a deleted conversation
   open is detached from it, as the one that deleted it is, and its
   `conversation_bulk_deleted` says so in `active_conversation_deleted`.
+- The `conversation_bulk_deleted` sent to the _other_ connections carries
+  `from_other_connection: true`. A client waiting for the reply to its own
+  `conversation_delete_bulk` must not take such a frame for that reply.
+- The other connections are told before the connection that made the change gets
+  its reply, and a delete is announced before any of the user's connections can
+  load another conversation, so `active_conversation_deleted` always describes the
+  conversation the client still shows. Updates, titles and renames are serialised
+  with deletes too: none arrives for a conversation after its delete.
 
 These also only reach connections on the same server process.
 

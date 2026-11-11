@@ -182,6 +182,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   serverFrame('conversation_bulk_deleted').extend({
     deleted_ids: z.array(z.string()),
     active_conversation_deleted: z.boolean(),
+    // Set on the copy another tab's bulk delete sends here: not the reply to one this tab sent.
+    from_other_connection: z.boolean().optional(),
   }),
   serverFrame('conversation_all_deleted').extend({ deleted_count: z.number() }),
   serverFrame('conversation_error').extend({

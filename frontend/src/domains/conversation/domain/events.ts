@@ -49,6 +49,8 @@ export type ConversationEvent =
       readonly kind: 'bulk-deleted'
       readonly deletedIds: readonly ConversationId[]
       readonly activeDeleted: boolean
+      /** Another tab deleted them: not the reply to a bulk delete this tab may be waiting on. */
+      readonly fromOtherTab?: boolean
     }
   | { readonly kind: 'all-deleted'; readonly count: number }
   | {

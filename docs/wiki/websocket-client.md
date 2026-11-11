@@ -312,6 +312,7 @@ as `null`) when Bedrock doesn't return one.
 { "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "in_progress": false, "live": false, "timestamp": "..." }
 { "type": "turn_started", "conversation_id": "b16d7f4e-…", "message": "What the user sent", "timestamp": "..." }
 { "type": "conversation_deleted", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+{ "type": "conversation_bulk_deleted", "deleted_ids": ["b16d7f4e-…"], "active_conversation_deleted": false, "timestamp": "..." }
 { "type": "conversation_all_deleted", "deleted_count": 3, "timestamp": "..." }
 { "type": "conversation_titled", "conversation_id": "b16d7f4e-…", "title": "Configuring Okta SSO", "timestamp": "..." }
 { "type": "conversation_renamed", "conversation_id": "b16d7f4e-…", "title": "My renamed chat", "timestamp": "..." }
@@ -335,6 +336,10 @@ Use it, not the shape of `messages`, to decide whether to show a
 [Interrupted turns](conversation-persistence#in-progress-and-interrupted-turns).
 When `live` is `true` the turn's frames follow on this socket, so there is
 nothing to poll for.
+
+`conversation_bulk_deleted` has `from_other_connection: true` when another of the
+user's connections made the delete; the reply to this connection's own
+`conversation_delete_bulk` does not have the field.
 
 **Typing indicator:**
 

@@ -124,6 +124,23 @@ describe('WsConversationGateway frame mapping', () => {
   it.each([
     [true, true],
     [undefined, false],
+  ])('carries from_other_connection=%s as %s onto the bulk-deleted event', (fromOther, expected) => {
+    const harness = createHarness()
+
+    harness.emit({
+      type: 'conversation_bulk_deleted',
+      timestamp: '2026-08-25T12:00:00Z',
+      deleted_ids: ['c-1'],
+      active_conversation_deleted: false,
+      ...(fromOther === undefined ? {} : { from_other_connection: fromOther }),
+    })
+
+    expect(harness.events[0]).toMatchObject({ kind: 'bulk-deleted', fromOtherTab: expected })
+  })
+
+  it.each([
+    [true, true],
+    [undefined, false],
   ])('carries live=%s as %s onto the loaded event', (live, expected) => {
     const harness = createHarness()
 

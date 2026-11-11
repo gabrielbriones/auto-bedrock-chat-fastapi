@@ -524,15 +524,19 @@ async def test_conversation_load_reports_in_progress_while_turn_is_running():
         turn = asyncio.create_task(handler._handle_chat_message(_new_ws(), {"message": "validate job"}))
         await started.wait()
 
-        # A second connection (e.g. the user reopened the tab) loads the conversation mid-turn.
+        # A second connection (e.g. the user reopened the tab) loads the conversation mid-turn. It is
+        # not a signed-in connection the turn's frames are sent to, so it must not be told they follow:
+        # it gets what is checkpointed so far and polls.
         ws_during = _new_ws()
         await handler._handle_conversation_load(ws_during, {"conversation_id": "conv-1"})
         assert _sent(ws_during)[0]["in_progress"] is True
-        assert _sent(ws_during)[0]["live"] is True
+        assert _sent(ws_during)[0]["live"] is False
         assert handler.in_progress("conv-1")
-        # The running turn is not in the history: it follows as its own frames.
-        assert _sent(ws_during)[0]["messages"] == []
-        assert [f["type"] for f in _sent(ws_during)[1:]] == ["turn_started", "typing"]
+        assert len(_sent(ws_during)[0]["messages"]) == len(_tool_loop_messages())
+        assert len(_sent(ws_during)) == 1
+        # Nor is it replayed the turn when its own message is refused.
+        await handler._handle_chat_message(ws_during, {"message": "and another"})
+        assert [f["type"] for f in _sent(ws_during)[1:]] == ["typing", "error"]
         # A running turn's tool loop is not mistaken for a stuck one.
         chat_graph.aupdate_state.assert_not_awaited()
 
@@ -912,6 +916,9 @@ async def test_deletes_reach_every_tab_and_detach_those_on_a_deleted_conversatio
         if delete == "bulk":
             assert _sent(on_deleted)[0]["active_conversation_deleted"] is True
             assert _sent(on_kept)[0]["active_conversation_deleted"] is False
+            # Only the copies for other tabs are marked, so a tab can tell them from its own reply.
+            assert "from_other_connection" not in _sent(sender)[0]
+            assert _sent(on_deleted)[0]["from_other_connection"] is True
         assert _sent(stranger) == []
         assert (await harness.manager.get_session(stranger)).metadata["conversation_id"] == "conv-1"
     finally:
@@ -960,7 +967,7 @@ async def test_delete_arriving_during_a_load_never_leaves_that_tab_on_the_delete
 
 
 async def test_load_to_a_tab_that_stops_reading_releases_the_conversation(monkeypatch):
-    monkeypatch.setattr(websocket_handler, "_FOLLOWER_SEND_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(websocket_handler, "_OWN_SEND_TIMEOUT_SECONDS", 0.01)
     store = await _make_store()
     harness = _LiveTurnHarness(store, _make_chat_graph())
     try:
@@ -1007,6 +1014,168 @@ async def test_signed_out_tab_stops_getting_the_users_broadcasts():
         await harness.handler._handle_conversation_delete(sender, {"conversation_id": "conv-1"})
 
         assert _types(signed_out) == ["logout_success"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_tab_that_signs_out_during_a_broadcast_is_skipped():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        first = await harness.connect("alice", "conv-1")
+        second = await harness.connect("alice", "conv-1")
+
+        # The recipients were chosen before this send; the second signs out while it is awaited.
+        async def sign_out_second(frame):
+            (await harness.manager.get_session(second)).credentials = None
+
+        first.send_json = AsyncMock(side_effect=sign_out_second)
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+
+        assert first.send_json.await_count == 1
+        assert _sent(second) == []
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_origin_that_reloaded_the_answered_turn_is_not_sent_the_answer_again():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        answered = websocket_handler._LiveTurn(
+            origin=origin, user_id="alice", user_message="validate job", started_at="t", answered=True
+        )
+        harness.handler._live_turns["conv-1"] = answered
+        harness.graph._checkpoints["conv-1"] = [
+            {"role": "user", "content": "validate job", "metadata": {"message_id": answered.user_message_id}},
+            {"role": "assistant", "content": "done", "tool_calls": [], "metadata": {"message_id": "m"}},
+        ]
+
+        await harness.handler._handle_conversation_load(origin, {"conversation_id": "conv-1"})
+        assert _sent(origin)[0]["messages"][-1]["content"] == "done"
+        await harness.handler._send_turn_frame(
+            origin, "conv-1", {"type": "ai_response", "message": "done"}, answered, finish=True
+        )
+
+        assert _types(origin) == ["conversation_loaded"]
+        assert harness.handler._live_turns == {}
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_request_that_fails_before_starting_never_enters_another_tabs_running_turn():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        watcher = await harness.connect("alice", "conv-1")
+        failing = await harness.connect("alice", "conv-1")
+        harness.script([_CALLING])
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+        running = harness.handler._live_turns["conv-1"]
+        frames_so_far = list(running.frames)
+
+        harness.manager.artifact_store.activate = MagicMock(side_effect=ArtifactError("store is full"))
+        await harness.handler._handle_chat_message(failing, {"message": "and another"})
+
+        # Its failure is its own: the running turn neither records it nor shows it to its followers.
+        assert _sent(failing)[-1]["type"] == "ai_response" and _sent(failing)[-1]["error"] is True
+        assert harness.handler._live_turns["conv-1"] is running
+        assert running.frames == frames_so_far
+        assert "ai_response" not in _types(watcher) + _types(origin)
+
+        harness.advance()
+        await turn
+        assert _sent(watcher)[-2]["message"] == "done"
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_sender_that_stops_reading_is_closed_instead_of_holding_the_conversation(monkeypatch):
+    monkeypatch.setattr(websocket_handler, "_OWN_SEND_TIMEOUT_SECONDS", 0.01)
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        watcher = await harness.connect("alice", "conv-1")
+        never = asyncio.Event()
+        harness.script([])
+
+        async def hang_on_the_answer(frame):
+            if frame["type"] == "ai_response":
+                await never.wait()
+
+        origin.send_json = AsyncMock(side_effect=hang_on_the_answer)
+        await asyncio.wait_for(harness.handler._handle_chat_message(origin, {"message": "validate job"}), 1)
+        await asyncio.sleep(0)
+
+        # The follower has the answer, the turn is recorded, and the conversation is free again.
+        assert _types(watcher)[-2:] == ["ai_response", "conversation_updated"]
+        assert harness.handler._live_turns == {}
+        assert not harness.handler._thread_lock("conv-1").locked()
+        origin.close.assert_awaited_once_with(code=1013)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("change", ["delete", "bulk", "all", "rename"])
+async def test_other_tabs_hear_of_a_change_even_when_the_tab_that_made_it_is_gone(change):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice")
+        other_tab = await harness.connect("alice", "conv-1")
+        sender.send_json = AsyncMock(side_effect=RuntimeError("socket closed"))
+        requests = {
+            "delete": (harness.handler._handle_conversation_delete, {"conversation_id": "conv-1"}),
+            "bulk": (harness.handler._handle_conversation_delete_bulk, {"conversation_ids": ["conv-1"]}),
+            "all": (harness.handler._handle_conversation_delete_all, {}),
+            "rename": (harness.handler._handle_conversation_rename, {"conversation_id": "conv-1", "title": "Mine"}),
+        }
+        handle, data = requests[change]
+
+        with pytest.raises(websocket_handler.WebSocketError):
+            await handle(sender, data)
+
+        assert len(_sent(other_tab)) == 1
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_summary_of_a_conversation_deleted_meanwhile_is_not_announced():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        other_tab = await harness.connect("alice")
+
+        # A delete holds the user's lock: the update waits for it rather than reading a summary first.
+        lock = harness.handler._user_lock("alice")
+        await lock.acquire()
+        read = store.get_conversation = AsyncMock(side_effect=store.get_conversation)
+        announce = asyncio.create_task(harness.handler._announce_conversation_update(sender, "alice", "conv-1"))
+        await asyncio.sleep(0)
+        assert read.await_count == 0
+        await store.delete_conversation("conv-1")
+        lock.release()
+        await announce
+
+        assert _sent(other_tab) == []
     finally:
         await harness.handler.shutdown()
         await store.close()

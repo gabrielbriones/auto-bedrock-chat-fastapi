@@ -143,6 +143,20 @@ describe('reconcileRoster frame handling', () => {
     expect(reduce(active, anEvent.bulkDeleted(['a'], true)).activeId).toBeNull()
   })
 
+  // XMGPLAT-12228: another tab's bulk delete is not the reply to the one this tab is waiting on.
+  it('keeps its own bulk delete guarded and selected through another tab\'s bulk delete', () => {
+    const started = beginBulkDelete(aSeededRoster(), [id('a'), id('b')])
+
+    const roster = reduce(
+      isOk(started) ? started.value : emptyRoster,
+      anEvent.bulkDeletedElsewhere(['c']),
+    )
+
+    expect(roster.items.map((item) => item.id)).toEqual([id('b'), id('a')])
+    expect(roster.pendingBulkDelete).toEqual(new Set([id('a'), id('b')]))
+    expect([...roster.selection]).toEqual(expect.arrayContaining([id('a'), id('b')]))
+  })
+
   // FR-CONV-018.
   it('empties the roster, the selection and the active conversation on all-deleted', () => {
     const roster = reduce(aSeededRoster(), anEvent.loaded('a'), anEvent.allDeleted(3))
