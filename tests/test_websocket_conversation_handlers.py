@@ -512,6 +512,7 @@ async def test_conversation_load_reports_in_progress_while_turn_is_running():
 
         async def blocking_ainvoke(inputs, config):
             chat_graph._checkpoints["conv-1"] = _tool_loop_messages()
+            chat_graph._checkpoints["conv-1"][0]["metadata"]["message_id"] = config["configurable"]["user_message_id"]
             started.set()
             await release.wait()
             msgs = chat_graph._checkpoints["conv-1"]
@@ -579,7 +580,7 @@ class _LiveTurnHarness:
 
         async def ainvoke(inputs, config):
             msgs = self.graph._checkpoints.setdefault(config["configurable"]["thread_id"], [])
-            msgs.append({"role": "user", "content": inputs["user_message"], "metadata": {}})
+            msgs.append(_user_message(inputs, config))
             on_progress = config["configurable"]["on_progress"]
             for frame in frames:
                 await on_progress({**frame, "timestamp": datetime.now().isoformat()})
@@ -597,6 +598,12 @@ class _LiveTurnHarness:
 
     def advance(self):
         self.resume.set()
+
+
+def _user_message(inputs, config):
+    """The user message as init_turn checkpoints it, with the id the handler gave it."""
+    message_id = config["configurable"].get("user_message_id")
+    return {"role": "user", "content": inputs["user_message"], "metadata": {"message_id": message_id}}
 
 
 _TOOL_START = {"type": "tool_call_start", "tool_call_id": "tc-1", "name": "get_job", "arguments": {}}
@@ -710,6 +717,66 @@ async def test_tab_opening_an_answered_turn_gets_the_answer_from_history_only():
         await store.close()
 
 
+async def test_tab_opening_a_turn_whose_answer_is_checkpointed_but_not_sent_gets_it_once():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+
+        # The answer is checkpointed while later nodes (citation boost, token usage) still run.
+        async def ainvoke(inputs, config):
+            msgs = harness.graph._checkpoints.setdefault("conv-1", [])
+            msgs.append(_user_message(inputs, config))
+            msgs.append({"role": "assistant", "content": "done", "tool_calls": [], "metadata": {"message_id": "m"}})
+            harness.step.set()
+            await harness.resume.wait()
+            return {"messages": msgs, "metadata": {}, "kb_results": []}
+
+        harness.graph.ainvoke = AsyncMock(side_effect=ainvoke)
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+
+        late = await harness.connect("alice")
+        await harness.handler._handle_conversation_load(late, {"conversation_id": "conv-1"})
+        assert _sent(late)[0]["live"] is True
+        assert _sent(late)[0]["messages"] == []
+
+        harness.advance()
+        await turn
+
+        assert _types(late) == ["conversation_loaded", "turn_started", "typing", "ai_response", "conversation_updated"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_tab_that_stops_reading_is_closed_instead_of_stalling_the_turn(monkeypatch):
+    monkeypatch.setattr(websocket_handler, "_FOLLOWER_SEND_TIMEOUT_SECONDS", 0.01)
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        stalled = await harness.connect("alice", "conv-1")
+        stalled.send_json = AsyncMock(side_effect=asyncio.Event().wait)
+        harness.script([_CALLING])
+
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+        harness.advance()
+        await asyncio.wait_for(turn, 1)
+        await asyncio.sleep(0)
+
+        assert _types(origin).count("ai_response") == 1
+        # Only the first frame waited on it; it is closed so it reconnects and reloads.
+        assert stalled.send_json.await_count == 1
+        stalled.close.assert_awaited_once_with(code=1013)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
 async def test_second_message_into_a_running_conversation_is_refused():
     store = await _make_store()
     harness = _LiveTurnHarness(store, _make_chat_graph())
@@ -723,27 +790,34 @@ async def test_second_message_into_a_running_conversation_is_refused():
         await harness.wait_step()
         await harness.handler._handle_chat_message(other, {"message": "and another"})
 
-        assert _sent(other)[-1]["type"] == "error"
-        assert "still running" in _sent(other)[-1]["message"]
+        assert _sent(other)[-3]["type"] == "error"
+        assert "still running" in _sent(other)[-3]["message"]
+        # Replayed: a tab that sent at the same time dropped the turn's start for its own message.
+        assert _types(other)[-2:] == ["turn_started", "typing"]
+        assert _sent(other)[-2]["message"] == "validate job"
         assert harness.graph.ainvoke.await_count == 1
 
         harness.advance()
         await turn
+        assert _types(other)[-2:] == ["ai_response", "conversation_updated"]
     finally:
         await harness.handler.shutdown()
         await store.close()
 
 
-def test_before_running_turn_keeps_an_earlier_unanswered_message():
-    failed = {"role": "user", "content": "failed earlier", "metadata": {}}
+def test_before_running_turn_cuts_at_the_running_turns_own_message():
+    earlier = {"role": "user", "content": "now", "metadata": {"message_id": "u0"}}
     answered = {"role": "assistant", "content": "ok", "tool_calls": [], "metadata": {}}
-    running = {"role": "user", "content": "x", "original_content": "now", "artifact_marker": True}
+    running = {"role": "user", "content": "now", "metadata": {"message_id": "u1"}}
     tool_round = {"role": "assistant", "content": "", "tool_calls": [_TOOL_CALL], "metadata": {}}
+    answer = {"role": "assistant", "content": "done", "tool_calls": [], "metadata": {}}
 
     cut = websocket_handler._before_running_turn
-    assert cut([answered, failed, running, tool_round], "now") == [answered, failed]
-    # Not checkpointed yet: nothing belongs to the running turn.
-    assert cut([answered, failed], "now") == [answered, failed]
+    assert cut([earlier, answered, running, tool_round], "u1") == [earlier, answered]
+    # Still cut once the answer is checkpointed, before the turn has finished.
+    assert cut([earlier, answered, running, tool_round, answer], "u1") == [earlier, answered]
+    # Not checkpointed yet: an earlier message with the same text is not mistaken for it.
+    assert cut([earlier, answered], "u1") == [earlier, answered]
 
 
 # ---------------------------------------------------------------------------

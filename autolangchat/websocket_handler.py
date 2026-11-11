@@ -30,7 +30,6 @@ from .db import (
     BaseUserSettingsStore,
     FeedbackAuthorizer,
 )
-from .defaults import ARTIFACT_MARKER_ORIGINAL_KEY
 from .exceptions import (
     ConversationNotFoundError,
     FeedbackError,
@@ -73,6 +72,10 @@ _INTERRUPTED_TURN_MESSAGE = (
 
 _THINKING_MESSAGE = "AI is thinking..."
 
+# How long a tab following another tab's turn may take to accept a frame before it is dropped,
+# since those sends hold the conversation lock the turn itself needs.
+_FOLLOWER_SEND_TIMEOUT_SECONDS = 5.0
+
 
 @dataclass
 class _LiveTurn:
@@ -82,6 +85,8 @@ class _LiveTurn:
     user_id: Optional[str]
     user_message: str
     started_at: str
+    # The id init_turn gives the turn's user message, so history can be cut at the turn even once answered.
+    user_message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     # Progress frames so far; consecutive ``typing`` frames are merged since each replaces the last.
     frames: List[Dict[str, Any]] = field(default_factory=list)
     # Set once the graph has returned: the checkpoint already holds the answer.
@@ -96,17 +101,12 @@ class _LiveTurn:
             self.frames.append(frame)
 
 
-def _before_running_turn(messages: List[Dict[str, Any]], user_message: str) -> List[Dict[str, Any]]:
-    """``messages`` without the part written so far by the running turn whose request is ``user_message``."""
+def _before_running_turn(messages: List[Dict[str, Any]], user_message_id: str) -> List[Dict[str, Any]]:
+    """``messages`` without the part written so far by the running turn whose user message is ``user_message_id``."""
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
-        role = message.get("role")
-        if role == "assistant" and not message.get("tool_calls"):
-            break
-        if role == "user":
-            if message.get(ARTIFACT_MARKER_ORIGINAL_KEY, message.get("content")) == user_message:
-                return messages[:index]
-            break
+        if message.get("role") == "user" and (message.get("metadata") or {}).get("message_id") == user_message_id:
+            return messages[:index]
     return messages
 
 
@@ -244,6 +244,8 @@ class WebSocketChatHandler:
         # Serialises turn start against checkpoint repair for the same thread, and a
         # turn's frames against a tab joining it.
         self._thread_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+        # Follower sockets that stopped reading: skipped until they disconnect.
+        self._stalled_followers: "weakref.WeakSet[WebSocket]" = weakref.WeakSet()
 
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
@@ -793,15 +795,21 @@ class WebSocketChatHandler:
             # TypedDict pass-through), so no manual aget_state is needed.
             # ------------------------------------------------------------------
             async with self._thread_lock(thread_id):
-                busy = conversation_id is not None and conversation_id in self._live_turns
-                if not busy:
+                running = self._live_turns.get(conversation_id) if conversation_id is not None else None
+                if running is None:
                     self._in_flight_threads[thread_id] = self._in_flight_threads.get(thread_id, 0) + 1
                     if conversation_id is not None:
                         live_turn = await self._start_live_turn(websocket, session, conversation_id, user_message)
-            if busy:
-                await self._send_error(
-                    websocket, "A reply is still running in this conversation. Wait for it to finish."
-                )
+                else:
+                    await self._send_error(
+                        websocket, "A reply is still running in this conversation. Wait for it to finish."
+                    )
+                    # Sent again because a tab that sent at the same time dropped it for its own pending message.
+                    if websocket is not running.origin and websocket not in running.caught_up:
+                        await self._send_to_viewers(
+                            [websocket], [self._turn_started_frame(conversation_id, running), *running.frames]
+                        )
+            if running is not None:
                 return
             if started is not None:
                 started.set()
@@ -820,6 +828,7 @@ class WebSocketChatHandler:
                             "token_usage_store": self.token_usage_store,
                             "session_id": session.session_id,
                             "user_id": session.user_id,
+                            **({"user_message_id": live_turn.user_message_id} if live_turn is not None else {}),
                             **artifact_config,
                         }
                     },
@@ -1048,12 +1057,29 @@ class WebSocketChatHandler:
         ]
 
     async def _send_to_viewers(self, viewers: List[WebSocket], frames: List[Dict[str, Any]]) -> None:
+        """Send ``frames`` to each viewer, closing one that stops reading rather than waiting on it."""
         for viewer in viewers:
+            if viewer in self._stalled_followers:
+                continue
             try:
                 for frame in frames:
-                    await self._send_message(viewer, frame, log_errors=False)
+                    await asyncio.wait_for(
+                        self._send_message(viewer, frame, log_errors=False), _FOLLOWER_SEND_TIMEOUT_SECONDS
+                    )
+            except asyncio.TimeoutError:
+                logger.warning("Closing a connection that stopped reading the frames of another tab's turn")
+                self._stalled_followers.add(viewer)
+                self._spawn_background_task(self._close_stalled(viewer))
             except WebSocketError:
                 logger.debug("Could not send a frame to a closed socket")
+
+    @staticmethod
+    async def _close_stalled(websocket: WebSocket) -> None:
+        # The client reconnects and reloads, catching up on what it missed.
+        try:
+            await websocket.close(code=1013)
+        except Exception:
+            logger.debug("Could not close a stalled connection", exc_info=True)
 
     def _other_sessions(self, user_id: Optional[str], websocket: WebSocket) -> List[ChatSession]:
         """The live sessions of ``user_id`` other than the one on ``websocket``."""
@@ -2178,7 +2204,7 @@ class WebSocketChatHandler:
 
             # A running turn is shown from its own frames below, not from what it has checkpointed so far.
             history = self._format_history_messages(
-                raw_messages if live is None else _before_running_turn(raw_messages, live.user_message)
+                raw_messages if live is None else _before_running_turn(raw_messages, live.user_message_id)
             )
 
             self._deactivate_artifacts(session)

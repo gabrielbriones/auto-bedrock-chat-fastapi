@@ -174,7 +174,8 @@ Other connections of the same user that have the conversation open (another tab
 or window) follow the turn too: see
 [Running turns in other tabs](conversation-persistence#running-turns-in-other-tabs).
 A `chat` sent into a conversation whose turn is still running, from any of the
-user's connections, is refused with an `error` frame.
+user's connections, is refused with an `error` frame, followed by a replay of the
+running turn (`turn_started` and its frames so far) so the client can follow it.
 
 **Authenticate session:**
 

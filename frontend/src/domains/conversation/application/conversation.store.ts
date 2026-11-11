@@ -313,7 +313,15 @@ export class ConversationStore {
       )
     }
 
+    const removesOpen = this.#removesOpenConversation(event)
     this.#roster = reconcileRoster(this.#roster, event, this.#options.clock.now())
+
+    // The server has detached this tab from it, like a new chat, and nothing more comes for it: a
+    // turn this tab was following must not keep the composer waiting for an answer.
+    if (removesOpen) {
+      this.#roster = awaitFirstTurnId(this.#roster)
+      this.#requestedId = null
+    }
 
     // FR-CONV-016: refetch rather than trusting the in-place mutation, so the list and its total
     // come from the server (FIX-16).
@@ -326,6 +334,19 @@ export class ConversationStore {
     }
 
     this.#emit()
+  }
+
+  #removesOpenConversation(event: ConversationEvent): boolean {
+    switch (event.kind) {
+      case 'deleted':
+        return event.id === this.#roster.activeId || event.id === this.#requestedId
+      case 'bulk-deleted':
+        return event.activeDeleted
+      case 'all-deleted':
+        return this.#roster.activeId !== null || (this.#requestedId ?? null) !== null
+      default:
+        return false
+    }
   }
 
   #applyError(event: Extract<ConversationEvent, { kind: 'error' }>): void {

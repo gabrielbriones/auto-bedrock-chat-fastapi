@@ -51,7 +51,10 @@ async def init_turn_node(state: ChatState, config: RunnableConfig) -> Dict[str, 
             {
                 "role": "user",
                 "content": user_message,
-                "metadata": {"message_id": str(uuid.uuid4()), "timestamp": datetime.now().isoformat()},
+                "metadata": {
+                    "message_id": configurable.get("user_message_id") or str(uuid.uuid4()),
+                    "timestamp": datetime.now().isoformat(),
+                },
             }
         ]
         logger.debug(

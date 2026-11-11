@@ -173,6 +173,37 @@ describe('ConversationStore mutations', () => {
 
     expect(gateway.methods()).toEqual(['requestRoster'])
   })
+
+  // The server detaches every tab from a deleted conversation, so the open one turns into a new
+  // chat and stops accepting its frames, whichever tab deleted it.
+  it.each([
+    ['one', anEvent.deleted('a')],
+    ['bulk', anEvent.bulkDeleted(['a'], true)],
+    ['all', anEvent.allDeleted(2)],
+  ])('turns the open conversation into a new chat when %s delete removes it', (_kind, event) => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+
+    gateway.emit(event)
+
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+    expect(store.acceptsLoadedConversation(id('a'))).toBe(false)
+  })
+
+  it('leaves the open conversation alone when another one is deleted', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+
+    gateway.emit(anEvent.deleted('b'))
+    gateway.emit(anEvent.bulkDeleted(['b'], false))
+
+    expect(store.getSnapshot()).toMatchObject({ activeId: id('a'), awaitingId: false })
+    expect(store.acceptsLoadedConversation(id('a'))).toBe(true)
+  })
 })
 
 describe('ConversationStore bulk delete', () => {

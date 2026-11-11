@@ -149,10 +149,15 @@ turn exactly like the connection that sent the message:
   per-conversation lock, so no frame is missed or sent twice.
 - The connection that sent the message gets no `turn_started`; it already shows
   its message.
+- A following connection that takes more than a few seconds to accept a frame is
+  closed rather than left to hold up the turn; the client reconnects and reloads.
 
 Only one turn runs per conversation: a `chat` into a conversation with a running
-turn is refused with an `error` frame. Like `in_progress`, this is per process —
-a connection served by another worker sees `live: false` and polls.
+turn is refused with an `error` frame, followed by `turn_started` and the turn's
+frames so far (as for a load), because a client that sent at the same moment may
+have dropped the first `turn_started` for its own pending message. Like
+`in_progress`, this is per process — a connection served by another worker sees
+`live: false` and polls.
 
 ### Conversation list across tabs
 
