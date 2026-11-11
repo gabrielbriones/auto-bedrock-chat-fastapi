@@ -265,11 +265,13 @@ class ChatSessionManager:
         return self._sessions.get(session_id)
 
     def sessions_for_user(self, user_id: str) -> List[ChatSession]:
-        """The live sessions of ``user_id``, one per connection."""
+        """The live, still signed-in sessions of ``user_id``, one per connection."""
         return [
             self._sessions[sid]
             for sid in self._user_sessions.get(user_id, [])
             if sid in self._sessions and self._sessions[sid].is_authenticated
+            # Logout and auth expiry clear credentials; is_authenticated only says how user_id was set.
+            and self._sessions[sid].credentials is not None
         ]
 
     async def update_session_user_id(self, session_id: str, user_id: str, is_authenticated: bool = True) -> bool:

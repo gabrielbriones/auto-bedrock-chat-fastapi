@@ -321,6 +321,10 @@ export class ConversationStore {
     if (removesOpen) {
       this.#roster = awaitFirstTurnId(this.#roster)
       this.#requestedId = null
+      // A deleted open that had not loaded yet leaves the server on the previous one, so detach it too.
+      if (this.#ready()) {
+        this.#options.gateway.create()
+      }
     }
 
     // FR-CONV-016: refetch rather than trusting the in-place mutation, so the list and its total
@@ -337,11 +341,14 @@ export class ConversationStore {
   }
 
   #removesOpenConversation(event: ConversationEvent): boolean {
+    // An open still awaiting its reply decides what is open: the server switches this tab to it.
+    const openId = this.#requestedId === undefined ? this.#roster.activeId : this.#requestedId
+
     switch (event.kind) {
       case 'deleted':
-        return event.id === this.#roster.activeId || event.id === this.#requestedId
+        return openId !== null && event.id === openId
       case 'bulk-deleted':
-        return event.activeDeleted
+        return openId !== null && event.deletedIds.includes(openId)
       case 'all-deleted':
         return this.#roster.activeId !== null || (this.#requestedId ?? null) !== null
       default:

@@ -244,6 +244,8 @@ class WebSocketChatHandler:
         # Serialises turn start against checkpoint repair for the same thread, and a
         # turn's frames against a tab joining it.
         self._thread_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+        # Serialises a user's conversation deletes against their loads, so a load never attaches to a deleted one.
+        self._user_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
         # Follower sockets that stopped reading: skipped until they disconnect.
         self._stalled_followers: "weakref.WeakSet[WebSocket]" = weakref.WeakSet()
 
@@ -1067,7 +1069,7 @@ class WebSocketChatHandler:
                         self._send_message(viewer, frame, log_errors=False), _FOLLOWER_SEND_TIMEOUT_SECONDS
                     )
             except asyncio.TimeoutError:
-                logger.warning("Closing a connection that stopped reading the frames of another tab's turn")
+                logger.warning("Closing a connection that stopped reading its frames")
                 self._stalled_followers.add(viewer)
                 self._spawn_background_task(self._close_stalled(viewer))
             except WebSocketError:
@@ -1203,6 +1205,13 @@ class WebSocketChatHandler:
         if lock is None:
             lock = asyncio.Lock()
             self._thread_locks[thread_id] = lock
+        return lock
+
+    def _user_lock(self, user_id: str) -> asyncio.Lock:
+        lock = self._user_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._user_locks[user_id] = lock
         return lock
 
     async def _close_interrupted_turn(self, thread_id: str) -> None:
@@ -2147,75 +2156,74 @@ class WebSocketChatHandler:
             )
             return
 
-        conversation = await self.conversation_store.get_conversation(conversation_id)
-        # Do not distinguish "not found" from "belongs to another user" in
-        # the response — that would let a client enumerate valid conversation
-        # ids it doesn't own.
-        if conversation is None or conversation.get("user_id") != session.user_id:
-            await self._send_conversation_error(
-                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
-            )
-            return
+        async with self._user_lock(session.user_id):
+            conversation = await self.conversation_store.get_conversation(conversation_id)
+            # Do not distinguish "not found" from "belongs to another user" in
+            # the response — that would let a client enumerate valid conversation
+            # ids it doesn't own.
+            if conversation is None or conversation.get("user_id") != session.user_id:
+                await self._send_conversation_error(
+                    websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+                )
+                return
 
-        cfg: Dict[str, Any] = {"configurable": {"thread_id": conversation_id}}
-        # Held until this socket is caught up on a running turn, so none of its frames is missed or sent twice.
-        async with self._thread_lock(conversation_id):
-            checkpoint_state = await self.chat_graph.aget_state(cfg)
-            checkpoint_values = checkpoint_state.values if checkpoint_state else None
-            if not checkpoint_values:
-                if conversation.get("message_count", 0) > 0:
-                    # This conversation has recorded turns, so a missing
-                    # checkpoint means the process likely restarted with a
-                    # non-persistent checkpointer (MemorySaver) — history was
-                    # actually lost, distinct from "no messages yet".
-                    await self._send_conversation_error(
-                        websocket,
-                        "conversation_history_unavailable",
-                        "This conversation's message history is unavailable",
-                        conversation_id=conversation_id,
-                    )
-                    return
-                # A brand-new conversation (e.g. created via REST POST, or the
-                # WebSocket lazy-create failed before the first ainvoke) that
-                # has never had a turn recorded — an empty history is the
-                # correct, loadable state here, not "unavailable".
-                raw_messages: List[Dict[str, Any]] = []
-            else:
-                raw_messages = checkpoint_values.get("messages", [])
-
-            live = self._live_turns.get(conversation_id)
-            if live is not None and live.answered:
-                live.caught_up.add(websocket)
-                live = None
-
-            # Repairs conversations left mid tool-loop by a turn that never got
-            # to close itself (process killed, or interrupted before this fix).
-            # A recent tail may belong to a turn running on another worker.
-            if live is None and not self.in_progress(conversation_id) and not has_recent_tool_loop(raw_messages):
-                closed = _close_dangling_tool_loop(raw_messages)
-                if closed is not None:
-                    try:
-                        await self.chat_graph.aupdate_state(cfg, {"messages": closed})
-                        raw_messages = closed
-                    except Exception:
-                        logger.exception(
-                            "Failed to close interrupted turn on load (conversation_id=%s)", conversation_id
+            cfg: Dict[str, Any] = {"configurable": {"thread_id": conversation_id}}
+            # Held until this socket is caught up on a running turn, so none of its frames is missed or sent twice.
+            async with self._thread_lock(conversation_id):
+                checkpoint_state = await self.chat_graph.aget_state(cfg)
+                checkpoint_values = checkpoint_state.values if checkpoint_state else None
+                if not checkpoint_values:
+                    if conversation.get("message_count", 0) > 0:
+                        # This conversation has recorded turns, so a missing
+                        # checkpoint means the process likely restarted with a
+                        # non-persistent checkpointer (MemorySaver) — history was
+                        # actually lost, distinct from "no messages yet".
+                        await self._send_conversation_error(
+                            websocket,
+                            "conversation_history_unavailable",
+                            "This conversation's message history is unavailable",
+                            conversation_id=conversation_id,
                         )
+                        return
+                    # A brand-new conversation (e.g. created via REST POST, or the
+                    # WebSocket lazy-create failed before the first ainvoke) that
+                    # has never had a turn recorded — an empty history is the
+                    # correct, loadable state here, not "unavailable".
+                    raw_messages: List[Dict[str, Any]] = []
+                else:
+                    raw_messages = checkpoint_values.get("messages", [])
 
-            # A running turn is shown from its own frames below, not from what it has checkpointed so far.
-            history = self._format_history_messages(
-                raw_messages if live is None else _before_running_turn(raw_messages, live.user_message_id)
-            )
+                live = self._live_turns.get(conversation_id)
+                if live is not None and live.answered:
+                    live.caught_up.add(websocket)
+                    live = None
 
-            self._deactivate_artifacts(session)
-            session.metadata["conversation_id"] = conversation_id
-            # Switching conversations invalidates the per-turn feedback cache
-            # collected against the previously active thread.
-            session.metadata.pop("feedback_meta", None)
+                # Repairs conversations left mid tool-loop by a turn that never got
+                # to close itself (process killed, or interrupted before this fix).
+                # A recent tail may belong to a turn running on another worker.
+                if live is None and not self.in_progress(conversation_id) and not has_recent_tool_loop(raw_messages):
+                    closed = _close_dangling_tool_loop(raw_messages)
+                    if closed is not None:
+                        try:
+                            await self.chat_graph.aupdate_state(cfg, {"messages": closed})
+                            raw_messages = closed
+                        except Exception:
+                            logger.exception(
+                                "Failed to close interrupted turn on load (conversation_id=%s)", conversation_id
+                            )
 
-            await self._send_message(
-                websocket,
-                {
+                # A running turn is shown from its own frames below, not from what it has checkpointed so far.
+                history = self._format_history_messages(
+                    raw_messages if live is None else _before_running_turn(raw_messages, live.user_message_id)
+                )
+
+                self._deactivate_artifacts(session)
+                session.metadata["conversation_id"] = conversation_id
+                # Switching conversations invalidates the per-turn feedback cache
+                # collected against the previously active thread.
+                session.metadata.pop("feedback_meta", None)
+
+                loaded = {
                     "type": "conversation_loaded",
                     "conversation_id": conversation_id,
                     "conversation": conversation,
@@ -2226,11 +2234,10 @@ class WebSocketChatHandler:
                     # The turn's frames follow, so the client need not poll for it.
                     "live": live is not None,
                     "timestamp": datetime.now().isoformat(),
-                },
-            )
-            if live is not None:
-                for frame in (self._turn_started_frame(conversation_id, live), *live.frames):
-                    await self._send_message(websocket, frame)
+                }
+                replay = [] if live is None else [self._turn_started_frame(conversation_id, live), *live.frames]
+                # Bounded like a follower's: both locks are held, so a tab that stops reading must not keep them.
+                await self._send_to_viewers([websocket], [loaded, *replay])
 
     async def _handle_conversation_delete(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_delete`` request — remove one conversation's metadata row."""
@@ -2245,25 +2252,26 @@ class WebSocketChatHandler:
             )
             return
 
-        conversation = await self.conversation_store.get_conversation(conversation_id)
-        if conversation is None or conversation.get("user_id") != session.user_id:
-            await self._send_conversation_error(
-                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
-            )
-            return
+        async with self._user_lock(session.user_id):
+            conversation = await self.conversation_store.get_conversation(conversation_id)
+            if conversation is None or conversation.get("user_id") != session.user_id:
+                await self._send_conversation_error(
+                    websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+                )
+                return
 
-        await self.conversation_store.delete_conversation(conversation_id)
-        self._purge_thread_artifacts(conversation_id, session.user_id)
-        if session.metadata.get("conversation_id") == conversation_id:
-            session.metadata["conversation_id"] = None
-            session.metadata.pop("feedback_meta", None)
+            await self.conversation_store.delete_conversation(conversation_id)
+            self._purge_thread_artifacts(conversation_id, session.user_id)
+            if session.metadata.get("conversation_id") == conversation_id:
+                session.metadata["conversation_id"] = None
+                session.metadata.pop("feedback_meta", None)
+            others = self._detach_other_sessions(session.user_id, websocket, {conversation_id})
 
         deleted = {
             "type": "conversation_deleted",
             "conversation_id": conversation_id,
             "timestamp": datetime.now().isoformat(),
         }
-        others = self._detach_other_sessions(session.user_id, websocket, {conversation_id})
         await self._send_message(websocket, deleted)
         await self._send_to_viewers([other for other, _ in others], [deleted])
 
@@ -2302,17 +2310,18 @@ class WebSocketChatHandler:
             )
             return
 
-        deleted_ids = await self.conversation_store.delete_conversations(session.user_id, unique_ids)
-        for deleted_id in deleted_ids:
-            self._purge_thread_artifacts(deleted_id, session.user_id)
+        async with self._user_lock(session.user_id):
+            deleted_ids = await self.conversation_store.delete_conversations(session.user_id, unique_ids)
+            for deleted_id in deleted_ids:
+                self._purge_thread_artifacts(deleted_id, session.user_id)
 
-        active_conversation_id = session.metadata.get("conversation_id")
-        active_conversation_deleted = active_conversation_id in deleted_ids
-        if active_conversation_deleted:
-            session.metadata["conversation_id"] = None
-            session.metadata.pop("feedback_meta", None)
+            active_conversation_id = session.metadata.get("conversation_id")
+            active_conversation_deleted = active_conversation_id in deleted_ids
+            if active_conversation_deleted:
+                session.metadata["conversation_id"] = None
+                session.metadata.pop("feedback_meta", None)
 
-        others = self._detach_other_sessions(session.user_id, websocket, set(deleted_ids)) if deleted_ids else []
+            others = self._detach_other_sessions(session.user_id, websocket, set(deleted_ids)) if deleted_ids else []
         await self._send_message(
             websocket,
             {
@@ -2341,19 +2350,20 @@ class WebSocketChatHandler:
         if session is None:
             return
 
-        deleted_count = await self.conversation_store.delete_all_conversations(session.user_id)
-        store = getattr(self.session_manager, "artifact_store", None)
-        if isinstance(store, ArtifactStore):
-            store.delete_user(session.user_id)
-        session.metadata["conversation_id"] = None
-        session.metadata.pop("feedback_meta", None)
+        async with self._user_lock(session.user_id):
+            deleted_count = await self.conversation_store.delete_all_conversations(session.user_id)
+            store = getattr(self.session_manager, "artifact_store", None)
+            if isinstance(store, ArtifactStore):
+                store.delete_user(session.user_id)
+            session.metadata["conversation_id"] = None
+            session.metadata.pop("feedback_meta", None)
+            others = self._detach_other_sessions(session.user_id, websocket, None)
 
         all_deleted = {
             "type": "conversation_all_deleted",
             "deleted_count": deleted_count,
             "timestamp": datetime.now().isoformat(),
         }
-        others = self._detach_other_sessions(session.user_id, websocket, None)
         await self._send_message(websocket, all_deleted)
         await self._send_to_viewers([other for other, _ in others], [all_deleted])
 

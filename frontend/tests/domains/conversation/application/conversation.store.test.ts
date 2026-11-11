@@ -204,6 +204,40 @@ describe('ConversationStore mutations', () => {
     expect(store.getSnapshot()).toMatchObject({ activeId: id('a'), awaitingId: false })
     expect(store.acceptsLoadedConversation(id('a'))).toBe(true)
   })
+
+  // The server switches this tab to the one it asked for, even when the one on screen is deleted first.
+  it.each([
+    ['one', anEvent.deleted('a')],
+    ['bulk', anEvent.bulkDeleted(['a'], true)],
+  ])('keeps an outstanding open when %s delete removes the conversation on screen', (_kind, event) => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    store.open(id('b'))
+
+    gateway.emit(event)
+
+    expect(store.getSnapshot().awaitingId).toBe(false)
+    expect(store.acceptsLoadedConversation(id('b'))).toBe(true)
+    gateway.emit(anEvent.loaded('b'))
+    expect(store.getSnapshot().activeId).toBe(id('b'))
+  })
+
+  it('drops an outstanding open when a delete removes the conversation it asked for', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    store.open(id('b'))
+
+    gateway.emit(anEvent.bulkDeleted(['b'], false))
+
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+    expect(store.acceptsLoadedConversation(id('b'))).toBe(false)
+    // The server never switched to b, so it is told to leave a as well.
+    expect(gateway.methods()).toContain('create')
+  })
 })
 
 describe('ConversationStore bulk delete', () => {

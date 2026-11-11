@@ -919,6 +919,99 @@ async def test_deletes_reach_every_tab_and_detach_those_on_a_deleted_conversatio
         await store.close()
 
 
+@pytest.mark.parametrize("delete", ["one", "bulk", "all"])
+async def test_delete_arriving_during_a_load_never_leaves_that_tab_on_the_deleted_conversation(delete):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        loading = await harness.connect("alice")
+        deleting = await harness.connect("alice")
+        reading, resume = asyncio.Event(), asyncio.Event()
+        read_checkpoint = harness.graph.aget_state.side_effect
+
+        async def slow_aget_state(cfg):
+            reading.set()
+            await resume.wait()
+            return await read_checkpoint(cfg)
+
+        harness.graph.aget_state.side_effect = slow_aget_state
+        load = asyncio.create_task(harness.handler._handle_conversation_load(loading, {"conversation_id": "conv-1"}))
+        await reading.wait()
+
+        if delete == "one":
+            removal = harness.handler._handle_conversation_delete(deleting, {"conversation_id": "conv-1"})
+        elif delete == "bulk":
+            removal = harness.handler._handle_conversation_delete_bulk(deleting, {"conversation_ids": ["conv-1"]})
+        else:
+            removal = harness.handler._handle_conversation_delete_all(deleting, {})
+        removal = asyncio.create_task(removal)
+        # Unserialised, the delete would finish here while the load still awaits the checkpoint.
+        await asyncio.wait({removal}, timeout=0.05)
+        resume.set()
+        await asyncio.wait_for(asyncio.gather(load, removal), 1)
+
+        # The load finished first, so the delete that followed detached it.
+        assert _types(loading)[0] == "conversation_loaded"
+        assert (await harness.manager.get_session(loading)).metadata["conversation_id"] is None
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_load_to_a_tab_that_stops_reading_releases_the_conversation(monkeypatch):
+    monkeypatch.setattr(websocket_handler, "_FOLLOWER_SEND_TIMEOUT_SECONDS", 0.01)
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        harness.script([_CALLING])
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+
+        stalled = await harness.connect("alice")
+        never = asyncio.Event()
+
+        async def hang(frame):
+            await never.wait()
+
+        stalled.send_json = AsyncMock(side_effect=hang)
+        await asyncio.wait_for(harness.handler._handle_conversation_load(stalled, {"conversation_id": "conv-1"}), 1)
+        harness.advance()
+        await asyncio.wait_for(turn, 1)
+        await asyncio.sleep(0)
+
+        assert _types(origin).count("ai_response") == 1
+        # The replay after the history was never attempted, and the tab is closed so it reloads.
+        assert stalled.send_json.await_count == 1
+        stalled.close.assert_awaited_once_with(code=1013)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_signed_out_tab_stops_getting_the_users_broadcasts():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        signed_out = await harness.connect("alice", "conv-1")
+        await harness.handler._handle_logout(signed_out, {})
+        assert _types(signed_out) == ["logout_success"]
+        harness.script([])
+
+        await harness.handler._handle_chat_message(sender, {"message": "hello"})
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+        await harness.handler._handle_conversation_delete(sender, {"conversation_id": "conv-1"})
+
+        assert _types(signed_out) == ["logout_success"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
 def _tool_loop_messages_at(ts: datetime):
     msgs = _tool_loop_messages()
     msgs[-1]["metadata"] = {"timestamp": ts.isoformat()}
