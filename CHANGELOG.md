@@ -2,6 +2,77 @@
 
 <!-- version list -->
 
+## v4.3.0 (2026-11-12)
+
+### Bug Fixes
+
+- **chat**: Address review feedback on prompt caching (XMGPLAT-11867)
+  ([`29154f6`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/29154f6a793884f81cba032fa1f3d758cfae2253))
+
+- **chat**: Show what the user sent, not the artifact marker, in reloaded history (XMGPLAT-12228)
+  ([`e191cf9`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/e191cf91aa6d53510b84617f2768bd92e8fb86d4))
+
+- **frontend**: Address review feedback on reply notifications (XMGPLAT-12045)
+  ([`000a13a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/000a13aefa81f9c86851c76d1c9d8578a071d37a))
+
+- **websocket**: Bind sign-in to the verified credentials and recheck the sender on every delivery
+  (XMGPLAT-12228)
+  ([`23711f8`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/23711f8ac853898c5f4a0888e3cb53274474a6c2))
+
+- **websocket**: Bound every send under a lock, order notices with deletes and keep failed requests
+  out of running turns (XMGPLAT-12228)
+  ([`5d1a8d5`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/5d1a8d566d890eac571b74323ed673e8c3b5f561))
+
+- **websocket**: Cut running-turn history by message id and drop stalled follower tabs
+  (XMGPLAT-12228)
+  ([`c7385e0`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c7385e07a257ac33a2a696aed5ea5fa98fd652bc))
+
+- **websocket**: Fan out only for verified senders, send to tabs concurrently and acknowledge under
+  the lock (XMGPLAT-12228)
+  ([`b162d36`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/b162d36337f97ccb0915e276ff91772a5aee9d2c))
+
+- **websocket**: Serialize lazy creation with deletes and sign out tabs whose SSO session ended
+  (XMGPLAT-12228)
+  ([`1a84694`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/1a84694ba0d093fae611789e72c451710c75c5a0))
+
+- **websocket**: Serialize loads with deletes, bound load sends and skip signed-out tabs
+  (XMGPLAT-12228)
+  ([`f9d7f4b`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/f9d7f4b36f7fbb20dbddf754621735c07377c065))
+
+### Chores
+
+- **chat**: Add debug prompt-cache summary log (XMGPLAT-11867)
+  ([`c57a2a1`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/c57a2a12f862c4c6f8d9d9d50fc622205b265ad8))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`248bf66`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/248bf6649f00124adc2383113fa19b9420fe8ecf))
+
+- **deps**: Sync requirements.txt from poetry.lock
+  ([`7f485cf`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/7f485cfcec3330b7a61a9a6dd54f2251c2c02809))
+
+- **deps**: Update python-minor-patch
+  ([`daaf836`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/daaf8363c2d99ef5e1b011c4917076a06322573e))
+
+- **deps**: Update python-minor-patch
+  ([`2b011df`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/2b011df312453f74c2476f590ef2b73ca2db06dd))
+
+### Features
+
+- **chat**: Bedrock prompt caching with cache-token accounting (XMGPLAT-11867)
+  ([`123c5c2`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/123c5c28934b9a26fecd5856a19c7ebf8efa9d44))
+
+- **frontend**: Notify via OS when the agent finishes replying (XMGPLAT-12045)
+  ([`3ffa217`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/3ffa217996296dec2ad8ff5632742a3b5f974fa8))
+
+- **websocket**: Sync running turns and conversation list across tabs
+  ([`d9fdd2a`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/d9fdd2ac88de32d8215f6f34b2cdca0bb923a945))
+
+### Testing
+
+- **websocket**: Fix stalled-follower mock so it hangs instead of raising (XMGPLAT-12228)
+  ([`baf98a2`](https://github.com/gabrielbriones/auto-bedrock-chat-fastapi/commit/baf98a29329451e393b9ded6f772e4a3395bcafb))
+
+
 ## v4.2.0 (2026-10-30)
 
 ### Bug Fixes
