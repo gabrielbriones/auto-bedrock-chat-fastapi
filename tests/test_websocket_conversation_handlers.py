@@ -1181,6 +1181,244 @@ async def test_summary_of_a_conversation_deleted_meanwhile_is_not_announced():
         await store.close()
 
 
+async def test_list_read_before_a_delete_never_reaches_the_tab_after_its_notice():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        listing = await harness.connect("alice")
+
+        lock = harness.handler._user_lock("alice")
+        await lock.acquire()
+        listed = asyncio.create_task(harness.handler._handle_conversation_list(listing, {}))
+        await asyncio.sleep(0)
+        await store.delete_conversation("conv-1")
+        lock.release()
+        await listed
+
+        assert _sent(listing)[0]["conversations"] == []
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+def _signal_next_user_lock(handler):
+    """An event set when ``handler`` next reaches for a user's lock; the caller is queued on it by then."""
+    reached = asyncio.Event()
+    user_lock = handler._user_lock
+
+    def spy(user_id):
+        reached.set()
+        return user_lock(user_id)
+
+    handler._user_lock = spy
+    return reached
+
+
+async def test_conversation_created_during_a_delete_all_survives_it_and_stays_attached():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        sender = await harness.connect("alice")
+        deleting = await harness.connect("alice")
+        deleting_all, release = asyncio.Event(), asyncio.Event()
+        delete_all = store.delete_all_conversations
+
+        async def slow_delete_all(user_id):
+            deleting_all.set()
+            await release.wait()
+            return await delete_all(user_id)
+
+        store.delete_all_conversations = slow_delete_all
+        removal = asyncio.create_task(harness.handler._handle_conversation_delete_all(deleting, {}))
+        await deleting_all.wait()
+        queued = _signal_next_user_lock(harness.handler)
+        turn = asyncio.create_task(harness.handler._handle_chat_message(sender, {"message": "hello"}))
+        await queued.wait()
+        assert await store.get_conversation_count("alice") == 0
+        release.set()
+        await asyncio.wait_for(asyncio.gather(removal, turn), 1)
+
+        created = _frames(sender, "conversation_created")[0]["conversation_id"]
+        assert await store.get_conversation(created) is not None
+        assert (await harness.manager.get_session(sender)).metadata["conversation_id"] == created
+        # Each tab hears of the delete-all before the conversation created after it.
+        assert _types(sender)[:3] == ["typing", "conversation_all_deleted", "conversation_created"]
+        assert _types(deleting)[:2] == ["conversation_all_deleted", "conversation_updated"]
+        assert _frames(deleting, "conversation_updated")[0]["conversation"]["id"] == created
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_conversation_created_before_a_delete_all_is_removed_by_it_and_its_tab_detached():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        sender = await harness.connect("alice")
+        deleting = await harness.connect("alice")
+        created, release = asyncio.Event(), asyncio.Event()
+        create = store.create_conversation
+
+        async def slow_create(conversation_id, user_id):
+            await create(conversation_id, user_id)
+            created.set()
+            await release.wait()
+
+        store.create_conversation = slow_create
+        turn = asyncio.create_task(harness.handler._handle_chat_message(sender, {"message": "hello"}))
+        await created.wait()
+        queued = _signal_next_user_lock(harness.handler)
+        removal = asyncio.create_task(harness.handler._handle_conversation_delete_all(deleting, {}))
+        await queued.wait()
+        release.set()
+        await asyncio.wait_for(asyncio.gather(turn, removal), 1)
+
+        assert await store.get_conversation_count("alice") == 0
+        assert (await harness.manager.get_session(sender)).metadata["conversation_id"] is None
+        # Each tab hears of the conversation before the delete-all that removed it.
+        assert _types(sender).index("conversation_created") < _types(sender).index("conversation_all_deleted")
+        assert _types(deleting).index("conversation_updated") < _types(deleting).index("conversation_all_deleted")
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("request_type", ["load", "delete"])
+async def test_error_reply_to_a_tab_that_stops_reading_releases_the_users_lock(monkeypatch, request_type):
+    monkeypatch.setattr(websocket_handler, "_OWN_SEND_TIMEOUT_SECONDS", 0.01)
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        stalled = await harness.connect("alice")
+        never = asyncio.Event()
+
+        async def hang(frame):
+            await never.wait()
+
+        stalled.send_json = AsyncMock(side_effect=hang)
+        handle = {
+            "load": harness.handler._handle_conversation_load,
+            "delete": harness.handler._handle_conversation_delete,
+        }[request_type]
+
+        with pytest.raises(websocket_handler.WebSocketError):
+            await asyncio.wait_for(handle(stalled, {"conversation_id": "missing"}), 1)
+        await asyncio.sleep(0)
+
+        assert not harness.handler._user_lock("alice").locked()
+        stalled.close.assert_awaited_once_with(code=1013)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_tab_whose_sso_session_ended_elsewhere_is_told_to_sign_in_instead_of_getting_broadcasts():
+    from autolangchat.auth_handler import AuthType, Credentials
+    from autolangchat.sso.sso_session_store import SSOSessionStore
+
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    sso_store = SSOSessionStore()
+    harness.handler.sso_session_store = sso_store
+    harness.handler.config.sso_session_secret = "s3cr3t-session-secret"
+    try:
+        await store.create_conversation("conv-1", "alice")
+        tabs = {}
+        for name in ("sender", "ended", "live"):
+            tabs[name] = await harness.connect("alice", "conv-1")
+            sso_session_id = sso_store.create_session({"access_token": f"{name}-token"})
+            token = sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
+            session = await harness.manager.get_session(tabs[name])
+            session.credentials = Credentials(auth_type=AuthType.SSO, session_token=token)
+            if name == "ended":
+                # Logged out in another tab sharing it, or expired: this socket still holds its credentials.
+                sso_store.delete_session(sso_session_id)
+
+        await harness.handler._handle_conversation_rename(
+            tabs["sender"], {"conversation_id": "conv-1", "title": "Mine"}
+        )
+        await asyncio.gather(*harness.handler._background_tasks)
+
+        assert _types(tabs["ended"]) == ["auth_expired"]
+        assert (await harness.manager.get_session(tabs["ended"])).credentials is None
+        assert _types(tabs["live"]) == ["conversation_renamed"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("request_type", ["delete", "delete_bulk", "delete_all"])
+async def test_tab_whose_sso_session_ended_elsewhere_is_still_detached_from_a_deleted_conversation(request_type):
+    from autolangchat.auth_handler import AuthType, Credentials
+    from autolangchat.sso.sso_session_store import SSOSessionStore
+
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    sso_store = SSOSessionStore()
+    harness.handler.sso_session_store = sso_store
+    harness.handler.config.sso_session_secret = "s3cr3t-session-secret"
+    try:
+        await store.create_conversation("conv-1", "alice")
+        deleting = await harness.connect("alice")
+        ended = await harness.connect("alice", "conv-1")
+        sso_session_id = sso_store.create_session({"access_token": "ended-token"})
+        token = sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
+        ended_session = await harness.manager.get_session(ended)
+        ended_session.credentials = Credentials(auth_type=AuthType.SSO, session_token=token)
+        # Signing in again on this socket keeps its conversation, so a stale one would take its next chat.
+        sso_store.delete_session(sso_session_id)
+
+        handle, data = {
+            "delete": (harness.handler._handle_conversation_delete, {"conversation_id": "conv-1"}),
+            "delete_bulk": (harness.handler._handle_conversation_delete_bulk, {"conversation_ids": ["conv-1"]}),
+            "delete_all": (harness.handler._handle_conversation_delete_all, {}),
+        }[request_type]
+        await handle(deleting, data)
+        await asyncio.gather(*harness.handler._background_tasks)
+
+        assert ended_session.metadata["conversation_id"] is None
+        assert _types(ended) == ["auth_expired"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_follower_whose_sso_session_ends_mid_turn_is_told_to_sign_in_instead_of_waiting():
+    from autolangchat.auth_handler import AuthType, Credentials
+    from autolangchat.sso.sso_session_store import SSOSessionStore
+
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    sso_store = SSOSessionStore()
+    harness.handler.sso_session_store = sso_store
+    harness.handler.config.sso_session_secret = "s3cr3t-session-secret"
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        follower = await harness.connect("alice", "conv-1")
+        sso_session_id = sso_store.create_session({"access_token": "follower-token"})
+        token = sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
+        follower_session = await harness.manager.get_session(follower)
+        follower_session.credentials = Credentials(auth_type=AuthType.SSO, session_token=token)
+        harness.script([_CALLING])
+
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+        sso_store.delete_session(sso_session_id)
+        harness.advance()
+        await asyncio.wait_for(turn, 1)
+        await asyncio.gather(*harness.handler._background_tasks)
+
+        # It never gets the answer, so it must hear why rather than keep waiting for it.
+        assert _types(follower) == ["turn_started", "typing", "typing", "auth_expired"]
+        assert follower_session.credentials is None
+        assert _types(origin).count("ai_response") == 1
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
 def _tool_loop_messages_at(ts: datetime):
     msgs = _tool_loop_messages()
     msgs[-1]["metadata"] = {"timestamp": ts.isoformat()}

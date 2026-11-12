@@ -238,6 +238,35 @@ describe('ConversationStore mutations', () => {
     // The server never switched to b, so it is told to leave a as well.
     expect(gateway.methods()).toContain('create')
   })
+
+  // XMGPLAT-12228: the chat in flight may create its conversation before a detach would arrive.
+  it('adopts the next conversation id after another tab deletes everything during a new chat', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a')]))
+    store.startNew()
+    gateway.calls.length = 0
+
+    gateway.emit(anEvent.allDeleted(1))
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot().awaitingId).toBe(true)
+    gateway.emit(anEvent.created('c'))
+    expect(store.acceptsLoadedConversation(id('c'))).toBe(true)
+  })
+
+  it('detaches the server again when everything is deleted after the new chat got its id', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a')]))
+    store.startNew()
+    gateway.emit(anEvent.created('c'))
+    gateway.calls.length = 0
+
+    gateway.emit(anEvent.allDeleted(1))
+
+    expect(gateway.methods()).toContain('create')
+    expect(store.getSnapshot().awaitingId).toBe(true)
+    expect(store.acceptsLoadedConversation(id('c'))).toBe(false)
+  })
 })
 
 describe('ConversationStore bulk delete', () => {

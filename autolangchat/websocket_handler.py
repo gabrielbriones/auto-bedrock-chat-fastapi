@@ -749,37 +749,8 @@ class WebSocketChatHandler:
             if use_conversation_persistence:
                 conversation_id = session.metadata.get("conversation_id")
                 if conversation_id is None:
-                    new_conversation_id = str(uuid.uuid4())
-                    try:
-                        await self.conversation_store.create_conversation(new_conversation_id, session.user_id)
-                    except Exception:
-                        # Conversation persistence is optional — a transient
-                        # store failure (DB down, connection dropped, etc.)
-                        # must degrade to the legacy session_id-as-thread_id
-                        # behavior for this turn rather than blocking chat
-                        # delivery entirely. Do NOT set
-                        # session.metadata["conversation_id"]: leaving it
-                        # unset means the next turn retries lazy-creation
-                        # instead of referencing a conversation that was
-                        # never actually persisted.
-                        logger.exception(
-                            "Failed to create conversation for session=%s; "
-                            "falling back to session_id as thread_id for this turn",
-                            session.session_id,
-                        )
-                    else:
-                        conversation_id = new_conversation_id
-                        session.metadata["conversation_id"] = conversation_id
-                        conversation_just_created = True
-                        await self._send_message(
-                            websocket,
-                            {
-                                "type": "conversation_created",
-                                "conversation_id": conversation_id,
-                                "timestamp": datetime.now().isoformat(),
-                            },
-                        )
-                        await self._announce_conversation_update(websocket, session.user_id, conversation_id)
+                    conversation_id = await self._create_conversation(websocket, session)
+                    conversation_just_created = conversation_id is not None
                 thread_id = conversation_id if conversation_id is not None else session.session_id
             else:
                 thread_id = session.session_id
@@ -1063,6 +1034,39 @@ class WebSocketChatHandler:
                 finish=True,
             )
 
+    async def _create_conversation(self, websocket: WebSocket, session: ChatSession) -> Optional[str]:
+        """Create, attach and announce the conversation of ``session``'s first turn; ``None`` if the store failed.
+
+        Persistence is optional: on a store failure the turn uses ``session_id`` as its thread and the
+        next turn tries again. Done under the lock deletes take, so a delete-all that ran first leaves
+        the new conversation alone, and one that runs after removes it and detaches this tab.
+        """
+        conversation_id = str(uuid.uuid4())
+        async with self._user_lock(session.user_id):
+            try:
+                await self.conversation_store.create_conversation(conversation_id, session.user_id)
+            except Exception:
+                logger.exception(
+                    "Failed to create conversation for session=%s; "
+                    "falling back to session_id as thread_id for this turn",
+                    session.session_id,
+                )
+                return None
+            session.metadata["conversation_id"] = conversation_id
+            await self._send_bounded(
+                websocket,
+                {
+                    "type": "conversation_created",
+                    "conversation_id": conversation_id,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                _OWN_SEND_TIMEOUT_SECONDS,
+                log_errors=True,
+            )
+            if self._other_sessions(session.user_id, websocket):
+                await self._publish_conversation_update(websocket, session.user_id, conversation_id)
+        return conversation_id
+
     def in_progress(self, thread_id: str) -> bool:
         """Whether a chat turn is currently running for ``thread_id`` in this process."""
         return self._in_flight_threads.get(thread_id, 0) > 0
@@ -1073,17 +1077,70 @@ class WebSocketChatHandler:
             return []
         return [
             s.websocket
-            for s in self.session_manager.sessions_for_user(live.user_id)
-            if s.websocket is not live.origin
-            and s.websocket not in live.caught_up
-            and s.metadata.get("conversation_id") == conversation_id
+            for s in self._signed_in_sessions(live.user_id, excluding=live.origin)
+            if s.websocket not in live.caught_up and s.metadata.get("conversation_id") == conversation_id
         ]
 
     def _signed_in_as(self, websocket: WebSocket, user_id: Optional[str]) -> bool:
         """Whether ``websocket`` is, right now, a signed-in connection of ``user_id``."""
         if not user_id:
             return False
-        return any(s.websocket is websocket for s in self.session_manager.sessions_for_user(user_id))
+        return any(
+            s.websocket is websocket and self._still_signed_in(s)
+            for s in self.session_manager.sessions_for_user(user_id)
+        )
+
+    def _signed_in_sessions(self, user_id: str, excluding: Optional[WebSocket] = None) -> List[ChatSession]:
+        """The live sessions of ``user_id``, other than the one on ``excluding``, still signed in right now."""
+        return [
+            s
+            for s in self.session_manager.sessions_for_user(user_id)
+            if s.websocket is not excluding and self._still_signed_in(s)
+        ]
+
+    def _still_signed_in(self, session: ChatSession) -> bool:
+        """Whether ``session`` is still signed in; if its SSO session ended elsewhere, sign it out and tell it.
+
+        A shared SSO session can be logged out or expire through another connection, which leaves
+        this one's credentials in place until it next sends a chat. Told now, a tab following a turn
+        it will no longer be sent stops waiting for its answer.
+        """
+        if self._sso_session_alive(session):
+            return True
+        session.credentials = None
+        session.auth_handler = None
+        self._reset_artifacts(session)
+        self._spawn_background_task(self._send_auth_expired(session.websocket))
+        return False
+
+    async def _send_auth_expired(self, websocket: WebSocket) -> None:
+        try:
+            await self._send_bounded(
+                websocket,
+                {
+                    "type": "auth_expired",
+                    "message": "Your SSO session has expired. Please log in again.",
+                    "redirect_url": f"{self.config.chat_endpoint}/auth/sso/login",
+                    "timestamp": datetime.now().isoformat(),
+                },
+                _FOLLOWER_SEND_TIMEOUT_SECONDS,
+            )
+        except WebSocketError:
+            logger.debug("Could not tell a closed or stalled socket its SSO session expired")
+
+    def _sso_session_alive(self, session: ChatSession) -> bool:
+        credentials = session.credentials
+        if (
+            credentials is None
+            or credentials.auth_type != AuthType.SSO
+            or not self.sso_session_store
+            or not credentials.session_token
+        ):
+            return True
+        sso_session_id = _get_sso_session_store_class().validate_session_token(
+            credentials.session_token, self.config.sso_session_secret
+        )
+        return bool(sso_session_id) and self.sso_session_store.get_session(sso_session_id) is not None
 
     def _can_follow(self, live: _LiveTurn, websocket: WebSocket) -> bool:
         """Whether ``websocket`` is sent the frames of ``live``: its origin, or a signed-in tab of its user.
@@ -1146,7 +1203,7 @@ class WebSocketChatHandler:
         """The live sessions of ``user_id`` other than the one on ``websocket``."""
         if not user_id:
             return []
-        return [s for s in self.session_manager.sessions_for_user(user_id) if s.websocket is not websocket]
+        return self._signed_in_sessions(user_id, excluding=websocket)
 
     async def _send_to_other_sessions(
         self, user_id: Optional[str], websocket: WebSocket, frame: Dict[str, Any]
@@ -1162,8 +1219,13 @@ class WebSocketChatHandler:
 
         Returns each other socket with whether its active conversation was deleted.
         """
+        if not user_id:
+            return []
         sockets = []
-        for other in self._other_sessions(user_id, websocket):
+        # Not only signed-in ones: a tab signing in again on its socket keeps its conversation.
+        for other in self.session_manager.sessions_for_user(user_id):
+            if other.websocket is websocket:
+                continue
             active = other.metadata.get("conversation_id")
             detached = active is not None and (deleted is None or active in deleted)
             if detached:
@@ -1192,22 +1254,26 @@ class WebSocketChatHandler:
         # Read and sent under the lock deletes take: a summary read before a delete must not reach a
         # tab after that delete's notice, where it would put the conversation back in its list.
         async with self._user_lock(user_id):
-            try:
-                conversation = await self.conversation_store.get_conversation(conversation_id)
-            except Exception:
-                logger.warning("Could not read conversation_id=%s to update other tabs", conversation_id, exc_info=True)
-                return
-            if conversation is None:
-                return
-            await self._send_to_other_sessions(
-                user_id,
-                websocket,
-                {
-                    "type": "conversation_updated",
-                    "conversation": self._conversation_summary(conversation),
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
+            await self._publish_conversation_update(websocket, user_id, conversation_id)
+
+    async def _publish_conversation_update(self, websocket: WebSocket, user_id: str, conversation_id: str) -> None:
+        """``_announce_conversation_update`` for a caller that already holds the user's lock."""
+        try:
+            conversation = await self.conversation_store.get_conversation(conversation_id)
+        except Exception:
+            logger.warning("Could not read conversation_id=%s to update other tabs", conversation_id, exc_info=True)
+            return
+        if conversation is None:
+            return
+        await self._send_to_other_sessions(
+            user_id,
+            websocket,
+            {
+                "type": "conversation_updated",
+                "conversation": self._conversation_summary(conversation),
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
 
     @staticmethod
     def _turn_started_frame(conversation_id: str, live: _LiveTurn) -> Dict[str, Any]:
@@ -1969,6 +2035,7 @@ class WebSocketChatHandler:
         message: str,
         *,
         conversation_id: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> None:
         """Send a ``conversation_error`` envelope for conversation_* message handlers.
 
@@ -1976,6 +2043,7 @@ class WebSocketChatHandler:
         contract so the client can branch on ``code`` (e.g.
         ``conversation_persistence_disabled``, ``conversation_not_found``,
         ``conversation_history_unavailable``) rather than parsing free text.
+        Pass ``timeout`` when a user or conversation lock is held (see ``_send_bounded``).
         """
         payload: Dict[str, Any] = {
             "type": "conversation_error",
@@ -1985,7 +2053,10 @@ class WebSocketChatHandler:
         }
         if conversation_id is not None:
             payload["conversation_id"] = conversation_id
-        await self._send_message(websocket, payload)
+        if timeout is None:
+            await self._send_message(websocket, payload)
+        else:
+            await self._send_bounded(websocket, payload, timeout, log_errors=True)
 
     @staticmethod
     def _format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -2178,22 +2249,29 @@ class WebSocketChatHandler:
             )
             return
 
-        conversations = await self.conversation_store.list_conversations(session.user_id, limit=limit, offset=offset)
-        # Project down to the documented WS shape ({id, title, updated_at,
-        # message_count}) rather than forwarding the full store row —
-        # user_id is redundant (always the caller's own id), and
-        # created_at/metadata/is_archived aren't used by the client and
-        # needlessly widen the response payload/surface area.
-        projected = [self._conversation_summary(c) for c in conversations]
+        # Read and sent under the lock deletes take: a list read before a delete must not reach the
+        # tab after that delete's notice, where it would replace the roster with the deleted entry.
+        async with self._user_lock(session.user_id):
+            conversations = await self.conversation_store.list_conversations(
+                session.user_id, limit=limit, offset=offset
+            )
+            # Project down to the documented WS shape ({id, title, updated_at,
+            # message_count}) rather than forwarding the full store row —
+            # user_id is redundant (always the caller's own id), and
+            # created_at/metadata/is_archived aren't used by the client and
+            # needlessly widen the response payload/surface area.
+            projected = [self._conversation_summary(c) for c in conversations]
 
-        await self._send_message(
-            websocket,
-            {
-                "type": "conversation_list",
-                "conversations": projected,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
+            await self._send_bounded(
+                websocket,
+                {
+                    "type": "conversation_list",
+                    "conversations": projected,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                _OWN_SEND_TIMEOUT_SECONDS,
+                log_errors=True,
+            )
 
     async def _handle_conversation_new(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_new`` request — detach from any active conversation.
@@ -2232,7 +2310,11 @@ class WebSocketChatHandler:
             # ids it doesn't own.
             if conversation is None or conversation.get("user_id") != session.user_id:
                 await self._send_conversation_error(
-                    websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+                    websocket,
+                    "conversation_not_found",
+                    "Conversation not found",
+                    conversation_id=conversation_id,
+                    timeout=_OWN_SEND_TIMEOUT_SECONDS,
                 )
                 return
 
@@ -2252,6 +2334,7 @@ class WebSocketChatHandler:
                             "conversation_history_unavailable",
                             "This conversation's message history is unavailable",
                             conversation_id=conversation_id,
+                            timeout=_OWN_SEND_TIMEOUT_SECONDS,
                         )
                         return
                     # A brand-new conversation (e.g. created via REST POST, or the
@@ -2329,7 +2412,11 @@ class WebSocketChatHandler:
             conversation = await self.conversation_store.get_conversation(conversation_id)
             if conversation is None or conversation.get("user_id") != session.user_id:
                 await self._send_conversation_error(
-                    websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
+                    websocket,
+                    "conversation_not_found",
+                    "Conversation not found",
+                    conversation_id=conversation_id,
+                    timeout=_OWN_SEND_TIMEOUT_SECONDS,
                 )
                 return
 

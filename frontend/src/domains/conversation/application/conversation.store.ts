@@ -315,6 +315,9 @@ export class ConversationStore {
     }
 
     const removesOpen = this.#removesOpenConversation(event)
+    // On New chat the server holds no conversation for this tab: a detach there could land after the
+    // chat in flight has created one, leaving the server and this tab on different conversations.
+    const onNewChat = this.#roster.awaitingIdForFirstTurn && (this.#requestedId ?? null) === null
     this.#roster = reconcileRoster(this.#roster, event, this.#options.clock.now())
 
     // The server has detached this tab from it, like a new chat, and nothing more comes for it: a
@@ -323,7 +326,7 @@ export class ConversationStore {
       this.#roster = awaitFirstTurnId(this.#roster)
       this.#requestedId = null
       // A deleted open that had not loaded yet leaves the server on the previous one, so detach it too.
-      if (this.#ready()) {
+      if (this.#ready() && !onNewChat) {
         this.#options.gateway.create()
       }
     }
