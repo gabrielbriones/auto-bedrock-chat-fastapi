@@ -254,7 +254,7 @@ describe('ConversationStore mutations', () => {
     expect(store.acceptsLoadedConversation(id('c'))).toBe(true)
   })
 
-  it('detaches the server again when everything is deleted after the new chat got its id', () => {
+  it('goes back to a new chat when everything is deleted after the new chat got its id', () => {
     const { store, gateway } = createHarness()
     gateway.emit(anEvent.listed([aConversation('a')]))
     store.startNew()
@@ -263,9 +263,45 @@ describe('ConversationStore mutations', () => {
 
     gateway.emit(anEvent.allDeleted(1))
 
-    expect(gateway.methods()).toContain('create')
+    expect(gateway.methods()).not.toContain('create')
     expect(store.getSnapshot().awaitingId).toBe(true)
     expect(store.acceptsLoadedConversation(id('c'))).toBe(false)
+  })
+
+  // The server detached this tab before it sent the notice. A chat sent in between has already
+  // created a replacement there, and a detach sent on the notice would silently clear it.
+  it.each([
+    ['one', anEvent.deleted('a')],
+    ['bulk', anEvent.bulkDeleted(['a'], true)],
+    ['all', anEvent.allDeleted(1)],
+  ])('sends no detach of its own when %s delete removes the conversation it has open', (_kind, event) => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a')]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    gateway.calls.length = 0
+
+    gateway.emit(event)
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+    gateway.emit(anEvent.created('c'))
+    expect(store.getSnapshot().activeId).toBe(id('c'))
+    expect(store.acceptsLoadedConversation(id('c'))).toBe(true)
+  })
+
+  it('sends no detach when the shown conversation is deleted together with an outstanding open', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    store.open(id('b'))
+    gateway.calls.length = 0
+
+    gateway.emit(anEvent.bulkDeleted(['a', 'b'], true))
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
   })
 })
 

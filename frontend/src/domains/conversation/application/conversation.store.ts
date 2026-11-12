@@ -315,9 +315,7 @@ export class ConversationStore {
     }
 
     const removesOpen = this.#removesOpenConversation(event)
-    // On New chat the server holds no conversation for this tab: a detach there could land after the
-    // chat in flight has created one, leaving the server and this tab on different conversations.
-    const onNewChat = this.#roster.awaitingIdForFirstTurn && (this.#requestedId ?? null) === null
+    const serverStillOnShown = this.#leavesServerOnShownConversation(event)
     this.#roster = reconcileRoster(this.#roster, event, this.#options.clock.now())
 
     // The server has detached this tab from it, like a new chat, and nothing more comes for it: a
@@ -325,8 +323,10 @@ export class ConversationStore {
     if (removesOpen) {
       this.#roster = awaitFirstTurnId(this.#roster)
       this.#requestedId = null
-      // A deleted open that had not loaded yet leaves the server on the previous one, so detach it too.
-      if (this.#ready() && !onNewChat) {
+      // Only then is there anything left to detach. In every other case the server detached this
+      // tab before it sent the notice, and a detach sent now could land after a chat sent since has
+      // created its conversation, leaving the server and this tab on different ones.
+      if (this.#ready() && serverStillOnShown) {
         this.#options.gateway.create()
       }
     }
@@ -359,6 +359,26 @@ export class ConversationStore {
           (this.#requestedId ?? null) !== null ||
           this.#roster.awaitingIdForFirstTurn
         )
+      default:
+        return false
+    }
+  }
+
+  // A deleted open that had not loaded yet: the server never switched to it, so it is still on the
+  // conversation shown before, unless that one was deleted with it.
+  #leavesServerOnShownConversation(event: ConversationEvent): boolean {
+    const requested = this.#requestedId ?? null
+    const shown = this.#roster.activeId
+
+    if (requested === null || shown === null || requested === shown) {
+      return false
+    }
+
+    switch (event.kind) {
+      case 'deleted':
+        return event.id !== shown
+      case 'bulk-deleted':
+        return !event.deletedIds.includes(shown)
       default:
         return false
     }

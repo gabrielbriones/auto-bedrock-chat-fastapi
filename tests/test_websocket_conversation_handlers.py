@@ -576,6 +576,8 @@ class _LiveTurnHarness:
         ws = _new_ws()
         ws.close = AsyncMock()
         await self.manager.create_session(ws, user_id=user_id, is_authenticated=verified)
+        if verified:
+            (await self.manager.get_session(ws)).mark_verified()
         if conversation_id is not None:
             (await self.manager.get_session(ws)).metadata["conversation_id"] = conversation_id
         return ws
@@ -875,8 +877,9 @@ async def test_title_and_rename_reach_every_tab_of_the_user():
         stranger = await harness.connect("bob")
         harness.handler._build_title_llm_client = lambda: None
 
+        created_by = websocket_handler._LiveTurn(origin=sender, user_id="alice", user_message="Tune L2", started_at="")
         await harness.handler._generate_and_apply_title(
-            sender, "conv-1", [{"role": "user", "content": "Tune L2"}], verified_user_id="alice"
+            sender, "conv-1", [{"role": "user", "content": "Tune L2"}], turn=created_by
         )
         await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
 
@@ -1330,6 +1333,7 @@ async def test_tab_whose_sso_session_ended_elsewhere_is_told_to_sign_in_instead_
             token = sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
             session = await harness.manager.get_session(tabs[name])
             session.credentials = Credentials(auth_type=AuthType.SSO, session_token=token)
+            session.mark_verified()
             if name == "ended":
                 # Logged out in another tab sharing it, or expired: this socket still holds its credentials.
                 sso_store.delete_session(sso_session_id)
@@ -1365,6 +1369,7 @@ async def test_tab_whose_sso_session_ended_elsewhere_is_still_detached_from_a_de
         token = sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
         ended_session = await harness.manager.get_session(ended)
         ended_session.credentials = Credentials(auth_type=AuthType.SSO, session_token=token)
+        ended_session.mark_verified()
         # Signing in again on this socket keeps its conversation, so a stale one would take its next chat.
         sso_store.delete_session(sso_session_id)
 
@@ -1400,6 +1405,7 @@ async def test_follower_whose_sso_session_ends_mid_turn_is_told_to_sign_in_inste
         token = sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
         follower_session = await harness.manager.get_session(follower)
         follower_session.credentials = Credentials(auth_type=AuthType.SSO, session_token=token)
+        follower_session.mark_verified()
         harness.script([_CALLING])
 
         turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
@@ -1676,6 +1682,161 @@ async def test_acknowledgement_reaches_its_tab_before_a_later_change_from_anothe
         await asyncio.wait_for(asyncio.gather(first, later), 1)
 
         assert delivered[:2] == [acknowledgement, notice]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_unverified_credentials_installed_after_a_logout_do_not_sign_the_connection_back_in():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    harness.handler.config.auth_verification_endpoint = None
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        tab = await harness.connect("alice", "conv-1")
+        await harness.handler._handle_logout(tab, {})
+        # Nothing verifies this key: any non-empty one is accepted as credentials for tool calls.
+        await harness.handler._handle_auth_message(tab, {"auth_type": "api_key", "api_key": "anything"})
+        assert _types(tab) == ["logout_success", "auth_configured"]
+        harness.script([])
+
+        await harness.handler._handle_chat_message(sender, {"message": "private"})
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+
+        assert _types(tab) == ["logout_success", "auth_configured"]
+        assert not (await harness.manager.get_session(tab)).signed_in
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_unverified_credentials_replacing_verified_ones_sign_the_connection_out():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    harness.handler.config.auth_verification_endpoint = None
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        tab = await harness.connect("alice", "conv-1")
+
+        await harness.handler._handle_auth_message(tab, {"auth_type": "api_key", "api_key": "anything"})
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+
+        assert _types(tab) == ["auth_configured"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("vouched_for", ["alice", "bob"])
+async def test_replacement_credentials_keep_the_connection_signed_in_only_if_verified_as_the_same_user(vouched_for):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    harness.handler.config.auth_verification_endpoint = "https://app.example/verify"
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        tab = await harness.connect("alice", "conv-1")
+        verify = AsyncMock(return_value=(True, "ok", {"user_id": vouched_for}))
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(websocket_handler.AuthenticationHandler, "verify_credentials_remote", verify)
+            await harness.handler._handle_auth_message(tab, {"auth_type": "bearer_token", "token": "t"})
+
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+
+        expected = ["auth_configured", "conversation_renamed"] if vouched_for == "alice" else ["auth_configured"]
+        assert _types(tab) == expected
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("change", ["switch_user", "logout"])
+async def test_origin_that_stops_being_the_sender_mid_turn_gets_no_more_of_it_while_followers_do(change):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    _, bobs_token = _sso_handler(harness, "bob")
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        follower = await harness.connect("alice", "conv-1")
+        harness.script([_CALLING, _TOOL_START])
+
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "validate job"}))
+        await harness.wait_step()
+        before = len(_sent(origin))
+        # The message loop keeps reading while the turn runs, so this arrives in the middle of it.
+        if change == "switch_user":
+            await harness.handler._handle_auth_message(origin, {"auth_type": "sso", "session_token": bobs_token})
+            reply = "auth_configured"
+        else:
+            await harness.handler._handle_logout(origin, {})
+            reply = "logout_success"
+        harness.advance()
+        await harness.wait_step()
+        harness.advance()
+        await asyncio.wait_for(turn, 1)
+        await asyncio.gather(*harness.handler._background_tasks)
+
+        # Alice's tool call and answer are not for whoever holds the socket now.
+        assert _types(origin)[before:] == [reply]
+        assert _types(follower)[-3:] == ["tool_call_start", "ai_response", "conversation_updated"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("verified", [True, False])
+async def test_title_of_a_conversation_is_not_sent_to_its_tab_once_that_tab_is_someone_else(verified):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    _, bobs_token = _sso_handler(harness, "bob")
+    llm = _GatedTitleLLM()
+    harness.handler._build_title_llm_client = lambda: llm
+    try:
+        origin = await harness.connect("alice", verified=verified)
+        alices_tab = await harness.connect("alice")
+        harness.script([])
+        await harness.handler._handle_chat_message(origin, {"message": "hello"})
+        await asyncio.wait_for(llm.started.wait(), 1)
+
+        await harness.handler._handle_auth_message(origin, {"auth_type": "sso", "session_token": bobs_token})
+        llm.release.set()
+        await asyncio.gather(*harness.handler._background_tasks)
+
+        assert _frames(origin, "conversation_titled") == []
+        # Alice's other tab still hears of it, if it was Alice (verified) who created it.
+        assert len(_frames(alices_tab, "conversation_titled")) == (1 if verified else 0)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_replay_to_a_tab_that_signs_out_while_the_history_goes_out_stops_there():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        origin = await harness.connect("alice", "conv-1")
+        harness.script([_CALLING, _TOOL_START])
+        turn = asyncio.create_task(harness.handler._handle_chat_message(origin, {"message": "private"}))
+        await harness.wait_step()
+        loading = await harness.connect("alice")
+
+        # Its shared session is logged out elsewhere while it accepts the history.
+        async def sign_out_on_history(frame):
+            if frame["type"] == "conversation_loaded":
+                (await harness.manager.get_session(loading)).credentials = None
+
+        loading.send_json = AsyncMock(side_effect=sign_out_on_history)
+        await harness.handler._handle_conversation_load(loading, {"conversation_id": "conv-1"})
+        harness.advance()
+        await harness.wait_step()
+        harness.advance()
+        await asyncio.wait_for(turn, 1)
+
+        assert _types(loading) == ["conversation_loaded"]
     finally:
         await harness.handler.shutdown()
         await store.close()

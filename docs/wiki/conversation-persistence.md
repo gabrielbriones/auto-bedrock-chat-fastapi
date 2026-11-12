@@ -207,6 +207,15 @@ them, so no tab needs a refresh:
   open connection (`auth` with `auth_type: "sso"`) makes its identity the verified
   one, whatever it claimed before; if that is a different user, the connection is
   detached from the conversation it had open.
+- "Signed in" means the connection still holds the credentials its `user_id` was
+  verified with. A logout or an expiry ends it, and so does an `auth` frame that
+  replaces those credentials, unless the new ones are verified as the same user
+  (SSO, or the verification endpoint returning that user's id). Credentials nothing
+  verifies, such as an API key with no verification endpoint configured, never
+  sign a connection in.
+- A connection that stops being the user it sent a turn as (it signs out, or signs
+  in as someone else, while the turn runs) is sent nothing more of that turn or of
+  the title of the conversation it created; the user's other connections still are.
 - A connection that has signed out is told nothing, but is still detached from a
   deleted conversation, so that signing in again on it does not send its next
   `chat` into that conversation.

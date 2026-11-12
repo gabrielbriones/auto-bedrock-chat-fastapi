@@ -45,10 +45,26 @@ class ChatSession:
     # Authentication
     credentials: Credentials = field(default_factory=Credentials)
     auth_handler: Optional[AuthenticationHandler] = field(default=None, init=False)
+    # The credentials ``user_id`` was verified with (see ``signed_in``).
+    verified_credentials: Optional[Credentials] = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         """Initialize auth handler after dataclass initialization"""
         self.auth_handler = AuthenticationHandler(self.credentials)
+
+    def mark_verified(self) -> None:
+        """Record that the credentials held now are the ones that verified ``user_id``."""
+        self.is_authenticated = True
+        self.verified_credentials = self.credentials
+
+    @property
+    def signed_in(self) -> bool:
+        """Whether this connection still holds the credentials its ``user_id`` was verified with.
+
+        ``is_authenticated`` alone outlives a logout or an expiry, and says nothing about
+        credentials installed since: replaced ones count only once they are verified as the same user.
+        """
+        return self.is_authenticated and self.credentials is not None and self.credentials is self.verified_credentials
 
     def get_duration(self) -> timedelta:
         """Get session duration"""
@@ -270,12 +286,7 @@ class ChatSessionManager:
 
     def sessions_for_user(self, user_id: str) -> List[ChatSession]:
         """The live, still signed-in sessions of ``user_id``, one per connection."""
-        return [
-            session
-            for session in self.connections_for_user(user_id)
-            # Logout and auth expiry clear credentials; is_authenticated only says how user_id was set.
-            if session.is_authenticated and session.credentials is not None
-        ]
+        return [session for session in self.connections_for_user(user_id) if session.signed_in]
 
     async def update_session_user_id(self, session_id: str, user_id: str, is_authenticated: bool = True) -> bool:
         """Update the user_id for an existing session.
@@ -314,6 +325,9 @@ class ChatSessionManager:
                 del self._user_sessions[old_user_id]
 
         # Update session user_id
+        if old_user_id != user_id or not is_authenticated:
+            # Whatever verified the previous identity says nothing about this one.
+            session.verified_credentials = None
         session.user_id = user_id
         session.is_authenticated = is_authenticated
 

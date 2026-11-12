@@ -90,6 +90,9 @@ class _LiveTurn:
     user_id: Optional[str]
     user_message: str
     started_at: str
+    # The sender's session and the user id it had, verified or not, when the turn started.
+    sender: Optional[Any] = None
+    sender_user_id: Optional[str] = None
     # The id init_turn gives the turn's user message, so history can be cut at the turn even once answered.
     user_message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     # Progress frames so far; consecutive ``typing`` frames are merged since each replaces the last.
@@ -333,6 +336,8 @@ class WebSocketChatHandler:
                     session.credentials = sso_credentials
                     session.auth_handler = sso_auth_handler
                     session.metadata.update(sso_metadata)
+                    if session.user_id:
+                        session.mark_verified()
 
                     # Send auth_configured message
                     await self._send_message(
@@ -572,6 +577,7 @@ class WebSocketChatHandler:
                 if not sso_session:
                     # SSO session expired — notify client and clear credentials
                     session.credentials = None
+                    session.verified_credentials = None
                     session.auth_handler = None
                     self._reset_artifacts(session)
                     await self._send_message(
@@ -605,6 +611,7 @@ class WebSocketChatHandler:
                             )
                         if refreshed_session is None:
                             session.credentials = None
+                            session.verified_credentials = None
                             session.auth_handler = None
                             self._reset_artifacts(session)
                             await self._send_message(
@@ -800,8 +807,10 @@ class WebSocketChatHandler:
                         and self._can_follow(running, websocket)
                     ):
                         refusal += [self._turn_started_frame(conversation_id, running), *running.frames]
-                    # Bounded: the running turn's lock is held, and this tab must not keep it.
-                    await self._send_to_viewers([websocket], refusal)
+                    # Bounded: the running turn's lock is held, and this tab must not keep it. The
+                    # replay stops if the tab signs out while it is being sent.
+                    await self._send_to_viewers([websocket], refusal[:1])
+                    await self._send_to_viewers([websocket], refusal[1:], user_id=running.user_id)
             if running is not None:
                 return
             if started is not None:
@@ -949,6 +958,7 @@ class WebSocketChatHandler:
             # already produced a reply reacting to the tool failure.
             if graph_metadata.get("auth_expired"):
                 session.credentials = None
+                session.verified_credentials = None
                 session.auth_handler = None
                 self._reset_artifacts(session)
                 try:
@@ -990,7 +1000,7 @@ class WebSocketChatHandler:
                         {"role": "user", "content": user_message},
                         {"role": "assistant", "content": content},
                     ],
-                    verified_user_id=live_turn.user_id if live_turn is not None else None,
+                    turn=live_turn,
                 )
 
             # Token usage is now recorded inside the graph itself by
@@ -1123,6 +1133,7 @@ class WebSocketChatHandler:
         if self._sso_session_alive(session):
             return True
         session.credentials = None
+        session.verified_credentials = None
         session.auth_handler = None
         self._reset_artifacts(session)
         self._spawn_background_task(self._send_auth_expired(session.websocket))
@@ -1163,7 +1174,19 @@ class WebSocketChatHandler:
         Any other connection (a ``user_id`` that was never verified, a signed-out tab) must not be
         told that the frames follow, or it would wait for an answer that never comes.
         """
-        return websocket is live.origin or self._signed_in_as(websocket, live.user_id)
+        if websocket is live.origin:
+            return self._origin_is_still_sender(live)
+        return self._signed_in_as(websocket, live.user_id)
+
+    def _origin_is_still_sender(self, turn: _LiveTurn) -> bool:
+        """Whether the socket that started ``turn`` is still the user it started it as.
+
+        It can sign out, or sign in as someone else, while its turn runs; what the turn sends
+        from then on is the earlier user's.
+        """
+        if turn.sender is not None and turn.sender.user_id != turn.sender_user_id:
+            return False
+        return turn.user_id is None or self._signed_in_as(turn.origin, turn.user_id)
 
     async def _send_bounded(
         self, websocket: WebSocket, frame: Dict[str, Any], timeout: float, log_errors: bool = False
@@ -1335,6 +1358,8 @@ class WebSocketChatHandler:
             user_id=self._verified_user_id(websocket, session),
             user_message=user_message,
             started_at=now,
+            sender=session,
+            sender_user_id=session.user_id,
         )
         live.record(
             {"type": "typing", "message": _THINKING_MESSAGE, "timestamp": now, "conversation_id": conversation_id}
@@ -1373,6 +1398,9 @@ class WebSocketChatHandler:
             await self._send_to_viewers(viewers, [frame], user_id=turn.user_id)
             # It reloaded the conversation once the answer was checkpointed, so its history has it.
             if origin in turn.caught_up:
+                return
+            # No longer the user that sent it: the rest of the turn is not this connection's to see.
+            if not self._origin_is_still_sender(turn):
                 return
             # Bounded like a follower's: the lock is held, and a load waiting for it holds the user's.
             await self._send_bounded(origin, frame, _OWN_SEND_TIMEOUT_SECONDS, log_errors=log_errors)
@@ -2171,12 +2199,10 @@ class WebSocketChatHandler:
         websocket: WebSocket,
         conversation_id: str,
         messages: List[Dict[str, Any]],
-        verified_user_id: Optional[str] = None,
+        turn: Optional[_LiveTurn] = None,
     ) -> None:
         """Start auto-titling for ``conversation_id``, tracked so a rename can cancel it."""
-        task = self._spawn_background_task(
-            self._generate_and_apply_title(websocket, conversation_id, messages, verified_user_id)
-        )
+        task = self._spawn_background_task(self._generate_and_apply_title(websocket, conversation_id, messages, turn))
         self._pending_title_tasks[conversation_id] = task
 
         def _forget(t: "asyncio.Task[Any]") -> None:
@@ -2233,13 +2259,14 @@ class WebSocketChatHandler:
         websocket: WebSocket,
         conversation_id: str,
         messages: List[Dict[str, Any]],
-        verified_user_id: Optional[str] = None,
+        turn: Optional[_LiveTurn] = None,
     ) -> None:
         """Fire-and-forget: title a freshly created conversation and notify the client.
 
-        ``verified_user_id`` is the identity verified when the turn that created it started; the
-        owner's other tabs hear of the title only if it is theirs. It is not checked again here,
-        since the tab that sent the turn may have gone by now.
+        ``turn`` is the turn that created it. The owner's other tabs hear of the title only if
+        the identity verified when that turn started is theirs; it is not verified again here,
+        since the tab that sent the turn may have gone by now. That tab itself is told only
+        while it is still the user it sent the turn as.
 
         Runs after the ``ai_response`` has already been sent so
         title-generation latency never delays the chat reply. Failures are
@@ -2276,9 +2303,10 @@ class WebSocketChatHandler:
                     "title": title,
                     "timestamp": datetime.now().isoformat(),
                 }
-                if owner and owner == verified_user_id:
+                if turn is not None and owner and owner == turn.user_id:
                     await self._send_to_other_sessions(owner, websocket, titled)
-                await self._send_to_viewers([websocket], [titled], timeout=_OWN_SEND_TIMEOUT_SECONDS)
+                if turn is None or self._origin_is_still_sender(turn):
+                    await self._send_to_viewers([websocket], [titled], timeout=_OWN_SEND_TIMEOUT_SECONDS)
         except Exception:
             logger.warning("Conversation auto-titling failed for conversation_id=%s", conversation_id, exc_info=True)
 
@@ -2453,7 +2481,13 @@ class WebSocketChatHandler:
                 }
                 replay = [] if live is None else [self._turn_started_frame(conversation_id, live), *live.frames]
                 # Bounded like a follower's: both locks are held, so a tab that stops reading must not keep them.
-                await self._send_to_viewers([websocket], [loaded, *replay], timeout=_OWN_SEND_TIMEOUT_SECONDS)
+                await self._send_to_viewers([websocket], [loaded], timeout=_OWN_SEND_TIMEOUT_SECONDS)
+                if live is not None:
+                    # Checked before every frame, like the live ones: the tab can sign out while
+                    # the history is going out. (No user to check for an unverified sender's own turn.)
+                    await self._send_to_viewers(
+                        [websocket], replay, user_id=live.user_id, timeout=_OWN_SEND_TIMEOUT_SECONDS
+                    )
 
     async def _handle_conversation_delete(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_delete`` request — remove one conversation's metadata row."""
@@ -2768,6 +2802,8 @@ class WebSocketChatHandler:
 
             # Initialize user_info (will be populated by verification endpoint if configured)
             user_info = None
+            # The user id the verification endpoint vouched for with these credentials, if any.
+            verified_user_id = None
 
             # Verify credentials against remote endpoint if configured
             if self.config.auth_verification_endpoint:
@@ -2803,18 +2839,23 @@ class WebSocketChatHandler:
                     return
 
                 # Extract user_id from verification response if available
-                if user_info and not (session.user_id and session.is_authenticated):
+                if user_info:
                     # Try common user_id fields: user_id, sub, email, username
-                    extracted_user_id = (
+                    verified_user_id = (
                         user_info.get("user_id")
                         or user_info.get("sub")
                         or user_info.get("email")
                         or user_info.get("username")
                         or user_info.get("user")
                     )
-                    # A claimed id the endpoint confirms becomes verified; a different one is kept as it was.
-                    if extracted_user_id and session.user_id in (None, "", extracted_user_id):
-                        await self.session_manager.update_session_user_id(session.session_id, extracted_user_id)
+                    # A claimed id the endpoint confirms becomes verified; a different one is kept
+                    # as it was, and the connection is then not signed in as it (see below).
+                    if (
+                        verified_user_id
+                        and session.user_id in (None, "", verified_user_id)
+                        and not (session.user_id and session.is_authenticated)
+                    ):
+                        await self.session_manager.update_session_user_id(session.session_id, verified_user_id)
                         # Refresh session reference after update
                         session = await self.session_manager.get_session(websocket)
 
@@ -2823,9 +2864,15 @@ class WebSocketChatHandler:
                     session.metadata["verified_user_info"] = user_info
                     logger.debug("Session metadata updated with verified_user_info")
 
-            # Store credentials in session
+            # Store credentials in session. They replace the ones that verified this connection's
+            # user, so it stays signed in as that user (and keeps getting the user's broadcasts)
+            # only if the endpoint vouched for the same user with them.
             session.credentials = credentials
             session.auth_handler = auth_handler
+            if verified_user_id and session.is_authenticated and session.user_id == verified_user_id:
+                session.mark_verified()
+            else:
+                session.verified_credentials = None
 
             # Extract display name for UI
             display_name = None
@@ -2956,6 +3003,7 @@ class WebSocketChatHandler:
 
             # Clear credentials from session
             session.credentials = None
+            session.verified_credentials = None
             session.auth_handler = None
 
             logger.info(f"User logged out from session {session.session_id}")
@@ -3132,6 +3180,11 @@ class WebSocketChatHandler:
         chat_session.credentials = user_info_dict["credentials"]
         chat_session.auth_handler = user_info_dict["auth_handler"]
         chat_session.metadata.update(user_info_dict["metadata"])
+        # Replaced credentials count as signed in only when they verified this very user.
+        if verified_user_id and chat_session.user_id == verified_user_id:
+            chat_session.mark_verified()
+        else:
+            chat_session.verified_credentials = None
 
         display_name = user_info_dict["display_name"]
         logger.info(
