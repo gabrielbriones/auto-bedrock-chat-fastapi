@@ -1,5 +1,6 @@
 """Unit tests for the shared checkpoint -> client history projection."""
 
+from autolangchat.defaults import ARTIFACT_MARKER_ENTRY_KEY, ARTIFACT_MARKER_ORIGINAL_KEY
 from autolangchat.history import format_history_messages
 
 
@@ -46,3 +47,30 @@ def test_messages_without_metadata_get_null_id_and_timestamp():
     assert only["message_id"] is None
     assert only["timestamp"] is None
     assert only["metadata"] == {}
+
+
+def _spilled_user_message(**extra):
+    marker = {"artifact_handle": "h1", "source": "user_message", "size_bytes": 12_345, "preview": "JOB_ID = 1"}
+    return {"role": "user", "content": str(marker), ARTIFACT_MARKER_ENTRY_KEY: True, **extra}
+
+
+def test_spilled_user_message_shows_what_was_sent_not_the_marker():
+    (only,) = format_history_messages([_spilled_user_message(**{ARTIFACT_MARKER_ORIGINAL_KEY: "JOB_ID = 1\nfull"})])
+
+    assert only["content"] == "JOB_ID = 1\nfull"
+    assert ARTIFACT_MARKER_ORIGINAL_KEY not in only
+
+
+def test_spilled_user_message_without_the_original_shows_the_preview():
+    (only,) = format_history_messages([_spilled_user_message()])
+
+    assert only["content"].startswith("JOB_ID = 1\n\n")
+    assert "12,345 bytes" in only["content"] and "artifact_handle" not in only["content"]
+
+
+def test_unparseable_marker_falls_back_to_the_stored_content():
+    message = {"role": "user", "content": "not a marker", ARTIFACT_MARKER_ENTRY_KEY: True}
+
+    (only,) = format_history_messages([message])
+
+    assert only["content"] == "not a marker"

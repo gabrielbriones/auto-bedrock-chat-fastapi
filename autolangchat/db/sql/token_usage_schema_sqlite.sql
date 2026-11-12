@@ -8,6 +8,10 @@
 --     client-side by the caller (see `SQLiteTokenUsageStore.record_turn`).
 --   * `turn_ts` is a TEXT column holding an ISO-8601 UTC timestamp string,
 --     matching the `created_at` convention used by the `feedback` table.
+--   * SQLite lacks `ADD COLUMN IF NOT EXISTS`, so `cache_read_tokens` and
+--     `cache_write_tokens` are defined only in `token_usage_sqlite._ADDED_COLUMNS`
+--     and added (to fresh and pre-existing tables alike) by
+--     `SQLiteTokenUsageStore._migrate_columns_locked`.
 --
 -- All statements are idempotent (`IF NOT EXISTS`) and safe to re-run.
 -- ---------------------------------------------------------------------------

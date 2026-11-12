@@ -39,15 +39,18 @@ export const anEvent = {
     title,
   }),
   listed: (items: readonly Conversation[]): ConversationEvent => ({ kind: 'listed', items }),
+  updated: (conversation: Conversation): ConversationEvent => ({ kind: 'updated', conversation }),
   loaded: (
     name: string,
     roles: readonly string[] = [],
     inProgress: boolean | null = null,
+    live?: boolean,
   ): ConversationEvent => ({
     kind: 'loaded',
     id: id(name),
     messages: roles.map((role) => ({ role, toolCallCount: 0 })),
     inProgress,
+    ...(live === undefined ? {} : { live }),
   }),
   renamed: (name: string, title: string): ConversationEvent => ({
     kind: 'renamed',
@@ -59,6 +62,12 @@ export const anEvent = {
     kind: 'bulk-deleted',
     deletedIds: names.map(id),
     activeDeleted,
+  }),
+  bulkDeletedElsewhere: (names: readonly string[], activeDeleted = false): ConversationEvent => ({
+    kind: 'bulk-deleted',
+    deletedIds: names.map(id),
+    activeDeleted,
+    fromOtherTab: true,
   }),
   allDeleted: (count: number): ConversationEvent => ({ kind: 'all-deleted', count }),
   error: (code: string, message = 'nope', name: string | null = null): ConversationEvent => ({

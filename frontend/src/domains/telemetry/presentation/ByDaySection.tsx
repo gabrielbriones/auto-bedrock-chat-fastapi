@@ -30,6 +30,8 @@ const dailyColumns: readonly DataTableColumn<DailyUsageRow>[] = [
   { id: 'date', header: TELEMETRY_COPY.byDay.date, cell: (row) => row.date.toIso() },
   { id: 'input', header: TELEMETRY_COPY.byDay.input, cell: (row) => formatUsageNumber(row.tokens.input) },
   { id: 'output', header: TELEMETRY_COPY.byDay.output, cell: (row) => formatUsageNumber(row.tokens.output) },
+  { id: 'cache-read', header: TELEMETRY_COPY.byDay.cacheRead, cell: (row) => formatUsageNumber(row.tokens.cacheRead) },
+  { id: 'cache-write', header: TELEMETRY_COPY.byDay.cacheWrite, cell: (row) => formatUsageNumber(row.tokens.cacheWrite) },
   { id: 'turns', header: TELEMETRY_COPY.byDay.turns, cell: (row) => formatUsageNumber(row.turnCount) },
 ]
 

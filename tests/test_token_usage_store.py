@@ -4,13 +4,18 @@ Covers the SQLite ``TokenUsageStore``:
 
   (a) ``record_turn`` inserts a row that can be read back exactly;
   (b) a duplicate ``turn_id`` is silently ignored (idempotency) rather than
-      raising or double-counting.
+      raising or double-counting;
+  (e) ``cache_read_tokens``/``cache_write_tokens`` are persisted (default 0),
+      summed by the aggregate queries, and added to a pre-existing table
+      that lacks them by the idempotent migration run on ``open()``.
 
 And the Postgres ``TokenUsageStore`` (faked async connection layer, no live
 server in CI, mirroring the ``test_feedback_store_delete`` approach):
 
   (c) ``record_turn`` inserts a row via ``INSERT ... ON CONFLICT DO NOTHING``;
-  (d) a duplicate ``turn_id`` does not overwrite the existing row.
+  (d) a duplicate ``turn_id`` does not overwrite the existing row;
+  (f) the cache-token columns round-trip through every query, and the
+      schema DDL carries ``ADD COLUMN IF NOT EXISTS`` migrations for them.
 
 Mirrors the ``load_module``-based import pattern used by
 ``tests/test_feedback_store_delete.py`` so these tests don't require the
@@ -18,6 +23,7 @@ heavy ``autolangchat`` package (and its ``langchain``/``langchain-aws``
 dependencies) to be importable.
 """
 
+import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -85,7 +91,8 @@ async def _open_sqlite_store():
 
 def _select_all(store):
     return store._conn.execute(
-        "SELECT id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts FROM token_usage"
+        "SELECT id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,"
+        " cache_read_tokens, cache_write_tokens FROM token_usage"
     ).fetchall()
 
 
@@ -113,8 +120,31 @@ async def test_record_turn_inserts_a_row():
                 120,
                 240,
                 "2026-07-08T12:00:00+00:00",
+                0,
+                0,
             )
         ]
+    finally:
+        await store.close()
+
+
+async def test_record_turn_persists_cache_token_counts():
+    store = await _open_sqlite_store()
+    try:
+        await store.record_turn(
+            turn_id="turn-1",
+            session_id="sess-1",
+            user_id="alice",
+            model_id="model-a",
+            input_tokens=1000,
+            output_tokens=50,
+            turn_ts=datetime(2026, 7, 8, tzinfo=timezone.utc),
+            cache_read_tokens=800,
+            cache_write_tokens=150,
+        )
+
+        rows = _select_all(store)
+        assert rows[0][7:] == (800, 150)
     finally:
         await store.close()
 
@@ -152,6 +182,8 @@ async def test_duplicate_turn_id_is_silently_ignored():
             input_tokens=10,
             output_tokens=20,
             turn_ts=ts,
+            cache_read_tokens=4,
+            cache_write_tokens=2,
         )
         # Same turn_id, different (bogus) counts — must be ignored, not
         # overwritten and not raise a duplicate-key error.
@@ -163,12 +195,113 @@ async def test_duplicate_turn_id_is_silently_ignored():
             input_tokens=999,
             output_tokens=999,
             turn_ts=ts,
+            cache_read_tokens=999,
+            cache_write_tokens=999,
         )
 
         rows = _select_all(store)
         assert len(rows) == 1
         assert rows[0][4] == 10
         assert rows[0][5] == 20
+        assert rows[0][7:] == (4, 2)
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# SQLite store — cache-token column migration
+# ---------------------------------------------------------------------------
+
+# ``token_usage`` DDL as shipped before the cache-token columns existed.
+_LEGACY_SQLITE_DDL = """
+    CREATE TABLE token_usage (
+        id            TEXT PRIMARY KEY,
+        session_id    TEXT NOT NULL,
+        user_id       TEXT,
+        model_id      TEXT NOT NULL,
+        input_tokens  INTEGER NOT NULL CHECK (input_tokens >= 0),
+        output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+        turn_ts       TEXT NOT NULL
+    );
+    INSERT INTO token_usage VALUES
+        ('legacy-1', 'sess-old', 'alice', 'model-a', 70, 30, '2026-06-30T08:00:00+00:00');
+"""
+
+
+def _columns(conn):
+    return [row[1] for row in conn.execute("PRAGMA table_info(token_usage)")]
+
+
+async def _open_legacy_sqlite_store(monkeypatch, init_schema=True):
+    """Open a store whose ``sqlite3.connect`` returns an in-memory DB that
+    already holds a legacy ``token_usage`` table (no cache-token columns)."""
+    legacy_conn = sqlite3.connect(":memory:", check_same_thread=False)
+    legacy_conn.executescript(_LEGACY_SQLITE_DDL)
+    legacy_conn.commit()
+    monkeypatch.setattr(token_usage_sqlite_mod.sqlite3, "connect", lambda *args, **kwargs: legacy_conn)
+    store = SQLiteTokenUsageStore(":memory:", init_schema=init_schema)
+    await store.open()
+    return store
+
+
+@pytest.mark.parametrize("init_schema", [True, False])
+async def test_open_migrates_legacy_table_missing_cache_columns(monkeypatch, init_schema):
+    store = await _open_legacy_sqlite_store(monkeypatch, init_schema=init_schema)
+    try:
+        assert {"cache_read_tokens", "cache_write_tokens"} <= set(_columns(store._conn))
+        # Pre-existing rows pick up the column default.
+        assert _select_all(store) == [
+            ("legacy-1", "sess-old", "alice", "model-a", 70, 30, "2026-06-30T08:00:00+00:00", 0, 0)
+        ]
+
+        await store.record_turn(
+            "t-new",
+            "sess-new",
+            "alice",
+            "model-a",
+            100,
+            10,
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+            cache_read_tokens=60,
+            cache_write_tokens=20,
+        )
+
+        assert await store.aggregate_by_model() == [
+            {
+                "model_id": "model-a",
+                "input_tokens": 170,
+                "output_tokens": 40,
+                "cache_read_tokens": 60,
+                "cache_write_tokens": 20,
+                "turn_count": 2,
+            }
+        ]
+        rows = await store.list_by_user("alice")
+        assert [(r["cache_read_tokens"], r["cache_write_tokens"]) for r in rows] == [(60, 20), (0, 0)]
+    finally:
+        await store.close()
+
+
+async def test_column_migration_is_idempotent(monkeypatch):
+    store = await _open_legacy_sqlite_store(monkeypatch)
+    try:
+        before = _columns(store._conn)
+        # Re-running against an already-migrated table must be a no-op
+        # rather than raising "duplicate column name".
+        SQLiteTokenUsageStore._migrate_columns_locked(store._conn)
+        assert _columns(store._conn) == before
+        assert before.count("cache_read_tokens") == 1
+        assert before.count("cache_write_tokens") == 1
+    finally:
+        await store.close()
+
+
+async def test_column_migration_skips_missing_table():
+    """``init_schema=False`` on a fresh DB: no table yet, nothing to migrate."""
+    store = SQLiteTokenUsageStore(":memory:", init_schema=False)
+    await store.open()
+    try:
+        assert _columns(store._conn) == []
     finally:
         await store.close()
 
@@ -182,9 +315,12 @@ async def _seed(store):
     ts1 = datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc)
     ts2 = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
     ts3 = datetime(2026, 7, 2, 9, 0, 0, tzinfo=timezone.utc)
-    await store.record_turn("t1", "sess-1", "alice", "model-a", 10, 20, ts1)
+    await store.record_turn("t1", "sess-1", "alice", "model-a", 10, 20, ts1, cache_read_tokens=4, cache_write_tokens=2)
+    # No cache counts supplied — both default to 0.
     await store.record_turn("t2", "sess-1", "alice", "model-b", 5, 5, ts2)
-    await store.record_turn("t3", "sess-2", "bob", "model-a", 100, 200, ts3)
+    await store.record_turn(
+        "t3", "sess-2", "bob", "model-a", 100, 200, ts3, cache_read_tokens=60, cache_write_tokens=30
+    )
     return ts1, ts2, ts3
 
 
@@ -199,6 +335,8 @@ async def test_list_by_user_returns_rows_newest_first():
                 "model_id": "model-b",
                 "input_tokens": 5,
                 "output_tokens": 5,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
                 "turn_ts": "2026-07-01T14:00:00+00:00",
             },
             {
@@ -206,6 +344,8 @@ async def test_list_by_user_returns_rows_newest_first():
                 "model_id": "model-a",
                 "input_tokens": 10,
                 "output_tokens": 20,
+                "cache_read_tokens": 4,
+                "cache_write_tokens": 2,
                 "turn_ts": "2026-07-01T10:00:00+00:00",
             },
         ]
@@ -253,8 +393,22 @@ async def test_aggregate_by_model_sums_and_counts_per_model():
         await _seed(store)
         rows = await store.aggregate_by_model()
         assert rows == [
-            {"model_id": "model-a", "input_tokens": 110, "output_tokens": 220, "turn_count": 2},
-            {"model_id": "model-b", "input_tokens": 5, "output_tokens": 5, "turn_count": 1},
+            {
+                "model_id": "model-a",
+                "input_tokens": 110,
+                "output_tokens": 220,
+                "cache_read_tokens": 64,
+                "cache_write_tokens": 32,
+                "turn_count": 2,
+            },
+            {
+                "model_id": "model-b",
+                "input_tokens": 5,
+                "output_tokens": 5,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "turn_count": 1,
+            },
         ]
     finally:
         await store.close()
@@ -269,8 +423,22 @@ async def test_aggregate_by_day_buckets_by_utc_date():
             datetime(2026, 7, 3, tzinfo=timezone.utc),
         )
         assert rows == [
-            {"date": "2026-07-01", "input_tokens": 15, "output_tokens": 25, "turn_count": 2},
-            {"date": "2026-07-02", "input_tokens": 100, "output_tokens": 200, "turn_count": 1},
+            {
+                "date": "2026-07-01",
+                "input_tokens": 15,
+                "output_tokens": 25,
+                "cache_read_tokens": 4,
+                "cache_write_tokens": 2,
+                "turn_count": 2,
+            },
+            {
+                "date": "2026-07-02",
+                "input_tokens": 100,
+                "output_tokens": 200,
+                "cache_read_tokens": 60,
+                "cache_write_tokens": 30,
+                "turn_count": 1,
+            },
         ]
     finally:
         await store.close()
@@ -284,7 +452,16 @@ async def test_aggregate_by_day_excludes_rows_outside_range():
             datetime(2026, 7, 1, tzinfo=timezone.utc),
             datetime(2026, 7, 2, tzinfo=timezone.utc),
         )
-        assert rows == [{"date": "2026-07-01", "input_tokens": 15, "output_tokens": 25, "turn_count": 2}]
+        assert rows == [
+            {
+                "date": "2026-07-01",
+                "input_tokens": 15,
+                "output_tokens": 25,
+                "cache_read_tokens": 4,
+                "cache_write_tokens": 2,
+                "turn_count": 2,
+            }
+        ]
     finally:
         await store.close()
 
@@ -306,8 +483,20 @@ async def test_aggregate_by_user_ranks_by_combined_tokens_desc():
         # alice: 15 input + 25 output = 40 combined; bob: 100 + 200 = 300 combined.
         rows = await store.aggregate_by_user()
         assert rows == [
-            {"user_id": "bob", "input_tokens": 100, "output_tokens": 200},
-            {"user_id": "alice", "input_tokens": 15, "output_tokens": 25},
+            {
+                "user_id": "bob",
+                "input_tokens": 100,
+                "output_tokens": 200,
+                "cache_read_tokens": 60,
+                "cache_write_tokens": 30,
+            },
+            {
+                "user_id": "alice",
+                "input_tokens": 15,
+                "output_tokens": 25,
+                "cache_read_tokens": 4,
+                "cache_write_tokens": 2,
+            },
         ]
     finally:
         await store.close()
@@ -318,7 +507,15 @@ async def test_aggregate_by_user_respects_limit():
     try:
         await _seed(store)
         rows = await store.aggregate_by_user(limit=1)
-        assert rows == [{"user_id": "bob", "input_tokens": 100, "output_tokens": 200}]
+        assert rows == [
+            {
+                "user_id": "bob",
+                "input_tokens": 100,
+                "output_tokens": 200,
+                "cache_read_tokens": 60,
+                "cache_write_tokens": 30,
+            }
+        ]
     finally:
         await store.close()
 
@@ -373,8 +570,9 @@ class _FakeCursor:
     """Async cursor faking enough Postgres semantics to exercise the store's
     SQL against an in-memory ``{turn_id: full_row_tuple}`` dict.
 
-    ``full_row_tuple`` order matches the schema:
-    ``(id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts)``.
+    ``full_row_tuple`` order matches the store's INSERT column list:
+    ``(id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,
+    cache_read_tokens, cache_write_tokens)``.
 
     Supports:
 
@@ -386,8 +584,9 @@ class _FakeCursor:
       SQL text (rather than a real SQL parser).
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, executed_ddl=None):
         self._rows = rows
+        self._executed_ddl = executed_ddl if executed_ddl is not None else []
         self._result = []
 
     async def __aenter__(self):
@@ -397,6 +596,10 @@ class _FakeCursor:
         return False
 
     async def execute(self, sql, params=()):
+        if "CREATE TABLE IF NOT EXISTS token_usage" in sql:
+            self._executed_ddl.append(sql)
+            return
+
         if "INSERT INTO token_usage" in sql:
             turn_id = str(params[0])
             if turn_id not in self._rows:
@@ -416,17 +619,19 @@ class _FakeCursor:
             matched.sort(key=lambda v: v[0])
             matched.sort(key=lambda v: v[6], reverse=True)
             page = matched[offset : offset + limit]
-            self._result = [(v[1], v[3], v[4], v[5], v[6]) for v in page]
+            self._result = [(v[1], v[3], v[4], v[5], v[7], v[8], v[6]) for v in page]
             return
 
         if "GROUP BY model_id" in sql:
             by_model = {}
             for v in values:
-                model_id, input_tokens, output_tokens = v[3], v[4], v[5]
-                agg = by_model.setdefault(model_id, [0, 0, 0])
-                agg[0] += input_tokens
-                agg[1] += output_tokens
-                agg[2] += 1
+                model_id = v[3]
+                agg = by_model.setdefault(model_id, [0, 0, 0, 0, 0])
+                agg[0] += v[4]
+                agg[1] += v[5]
+                agg[2] += v[7]
+                agg[3] += v[8]
+                agg[4] += 1
             self._result = [(model_id, *agg) for model_id, agg in sorted(by_model.items())]
             return
 
@@ -434,7 +639,7 @@ class _FakeCursor:
             start, end = params
             by_day = {}
             for v in values:
-                turn_ts, input_tokens, output_tokens = v[6], v[4], v[5]
+                turn_ts = v[6]
                 if not (start <= turn_ts < end):
                     continue
                 # Force UTC before bucketing, matching the real SQL's
@@ -442,10 +647,12 @@ class _FakeCursor:
                 # turn_ts would bucket by the wrong calendar day here while
                 # the real store still buckets correctly, masking a bug.
                 day = turn_ts.astimezone(timezone.utc).date() if hasattr(turn_ts, "astimezone") else turn_ts
-                agg = by_day.setdefault(day, [0, 0, 0])
-                agg[0] += input_tokens
-                agg[1] += output_tokens
-                agg[2] += 1
+                agg = by_day.setdefault(day, [0, 0, 0, 0, 0])
+                agg[0] += v[4]
+                agg[1] += v[5]
+                agg[2] += v[7]
+                agg[3] += v[8]
+                agg[4] += 1
             self._result = [(day, *agg) for day, agg in sorted(by_day.items())]
             return
 
@@ -453,12 +660,14 @@ class _FakeCursor:
             (limit,) = params
             by_user = {}
             for v in values:
-                user_id, input_tokens, output_tokens = v[2], v[4], v[5]
+                user_id = v[2]
                 if user_id is None:
                     continue
-                agg = by_user.setdefault(user_id, [0, 0])
-                agg[0] += input_tokens
-                agg[1] += output_tokens
+                agg = by_user.setdefault(user_id, [0, 0, 0, 0])
+                agg[0] += v[4]
+                agg[1] += v[5]
+                agg[2] += v[7]
+                agg[3] += v[8]
             # Emulate ORDER BY (combined) DESC, user_id ASC: sort by the
             # ascending tie-breaker first, then stable-sort by the
             # descending primary key.
@@ -474,8 +683,9 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    def __init__(self, rows):
+    def __init__(self, rows, executed_ddl):
         self._rows = rows
+        self._executed_ddl = executed_ddl
         self.commits = 0
 
     async def __aenter__(self):
@@ -485,7 +695,7 @@ class _FakeConnection:
         return False
 
     def cursor(self):
-        return _FakeCursor(self._rows)
+        return _FakeCursor(self._rows, self._executed_ddl)
 
     async def commit(self):
         self.commits += 1
@@ -496,10 +706,11 @@ class _FakePool:
 
     def __init__(self):
         self.rows = {}
+        self.executed_ddl = []
         self.last_connection = None
 
     def connection(self):
-        conn = _FakeConnection(self.rows)
+        conn = _FakeConnection(self.rows, self.executed_ddl)
         self.last_connection = conn
         return conn
 
@@ -534,7 +745,42 @@ async def test_postgres_record_turn_inserts_a_row():
         120,
         240,
         ts,
+        0,
+        0,
     )
+    assert store._pool.last_connection.commits == 1
+
+
+async def test_postgres_record_turn_persists_cache_token_counts():
+    store = _make_postgres_store()
+    ts = datetime(2026, 7, 8, 12, 0, 0, tzinfo=timezone.utc)
+
+    await store.record_turn(
+        turn_id="turn-1",
+        session_id="sess-1",
+        user_id="alice",
+        model_id="model-a",
+        input_tokens=1000,
+        output_tokens=50,
+        turn_ts=ts,
+        cache_read_tokens=800,
+        cache_write_tokens=150,
+    )
+
+    assert store._pool.rows["turn-1"][7:] == (800, 150)
+
+
+async def test_postgres_apply_schema_migrates_cache_token_columns():
+    """Existing deployments already have ``token_usage``; the DDL applied on
+    ``open()`` must idempotently add the cache-token columns to it."""
+    store = _make_postgres_store()
+
+    await store._apply_schema()
+
+    (ddl,) = store._pool.executed_ddl
+    normalized = " ".join(ddl.split())
+    for column in ("cache_read_tokens", "cache_write_tokens"):
+        assert f"ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS {column} INTEGER NOT NULL DEFAULT 0" in normalized
     assert store._pool.last_connection.commits == 1
 
 
@@ -550,6 +796,8 @@ async def test_postgres_duplicate_turn_id_does_not_overwrite():
         input_tokens=10,
         output_tokens=20,
         turn_ts=ts,
+        cache_read_tokens=4,
+        cache_write_tokens=2,
     )
     # Same turn_id, different (bogus) counts — ON CONFLICT DO NOTHING must
     # leave the original row untouched.
@@ -561,11 +809,14 @@ async def test_postgres_duplicate_turn_id_does_not_overwrite():
         input_tokens=999,
         output_tokens=999,
         turn_ts=ts,
+        cache_read_tokens=999,
+        cache_write_tokens=999,
     )
 
     row = store._pool.rows["turn-1"]
     assert row[4] == 10
     assert row[5] == 20
+    assert row[7:] == (4, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -577,9 +828,12 @@ async def _seed_postgres(store):
     ts1 = datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc)
     ts2 = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
     ts3 = datetime(2026, 7, 2, 9, 0, 0, tzinfo=timezone.utc)
-    await store.record_turn("t1", "sess-1", "alice", "model-a", 10, 20, ts1)
+    await store.record_turn("t1", "sess-1", "alice", "model-a", 10, 20, ts1, cache_read_tokens=4, cache_write_tokens=2)
+    # No cache counts supplied — both default to 0.
     await store.record_turn("t2", "sess-1", "alice", "model-b", 5, 5, ts2)
-    await store.record_turn("t3", "sess-2", "bob", "model-a", 100, 200, ts3)
+    await store.record_turn(
+        "t3", "sess-2", "bob", "model-a", 100, 200, ts3, cache_read_tokens=60, cache_write_tokens=30
+    )
 
 
 async def test_postgres_list_by_user_returns_rows_newest_first():
@@ -594,6 +848,8 @@ async def test_postgres_list_by_user_returns_rows_newest_first():
             "model_id": "model-b",
             "input_tokens": 5,
             "output_tokens": 5,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
             "turn_ts": "2026-07-01T14:00:00+00:00",
         },
         {
@@ -601,6 +857,8 @@ async def test_postgres_list_by_user_returns_rows_newest_first():
             "model_id": "model-a",
             "input_tokens": 10,
             "output_tokens": 20,
+            "cache_read_tokens": 4,
+            "cache_write_tokens": 2,
             "turn_ts": "2026-07-01T10:00:00+00:00",
         },
     ]
@@ -652,6 +910,8 @@ async def test_postgres_list_by_user_normalizes_turn_ts_to_utc():
             "model_id": "model-a",
             "input_tokens": 1,
             "output_tokens": 2,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
             "turn_ts": "2026-07-01T10:00:00+00:00",
         }
     ]
@@ -664,8 +924,22 @@ async def test_postgres_aggregate_by_model_sums_and_counts_per_model():
     rows = await store.aggregate_by_model()
 
     assert rows == [
-        {"model_id": "model-a", "input_tokens": 110, "output_tokens": 220, "turn_count": 2},
-        {"model_id": "model-b", "input_tokens": 5, "output_tokens": 5, "turn_count": 1},
+        {
+            "model_id": "model-a",
+            "input_tokens": 110,
+            "output_tokens": 220,
+            "cache_read_tokens": 64,
+            "cache_write_tokens": 32,
+            "turn_count": 2,
+        },
+        {
+            "model_id": "model-b",
+            "input_tokens": 5,
+            "output_tokens": 5,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "turn_count": 1,
+        },
     ]
 
 
@@ -679,8 +953,22 @@ async def test_postgres_aggregate_by_day_buckets_by_date():
     )
 
     assert rows == [
-        {"date": "2026-07-01", "input_tokens": 15, "output_tokens": 25, "turn_count": 2},
-        {"date": "2026-07-02", "input_tokens": 100, "output_tokens": 200, "turn_count": 1},
+        {
+            "date": "2026-07-01",
+            "input_tokens": 15,
+            "output_tokens": 25,
+            "cache_read_tokens": 4,
+            "cache_write_tokens": 2,
+            "turn_count": 2,
+        },
+        {
+            "date": "2026-07-02",
+            "input_tokens": 100,
+            "output_tokens": 200,
+            "cache_read_tokens": 60,
+            "cache_write_tokens": 30,
+            "turn_count": 1,
+        },
     ]
 
 
@@ -700,7 +988,16 @@ async def test_postgres_aggregate_by_day_excludes_rows_outside_range():
         datetime(2026, 7, 2, tzinfo=timezone.utc),
     )
 
-    assert rows == [{"date": "2026-07-01", "input_tokens": 15, "output_tokens": 25, "turn_count": 2}]
+    assert rows == [
+        {
+            "date": "2026-07-01",
+            "input_tokens": 15,
+            "output_tokens": 25,
+            "cache_read_tokens": 4,
+            "cache_write_tokens": 2,
+            "turn_count": 2,
+        }
+    ]
 
 
 async def test_postgres_aggregate_by_day_buckets_by_utc_date_not_local():
@@ -721,7 +1018,16 @@ async def test_postgres_aggregate_by_day_buckets_by_utc_date_not_local():
         datetime(2026, 7, 2, tzinfo=timezone.utc),
     )
 
-    assert rows == [{"date": "2026-07-01", "input_tokens": 10, "output_tokens": 20, "turn_count": 1}]
+    assert rows == [
+        {
+            "date": "2026-07-01",
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "turn_count": 1,
+        }
+    ]
 
 
 async def test_postgres_aggregate_by_user_ranks_by_combined_tokens_desc():
@@ -731,8 +1037,14 @@ async def test_postgres_aggregate_by_user_ranks_by_combined_tokens_desc():
     rows = await store.aggregate_by_user()
 
     assert rows == [
-        {"user_id": "bob", "input_tokens": 100, "output_tokens": 200},
-        {"user_id": "alice", "input_tokens": 15, "output_tokens": 25},
+        {
+            "user_id": "bob",
+            "input_tokens": 100,
+            "output_tokens": 200,
+            "cache_read_tokens": 60,
+            "cache_write_tokens": 30,
+        },
+        {"user_id": "alice", "input_tokens": 15, "output_tokens": 25, "cache_read_tokens": 4, "cache_write_tokens": 2},
     ]
 
 
@@ -742,7 +1054,9 @@ async def test_postgres_aggregate_by_user_respects_limit():
 
     rows = await store.aggregate_by_user(limit=1)
 
-    assert rows == [{"user_id": "bob", "input_tokens": 100, "output_tokens": 200}]
+    assert rows == [
+        {"user_id": "bob", "input_tokens": 100, "output_tokens": 200, "cache_read_tokens": 60, "cache_write_tokens": 30}
+    ]
 
 
 async def test_postgres_aggregate_by_user_breaks_ties_by_user_id_ascending():

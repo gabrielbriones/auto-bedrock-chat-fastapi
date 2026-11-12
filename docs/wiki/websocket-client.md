@@ -170,6 +170,13 @@ carry the turn's `conversation_id` (`null` without conversation persistence).
 Ignore those that don't match the conversation on screen; the answer is in that
 conversation's history when it is reloaded.
 
+Other connections of the same user that have the conversation open (another tab
+or window) follow the turn too: see
+[Running turns in other tabs](conversation-persistence#running-turns-in-other-tabs).
+A `chat` sent into a conversation whose turn is still running, from any of the
+user's connections, is refused with an `error` frame, followed by a replay of the
+running turn (`turn_started` and its frames so far) so the client can follow it.
+
 **Authenticate session:**
 
 ```json
@@ -225,7 +232,7 @@ conversation's history when it is reloaded.
   "metadata": {
     "message_id": "f1c2…",
     "model_id": "us.anthropic.claude-sonnet-5",
-    "usage": { "input_tokens": 120, "output_tokens": 240 },
+    "usage": { "input_tokens": 120, "output_tokens": 240, "cache_read_tokens": 0, "cache_write_tokens": 0 },
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
     "total_tool_calls": 2,
@@ -233,6 +240,8 @@ conversation's history when it is reloaded.
     "preprocessing_applied": false,
     "input_tokens": 120,
     "output_tokens": 240,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
     "stop_reason": "end_turn",
     "kb_used": true,
     "kb_chunks": 3,
@@ -256,7 +265,7 @@ final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
 | ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `message_id`            | `string` (UUID)          | Stable per-turn ID, also present at the top level of the `ai_response` payload.                                                                                                            |
 | `model_id`              | `string`                 | Active model ID. Written directly from server config and overwrites any value returned by the LLM.                                                                                         |
-| `usage`                 | `object`                 | Token usage for the **final** LLM call only: `{ "input_tokens": int\|null, "output_tokens": int\|null }`. For multi-round totals use the top-level `input_tokens` / `output_tokens` below. |
+| `usage`                 | `object`                 | Token usage for the **final** LLM call only: `{ "input_tokens": int\|null, "output_tokens": int\|null }`, plus `cache_read_tokens` / `cache_write_tokens` when the provider reports prompt-cache details. For multi-round totals use the top-level keys below. |
 | `timestamp`             | `string` (ISO 8601)      | Timestamp of the final LLM call.                                                                                                                                                           |
 | `tool_call_rounds`      | `int` (default `0`)      | Number of tool-call loop iterations for this turn.                                                                                                                                         |
 | `total_tool_calls`      | `int` (default `0`)      | Total individual tool calls executed across all rounds.                                                                                                                                    |
@@ -272,6 +281,8 @@ nested `usage` dict, which reflects only the final LLM call.
 | --------------- | ----- | ------------------------------------ | ---------------------------------------------------------------- |
 | `input_tokens`  | `int` | Present when the model returns usage | Total input tokens consumed across all LLM calls in this turn.   |
 | `output_tokens` | `int` | Present when the model returns usage | Total output tokens generated across all LLM calls in this turn. |
+| `cache_read_tokens`  | `int` | Present when the provider reports prompt-cache details | Input tokens read from the [prompt cache](configuration.md#prompt-caching) across all LLM calls. A subset of `input_tokens`. |
+| `cache_write_tokens` | `int` | Present when the provider reports prompt-cache details | Input tokens written to the prompt cache across all LLM calls. A subset of `input_tokens`. |
 
 **Conditional — stop reason (present whenever Bedrock returns a stopReason):**
 
@@ -301,8 +312,11 @@ as `null`) when Bedrock doesn't return one.
 ```json
 { "type": "conversation_created", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
 { "type": "conversation_list", "conversations": [ { "id": "...", "title": "...", "updated_at": "...", "message_count": 3 }, { "id": "...", "title": null, "updated_at": "...", "message_count": 1 } ], "timestamp": "..." }
-{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "in_progress": false, "timestamp": "..." }
+{ "type": "conversation_updated", "conversation": { "id": "...", "title": "", "updated_at": "...", "message_count": 2 }, "timestamp": "..." }
+{ "type": "conversation_loaded", "conversation_id": "b16d7f4e-…", "conversation": { ... }, "messages": [ ... ], "in_progress": false, "live": false, "timestamp": "..." }
+{ "type": "turn_started", "conversation_id": "b16d7f4e-…", "message": "What the user sent", "timestamp": "..." }
 { "type": "conversation_deleted", "conversation_id": "b16d7f4e-…", "timestamp": "..." }
+{ "type": "conversation_bulk_deleted", "deleted_ids": ["b16d7f4e-…"], "active_conversation_deleted": false, "timestamp": "..." }
 { "type": "conversation_all_deleted", "deleted_count": 3, "timestamp": "..." }
 { "type": "conversation_titled", "conversation_id": "b16d7f4e-…", "title": "Configuring Okta SSO", "timestamp": "..." }
 { "type": "conversation_renamed", "conversation_id": "b16d7f4e-…", "title": "My renamed chat", "timestamp": "..." }
@@ -324,6 +338,12 @@ tool-loop), including on another worker if its last checkpoint is recent.
 Use it, not the shape of `messages`, to decide whether to show a
 "still working" state and re-poll with `conversation_load` — see
 [Interrupted turns](conversation-persistence#in-progress-and-interrupted-turns).
+When `live` is `true` the turn's frames follow on this socket, so there is
+nothing to poll for.
+
+`conversation_bulk_deleted` has `from_other_connection: true` when another of the
+user's connections made the delete; the reply to this connection's own
+`conversation_delete_bulk` does not have the field.
 
 **Typing indicator:**
 

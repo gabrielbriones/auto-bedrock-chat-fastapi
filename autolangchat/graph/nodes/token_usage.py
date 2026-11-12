@@ -19,8 +19,12 @@ Inputs from ``config["configurable"]``:
     user_id           — optional explicit user id
 
 State read:
-    metadata  — top-level turn metadata (input_tokens/output_tokens/model_id),
+    metadata  — top-level turn metadata (input_tokens/output_tokens/model_id,
+                plus optional cache_read_tokens/cache_write_tokens),
                 accumulated across tool-call rounds by llm_call_node.
+                ``input_tokens`` already includes cached prompt tokens; the
+                two cache counters are subsets of it and default to 0 when
+                absent (older checkpoints, providers without cache info).
     messages  — the last message's own ``metadata`` dict carries message_id.
 
 Returns ``{}`` in most cases -- no state mutation. When the last message has
@@ -88,6 +92,8 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 turn_ts=datetime.now(timezone.utc),
+                cache_read_tokens=metadata.get("cache_read_tokens") or 0,
+                cache_write_tokens=metadata.get("cache_write_tokens") or 0,
             ),
             timeout=getattr(chat_config, "token_usage_write_timeout", 5.0),
         )

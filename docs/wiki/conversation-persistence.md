@@ -134,6 +134,94 @@ of a turn take a per-conversation lock, so a new turn never races the write.
 The trade-off: after a crash, a conversation keeps reporting `in_progress`
 until that lease expires.
 
+### Running turns in other tabs
+
+Every connection of the user that has a conversation open follows its running
+turn exactly like the connection that sent the message:
+
+- A connection that already has it open gets `turn_started` (with the user's
+  `message`) when the turn starts, then every `typing`, `tool_call_start`,
+  `tool_call_end` and the final `ai_response`.
+- A connection that loads it mid-turn gets `conversation_loaded` with
+  `live: true` and the history _without_ the running turn, then `turn_started`
+  and a replay of the turn's frames so far (consecutive `typing` frames merged to
+  the latest), then the rest live. Loading and the turn's frames take the same
+  per-conversation lock, so no frame is missed or sent twice.
+- The connection that sent the message gets no `turn_started`; it already shows
+  its message.
+- A following connection that takes more than a few seconds to accept a frame is
+  closed (code `1013`) rather than left to hold up the turn; the client reconnects
+  and reloads. The connection that sent the message, and one that is being sent the
+  history it asked for, get longer (30 seconds) before the same happens to them.
+- Only a signed-in connection of the user is sent the frames of a turn it did not
+  start. Any other connection (a `user_id` that was never verified, a connection
+  that has signed out) loading the conversation mid-turn gets `live: false` with
+  what is checkpointed so far and polls, as it would for a turn on another worker.
+- Only a turn sent by a signed-in connection with a verified `user_id` is followed
+  by other connections. A turn sent by a connection that merely claims a `user_id`
+  (the `?user_id=` parameter, never verified) stays on that connection.
+- Following connections are sent to at the same time, so several that stop reading
+  hold the turn up for one timeout between them, not one each.
+- If the connection that sent the message reloads the conversation after the answer
+  is checkpointed, the answer is in the history it gets and no `ai_response` follows.
+
+Only one turn runs per conversation: a `chat` into a conversation with a running
+turn is refused with an `error` frame, followed by `turn_started` and the turn's
+frames so far (as for a load), because a client that sent at the same moment may
+have dropped the first `turn_started` for its own pending message. Like
+`in_progress`, this is per process — a connection served by another worker sees
+`live: false` and polls.
+
+### Conversation list across tabs
+
+The user's other connections hear about every change to the list made in one of
+them, so no tab needs a refresh:
+
+- `conversation_updated` carries one conversation as `conversation_list` lists it
+  (`id`, `title`, `updated_at`, `message_count`). It is sent to the user's other
+  connections when a conversation is created and after each of its turns. Merge it
+  into the list without opening it; an empty `title` means it is not titled yet.
+- `conversation_titled` and `conversation_renamed` go to all of the user's
+  connections.
+- `conversation_deleted`, `conversation_bulk_deleted` and `conversation_all_deleted`
+  go to all of the user's connections. A connection that had a deleted conversation
+  open is detached from it, as the one that deleted it is, and its
+  `conversation_bulk_deleted` says so in `active_conversation_deleted`.
+- The `conversation_bulk_deleted` sent to the _other_ connections carries
+  `from_other_connection: true`. A client waiting for the reply to its own
+  `conversation_delete_bulk` must not take such a frame for that reply.
+- The other connections are told before the connection that made the change gets
+  its reply, and a delete is announced before any of the user's connections can
+  load another conversation, so `active_conversation_deleted` always describes the
+  conversation the client still shows. Updates, titles and renames are serialised
+  with deletes too: none arrives for a conversation after its delete.
+
+- The reply to the connection that made the change is ordered with the notices
+  too: a `conversation_renamed` reply never arrives after the notice of a later
+  delete of that conversation, nor a `conversation_all_deleted` reply after the
+  `conversation_updated` of a conversation created since.
+- Only a change made by a signed-in connection with a verified `user_id` reaches
+  the user's other connections. A connection that merely claims a `user_id` (the
+  `?user_id=` parameter, never verified) or has signed out still gets its own
+  reply, but no other connection is told or detached. Signing in over SSO on an
+  open connection (`auth` with `auth_type: "sso"`) makes its identity the verified
+  one, whatever it claimed before; if that is a different user, the connection is
+  detached from the conversation it had open.
+- "Signed in" means the connection still holds the credentials its `user_id` was
+  verified with. A logout or an expiry ends it, and so does an `auth` frame that
+  replaces those credentials, unless the new ones are verified as the same user
+  (SSO, or the verification endpoint returning that user's id). Credentials nothing
+  verifies, such as an API key with no verification endpoint configured, never
+  sign a connection in.
+- A connection that stops being the user it sent a turn as (it signs out, or signs
+  in as someone else, while the turn runs) is sent nothing more of that turn or of
+  the title of the conversation it created; the user's other connections still are.
+- A connection that has signed out is told nothing, but is still detached from a
+  deleted conversation, so that signing in again on it does not send its next
+  `chat` into that conversation.
+
+These also only reach connections on the same server process.
+
 ### Connection identity vs. conversation identity
 
 The WebSocket connection's `session_id` (from `connection_established`,

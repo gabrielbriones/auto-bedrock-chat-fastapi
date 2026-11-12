@@ -1,0 +1,6 @@
+{
+  "type": "turn_started",
+  "timestamp": "2026-08-25T12:00:00Z",
+  "conversation_id": "c-1",
+  "message": "Validate job 42"
+}

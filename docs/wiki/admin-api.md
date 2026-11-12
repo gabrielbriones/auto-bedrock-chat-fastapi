@@ -543,6 +543,15 @@ each backend regardless of DB session timezone settings; `top-users`
 excludes anonymous turns (no `user_id`) since there's no user identity
 to rank.
 
+Every row in all four responses also includes `cache_read_tokens` and
+`cache_write_tokens` (summed for the aggregate routes): prompt tokens served
+from / written to the model provider's prompt cache. Both are **subsets** of
+`input_tokens`, which stays the total prompt-token count for the turn, so
+uncached input is `input_tokens - cache_read_tokens - cache_write_tokens`
+and the `top-users` ranking already accounts for cached tokens. Turns
+recorded before these columns existed (or by providers that report no cache
+usage) report `0`.
+
 ```bash
 curl -sS -b cookies.txt \
   'https://app.example.com/admin/tokens/by-day?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z'
@@ -550,7 +559,16 @@ curl -sS -b cookies.txt \
 
 ```json
 {
-  "items": [{ "date": "2026-01-15", "input_tokens": 1200, "output_tokens": 3400, "turn_count": 12 }]
+  "items": [
+    {
+      "date": "2026-01-15",
+      "input_tokens": 1200,
+      "output_tokens": 3400,
+      "cache_read_tokens": 800,
+      "cache_write_tokens": 150,
+      "turn_count": 12
+    }
+  ]
 }
 ```
 

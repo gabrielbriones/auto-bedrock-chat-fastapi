@@ -46,8 +46,39 @@ describe('HttpTelemetryGateway', () => {
     const result = await gateway.summary(AbortSignal.timeout(1_000))
 
     expect(isOk(result) && result.value).toEqual([
-      { modelId: 'claude-3', tokens: { input: 120, output: 30, total: 150 }, turnCount: 4 },
+      { modelId: 'claude-3', tokens: { input: 120, output: 30, cacheRead: 90, cacheWrite: 10, total: 150 }, turnCount: 4 },
     ])
+  })
+
+  it('defaults cache counts to zero for a backend that predates prompt caching', async () => {
+    server.use(http.get('*/chat/admin/tokens/summary', () => HttpResponse.json({
+      items: [{ model_id: 'claude-3', input_tokens: 120, output_tokens: 30, turn_count: 4 }],
+    })))
+
+    const result = await gateway.summary(AbortSignal.timeout(1_000))
+
+    expect(isOk(result) && result.value[0]?.tokens).toEqual({ input: 120, output: 30, cacheRead: 0, cacheWrite: 0, total: 150 })
+  })
+
+  it('maps cache counts on daily and per-user rows', async () => {
+    const daily = await gateway.byDay(dateRange.value, AbortSignal.timeout(1_000))
+    const perUser = await gateway.byUser(
+      { userId: 'alice@example.com', page: createCursorlessPage(0, 50, 0) },
+      AbortSignal.timeout(1_000),
+    )
+
+    expect(isOk(daily) && daily.value[0]?.tokens).toEqual({ input: 80, output: 20, cacheRead: 50, cacheWrite: 5, total: 100 })
+    expect(isOk(perUser) && perUser.value[0]?.tokens).toEqual({ input: 40, output: 10, cacheRead: 30, cacheWrite: 0, total: 50 })
+  })
+
+  it('rejects negative cache counts as invalid responses', async () => {
+    server.use(http.get('*/chat/admin/tokens/top-users', () => HttpResponse.json({
+      items: [{ user_id: 'alice@example.com', input_tokens: 1, output_tokens: 1, cache_read_tokens: -1 }],
+    })))
+
+    const result = await gateway.topUsers(5, AbortSignal.timeout(1_000))
+
+    expect(isErr(result) && result.error.code).toBe('invalid-response')
   })
 
   it('encodes top-user limits and maps user totals', async () => {
@@ -56,7 +87,7 @@ describe('HttpTelemetryGateway', () => {
     expect(requestUrls.at(-1)).toBe(`${ADMIN}/tokens/top-users?limit=5`)
     expect(isOk(result) && result.value[0]).toEqual({
       userId: 'alice@example.com',
-      tokens: { input: 100, output: 50, total: 150 },
+      tokens: { input: 100, output: 50, cacheRead: 60, cacheWrite: 20, total: 150 },
     })
   })
 

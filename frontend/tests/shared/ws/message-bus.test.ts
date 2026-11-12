@@ -99,6 +99,35 @@ describe('ServerFrameSchema', () => {
         ],
       },
     ],
+    [
+      // XMGPLAT-11867: `usage` is strict, so the prompt-cache counts must be known keys.
+      'with prompt-cache token counts',
+      {
+        message_id: 'message-1',
+        model_id: 'model-1',
+        model_name: 'Test model',
+        usage: { input_tokens: 6143, output_tokens: 102, cache_read_tokens: 5120, cache_write_tokens: 0 },
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+        input_tokens: 6143,
+        output_tokens: 102,
+        cache_read_tokens: 5120,
+        cache_write_tokens: 0,
+      },
+    ],
+    [
+      'with null prompt-cache token counts',
+      {
+        message_id: 'message-1',
+        model_id: 'model-1',
+        model_name: 'Test model',
+        usage: { input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null },
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+      },
+    ],
   ])('accepts an ai response with metadata %s', (_label, metadata) => {
     expect(
       ServerFrameSchema.safeParse({
@@ -162,6 +191,39 @@ describe('ServerFrameSchema', () => {
 
     expect(bus.invalidFrameCount('ai_response')).toBe(0)
     expect(subscriber).toHaveBeenCalledExactlyOnceWith({ ...frame, metadata })
+  })
+
+  it('delivers an ai response whose usage carries prompt-cache counts instead of dropping it', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const frame = {
+      type: 'ai_response',
+      message_id: 'message-1',
+      message: 'answer',
+      tool_calls: [],
+      tool_results: [],
+      timestamp: '2026-11-03T12:00:00',
+      metadata: {
+        message_id: 'message-1',
+        usage: { input_tokens: 6143, output_tokens: 102, cache_read_tokens: 5120, cache_write_tokens: null },
+        model_id: 'model-1',
+        model_name: 'Test model',
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+        input_tokens: 6143,
+        output_tokens: 102,
+        cache_read_tokens: 5120,
+        cache_write_tokens: 0,
+      },
+      conversation_id: 'conversation-1',
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.invalidFrameCount('ai_response')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
   })
 
   it('delivers an anonymous ai response with no persisted conversation', () => {
@@ -283,6 +345,7 @@ describe('ServerFrameSchema', () => {
       auth_expired: 'iam',
       logout_success: 'iam',
       typing: 'messaging',
+      turn_started: 'messaging',
       tool_call_start: 'messaging',
       tool_call_end: 'messaging',
       ai_response: 'messaging',
@@ -296,6 +359,7 @@ describe('ServerFrameSchema', () => {
       conversation_created: 'conversation',
       conversation_titled: 'conversation',
       conversation_list: 'conversation',
+      conversation_updated: 'conversation',
       conversation_loaded: 'conversation',
       conversation_renamed: 'conversation',
       conversation_deleted: 'conversation',

@@ -327,6 +327,27 @@ class ChatConfig(BaseSettings):
         description="Custom system prompt for the AI assistant",
     )
 
+    # Bedrock prompt caching (cachePoint blocks)
+    prompt_caching_enabled: bool = Field(
+        default=False,
+        alias="AUTOCHAT_PROMPT_CACHING_ENABLED",
+        description=(
+            "Send Bedrock cachePoint blocks so the stable system prompt and the "
+            "conversation history are cached between LLM calls. Only applies to "
+            "models whose capability profile supports prompt caching; with this "
+            "off (or on any other model) requests are unchanged."
+        ),
+    )
+
+    prompt_cache_ttl: Literal["5m", "1h"] = Field(
+        default="5m",
+        alias="AUTOCHAT_PROMPT_CACHE_TTL",
+        description=(
+            "Prompt-cache time-to-live: '5m' (default) or '1h'. '1h' is only sent "
+            "to models that support it; other models fall back to 5 minutes."
+        ),
+    )
+
     # API Tools Configuration
     tools_desc: Optional[Dict] = Field(default_factory=dict, description="Auto-generated tools from FastAPI routes")
     langchain_tools: Optional[List] = Field(

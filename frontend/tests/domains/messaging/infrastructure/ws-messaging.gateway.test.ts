@@ -76,6 +76,35 @@ describe('WsMessagingGateway', () => {
     expect(events).toEqual([{ kind: 'session-established', sessionId: 's-1' }])
   })
 
+  it('maps turn_started from another tab to an observed turn', () => {
+    const { emit, events } = createHarness()
+
+    emit({ type: 'turn_started', timestamp: TIMESTAMP, conversation_id: 'c-1', message: 'validate job' })
+
+    expect(events).toEqual([{ kind: 'turn-observed', text: 'validate job', conversationId: 'c-1' }])
+  })
+
+  it('drops turn_started for a conversation this tab did not open', () => {
+    const send = jest.fn<(frame: string) => 'sent' | 'dropped-closed'>(() => 'sent')
+    let subscriber: ServerFrameSubscriber | undefined
+    const gateway = new WsMessagingGateway(
+      { send },
+      {
+        subscribe: (next) => {
+          subscriber = next
+          return () => undefined
+        },
+      },
+      (id) => id === 'c-1',
+    )
+    const events: MessagingEvent[] = []
+    gateway.onEvent((event) => events.push(event))
+
+    subscriber?.({ type: 'turn_started', timestamp: TIMESTAMP, conversation_id: 'c-2', message: 'other' })
+
+    expect(events).toEqual([])
+  })
+
   it('maps a successful ai_response to an answered event with its ids', () => {
     const { emit, events } = createHarness()
 

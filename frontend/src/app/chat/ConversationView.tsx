@@ -20,7 +20,7 @@ export type ConversationViewProps = {
 // `prompt-catalog` meet: no context imports another, so the pending-turn notice, the transcript
 // and the preset bar are all joined here instead (DESIGN-002 §3 / `PromptCatalogArea`).
 export function ConversationView({ conversationId }: ConversationViewProps) {
-  const { bootstrap, conversations, promptCatalog } = useContainer()
+  const { bootstrap, conversations, promptCatalog, replyNotifications } = useContainer()
   const { inputEnabled } = useContainerStore('identity')
   const { pendingTurn, unknownId } = useContainerStore('conversations')
   const { configuredModel } = useContainerStore('chatSession')
@@ -40,8 +40,9 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const onMessageSent = useCallback(
     (text: string) => {
       promptCatalog.detectFromMessage(text)
+      replyNotifications.userSent()
     },
-    [promptCatalog],
+    [promptCatalog, replyNotifications],
   )
 
   // Identity-stable on purpose: `MessageBubble` is memoised on this prop, so a fresh closure per

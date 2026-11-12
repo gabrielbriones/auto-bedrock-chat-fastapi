@@ -368,10 +368,11 @@ The preview is the beginning of the text only, so a question that ends a pasted 
 the end through the handle. `read_hint` is present only when the [assistant tools](#assistant-tools) are bound to
 the model. The message's metadata carries no `artifact_handle`, so the model is told the handle once.
 
-From then on the marker is the message in the conversation: in the checkpoint, in the model input on every later
-round, and in the history a reloaded conversation shows (the SPA renders the request bubble from what it sent, so
-only a reload shows the marker). The WebSocket handler still logs, and uses for the feedback query and the
-conversation title, the text it received.
+From then on the marker is the message in the conversation: in the checkpoint and in the model input on every later
+round. The message also keeps the text it replaced in `original_content`, which is never sent to the model, so the
+history a reloaded conversation shows (the WebSocket and REST history) has what the user sent, not the marker. A
+message replaced before `original_content` existed shows the marker's preview and its total size instead. The
+WebSocket handler still logs, and uses for the feedback query and the conversation title, the text it received.
 
 **What is not replaced.** Content that is not a string, a message that is already a marker, and a message that a
 marker would not make smaller (it is then copied into the store and tagged with a handle). Without a live artifact

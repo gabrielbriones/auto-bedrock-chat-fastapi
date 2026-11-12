@@ -34,6 +34,7 @@ const EVERY_EVENT: readonly ConversationEvent[] = [
   anEvent.created('a'),
   anEvent.titled('a', 'Job 42'),
   anEvent.listed([aConversation('a', 0), aConversation('b', 5)]),
+  anEvent.updated(aConversation('a', 7, 'Job 42', 2)),
   anEvent.loaded('a', ['user', 'assistant']),
   anEvent.renamed('a', 'Renamed'),
   anEvent.deleted('a'),
@@ -142,6 +143,20 @@ describe('reconcileRoster frame handling', () => {
     expect(reduce(active, anEvent.bulkDeleted(['a'], true)).activeId).toBeNull()
   })
 
+  // XMGPLAT-12228: another tab's bulk delete is not the reply to the one this tab is waiting on.
+  it('keeps its own bulk delete guarded and selected through another tab\'s bulk delete', () => {
+    const started = beginBulkDelete(aSeededRoster(), [id('a'), id('b')])
+
+    const roster = reduce(
+      isOk(started) ? started.value : emptyRoster,
+      anEvent.bulkDeletedElsewhere(['c']),
+    )
+
+    expect(roster.items.map((item) => item.id)).toEqual([id('b'), id('a')])
+    expect(roster.pendingBulkDelete).toEqual(new Set([id('a'), id('b')]))
+    expect([...roster.selection]).toEqual(expect.arrayContaining([id('a'), id('b')]))
+  })
+
   // FR-CONV-018.
   it('empties the roster, the selection and the active conversation on all-deleted', () => {
     const roster = reduce(aSeededRoster(), anEvent.loaded('a'), anEvent.allDeleted(3))
@@ -190,5 +205,27 @@ describe('reconcileRoster frame handling', () => {
 
     expect(roster.selection.has(id('b'))).toBe(true)
     expect(roster.items.find((item) => item.id === id('a'))?.title).toBe('Renamed')
+  })
+
+  // XMGPLAT-12228: another tab's conversation is listed, never opened here.
+  it('lists a conversation another tab created without making it active', () => {
+    const active = reduce(aSeededRoster(), anEvent.loaded('a'))
+
+    const roster = reduce(active, anEvent.updated(aConversation('elsewhere', 20)))
+
+    expect(roster.items[0]?.id).toBe(id('elsewhere'))
+    expect(roster.activeId).toBe(id('a'))
+  })
+
+  it('moves a conversation another tab used to the top with its new count and title', () => {
+    const roster = reduce(aSeededRoster(), anEvent.updated(aConversation('a', 20, 'Job 42 (cont.)', 4)))
+
+    expect(roster.items[0]).toEqual(aConversation('a', 20, 'Job 42 (cont.)', 4))
+  })
+
+  it('keeps the title it shows when an update carries none yet', () => {
+    const roster = reduce(aSeededRoster(), anEvent.updated(aConversation('a', 20)))
+
+    expect(roster.items[0]?.title).toBe('Job 42')
   })
 })

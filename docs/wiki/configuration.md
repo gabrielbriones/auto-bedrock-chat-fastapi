@@ -55,6 +55,42 @@ autolangchat_plugin = add_autolangchat(
 > (Bedrock Converse rejects requests carrying both). So a value that's valid
 > for one model won't break another — it's simply ignored where unsupported.
 
+### Prompt Caching
+
+Bedrock [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+reuses the processed prompt prefix (tool schemas → system prompt → conversation)
+between LLM calls, cutting latency and the cost of repeated input tokens.
+
+| Env Variable                      | Default | Description                                                                                                                         |
+| --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTOCHAT_PROMPT_CACHING_ENABLED` | `false` | Send `cachePoint` blocks to models that support prompt caching. Off by default until savings are measured for your workload.        |
+| `AUTOCHAT_PROMPT_CACHE_TTL`       | `5m`    | Cache lifetime: `5m` or `1h`. `1h` is only sent to models that accept it (e.g. Claude 4.5+); other models use the 5-minute default. |
+
+When enabled for a supported model (see `PROMPT_CACHE_PROFILES` in
+`autolangchat/model_capabilities.py`, which records each model's minimum
+cacheable prefix, checkpoint limit and accepted TTLs):
+
+- **System prompt order.** The stable system prompt goes first and the per-turn
+  knowledge-base / auth context after it, with a cache checkpoint between the
+  two, so a retrieval turn still reuses the cached tools + system prompt.
+- **History first.** The remaining checkpoints (Claude allows 4 per request) go
+  on the newest request boundaries: the message that ends this call and the one
+  that ended each earlier call. Round 2 of a tool loop reads what round 1
+  wrote, and a follow-up message within the TTL reads the previous turn.
+- **Minimum size.** A checkpoint is only placed once the prefix before it
+  reaches the model's minimum (512–4,096 tokens depending on the model); a
+  shorter prefix can't be cached anyway.
+- **No stale content.** The cache is keyed on the exact prefix, so changing the
+  system prompt (including via runtime config) or any earlier message simply
+  misses the cache.
+
+With the flag off, or on a model without prompt-caching support (e.g. OpenAI and
+Llama models), requests are byte-identical to those sent without this feature.
+Cache read/write token counts are reported separately — see
+[Token Usage Tracking](token-usage-tracking.md#prompt-cache-tokens). To measure
+hit rate, latency and cost on your model, run
+`poetry run python scripts/benchmark_prompt_caching.py --compare`.
+
 ### Endpoints
 
 | Env Variable                              | Default         | Description                                             |

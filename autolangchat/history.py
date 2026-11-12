@@ -7,8 +7,11 @@ what a history message looks like.
 
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
+
+from .defaults import ARTIFACT_MARKER_ENTRY_KEY, ARTIFACT_MARKER_ORIGINAL_KEY
 
 # Must exceed the longest gap between checkpoint writes in a live turn (a
 # Bedrock call can take 300s and is retried once with another model id).
@@ -38,6 +41,22 @@ def has_recent_tool_loop(messages: List[Dict[str, Any]]) -> bool:
     return datetime.now(ts.tzinfo) - ts < TOOL_LOOP_LEASE
 
 
+def _user_content(message: Dict[str, Any]) -> Any:
+    """What the user sent, also for a message the graph replaced by an artifact marker."""
+    content = message.get("content", "")
+    if not message.get(ARTIFACT_MARKER_ENTRY_KEY):
+        return content
+    original = message.get(ARTIFACT_MARKER_ORIGINAL_KEY)
+    if isinstance(original, str):
+        return original
+    # Replaced before the original was kept: the marker's preview beats the raw marker.
+    try:
+        marker = ast.literal_eval(content)
+        return f"{marker['preview']}\n\n[… {marker['size_bytes']:,} bytes in total; only the beginning was kept]"
+    except (ValueError, TypeError, SyntaxError, KeyError):
+        return content
+
+
 def format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert checkpoint message dicts to the client-facing history shape.
 
@@ -46,6 +65,8 @@ def format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str
     - ``tool`` messages keep their structured ``tool_results`` but drop
       ``content``, which is the same payload ``json.dumps``-ed a second time
       and can run to megabytes per turn.
+    - a ``user`` message replaced by an artifact marker shows the text that
+      was sent, not the marker the model reads.
     """
     history: List[Dict[str, Any]] = []
     for m in raw_messages:
@@ -53,11 +74,17 @@ def format_history_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str
         if role == "system":
             continue
         metadata = m.get("metadata") or {}
+        if role == "tool":
+            content = ""
+        elif role == "user":
+            content = _user_content(m)
+        else:
+            content = m.get("content", "")
         history.append(
             {
                 "message_id": metadata.get("message_id"),
                 "role": role,
-                "content": "" if role == "tool" else m.get("content", ""),
+                "content": content,
                 "timestamp": metadata.get("timestamp"),
                 "tool_calls": m.get("tool_calls", []),
                 "tool_results": m.get("tool_results", []),

@@ -71,6 +71,21 @@ def _make_ai_message(content: str, usage: Dict | None = None):
 
 
 # ---------------------------------------------------------------------------
+# init_turn node
+# ---------------------------------------------------------------------------
+
+
+async def test_init_turn_uses_the_user_message_id_the_caller_gave():
+    from autolangchat.graph.nodes.init_turn import init_turn_node
+
+    given = await init_turn_node({"user_message": "hi"}, {"configurable": {"user_message_id": "u-1"}})
+    minted = await init_turn_node({"user_message": "hi"}, {"configurable": {}})
+
+    assert given["messages"][-1]["metadata"]["message_id"] == "u-1"
+    assert minted["messages"][-1]["metadata"]["message_id"]
+
+
+# ---------------------------------------------------------------------------
 # should_continue edge function
 # ---------------------------------------------------------------------------
 

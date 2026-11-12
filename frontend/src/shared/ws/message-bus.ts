@@ -27,6 +27,10 @@ const metadataSchema = z
         // Bedrock's usage_metadata is read with `.get()`, so either count can arrive as null.
         input_tokens: z.number().nullable().optional(),
         output_tokens: z.number().nullable().optional(),
+        // Prompt-caching subsets of input_tokens (XMGPLAT-11867); this object is `.strict()`, so
+        // they must be listed or every cached answer would be dropped.
+        cache_read_tokens: z.number().nullable().optional(),
+        cache_write_tokens: z.number().nullable().optional(),
       })
       .strict()
       .optional(),
@@ -39,6 +43,8 @@ const metadataSchema = z
     rejected_overrides: z.record(z.string(), z.unknown()).optional(),
     input_tokens: z.number().optional(),
     output_tokens: z.number().optional(),
+    cache_read_tokens: z.number().optional(),
+    cache_write_tokens: z.number().optional(),
     // Null whenever Bedrock's response_metadata carries no stopReason.
     stop_reason: z.string().nullable().optional(),
     kb_used: z.boolean().optional(),
@@ -133,6 +139,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   serverFrame('logout_success').extend({ message: z.string() }),
   // Progress for a turn carries its conversation, so a client that switched away can ignore it.
   serverFrame('typing').extend({ message: z.string(), conversation_id: z.string().nullable().optional() }),
+  // A turn started by another tab of this user, on the conversation this tab has open.
+  serverFrame('turn_started').extend({ message: z.string(), conversation_id: z.string() }),
   toolCallStartFrameSchema,
   toolCallEndFrameSchema,
   aiResponseFrameSchema,
@@ -161,12 +169,16 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
     title: z.string(),
   }),
   serverFrame('conversation_list').extend({ conversations: z.array(conversationSummarySchema) }),
+  // Another tab of this user created or used a conversation.
+  serverFrame('conversation_updated').extend({ conversation: conversationSummarySchema }),
   serverFrame('conversation_loaded').extend({
     conversation_id: z.string(),
     conversation: z.record(z.string(), z.unknown()),
     messages: z.array(messageSchema),
     // XMGPLAT-11977: optional so an older server without the flag still parses.
     in_progress: z.boolean().optional(),
+    // The running turn's frames follow this one, so there is nothing to poll for.
+    live: z.boolean().optional(),
   }),
   serverFrame('conversation_renamed').extend({
     conversation_id: z.string(),
@@ -176,6 +188,8 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   serverFrame('conversation_bulk_deleted').extend({
     deleted_ids: z.array(z.string()),
     active_conversation_deleted: z.boolean(),
+    // Set on the copy another tab's bulk delete sends here: not the reply to one this tab sent.
+    from_other_connection: z.boolean().optional(),
   }),
   serverFrame('conversation_all_deleted').extend({ deleted_count: z.number() }),
   serverFrame('conversation_error').extend({
@@ -199,6 +213,7 @@ export const FRAME_OWNER = {
   auth_expired: 'iam',
   logout_success: 'iam',
   typing: 'messaging',
+  turn_started: 'messaging',
   tool_call_start: 'messaging',
   tool_call_end: 'messaging',
   ai_response: 'messaging',
@@ -212,6 +227,7 @@ export const FRAME_OWNER = {
   conversation_created: 'conversation',
   conversation_titled: 'conversation',
   conversation_list: 'conversation',
+  conversation_updated: 'conversation',
   conversation_loaded: 'conversation',
   conversation_renamed: 'conversation',
   conversation_deleted: 'conversation',

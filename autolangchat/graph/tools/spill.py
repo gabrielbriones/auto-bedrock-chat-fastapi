@@ -20,7 +20,7 @@ from typing import Any, Collection, Dict, List, Optional, Sequence, Set, Tuple
 
 from ...artifacts import ArtifactError, ArtifactScope, ArtifactStore
 from ...context_budget import estimate_message_parts, provider_for_model
-from ...defaults import ARTIFACT_MARKER_ENTRY_KEY, ARTIFACT_MARKER_PREVIEW_MAX_CHARS
+from ...defaults import ARTIFACT_MARKER_ENTRY_KEY, ARTIFACT_MARKER_ORIGINAL_KEY, ARTIFACT_MARKER_PREVIEW_MAX_CHARS
 from .artifact_tools import artifact_tools_bound
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,12 @@ def _rebuild(message: Dict[str, Any], entries: List[Dict[str, Any]]) -> Dict[str
             [e.get("result", e.get("error")) if isinstance(e, dict) else e for e in entries], default=str
         )
         return {**message, "content": mirror, "tool_results": entries}
-    return {**message, "content": str(entries[0]["result"]), ARTIFACT_MARKER_ENTRY_KEY: True}
+    return {
+        **message,
+        "content": str(entries[0]["result"]),
+        ARTIFACT_MARKER_ENTRY_KEY: True,
+        ARTIFACT_MARKER_ORIGINAL_KEY: message["content"],
+    }
 
 
 def _is_spillable(entry: Any, exempt_tools: Collection[str]) -> bool:
@@ -288,9 +293,10 @@ def replace_oversized_message(
 
     A user message gains ``artifact_marker: True`` and its ``content`` becomes the marker as the model receives a
     tool result's marker (``str(marker)``, see ``_to_langchain_messages``). Its metadata carries no
-    ``artifact_handle``, so the model is told about the handle once, by the marker. Without a store it is left as it
-    is. An error from the store is not caught (``ArtifactError``): a message that cannot be stored stops the turn
-    explicitly, as it does when a copy of it is archived.
+    ``artifact_handle``, so the model is told about the handle once, by the marker. The original text stays in
+    ``original_content``, which only the client's history shows (``history.format_history_messages``). Without a
+    store it is left as it is. An error from the store is not caught (``ArtifactError``): a message that cannot be
+    stored stops the turn explicitly, as it does when a copy of it is archived.
 
     Any other message, a user message that already is a marker or has no text, and a replacement that would not be
     smaller are returned as they are. The input message and its entries are not mutated. ``artifact_store`` and

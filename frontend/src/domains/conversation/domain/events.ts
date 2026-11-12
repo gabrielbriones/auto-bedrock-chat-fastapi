@@ -32,12 +32,16 @@ export type ConversationEvent =
   | { readonly kind: 'created'; readonly id: ConversationId }
   | { readonly kind: 'titled'; readonly id: ConversationId; readonly title: string }
   | { readonly kind: 'listed'; readonly items: readonly ConversationSummary[] }
+  /** Another tab of this user created the conversation or added a turn to it. */
+  | { readonly kind: 'updated'; readonly conversation: ConversationSummary }
   | {
       readonly kind: 'loaded'
       readonly id: ConversationId
       readonly messages: readonly LoadedMessage[]
       /** Whether the server is running a turn for this thread; null when it did not say. */
       readonly inProgress: boolean | null
+      /** The running turn's frames follow, so it need not be polled for. */
+      readonly live?: boolean
     }
   | { readonly kind: 'renamed'; readonly id: ConversationId; readonly title: string }
   | { readonly kind: 'deleted'; readonly id: ConversationId }
@@ -45,6 +49,8 @@ export type ConversationEvent =
       readonly kind: 'bulk-deleted'
       readonly deletedIds: readonly ConversationId[]
       readonly activeDeleted: boolean
+      /** Another tab deleted them: not the reply to a bulk delete this tab may be waiting on. */
+      readonly fromOtherTab?: boolean
     }
   | { readonly kind: 'all-deleted'; readonly count: number }
   | {

@@ -141,6 +141,44 @@ describe('usage analytics route', () => {
     expect(inputHeader).toHaveAttribute('aria-sort', 'descending')
   })
 
+  it('shows cache read and cache write as separate columns in every usage table', async () => {
+    const gateway = createGateway({
+      summary: jest.fn(async () => ok([{ modelId: 'claude-3', tokens: createTokenCount(1200, 30, 900, 100), turnCount: 4 }])),
+      topUsers: jest.fn(async () => ok([{ userId: 'alice@example.com', tokens: createTokenCount(1000, 50, 600, 200) }])),
+      byDay: jest.fn(async () => ok([{ date: date('2026-05-01'), tokens: createTokenCount(800, 20, 500, 50), turnCount: 2 }])),
+      byUser: jest.fn(async () => ok([{ ...sessionRow, tokens: createTokenCount(400, 10, 300, 0) }])),
+    })
+    renderAt('/chat/dashboard/token-usages?from=2026-05-01&to=2026-05-31&user=alice%40example.com', gateway)
+
+    const firstRowByHeader = async (caption: string): Promise<Record<string, string>> => {
+      const table = await screen.findByRole('table', { name: caption })
+      const headers = within(table).getAllByRole('columnheader').map((header) => header.textContent ?? '')
+      const [firstRow] = within(table).getAllByRole('row').slice(1)
+      if (firstRow === undefined) throw new Error(`no rows in ${caption}`)
+      const cells = within(firstRow).getAllByRole('cell').map((cell) => cell.textContent ?? '')
+      return Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? '']))
+    }
+
+    expect(await firstRowByHeader(TELEMETRY_COPY.summary.table)).toMatchObject({
+      [TELEMETRY_COPY.summary.input]: formatUsageNumber(1200),
+      [TELEMETRY_COPY.summary.cacheRead]: formatUsageNumber(900),
+      [TELEMETRY_COPY.summary.cacheWrite]: formatUsageNumber(100),
+      [TELEMETRY_COPY.summary.totalTokens]: formatUsageNumber(1230),
+    })
+    expect(await firstRowByHeader(TELEMETRY_COPY.topUsers.title)).toMatchObject({
+      [TELEMETRY_COPY.topUsers.cacheRead]: formatUsageNumber(600),
+      [TELEMETRY_COPY.topUsers.cacheWrite]: formatUsageNumber(200),
+    })
+    expect(await firstRowByHeader(TELEMETRY_COPY.byDay.table)).toMatchObject({
+      [TELEMETRY_COPY.byDay.cacheRead]: formatUsageNumber(500),
+      [TELEMETRY_COPY.byDay.cacheWrite]: formatUsageNumber(50),
+    })
+    expect(await firstRowByHeader(TELEMETRY_COPY.byUser.title)).toMatchObject({
+      [TELEMETRY_COPY.byUser.cacheRead]: formatUsageNumber(300),
+      [TELEMETRY_COPY.byUser.cacheWrite]: formatUsageNumber(0),
+    })
+  })
+
   it('restores applied filters from the URL and fetches each selected section', async () => {
     const { gateway, router } = renderAt(
       '/chat/dashboard/token-usages?topLimit=20&from=2026-05-01&to=2026-05-31&user=alice%40example.com&offset=50',

@@ -64,6 +64,76 @@ logger = logging.getLogger(__name__)
 # environment's AWS credentials lack `bedrock:InvokeModel` for that model).
 CAPABILITY_OVERRIDES: Dict[str, Dict[str, Any]] = {}
 
+# Explicit (cachePoint) prompt-caching limits per foundation model, merged into
+# :func:`get_model_profile` between ``_PROFILES`` (which has no caching data)
+# and :data:`CAPABILITY_OVERRIDES`. Region-prefixed ids resolve through the
+# usual bare/prefixed fallback. Source: "Supported models, Regions, and
+# explicit caching limits" in
+# https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+#
+# * ``prompt_cache_min_tokens`` -- minimum cumulative prefix (tools + system +
+#   messages) before a checkpoint; a smaller prefix is accepted but not cached.
+# * ``prompt_cache_max_checkpoints`` -- cachePoint blocks allowed per request.
+# * ``prompt_cache_ttls`` -- accepted ``ttl`` values. Sending ``ttl`` to a
+#   5-minute-only model can fail with a ValidationException.
+# * ``prompt_cache_max_tokens`` -- largest cacheable prefix, where limited.
+# * ``prompt_cache_tool_results`` -- whether a checkpoint may follow a tool
+#   result (default ``True``).
+#
+# Models missing here (including OpenAI models, whose explicit caching isn't
+# available through Converse) never get cachePoint blocks.
+_CLAUDE_CACHE = {"supports_prompt_caching": True, "prompt_cache_max_checkpoints": 4, "prompt_cache_ttls": ("5m", "1h")}
+_NOVA_CACHE = {
+    "supports_prompt_caching": True,
+    "prompt_cache_min_tokens": 1000,
+    "prompt_cache_max_checkpoints": 4,
+    "prompt_cache_ttls": ("5m",),
+    "prompt_cache_max_tokens": 20000,
+    # Nova rejects a cachePoint in a message that carries toolUse/toolResult.
+    "prompt_cache_tool_results": False,
+}
+PROMPT_CACHE_PROFILES: Dict[str, Dict[str, Any]] = {
+    **{
+        model_id: {**_CLAUDE_CACHE, "prompt_cache_min_tokens": 512}
+        for model_id in (
+            "anthropic.claude-haiku-5-5",
+            "anthropic.claude-sonnet-5-5",
+            "anthropic.claude-opus-5-5",
+            "anthropic.claude-fable-5-1",
+            "anthropic.claude-mythos-5-1",
+            "anthropic.claude-fable-5",
+            "anthropic.claude-mythos-5",
+            "anthropic.claude-opus-5",
+        )
+    },
+    **{
+        model_id: {**_CLAUDE_CACHE, "prompt_cache_min_tokens": 1024}
+        for model_id in (
+            "anthropic.claude-opus-4-8",
+            "anthropic.claude-sonnet-5",
+            "anthropic.claude-sonnet-4-6",
+        )
+    },
+    **{
+        model_id: {**_CLAUDE_CACHE, "prompt_cache_min_tokens": 4096}
+        for model_id in (
+            "anthropic.claude-opus-4-7",
+            "anthropic.claude-opus-4-6-v1",
+            "anthropic.claude-opus-4-5-20251101-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        )
+    },
+    **{
+        model_id: dict(_NOVA_CACHE)
+        for model_id in (
+            "amazon.nova-2-lite-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        )
+    },
+}
+
 # Bedrock Converse read timeout floor (seconds) for generation calls. The
 # botocore default of 60s is not enough for large-output requests (e.g.
 # max_tokens=8192).
@@ -103,12 +173,16 @@ def get_model_profile(model_id: str) -> Dict[str, Any]:
     """Capability profile for ``model_id``, or ``{}`` when nothing is known.
 
     Falls back to the other region-prefix spelling of the id (see
-    :func:`_alternate_model_ids`) and merges :data:`CAPABILITY_OVERRIDES` on
-    top of whatever was found -- looked up the same way, so an override keyed
+    :func:`_alternate_model_ids`) and merges :data:`PROMPT_CACHE_PROFILES`
+    and then :data:`CAPABILITY_OVERRIDES` on top of whatever was found -- looked up the same way, so an override keyed
     by the bare model id still applies to a region-prefixed inference-profile
     id (e.g. the one `llm_call_node` retries with) and vice versa.
     """
-    return {**_lookup(_PROFILES, model_id), **_lookup(CAPABILITY_OVERRIDES, model_id)}
+    return {
+        **_lookup(_PROFILES, model_id),
+        **_lookup(PROMPT_CACHE_PROFILES, model_id),
+        **_lookup(CAPABILITY_OVERRIDES, model_id),
+    }
 
 
 def supports_temperature(model_id: str) -> bool:
@@ -135,6 +209,48 @@ def get_max_output_tokens(model_id: str) -> Optional[int]:
     """The model's output-token cap, or ``None`` when unknown."""
     cap = get_model_profile(model_id).get("max_output_tokens")
     return cap if isinstance(cap, int) and cap > 0 else None
+
+
+def supports_prompt_caching(model_id: str) -> bool:
+    """Whether ``model_id`` accepts explicit ``cachePoint`` blocks through
+    Converse. Unknown models default to ``False``: an unsupported cachePoint
+    fails the whole request, while a missing one only costs a cache miss."""
+    return bool(get_model_profile(model_id).get("supports_prompt_caching", False))
+
+
+def _positive_int(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def get_prompt_cache_min_tokens(model_id: str) -> Optional[int]:
+    """Minimum cumulative prompt prefix (tokens) before a cache checkpoint, or
+    ``None`` when the model doesn't support prompt caching."""
+    if not supports_prompt_caching(model_id):
+        return None
+    return _positive_int(get_model_profile(model_id).get("prompt_cache_min_tokens"))
+
+
+def get_prompt_cache_max_checkpoints(model_id: str) -> int:
+    """Number of ``cachePoint`` blocks ``model_id`` accepts per request
+    (``0`` when prompt caching isn't supported)."""
+    if not supports_prompt_caching(model_id):
+        return 0
+    return _positive_int(get_model_profile(model_id).get("prompt_cache_max_checkpoints")) or 0
+
+
+def get_prompt_cache_max_tokens(model_id: str) -> Optional[int]:
+    """Largest cacheable prompt prefix (tokens) for ``model_id``, or ``None``
+    when unlimited/unknown."""
+    if not supports_prompt_caching(model_id):
+        return None
+    return _positive_int(get_model_profile(model_id).get("prompt_cache_max_tokens"))
+
+
+def supports_prompt_cache_ttl(model_id: str, ttl: str) -> bool:
+    """Whether ``model_id`` accepts ``ttl`` (``"5m"``/``"1h"``) on a cachePoint."""
+    if not supports_prompt_caching(model_id):
+        return False
+    return ttl in tuple(get_model_profile(model_id).get("prompt_cache_ttls") or ("5m",))
 
 
 def clamp_max_tokens(model_id: str, max_tokens: Optional[int]) -> Optional[int]:
