@@ -86,6 +86,7 @@ class _LiveTurn:
     """A turn running in this process, kept so any tab that opens its conversation can follow it live."""
 
     origin: WebSocket
+    # The sender's verified identity, whose other tabs follow the turn; None keeps it to ``origin``.
     user_id: Optional[str]
     user_message: str
     started_at: str
@@ -972,7 +973,10 @@ class WebSocketChatHandler:
                     await self.conversation_store.record_turn(conversation_id)
                 except Exception:
                     logger.exception("Failed to record conversation turn for conversation_id=%s", conversation_id)
-                await self._announce_conversation_update(websocket, session.user_id, conversation_id)
+                # The identity verified when the turn started: its tab may have gone since.
+                await self._announce_conversation_update(
+                    websocket, live_turn.user_id if live_turn is not None else None, conversation_id
+                )
 
             # Auto-title a freshly created conversation in the background so
             # title-generation latency never delays the ai_response that was
@@ -986,6 +990,7 @@ class WebSocketChatHandler:
                         {"role": "user", "content": user_message},
                         {"role": "assistant", "content": content},
                     ],
+                    verified_user_id=live_turn.user_id if live_turn is not None else None,
                 )
 
             # Token usage is now recorded inside the graph itself by
@@ -1053,6 +1058,10 @@ class WebSocketChatHandler:
                 )
                 return None
             session.metadata["conversation_id"] = conversation_id
+            # Before the acknowledgement, which fails if the creating tab has gone: the row exists by now.
+            verified_user_id = self._verified_user_id(websocket, session)
+            if self._other_sessions(verified_user_id, websocket):
+                await self._publish_conversation_update(websocket, verified_user_id, conversation_id)
             await self._send_bounded(
                 websocket,
                 {
@@ -1063,8 +1072,6 @@ class WebSocketChatHandler:
                 _OWN_SEND_TIMEOUT_SECONDS,
                 log_errors=True,
             )
-            if self._other_sessions(session.user_id, websocket):
-                await self._publish_conversation_update(websocket, session.user_id, conversation_id)
         return conversation_id
 
     def in_progress(self, thread_id: str) -> bool:
@@ -1089,6 +1096,14 @@ class WebSocketChatHandler:
             s.websocket is websocket and self._still_signed_in(s)
             for s in self.session_manager.sessions_for_user(user_id)
         )
+
+    def _verified_user_id(self, websocket: WebSocket, session: ChatSession) -> Optional[str]:
+        """``session``'s user id if the server verified it and it is still signed in, else ``None``.
+
+        A ``user_id`` the client merely claimed (the ``?user_id=`` parameter) lets a connection work
+        on its own; only a verified one may change what the user's other connections see or hold.
+        """
+        return session.user_id if self._signed_in_as(websocket, session.user_id) else None
 
     def _signed_in_sessions(self, user_id: str, excluding: Optional[WebSocket] = None) -> List[ChatSession]:
         """The live sessions of ``user_id``, other than the one on ``excluding``, still signed in right now."""
@@ -1178,18 +1193,36 @@ class WebSocketChatHandler:
         """Send ``frames`` to each viewer, closing one that stops reading rather than waiting on it.
 
         With ``user_id``, a viewer is checked before every frame and skipped once it is no longer a
-        signed-in connection of that user: it can sign out while an earlier viewer is being sent to.
+        signed-in connection of that user: it can sign out between two of its frames.
         """
-        if timeout is None:
-            timeout = _FOLLOWER_SEND_TIMEOUT_SECONDS
-        for viewer in viewers:
+        await self._deliver([(viewer, frames) for viewer in viewers], user_id=user_id, timeout=timeout)
+
+    async def _deliver(
+        self,
+        deliveries: List[Tuple[WebSocket, List[Dict[str, Any]]]],
+        user_id: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> None:
+        """``_send_to_viewers`` with each socket given its own frames.
+
+        A socket gets its frames in order; the sockets are sent to at the same time, so those that
+        stop reading cost the caller, and the lock it holds, one timeout between them rather than one each.
+        """
+        bound = _FOLLOWER_SEND_TIMEOUT_SECONDS if timeout is None else timeout
+
+        async def send(viewer: WebSocket, frames: List[Dict[str, Any]]) -> None:
             try:
                 for frame in frames:
                     if user_id is not None and not self._signed_in_as(viewer, user_id):
                         break
-                    await self._send_bounded(viewer, frame, timeout)
+                    await self._send_bounded(viewer, frame, bound)
             except WebSocketError:
                 logger.debug("Could not send a frame to a closed or stalled socket")
+
+        if len(deliveries) == 1:
+            await send(*deliveries[0])
+        elif deliveries:
+            await asyncio.gather(*(send(viewer, frames) for viewer, frames in deliveries))
 
     @staticmethod
     async def _close_stalled(websocket: WebSocket) -> None:
@@ -1200,7 +1233,11 @@ class WebSocketChatHandler:
             logger.debug("Could not close a stalled connection", exc_info=True)
 
     def _other_sessions(self, user_id: Optional[str], websocket: WebSocket) -> List[ChatSession]:
-        """The live sessions of ``user_id`` other than the one on ``websocket``."""
+        """The signed-in sessions of ``user_id`` other than the one on ``websocket``.
+
+        ``user_id`` is the verified identity of whoever made the change (``_verified_user_id``, or a
+        running turn's ``user_id``); ``None`` for an unverified one, which reaches nobody else.
+        """
         if not user_id:
             return []
         return self._signed_in_sessions(user_id, excluding=websocket)
@@ -1217,13 +1254,16 @@ class WebSocketChatHandler:
     ) -> List[Tuple[WebSocket, bool]]:
         """Detach the user's other sessions from deleted conversations (``None``: all of them).
 
-        Returns each other socket with whether its active conversation was deleted.
+        ``user_id`` is the deleting connection's verified identity; ``None`` leaves every other
+        connection alone. Returns each other socket with whether its active conversation was
+        deleted; the caller's send tells only those still signed in.
         """
         if not user_id:
             return []
         sockets = []
-        # Not only signed-in ones: a tab signing in again on its socket keeps its conversation.
-        for other in self.session_manager.sessions_for_user(user_id):
+        # Signed out or not: a tab that signs in again on its socket keeps its conversation, and its
+        # next chat would go to the deleted one.
+        for other in self.session_manager.connections_for_user(user_id):
             if other.websocket is websocket:
                 continue
             active = other.metadata.get("conversation_id")
@@ -1248,7 +1288,8 @@ class WebSocketChatHandler:
     async def _announce_conversation_update(
         self, websocket: WebSocket, user_id: Optional[str], conversation_id: str
     ) -> None:
-        """Send the user's other connections the current summary of ``conversation_id``. Best-effort."""
+        """Send the other connections of ``user_id`` (verified, see ``_other_sessions``) the current
+        summary of ``conversation_id``. Best-effort."""
         if not user_id or not self._other_sessions(user_id, websocket):
             return
         # Read and sent under the lock deletes take: a summary read before a delete must not reach a
@@ -1289,7 +1330,12 @@ class WebSocketChatHandler:
     ) -> _LiveTurn:
         """Register the turn ``websocket`` starts on ``conversation_id``. Call with its thread lock held."""
         now = datetime.now().isoformat()
-        live = _LiveTurn(origin=websocket, user_id=session.user_id, user_message=user_message, started_at=now)
+        live = _LiveTurn(
+            origin=websocket,
+            user_id=self._verified_user_id(websocket, session),
+            user_message=user_message,
+            started_at=now,
+        )
         live.record(
             {"type": "typing", "message": _THINKING_MESSAGE, "timestamp": now, "conversation_id": conversation_id}
         )
@@ -2120,9 +2166,17 @@ class WebSocketChatHandler:
         task.add_done_callback(_on_done)
         return task
 
-    def _spawn_title_task(self, websocket: WebSocket, conversation_id: str, messages: List[Dict[str, Any]]) -> None:
+    def _spawn_title_task(
+        self,
+        websocket: WebSocket,
+        conversation_id: str,
+        messages: List[Dict[str, Any]],
+        verified_user_id: Optional[str] = None,
+    ) -> None:
         """Start auto-titling for ``conversation_id``, tracked so a rename can cancel it."""
-        task = self._spawn_background_task(self._generate_and_apply_title(websocket, conversation_id, messages))
+        task = self._spawn_background_task(
+            self._generate_and_apply_title(websocket, conversation_id, messages, verified_user_id)
+        )
         self._pending_title_tasks[conversation_id] = task
 
         def _forget(t: "asyncio.Task[Any]") -> None:
@@ -2179,8 +2233,13 @@ class WebSocketChatHandler:
         websocket: WebSocket,
         conversation_id: str,
         messages: List[Dict[str, Any]],
+        verified_user_id: Optional[str] = None,
     ) -> None:
         """Fire-and-forget: title a freshly created conversation and notify the client.
+
+        ``verified_user_id`` is the identity verified when the turn that created it started; the
+        owner's other tabs hear of the title only if it is theirs. It is not checked again here,
+        since the tab that sent the turn may have gone by now.
 
         Runs after the ``ai_response`` has already been sent so
         title-generation latency never delays the chat reply. Failures are
@@ -2217,7 +2276,8 @@ class WebSocketChatHandler:
                     "title": title,
                     "timestamp": datetime.now().isoformat(),
                 }
-                await self._send_to_other_sessions(owner, websocket, titled)
+                if owner and owner == verified_user_id:
+                    await self._send_to_other_sessions(owner, websocket, titled)
                 await self._send_to_viewers([websocket], [titled], timeout=_OWN_SEND_TIMEOUT_SECONDS)
         except Exception:
             logger.warning("Conversation auto-titling failed for conversation_id=%s", conversation_id, exc_info=True)
@@ -2425,7 +2485,8 @@ class WebSocketChatHandler:
             if session.metadata.get("conversation_id") == conversation_id:
                 session.metadata["conversation_id"] = None
                 session.metadata.pop("feedback_meta", None)
-            others = self._detach_other_sessions(session.user_id, websocket, {conversation_id})
+            verified_user_id = self._verified_user_id(websocket, session)
+            others = self._detach_other_sessions(verified_user_id, websocket, {conversation_id})
             deleted = {
                 "type": "conversation_deleted",
                 "conversation_id": conversation_id,
@@ -2433,9 +2494,9 @@ class WebSocketChatHandler:
             }
             # Told under the lock, so a tab cannot load another conversation before it hears of this
             # one; and before the acknowledgement, which fails if the deleting tab has gone.
-            await self._send_to_viewers([other for other, _ in others], [deleted], user_id=session.user_id)
-
-        await self._send_message(websocket, deleted)
+            await self._send_to_viewers([other for other, _ in others], [deleted], user_id=verified_user_id)
+            # Acknowledged under the lock too, so no later change reaches the deleting tab first.
+            await self._send_bounded(websocket, deleted, _OWN_SEND_TIMEOUT_SECONDS, log_errors=True)
 
     async def _handle_conversation_delete_bulk(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_delete_bulk`` request — delete a chosen subset of conversations.
@@ -2483,32 +2544,39 @@ class WebSocketChatHandler:
                 session.metadata["conversation_id"] = None
                 session.metadata.pop("feedback_meta", None)
 
-            others = self._detach_other_sessions(session.user_id, websocket, set(deleted_ids)) if deleted_ids else []
+            verified_user_id = self._verified_user_id(websocket, session)
+            others = self._detach_other_sessions(verified_user_id, websocket, set(deleted_ids)) if deleted_ids else []
             # Under the lock and before the acknowledgement, as for a single delete.
-            for other, detached in others:
-                await self._send_to_viewers(
-                    [other],
-                    [
-                        {
-                            "type": "conversation_bulk_deleted",
-                            "deleted_ids": deleted_ids,
-                            "active_conversation_deleted": detached,
-                            # Not the reply to a bulk delete this connection may itself be waiting on.
-                            "from_other_connection": True,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                    ],
-                    user_id=session.user_id,
-                )
-        await self._send_message(
-            websocket,
-            {
-                "type": "conversation_bulk_deleted",
-                "deleted_ids": deleted_ids,
-                "active_conversation_deleted": active_conversation_deleted,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
+            await self._deliver(
+                [
+                    (
+                        other,
+                        [
+                            {
+                                "type": "conversation_bulk_deleted",
+                                "deleted_ids": deleted_ids,
+                                "active_conversation_deleted": detached,
+                                # Not the reply to a bulk delete this connection may itself be waiting on.
+                                "from_other_connection": True,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                        ],
+                    )
+                    for other, detached in others
+                ],
+                user_id=verified_user_id,
+            )
+            await self._send_bounded(
+                websocket,
+                {
+                    "type": "conversation_bulk_deleted",
+                    "deleted_ids": deleted_ids,
+                    "active_conversation_deleted": active_conversation_deleted,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                _OWN_SEND_TIMEOUT_SECONDS,
+                log_errors=True,
+            )
 
     async def _handle_conversation_delete_all(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_delete_all`` request — remove all of the user's conversations."""
@@ -2523,16 +2591,17 @@ class WebSocketChatHandler:
                 store.delete_user(session.user_id)
             session.metadata["conversation_id"] = None
             session.metadata.pop("feedback_meta", None)
-            others = self._detach_other_sessions(session.user_id, websocket, None)
+            verified_user_id = self._verified_user_id(websocket, session)
+            others = self._detach_other_sessions(verified_user_id, websocket, None)
             all_deleted = {
                 "type": "conversation_all_deleted",
                 "deleted_count": deleted_count,
                 "timestamp": datetime.now().isoformat(),
             }
             # Under the lock and before the acknowledgement, as for a single delete.
-            await self._send_to_viewers([other for other, _ in others], [all_deleted], user_id=session.user_id)
-
-        await self._send_message(websocket, all_deleted)
+            await self._send_to_viewers([other for other, _ in others], [all_deleted], user_id=verified_user_id)
+            # A late acknowledgement would clear a conversation created since from the deleting tab's list.
+            await self._send_bounded(websocket, all_deleted, _OWN_SEND_TIMEOUT_SECONDS, log_errors=True)
 
     async def _handle_conversation_rename(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_rename`` request — set an explicit user-chosen title."""
@@ -2555,41 +2624,39 @@ class WebSocketChatHandler:
             return
         title = title.strip()
 
-        conversation = await self.conversation_store.get_conversation(conversation_id)
-        if conversation is None or conversation.get("user_id") != session.user_id:
-            await self._send_conversation_error(
-                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
-            )
-            return
-
-        # Stop any in-flight auto-title before writing, so it can't land
-        # (or notify the client) after the user's chosen title.
-        self._cancel_pending_title(conversation_id)
-
-        renamed = {
-            "type": "conversation_renamed",
-            "conversation_id": conversation_id,
-            "title": title,
-            "timestamp": datetime.now().isoformat(),
-        }
-        # Written and announced under the lock deletes take, so the new title of a conversation
-        # deleted meanwhile never reaches a tab after that delete's notice.
-        found = True
+        # Checked, written, announced and acknowledged under the lock deletes take: neither the new
+        # title of a conversation deleted meanwhile nor its acknowledgement reaches a tab after that
+        # delete's notice, where it would put the conversation back in its list.
         async with self._user_lock(session.user_id):
-            try:
-                await self.conversation_store.update_conversation(conversation_id, title=title)
-            except ConversationNotFoundError:
-                found = False
-            else:
-                # Before the acknowledgement, which fails if the renaming tab has gone.
-                await self._send_to_other_sessions(session.user_id, websocket, renamed)
+            conversation = await self.conversation_store.get_conversation(conversation_id)
+            found = conversation is not None and conversation.get("user_id") == session.user_id
+            if found:
+                # Stop any in-flight auto-title before writing, so it can't land
+                # (or notify the client) after the user's chosen title.
+                self._cancel_pending_title(conversation_id)
+                try:
+                    await self.conversation_store.update_conversation(conversation_id, title=title)
+                except ConversationNotFoundError:
+                    found = False
+            if not found:
+                await self._send_conversation_error(
+                    websocket,
+                    "conversation_not_found",
+                    "Conversation not found",
+                    conversation_id=conversation_id,
+                    timeout=_OWN_SEND_TIMEOUT_SECONDS,
+                )
+                return
 
-        if not found:
-            await self._send_conversation_error(
-                websocket, "conversation_not_found", "Conversation not found", conversation_id=conversation_id
-            )
-            return
-        await self._send_message(websocket, renamed)
+            renamed = {
+                "type": "conversation_renamed",
+                "conversation_id": conversation_id,
+                "title": title,
+                "timestamp": datetime.now().isoformat(),
+            }
+            # Before the acknowledgement, which fails if the renaming tab has gone.
+            await self._send_to_other_sessions(self._verified_user_id(websocket, session), websocket, renamed)
+            await self._send_bounded(websocket, renamed, _OWN_SEND_TIMEOUT_SECONDS, log_errors=True)
 
     async def _handle_auth_message(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle authentication message from client"""
@@ -2736,7 +2803,7 @@ class WebSocketChatHandler:
                     return
 
                 # Extract user_id from verification response if available
-                if user_info and not session.user_id:
+                if user_info and not (session.user_id and session.is_authenticated):
                     # Try common user_id fields: user_id, sub, email, username
                     extracted_user_id = (
                         user_info.get("user_id")
@@ -2745,7 +2812,8 @@ class WebSocketChatHandler:
                         or user_info.get("username")
                         or user_info.get("user")
                     )
-                    if extracted_user_id:
+                    # A claimed id the endpoint confirms becomes verified; a different one is kept as it was.
+                    if extracted_user_id and session.user_id in (None, "", extracted_user_id):
                         await self.session_manager.update_session_user_id(session.session_id, extracted_user_id)
                         # Refresh session reference after update
                         session = await self.session_manager.get_session(websocket)
@@ -3046,17 +3114,24 @@ class WebSocketChatHandler:
         if not chat_session:
             return False
 
+        # The SSO identity is the verified one, whatever the connection claimed before (a
+        # ``?user_id=`` parameter is never verified, even when it names the same user).
+        verified_user_id = user_info_dict["user_id"]
+        if verified_user_id and (chat_session.user_id != verified_user_id or not chat_session.is_authenticated):
+            if chat_session.user_id and chat_session.user_id != verified_user_id:
+                # What it had open belongs to the user it claimed to be.
+                self._deactivate_artifacts(chat_session)
+                chat_session.metadata["conversation_id"] = None
+                chat_session.metadata.pop("feedback_meta", None)
+            await self.session_manager.update_session_user_id(chat_session.session_id, verified_user_id)
+            # Refresh session reference after update
+            chat_session = await self.session_manager.get_session(websocket)
+            logger.debug("Updated session user_id: %s", verified_user_id)
+
         # Update session with SSO credentials and user info
         chat_session.credentials = user_info_dict["credentials"]
         chat_session.auth_handler = user_info_dict["auth_handler"]
         chat_session.metadata.update(user_info_dict["metadata"])
-
-        # Update session user_id if not already set
-        if not chat_session.user_id and user_info_dict["user_id"]:
-            await self.session_manager.update_session_user_id(chat_session.session_id, user_info_dict["user_id"])
-            # Refresh session reference after update
-            chat_session = await self.session_manager.get_session(websocket)
-            logger.debug("Updated session user_id: %s", user_info_dict["user_id"])
 
         display_name = user_info_dict["display_name"]
         logger.info(

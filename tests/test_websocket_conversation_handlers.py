@@ -571,10 +571,11 @@ class _LiveTurnHarness:
         self.step = asyncio.Event()
         self.resume = asyncio.Event()
 
-    async def connect(self, user_id, conversation_id=None):
+    async def connect(self, user_id, conversation_id=None, verified=True):
+        """``verified=False`` is a connection that only claims ``user_id`` (the ``?user_id=`` parameter)."""
         ws = _new_ws()
         ws.close = AsyncMock()
-        await self.manager.create_session(ws, user_id=user_id, is_authenticated=True)
+        await self.manager.create_session(ws, user_id=user_id, is_authenticated=verified)
         if conversation_id is not None:
             (await self.manager.get_session(ws)).metadata["conversation_id"] = conversation_id
         return ws
@@ -874,7 +875,9 @@ async def test_title_and_rename_reach_every_tab_of_the_user():
         stranger = await harness.connect("bob")
         harness.handler._build_title_llm_client = lambda: None
 
-        await harness.handler._generate_and_apply_title(sender, "conv-1", [{"role": "user", "content": "Tune L2"}])
+        await harness.handler._generate_and_apply_title(
+            sender, "conv-1", [{"role": "user", "content": "Tune L2"}], verified_user_id="alice"
+        )
         await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
 
         for ws in (sender, other_tab):
@@ -1019,24 +1022,20 @@ async def test_signed_out_tab_stops_getting_the_users_broadcasts():
         await store.close()
 
 
-async def test_tab_that_signs_out_during_a_broadcast_is_skipped():
+async def test_tab_that_signs_out_between_two_of_its_frames_gets_no_more_of_them():
     store = await _make_store()
     harness = _LiveTurnHarness(store, _make_chat_graph())
     try:
-        await store.create_conversation("conv-1", "alice")
-        sender = await harness.connect("alice", "conv-1")
-        first = await harness.connect("alice", "conv-1")
-        second = await harness.connect("alice", "conv-1")
+        tab = await harness.connect("alice", "conv-1")
 
-        # The recipients were chosen before this send; the second signs out while it is awaited.
-        async def sign_out_second(frame):
-            (await harness.manager.get_session(second)).credentials = None
+        # The recipient was chosen before the first send; it signs out while that send is awaited.
+        async def sign_out(frame):
+            (await harness.manager.get_session(tab)).credentials = None
 
-        first.send_json = AsyncMock(side_effect=sign_out_second)
-        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Mine"})
+        tab.send_json = AsyncMock(side_effect=sign_out)
+        await harness.handler._send_to_viewers([tab], [{"type": "first"}, {"type": "second"}], user_id="alice")
 
-        assert first.send_json.await_count == 1
-        assert _sent(second) == []
+        assert _types(tab) == ["first"]
     finally:
         await harness.handler.shutdown()
         await store.close()
@@ -1414,6 +1413,269 @@ async def test_follower_whose_sso_session_ends_mid_turn_is_told_to_sign_in_inste
         assert _types(follower) == ["turn_started", "typing", "typing", "auth_expired"]
         assert follower_session.credentials is None
         assert _types(origin).count("ai_response") == 1
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("change", ["create", "turn", "rename", "delete", "bulk", "all"])
+async def test_connection_that_only_claims_a_user_id_changes_nothing_for_that_users_tabs(change):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    harness.handler._build_title_llm_client = lambda: None
+    try:
+        await store.create_conversation("conv-1", "alice")
+        # Anyone can open a socket with ``?user_id=alice``; nothing verified that it is alice.
+        claimed = await harness.connect("alice", None if change == "create" else "conv-1", verified=False)
+        alices_tab = await harness.connect("alice", "conv-1")
+        harness.script([])
+        handle, data = {
+            "create": (harness.handler._handle_chat_message, {"message": "hello"}),
+            "turn": (harness.handler._handle_chat_message, {"message": "hello"}),
+            "rename": (harness.handler._handle_conversation_rename, {"conversation_id": "conv-1", "title": "Mine"}),
+            "delete": (harness.handler._handle_conversation_delete, {"conversation_id": "conv-1"}),
+            "bulk": (harness.handler._handle_conversation_delete_bulk, {"conversation_ids": ["conv-1"]}),
+            "all": (harness.handler._handle_conversation_delete_all, {}),
+        }[change]
+
+        await handle(claimed, data)
+        await asyncio.gather(*harness.handler._background_tasks)
+
+        # No list change, no turn frame and no detach reaches the verified tab.
+        assert _sent(alices_tab) == []
+        assert (await harness.manager.get_session(alices_tab)).metadata["conversation_id"] == "conv-1"
+        # The claiming connection is still answered itself, as before.
+        expected = {
+            "create": "conversation_titled",
+            "turn": "ai_response",
+            "rename": "conversation_renamed",
+            "delete": "conversation_deleted",
+            "bulk": "conversation_bulk_deleted",
+            "all": "conversation_all_deleted",
+        }[change]
+        assert expected in _types(claimed)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+def _sso_handler(harness, user_id):
+    """Give ``harness`` an SSO store; returns it with a session token that verifies as ``user_id``."""
+    from autolangchat.sso.sso_session_store import SSOSessionStore
+
+    sso_store = SSOSessionStore()
+    harness.handler.sso_session_store = sso_store
+    harness.handler.config.sso_session_secret = "s3cr3t-session-secret"
+    harness.handler.config.auth_verification_endpoint = None
+    sso_session_id = sso_store.create_session({"access_token": "token"}, user_info={"email": user_id})
+    return sso_store, sso_store.generate_session_token(sso_session_id, "s3cr3t-session-secret")
+
+
+async def test_sso_sign_in_after_connecting_verifies_a_connection_that_claimed_the_same_user_id():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    _, token = _sso_handler(harness, "alice")
+    try:
+        await store.create_conversation("conv-1", "alice")
+        late = await harness.connect("alice", "conv-1", verified=False)
+        sender = await harness.connect("alice", "conv-1")
+
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "Before"})
+        assert _sent(late) == []
+
+        await harness.handler._handle_auth_message(late, {"auth_type": "sso", "session_token": token})
+        session = await harness.manager.get_session(late)
+        assert session.is_authenticated and session.user_id == "alice"
+        # The same user: what it had open stays open.
+        assert session.metadata["conversation_id"] == "conv-1"
+
+        await harness.handler._handle_conversation_rename(sender, {"conversation_id": "conv-1", "title": "After"})
+        assert _types(late) == ["auth_configured", "conversation_renamed"]
+        # And its own changes now reach the user's other tabs.
+        await harness.handler._handle_conversation_rename(late, {"conversation_id": "conv-1", "title": "Mine"})
+        assert _sent(sender)[-1]["title"] == "Mine"
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_sso_sign_in_as_another_user_than_the_one_claimed_takes_the_verified_identity():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    _, token = _sso_handler(harness, "bob")
+    try:
+        await store.create_conversation("conv-1", "alice")
+        await store.create_conversation("conv-2", "bob")
+        late = await harness.connect("alice", "conv-1", verified=False)
+        alices_tab = await harness.connect("alice", "conv-1")
+        bobs_tab = await harness.connect("bob", "conv-2")
+
+        await harness.handler._handle_auth_message(late, {"auth_type": "sso", "session_token": token})
+
+        session = await harness.manager.get_session(late)
+        assert session.is_authenticated and session.user_id == "bob"
+        # Alice's conversation is not Bob's to keep open.
+        assert session.metadata["conversation_id"] is None
+        assert late not in [s.websocket for s in harness.manager.connections_for_user("alice")]
+
+        await harness.handler._handle_conversation_rename(alices_tab, {"conversation_id": "conv-1", "title": "A"})
+        await harness.handler._handle_conversation_rename(bobs_tab, {"conversation_id": "conv-2", "title": "B"})
+        assert [f["conversation_id"] for f in _frames(late, "conversation_renamed")] == ["conv-2"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_other_tabs_hear_of_a_new_conversation_even_when_the_tab_that_created_it_is_gone():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        sender = await harness.connect("alice")
+        other_tab = await harness.connect("alice", "conv-old")
+
+        async def gone_before_the_acknowledgement(frame):
+            if frame["type"] == "conversation_created":
+                raise RuntimeError("socket closed")
+
+        sender.send_json = AsyncMock(side_effect=gone_before_the_acknowledgement)
+        await harness.handler._handle_chat_message(sender, {"message": "hello"})
+
+        # The row is committed by then, so the list of every other tab has to show it.
+        (created,) = await store.list_conversations("alice")
+        assert [f["conversation"]["id"] for f in _frames(other_tab, "conversation_updated")] == [created["id"]]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("change", ["turn", "rename", "delete", "bulk", "all"])
+async def test_tabs_are_sent_to_at_the_same_time_so_slow_ones_do_not_add_up(monkeypatch, change):
+    monkeypatch.setattr(websocket_handler, "_FOLLOWER_SEND_TIMEOUT_SECONDS", 0.2)
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        slow_tabs = [await harness.connect("alice", "conv-1") for _ in range(3)]
+        healthy = await harness.connect("alice", "conv-1")
+        reached_healthy = asyncio.Event()
+
+        # Each slow tab takes its frame only once the tab listed after all of them has had it:
+        # sent to one at a time, they would time out and be closed first.
+        async def accept_after_healthy(frame):
+            await reached_healthy.wait()
+
+        async def accept(frame):
+            reached_healthy.set()
+
+        for tab in slow_tabs:
+            tab.send_json = AsyncMock(side_effect=accept_after_healthy)
+        healthy.send_json = AsyncMock(side_effect=accept)
+        harness.script([])
+        handle, data = {
+            "turn": (harness.handler._handle_chat_message, {"message": "hello"}),
+            "rename": (harness.handler._handle_conversation_rename, {"conversation_id": "conv-1", "title": "Mine"}),
+            "delete": (harness.handler._handle_conversation_delete, {"conversation_id": "conv-1"}),
+            "bulk": (harness.handler._handle_conversation_delete_bulk, {"conversation_ids": ["conv-1"]}),
+            "all": (harness.handler._handle_conversation_delete_all, {}),
+        }[change]
+
+        await asyncio.wait_for(handle(sender, data), 2)
+        await asyncio.sleep(0)
+
+        assert _types(healthy) != []
+        for tab in slow_tabs:
+            assert _types(tab) == _types(healthy)
+            tab.close.assert_not_awaited()
+        if change == "bulk":
+            # Each tab still gets its own copy, saying whether the conversation it had open went.
+            assert all(_sent(tab)[0]["active_conversation_deleted"] is True for tab in slow_tabs)
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("request_type", ["delete", "delete_bulk", "delete_all"])
+async def test_tab_that_logged_out_is_still_detached_from_a_deleted_conversation(request_type):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        deleting = await harness.connect("alice")
+        logged_out = await harness.connect("alice", "conv-1")
+        await harness.handler._handle_logout(logged_out, {})
+        handle, data = {
+            "delete": (harness.handler._handle_conversation_delete, {"conversation_id": "conv-1"}),
+            "delete_bulk": (harness.handler._handle_conversation_delete_bulk, {"conversation_ids": ["conv-1"]}),
+            "delete_all": (harness.handler._handle_conversation_delete_all, {}),
+        }[request_type]
+
+        await handle(deleting, data)
+
+        # Signing in again on this socket keeps what it has open, and its next chat must not go
+        # to the deleted conversation. Signed out, it is told nothing.
+        assert (await harness.manager.get_session(logged_out)).metadata["conversation_id"] is None
+        assert _types(logged_out) == ["logout_success"]
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+@pytest.mark.parametrize("change", ["rename", "delete", "bulk", "all"])
+async def test_acknowledgement_reaches_its_tab_before_a_later_change_from_another_tab(change):
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        await store.create_conversation("conv-2", "alice")
+        sender = await harness.connect("alice")
+        other_tab = await harness.connect("alice")
+        delivered = []
+        acknowledging, release = asyncio.Event(), asyncio.Event()
+
+        # The first frame the sender is sent is its acknowledgement; it takes a while to go out.
+        async def deliver(frame):
+            if not acknowledging.is_set():
+                acknowledging.set()
+                await release.wait()
+            delivered.append(frame["type"])
+
+        sender.send_json = AsyncMock(side_effect=deliver)
+        handle, data, acknowledgement = {
+            "rename": (
+                harness.handler._handle_conversation_rename,
+                {"conversation_id": "conv-1", "title": "Mine"},
+                "conversation_renamed",
+            ),
+            "delete": (
+                harness.handler._handle_conversation_delete,
+                {"conversation_id": "conv-2"},
+                "conversation_deleted",
+            ),
+            "bulk": (
+                harness.handler._handle_conversation_delete_bulk,
+                {"conversation_ids": ["conv-2"]},
+                "conversation_bulk_deleted",
+            ),
+            "all": (harness.handler._handle_conversation_delete_all, {}, "conversation_all_deleted"),
+        }[change]
+        first = asyncio.create_task(handle(sender, data))
+        await acknowledging.wait()
+
+        # A rename put back after the delete's notice would list the conversation again; a
+        # delete-all acknowledged late would clear the conversation created since.
+        if change == "all":
+            later = harness.handler._handle_chat_message(other_tab, {"message": "hello"})
+            notice = "conversation_updated"
+        else:
+            later = harness.handler._handle_conversation_delete(other_tab, {"conversation_id": "conv-1"})
+            notice = "conversation_deleted"
+        later = asyncio.create_task(later)
+        await asyncio.wait({later}, timeout=0.05)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(first, later), 1)
+
+        assert delivered[:2] == [acknowledgement, notice]
     finally:
         await harness.handler.shutdown()
         await store.close()

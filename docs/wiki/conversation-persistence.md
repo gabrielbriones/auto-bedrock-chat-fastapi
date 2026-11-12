@@ -157,6 +157,11 @@ turn exactly like the connection that sent the message:
   start. Any other connection (a `user_id` that was never verified, a connection
   that has signed out) loading the conversation mid-turn gets `live: false` with
   what is checkpointed so far and polls, as it would for a turn on another worker.
+- Only a turn sent by a signed-in connection with a verified `user_id` is followed
+  by other connections. A turn sent by a connection that merely claims a `user_id`
+  (the `?user_id=` parameter, never verified) stays on that connection.
+- Following connections are sent to at the same time, so several that stop reading
+  hold the turn up for one timeout between them, not one each.
 - If the connection that sent the message reloads the conversation after the answer
   is checkpointed, the answer is in the history it gets and no `ai_response` follows.
 
@@ -190,6 +195,21 @@ them, so no tab needs a refresh:
   load another conversation, so `active_conversation_deleted` always describes the
   conversation the client still shows. Updates, titles and renames are serialised
   with deletes too: none arrives for a conversation after its delete.
+
+- The reply to the connection that made the change is ordered with the notices
+  too: a `conversation_renamed` reply never arrives after the notice of a later
+  delete of that conversation, nor a `conversation_all_deleted` reply after the
+  `conversation_updated` of a conversation created since.
+- Only a change made by a signed-in connection with a verified `user_id` reaches
+  the user's other connections. A connection that merely claims a `user_id` (the
+  `?user_id=` parameter, never verified) or has signed out still gets its own
+  reply, but no other connection is told or detached. Signing in over SSO on an
+  open connection (`auth` with `auth_type: "sso"`) makes its identity the verified
+  one, whatever it claimed before; if that is a different user, the connection is
+  detached from the conversation it had open.
+- A connection that has signed out is told nothing, but is still detached from a
+  deleted conversation, so that signing in again on it does not send its next
+  `chat` into that conversation.
 
 These also only reach connections on the same server process.
 

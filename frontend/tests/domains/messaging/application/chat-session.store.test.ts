@@ -368,6 +368,32 @@ describe('ChatSessionStore', () => {
 
       expect(store.getSnapshot().transcript.filter((entry) => entry.message.role === 'user')).toHaveLength(1)
     })
+
+    // Both tabs sent at once and this one lost: the server refuses its send, then sends the running
+    // turn again because the first `turn_started` was dropped for the message pending here.
+    it('is followed once the send it raced with here has been refused', () => {
+      const { store, emit } = createHarness()
+      store.send('mine')
+      emit(observed)
+      emit({ kind: 'failed', text: 'A reply is still running in this conversation. Wait for it to finish.' })
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+
+      emit(observed)
+      emit({ kind: 'typing', text: 'AI is thinking...' })
+
+      expect(store.getSnapshot().awaitingResponse).toBe(true)
+      expect(store.send('again')).toBe('refused')
+
+      emit(answered('done'))
+
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+      expect(store.getSnapshot().transcript.map((entry) => entry.message.raw)).toEqual([
+        'mine',
+        'A reply is still running in this conversation. Wait for it to finish.',
+        'validate job',
+        'done',
+      ])
+    })
   })
 
   describe('loading conversation history (FR-CONV-003)', () => {

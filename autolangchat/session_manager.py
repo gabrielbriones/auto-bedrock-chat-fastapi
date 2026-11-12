@@ -264,14 +264,17 @@ class ChatSessionManager:
         """Get session by ID"""
         return self._sessions.get(session_id)
 
+    def connections_for_user(self, user_id: str) -> List[ChatSession]:
+        """Every live session registered under ``user_id``, signed in or not, one per connection."""
+        return [self._sessions[sid] for sid in self._user_sessions.get(user_id, []) if sid in self._sessions]
+
     def sessions_for_user(self, user_id: str) -> List[ChatSession]:
         """The live, still signed-in sessions of ``user_id``, one per connection."""
         return [
-            self._sessions[sid]
-            for sid in self._user_sessions.get(user_id, [])
-            if sid in self._sessions and self._sessions[sid].is_authenticated
+            session
+            for session in self.connections_for_user(user_id)
             # Logout and auth expiry clear credentials; is_authenticated only says how user_id was set.
-            and self._sessions[sid].credentials is not None
+            if session.is_authenticated and session.credentials is not None
         ]
 
     async def update_session_user_id(self, session_id: str, user_id: str, is_authenticated: bool = True) -> bool:
