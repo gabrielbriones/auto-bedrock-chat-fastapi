@@ -351,7 +351,11 @@ export class ConversationStore {
       case 'bulk-deleted':
         return openId !== null && event.deletedIds.includes(openId)
       case 'all-deleted':
-        return this.#roster.activeId !== null || (this.#requestedId ?? null) !== null
+        return (
+          this.#roster.activeId !== null ||
+          (this.#requestedId ?? null) !== null ||
+          this.#roster.awaitingIdForFirstTurn
+        )
       default:
         return false
     }
