@@ -29,6 +29,16 @@ const startWatching = (harness: ReturnType<typeof createHarness>) => {
 }
 
 describe('pending-turn recovery', () => {
+  // XMGPLAT-12228: the server streams the running turn to this tab, so polling would only reload it.
+  it('starts no watch for a running turn the server streams to this tab', () => {
+    const harness = createHarness()
+
+    harness.gateway.emit(anEvent.loaded('a', pendingHistory, true, true))
+
+    expect(harness.store.getSnapshot().pendingTurn).toBeNull()
+    expect(harness.scheduler.running()).toBe(false)
+  })
+
   // FR-CONV-009.
   it('starts a 6-second watch when a loaded conversation is still working', () => {
     const harness = createHarness()

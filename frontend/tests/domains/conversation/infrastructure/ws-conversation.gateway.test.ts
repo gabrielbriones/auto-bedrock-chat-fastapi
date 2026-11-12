@@ -87,6 +87,7 @@ describe('WsConversationGateway frame mapping', () => {
       id: conversationId('c-1'),
       messages: [{ role: 'assistant', toolCallCount: 2 }],
       inProgress: null,
+      live: false,
     })
   })
 
@@ -103,6 +104,57 @@ describe('WsConversationGateway frame mapping', () => {
     })
 
     expect(harness.events[0]).toMatchObject({ kind: 'loaded', inProgress })
+  })
+
+  it('maps a conversation_updated frame to an updated summary, normalising an empty title', () => {
+    const harness = createHarness()
+
+    harness.emit({
+      type: 'conversation_updated',
+      timestamp: '2026-08-25T12:00:00Z',
+      conversation: { id: 'c-9', title: '', updated_at: '2026-08-25T12:05:00Z', message_count: 2 },
+    })
+
+    expect(harness.events[0]).toMatchObject({
+      kind: 'updated',
+      conversation: { id: conversationId('c-9'), title: null, messageCount: 2 },
+    })
+  })
+
+  it.each([
+    [true, true],
+    [undefined, false],
+  ])('carries from_other_connection=%s as %s onto the bulk-deleted event', (fromOther, expected) => {
+    const harness = createHarness()
+
+    harness.emit({
+      type: 'conversation_bulk_deleted',
+      timestamp: '2026-08-25T12:00:00Z',
+      deleted_ids: ['c-1'],
+      active_conversation_deleted: false,
+      ...(fromOther === undefined ? {} : { from_other_connection: fromOther }),
+    })
+
+    expect(harness.events[0]).toMatchObject({ kind: 'bulk-deleted', fromOtherTab: expected })
+  })
+
+  it.each([
+    [true, true],
+    [undefined, false],
+  ])('carries live=%s as %s onto the loaded event', (live, expected) => {
+    const harness = createHarness()
+
+    harness.emit({
+      type: 'conversation_loaded',
+      timestamp: '2026-08-25T12:00:00Z',
+      conversation_id: 'c-1',
+      conversation: {},
+      messages: [],
+      in_progress: true,
+      ...(live === undefined ? {} : { live }),
+    })
+
+    expect(harness.events[0]).toMatchObject({ kind: 'loaded', live: expected })
   })
 
   it.each(['  ', null])('normalises a %j server title to null so FR-CONV-014 can supply the fallback', (title) => {

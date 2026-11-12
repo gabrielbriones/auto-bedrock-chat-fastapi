@@ -173,6 +173,136 @@ describe('ConversationStore mutations', () => {
 
     expect(gateway.methods()).toEqual(['requestRoster'])
   })
+
+  // The server detaches every tab from a deleted conversation, so the open one turns into a new
+  // chat and stops accepting its frames, whichever tab deleted it.
+  it.each([
+    ['one', anEvent.deleted('a')],
+    ['bulk', anEvent.bulkDeleted(['a'], true)],
+    ['all', anEvent.allDeleted(2)],
+  ])('turns the open conversation into a new chat when %s delete removes it', (_kind, event) => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+
+    gateway.emit(event)
+
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+    expect(store.acceptsLoadedConversation(id('a'))).toBe(false)
+  })
+
+  it('leaves the open conversation alone when another one is deleted', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+
+    gateway.emit(anEvent.deleted('b'))
+    gateway.emit(anEvent.bulkDeleted(['b'], false))
+
+    expect(store.getSnapshot()).toMatchObject({ activeId: id('a'), awaitingId: false })
+    expect(store.acceptsLoadedConversation(id('a'))).toBe(true)
+  })
+
+  // The server switches this tab to the one it asked for, even when the one on screen is deleted first.
+  it.each([
+    ['one', anEvent.deleted('a')],
+    ['bulk', anEvent.bulkDeleted(['a'], true)],
+  ])('keeps an outstanding open when %s delete removes the conversation on screen', (_kind, event) => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    store.open(id('b'))
+
+    gateway.emit(event)
+
+    expect(store.getSnapshot().awaitingId).toBe(false)
+    expect(store.acceptsLoadedConversation(id('b'))).toBe(true)
+    gateway.emit(anEvent.loaded('b'))
+    expect(store.getSnapshot().activeId).toBe(id('b'))
+  })
+
+  it('drops an outstanding open when a delete removes the conversation it asked for', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    store.open(id('b'))
+
+    gateway.emit(anEvent.bulkDeleted(['b'], false))
+
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+    expect(store.acceptsLoadedConversation(id('b'))).toBe(false)
+    // The server never switched to b, so it is told to leave a as well.
+    expect(gateway.methods()).toContain('create')
+  })
+
+  // XMGPLAT-12228: the chat in flight may create its conversation before a detach would arrive.
+  it('adopts the next conversation id after another tab deletes everything during a new chat', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a')]))
+    store.startNew()
+    gateway.calls.length = 0
+
+    gateway.emit(anEvent.allDeleted(1))
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot().awaitingId).toBe(true)
+    gateway.emit(anEvent.created('c'))
+    expect(store.acceptsLoadedConversation(id('c'))).toBe(true)
+  })
+
+  it('goes back to a new chat when everything is deleted after the new chat got its id', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a')]))
+    store.startNew()
+    gateway.emit(anEvent.created('c'))
+    gateway.calls.length = 0
+
+    gateway.emit(anEvent.allDeleted(1))
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot().awaitingId).toBe(true)
+    expect(store.acceptsLoadedConversation(id('c'))).toBe(false)
+  })
+
+  // The server detached this tab before it sent the notice. A chat sent in between has already
+  // created a replacement there, and a detach sent on the notice would silently clear it.
+  it.each([
+    ['one', anEvent.deleted('a')],
+    ['bulk', anEvent.bulkDeleted(['a'], true)],
+    ['all', anEvent.allDeleted(1)],
+  ])('sends no detach of its own when %s delete removes the conversation it has open', (_kind, event) => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a')]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    gateway.calls.length = 0
+
+    gateway.emit(event)
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+    gateway.emit(anEvent.created('c'))
+    expect(store.getSnapshot().activeId).toBe(id('c'))
+    expect(store.acceptsLoadedConversation(id('c'))).toBe(true)
+  })
+
+  it('sends no detach when the shown conversation is deleted together with an outstanding open', () => {
+    const { store, gateway } = createHarness()
+    gateway.emit(anEvent.listed([aConversation('a'), aConversation('b', 5)]))
+    store.open(id('a'))
+    gateway.emit(anEvent.loaded('a'))
+    store.open(id('b'))
+    gateway.calls.length = 0
+
+    gateway.emit(anEvent.bulkDeleted(['a', 'b'], true))
+
+    expect(gateway.methods()).not.toContain('create')
+    expect(store.getSnapshot()).toMatchObject({ activeId: null, awaitingId: true })
+  })
 })
 
 describe('ConversationStore bulk delete', () => {
@@ -221,6 +351,23 @@ describe('ConversationStore bulk delete', () => {
     expect(harness.notifications.messages()).toEqual([CONVERSATION_COPY.bulk.partial(2)])
     expect(harness.gateway.methods()).toEqual(['requestRoster'])
     expect(harness.store.getSnapshot().selection.size).toBe(0)
+    expect(harness.store.getSnapshot().bulkDeleteInFlight).toBe(false)
+  })
+
+  // XMGPLAT-12228: two tabs bulk deleting at once must not settle each other's request.
+  it('neither reports nor settles its own bulk delete on another tab\'s', async () => {
+    const harness = createHarness({ answers: [true] })
+    seed(harness)
+    await harness.store.removeSelected()
+
+    harness.gateway.emit(anEvent.bulkDeletedElsewhere(['c']))
+
+    expect(harness.notifications.messages()).toEqual([])
+    expect(harness.store.getSnapshot().bulkDeleteInFlight).toBe(true)
+
+    harness.gateway.emit(anEvent.bulkDeleted(['a', 'b']))
+
+    expect(harness.notifications.messages()).toEqual([CONVERSATION_COPY.bulk.partial(1)])
     expect(harness.store.getSnapshot().bulkDeleteInFlight).toBe(false)
   })
 

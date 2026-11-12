@@ -86,4 +86,59 @@ describe('createContainer', () => {
     expect(container.chatSession.getSnapshot().transcript).toEqual([])
     container.socket.dispose()
   })
+
+  // XMGPLAT-12228: the server detaches this tab and sends nothing more for the conversation, so a
+  // turn it was following there must not leave the composer waiting for an answer.
+  it.each([
+    ['a single delete', { type: 'conversation_deleted', conversation_id: 'a' }],
+    [
+      'a bulk delete',
+      {
+        type: 'conversation_bulk_deleted',
+        deleted_ids: ['a'],
+        active_conversation_deleted: true,
+        from_other_connection: true,
+      },
+    ],
+    ['a delete-all', { type: 'conversation_all_deleted', deleted_count: 1 }],
+  ])('stops following a turn when another tab removes its conversation with %s', (_, removal) => {
+    const frame = (body: Record<string, unknown>) => ({
+      type: 'frame' as const,
+      data: JSON.stringify({ timestamp: '2026-08-28T10:00:00Z', ...body }),
+    })
+    const socket = new FakeChatSocket([
+      { type: 'open' },
+      frame({ type: 'auth_configured', message: 'Authenticated', auth_type: 'api_key', display_name: 'Test user' }),
+      frame({
+        type: 'conversation_loaded',
+        conversation_id: 'a',
+        conversation: {},
+        messages: [],
+        in_progress: true,
+        live: true,
+      }),
+      frame({ type: 'turn_started', conversation_id: 'a', message: 'Validate job 42' }),
+      frame(removal),
+      // Whatever the turn still sends is for a conversation this tab no longer shows.
+      frame({ type: 'typing', message: 'Calling get_job... (1/1)', conversation_id: 'a' }),
+    ])
+    const container = createContainer(chatBootstrap(), {
+      logger: fakeLogger,
+      connectivity: { status: () => 'online', subscribe: () => () => {} },
+      socketFactory: () => socket,
+    })
+    container.socket.connect()
+    for (let step = 0; step < 4; step += 1) {
+      socket.playNext()
+    }
+    expect(container.chatSession.getSnapshot().awaitingResponse).toBe(true)
+    expect(container.conversations.getSnapshot().activeId).toBe('a')
+
+    socket.play()
+
+    expect(container.conversations.getSnapshot().activeId).toBeNull()
+    expect(container.chatSession.getSnapshot().awaitingResponse).toBe(false)
+    expect(container.chatSession.getSnapshot().transcript).toEqual([])
+    container.socket.dispose()
+  })
 })

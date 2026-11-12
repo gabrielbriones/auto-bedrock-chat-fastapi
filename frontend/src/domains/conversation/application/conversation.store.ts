@@ -294,7 +294,8 @@ export class ConversationStore {
       this.#applyError(event)
     }
 
-    if (event.kind === 'bulk-deleted') {
+    // Another tab's bulk delete says nothing about the ids this tab asked to delete.
+    if (event.kind === 'bulk-deleted' && event.fromOtherTab !== true) {
       reportPartialDelete(
         this.#roster.pendingBulkDelete,
         event.deletedIds,
@@ -304,13 +305,31 @@ export class ConversationStore {
     }
 
     // FR-CONV-009 / P8: whether the server is still working is decided on every load — including
-    // the ones this watch itself issued.
+    // the ones this watch itself issued. A turn the server streams to this tab needs no polling.
     if (event.kind === 'loaded') {
       this.#unknownId = null
-      this.#pendingTurn.observe(event.id, isTurnInProgress(event.inProgress, event.messages))
+      this.#pendingTurn.observe(
+        event.id,
+        event.live !== true && isTurnInProgress(event.inProgress, event.messages),
+      )
     }
 
+    const removesOpen = this.#removesOpenConversation(event)
+    const serverStillOnShown = this.#leavesServerOnShownConversation(event)
     this.#roster = reconcileRoster(this.#roster, event, this.#options.clock.now())
+
+    // The server has detached this tab from it, like a new chat, and nothing more comes for it: a
+    // turn this tab was following must not keep the composer waiting for an answer.
+    if (removesOpen) {
+      this.#roster = awaitFirstTurnId(this.#roster)
+      this.#requestedId = null
+      // Only then is there anything left to detach. In every other case the server detached this
+      // tab before it sent the notice, and a detach sent now could land after a chat sent since has
+      // created its conversation, leaving the server and this tab on different ones.
+      if (this.#ready() && serverStillOnShown) {
+        this.#options.gateway.create()
+      }
+    }
 
     // FR-CONV-016: refetch rather than trusting the in-place mutation, so the list and its total
     // come from the server (FIX-16).
@@ -323,6 +342,46 @@ export class ConversationStore {
     }
 
     this.#emit()
+  }
+
+  #removesOpenConversation(event: ConversationEvent): boolean {
+    // An open still awaiting its reply decides what is open: the server switches this tab to it.
+    const openId = this.#requestedId === undefined ? this.#roster.activeId : this.#requestedId
+
+    switch (event.kind) {
+      case 'deleted':
+        return openId !== null && event.id === openId
+      case 'bulk-deleted':
+        return openId !== null && event.deletedIds.includes(openId)
+      case 'all-deleted':
+        return (
+          this.#roster.activeId !== null ||
+          (this.#requestedId ?? null) !== null ||
+          this.#roster.awaitingIdForFirstTurn
+        )
+      default:
+        return false
+    }
+  }
+
+  // A deleted open that had not loaded yet: the server never switched to it, so it is still on the
+  // conversation shown before, unless that one was deleted with it.
+  #leavesServerOnShownConversation(event: ConversationEvent): boolean {
+    const requested = this.#requestedId ?? null
+    const shown = this.#roster.activeId
+
+    if (requested === null || shown === null || requested === shown) {
+      return false
+    }
+
+    switch (event.kind) {
+      case 'deleted':
+        return event.id !== shown
+      case 'bulk-deleted':
+        return !event.deletedIds.includes(shown)
+      default:
+        return false
+    }
   }
 
   #applyError(event: Extract<ConversationEvent, { kind: 'error' }>): void {
