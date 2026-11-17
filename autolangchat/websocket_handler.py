@@ -2376,7 +2376,9 @@ class WebSocketChatHandler:
             logger.warning("Conversation auto-titling failed for conversation_id=%s", conversation_id, exc_info=True)
         finally:
             if turn_usage is not None:
-                await self._finalize_turn_usage(websocket, turn_usage, turn)
+                await asyncio.shield(
+                    self._spawn_background_task(self._finalize_turn_usage(websocket, turn_usage, turn))
+                )
 
     async def _persist_failed_turn_usage(self, turn_usage: _PendingTurnUsage) -> None:
         """Best-effort final usage row for the calls a failed turn made before it raised."""
