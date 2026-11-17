@@ -57,7 +57,9 @@ def estimate_cost(
     """Estimate event cost; return ``None`` if any provider/model is unpriced.
 
     Cached token counts are subsets of input tokens, so they are priced at
-    their cache rates and removed from the uncached input quantity.
+    their cache rates and removed from the uncached input quantity. One-hour
+    cache writes use ``cache_write_1h_per_million``; without it they are
+    unpriced.
     """
     table = load_pricing_table(pricing_table)
     revision = str(table.get("pricing_revision", "custom"))
@@ -80,6 +82,9 @@ def estimate_cost(
         cache_write_rate = _rate(model, "cache_write")
         if None in (input_rate, output_rate, cache_read_rate, cache_write_rate):
             return None
+        cache_write_1h_rate = _rate(model, "cache_write_1h")
+        if event.cache_write_1h_tokens and cache_write_1h_rate is None:
+            return None
         uncached_input = event.input_tokens - event.cache_read_tokens - event.cache_write_tokens
         if uncached_input < 0:
             return None
@@ -87,7 +92,8 @@ def estimate_cost(
             Decimal(uncached_input) * input_rate
             + Decimal(event.output_tokens) * output_rate
             + Decimal(event.cache_read_tokens) * cache_read_rate
-            + Decimal(event.cache_write_tokens) * cache_write_rate
+            + Decimal(event.cache_write_tokens - event.cache_write_1h_tokens) * cache_write_rate
+            + Decimal(event.cache_write_1h_tokens) * (cache_write_1h_rate or Decimal(0))
         ) * _MICROS_PER_MILLION_TOKENS
 
     return CostEstimate(

@@ -174,6 +174,58 @@ def test_ai_response_metadata_carries_the_turn_usage_summary():
     assert ai_response["metadata"]["usage"] == summary
 
 
+def _failing_graph_handler(store):
+    handler, chat_graph = _make_handler(_graph_state(), token_usage_store=store)
+    handler.config.token_usage_enabled = True
+    handler.config.token_usage_write_timeout = 1.0
+    handler.config.pricing_table = None
+
+    async def _fail(state, config):
+        config["configurable"]["usage_ledger"].record(
+            purpose="chat", provider="anthropic", model_id="anthropic.unpriced", input_tokens=100, output_tokens=10
+        )
+        raise RuntimeError("bedrock down")
+
+    chat_graph.ainvoke = AsyncMock(side_effect=_fail)
+    return handler
+
+
+def test_calls_made_before_the_graph_failed_are_persisted_as_a_final_turn():
+    store = MagicMock()
+    store.record_turn = AsyncMock()
+    store.record_events = AsyncMock()
+    handler = _failing_graph_handler(store)
+
+    sent = asyncio.run(_drive(handler))
+
+    assert [m for m in sent if m.get("type") == "ai_response"][0]["error"] is True
+    _, kwargs = store.record_turn.await_args
+    assert (kwargs["input_tokens"], kwargs["output_tokens"], kwargs["final"]) == (100, 10, True)
+    (events,) = store.record_events.await_args.args
+    assert len(events) == 1
+
+
+def test_a_failed_graph_without_recorded_calls_writes_nothing():
+    store = MagicMock()
+    store.record_turn = AsyncMock()
+    handler = _failing_graph_handler(store)
+    handler.chat_graph.ainvoke = AsyncMock(side_effect=RuntimeError("bedrock down"))
+
+    asyncio.run(_drive(handler))
+
+    store.record_turn.assert_not_awaited()
+
+
+def test_a_completed_graph_is_not_finalized_again_by_the_handler():
+    store = MagicMock()
+    store.record_turn = AsyncMock()
+    handler, _ = _make_handler(_graph_state(), token_usage_store=store)
+
+    asyncio.run(_drive(handler))
+
+    store.record_turn.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Late ``usage_updated`` after the title call
 # ---------------------------------------------------------------------------
@@ -266,3 +318,54 @@ def test_turn_is_finalized_even_when_the_title_was_already_set():
     (usage_updated,) = [m for m in sent if m.get("type") == "usage_updated"]
     assert usage_updated["usage"]["input_tokens"] == 500
     assert usage_updated["usage"]["final"] is True
+
+
+def _checkpointed_history():
+    pending = {"role": "assistant", "content": "a", "metadata": {"message_id": "msg-abc", "usage": {"final": False}}}
+    other = {"role": "assistant", "content": "b", "metadata": {"message_id": "msg-other", "usage": {"final": True}}}
+    return [{"role": "user", "content": "q"}, pending, other]
+
+
+def test_final_usage_replaces_the_pending_usage_in_the_checkpointed_message():
+    handler = _title_handler()
+    handler.chat_graph.aget_state = AsyncMock(
+        return_value=SimpleNamespace(values={"messages": _checkpointed_history()})
+    )
+    handler.chat_graph.aupdate_state = AsyncMock()
+    turn_usage = _turn_usage(_ledger_with_chat_and_summaries(), enabled=False)._replace(thread_id="conv-1")
+
+    asyncio.run(_run_title(handler, turn_usage))
+
+    (cfg, update), _ = handler.chat_graph.aupdate_state.await_args
+    assert cfg == {"configurable": {"thread_id": "conv-1"}}
+    messages = update["messages"]
+    assert messages[1]["metadata"]["usage"]["final"] is True
+    assert messages[1]["metadata"]["usage"]["input_tokens"] == 550
+    assert messages[2] == _checkpointed_history()[2]
+
+
+def test_final_usage_waits_for_a_running_turn_before_touching_the_checkpoint(monkeypatch):
+    monkeypatch.setattr(sys.modules[WebSocketChatHandler.__module__], "_USAGE_CHECKPOINT_RETRY_SECONDS", 0)
+    handler = _title_handler()
+    handler.chat_graph.aget_state = AsyncMock(
+        return_value=SimpleNamespace(values={"messages": _checkpointed_history()})
+    )
+    handler.chat_graph.aupdate_state = AsyncMock()
+    handler._in_flight_threads["conv-1"] = 1
+    state_reads = []
+
+    async def _turn_finishes_after_two_polls():
+        for _ in range(2):
+            state_reads.append(handler.chat_graph.aupdate_state.await_count)
+            await asyncio.sleep(0)
+        handler._in_flight_threads.pop("conv-1")
+
+    async def _run():
+        finisher = asyncio.create_task(_turn_finishes_after_two_polls())
+        await handler._checkpoint_final_usage("conv-1", "msg-abc", {"final": True})
+        await finisher
+
+    asyncio.run(_run())
+
+    assert state_reads == [0, 0]
+    handler.chat_graph.aupdate_state.assert_awaited_once()

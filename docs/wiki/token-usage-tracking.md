@@ -100,8 +100,9 @@ upserts the turn's row with `final = true` and sends a
 [`usage_updated`](websocket-client.md#usage_updated) frame carrying the final
 totals. Every other turn is `final: true` straight away.
 
-Stand-alone admin synthesis (`FeedbackSynthesizer`) records into its own
-administrative ledger, never into a chat turn.
+Stand-alone admin synthesis (`FeedbackSynthesizer`) is never recorded into a
+chat turn: each synthesis or ingestion operation collects its calls in its own
+short-lived ledger, logs the totals when it ends and then releases it.
 
 ### Pricing
 
@@ -112,14 +113,15 @@ the packaged, versioned `autolangchat/usage/pricing.json`, or from
 
 ```json
 {
-  "pricing_revision": "2026-11-12-v1",
+  "pricing_revision": "2026-11-17-v2",
   "currency": "USD",
   "models": {
     "anthropic:anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "input_per_million": 3.0,
       "output_per_million": 15.0,
       "cache_read_per_million": 0.3,
-      "cache_write_per_million": 3.75
+      "cache_write_per_million": 3.75,
+      "cache_write_1h_per_million": 6.0
     }
   }
 }
@@ -131,7 +133,10 @@ its own. If **any** event in a turn uses a model missing from the table, the
 estimate is unknown: `estimated_cost` is `null` (never `0`) and
 `estimated_cost_micros` is stored as `NULL`. Uncached input is priced as
 `input_tokens - cache_read_tokens - cache_write_tokens` (see
-[Prompt-cache tokens](#prompt-cache-tokens)). The packaged table only lists
+[Prompt-cache tokens](#prompt-cache-tokens)). Cache writes made with the
+one-hour TTL (`prompt_cache_ttl="1h"`) are priced at
+`cache_write_1h_per_million`; the estimate is unknown when a table entry lacks
+that rate and the turn wrote one-hour cache entries. The packaged table only lists
 models with published rates; set `AUTOCHAT_PRICING_TABLE` to price others.
 
 ---
@@ -157,7 +162,7 @@ plus `turn_id`, `purpose`, `provider`, `model_id`, the four token counts and
 final one, while a final row is never overwritten, so retried writes are
 idempotent. Event writes ignore event ids that already exist. A failed write
 is logged and kept in a bounded in-memory retry queue (oldest dropped when
-full), replayed after the next successful write — a token-usage write failure
+full), and one queued write is replayed after each successful write — a token-usage write failure
 never prevents the chat response from being delivered.
 
 ## Prompt-cache tokens
@@ -240,7 +245,9 @@ per-day aggregates, and top-users ranking) — see
 [Admin API — Token Usage Analytics](admin-api#token-usage-analytics).
 Per-turn rows include `turn_id`, `estimated_cost_micros`, `currency`,
 `pricing_revision` and `final`; aggregates include the summed
-`estimated_cost_micros` of priced turns and `unpriced_turn_count`.
+`estimated_cost_micros` of priced turns, its `currency` and
+`unpriced_turn_count`. The summed cost and `currency` are `null` when the
+priced turns in a row span more than one currency.
 Those routes are only registered when a token-usage store is configured,
 mirroring the Feedback/KB admin route groups.
 

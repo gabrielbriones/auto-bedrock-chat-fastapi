@@ -463,6 +463,11 @@ class ErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+_AGGREGATE_CURRENCY_DESCRIPTION = (
+    "Currency of the summed cost; null when no turn is priced or priced turns use more than one currency"
+)
+
+
 class TokenSummaryItem(BaseModel):
     """Aggregate token usage for a single model, across all recorded turns.
 
@@ -485,6 +490,7 @@ class TokenSummaryItem(BaseModel):
         default=None, ge=0, description="Summed estimated cost of priced turns, in micros of their currency"
     )
     unpriced_turn_count: int = Field(default=0, ge=0, description="Turns with an unknown cost estimate")
+    currency: Optional[str] = Field(default=None, description=_AGGREGATE_CURRENCY_DESCRIPTION)
 
 
 class TokenSummaryResponse(BaseModel):
@@ -554,6 +560,7 @@ class TokenByDayItem(BaseModel):
         default=None, ge=0, description="Summed estimated cost of priced turns, in micros of their currency"
     )
     unpriced_turn_count: int = Field(default=0, ge=0, description="Turns with an unknown cost estimate")
+    currency: Optional[str] = Field(default=None, description=_AGGREGATE_CURRENCY_DESCRIPTION)
 
 
 class TokenByDayResponse(BaseModel):
@@ -582,6 +589,7 @@ class TokenTopUserItem(BaseModel):
         default=None, ge=0, description="Summed estimated cost of priced turns, in micros of their currency"
     )
     unpriced_turn_count: int = Field(default=0, ge=0, description="Turns with an unknown cost estimate")
+    currency: Optional[str] = Field(default=None, description=_AGGREGATE_CURRENCY_DESCRIPTION)
 
 
 class TokenTopUsersResponse(BaseModel):

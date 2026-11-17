@@ -263,6 +263,32 @@ describe('ServerFrameSchema', () => {
     expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
   })
 
+  it('delivers a usage update that replaces the pending totals of a turn', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const frame = {
+      type: 'usage_updated',
+      message_id: 'message-1',
+      timestamp: '2026-11-12T12:00:06',
+      usage: {
+        input_tokens: 1410,
+        output_tokens: 288,
+        cache_read: 400,
+        cache_write: 0,
+        estimated_cost: null,
+        currency: null,
+        final: true,
+      },
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.unknownFrameCount('usage_updated')).toBe(0)
+    expect(bus.invalidFrameCount('usage_updated')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
+  })
+
   it('delivers an anonymous ai response with no persisted conversation', () => {
     const bus = new MessageBus(logger())
     const subscriber = jest.fn()
@@ -386,6 +412,7 @@ describe('ServerFrameSchema', () => {
       tool_call_start: 'messaging',
       tool_call_end: 'messaging',
       ai_response: 'messaging',
+      usage_updated: 'messaging',
       error: 'messaging',
       pong: 'messaging',
       history: 'messaging',

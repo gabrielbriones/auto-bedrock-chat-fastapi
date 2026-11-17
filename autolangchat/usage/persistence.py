@@ -38,13 +38,13 @@ class UsageWriteQueue:
                 logger.warning("Token-usage retry queue full; dropped the oldest pending write")
             self._pending.append(write)
             return False
+        # One replay per submission keeps recovery from stalling the caller's chat response.
         if self._pending and not self._lock.locked():
             async with self._lock:
-                while self._pending:
+                if self._pending:
                     pending = self._pending.popleft()
                     if not await self._attempt(pending, timeout):
                         self._pending.appendleft(pending)
-                        break
         return True
 
     @staticmethod

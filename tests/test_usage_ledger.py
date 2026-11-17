@@ -60,6 +60,24 @@ def test_record_usage_metadata_extracts_tokens_and_cache_subsets():
         300,
         50,
     )
+    assert event.cache_write_1h_tokens == 0
+
+
+def test_record_usage_metadata_keeps_the_one_hour_cache_write_subset():
+    ledger = UsageLedger("turn-1")
+
+    event = ledger.record_usage_metadata(
+        purpose="chat",
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        usage_metadata={
+            "input_tokens": 500,
+            "output_tokens": 12,
+            "input_token_details": {"ephemeral_5m_input_tokens": 50, "ephemeral_1h_input_tokens": 70},
+        },
+    )
+
+    assert event is not None
+    assert (event.cache_write_tokens, event.cache_write_1h_tokens) == (120, 70)
 
 
 def test_record_usage_metadata_ignores_missing_usage():

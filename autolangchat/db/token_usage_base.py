@@ -110,7 +110,9 @@ class BaseTokenUsageStore(ABC):
         ``cache_write_tokens`` (summed), ``turn_count``. The cache counters
         are subsets of ``input_tokens``. Like every aggregate, rows also carry
         ``estimated_cost_micros`` (summed over priced turns, ``None`` when
-        none are priced) and ``unpriced_turn_count``.
+        none are priced or the priced turns use more than one currency),
+        ``currency`` (that shared currency, else ``None``) and
+        ``unpriced_turn_count``.
         """
 
     @abstractmethod

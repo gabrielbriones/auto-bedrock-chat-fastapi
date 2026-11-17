@@ -60,7 +60,7 @@ _UNPRICED_TURN = {"estimated_cost_micros": None, "currency": None, "pricing_revi
 
 def _unpriced(count):
     """Cost fields of an aggregate over ``count`` unpriced turns."""
-    return {"estimated_cost_micros": None, "unpriced_turn_count": count}
+    return {"estimated_cost_micros": None, "unpriced_turn_count": count, "currency": None}
 
 
 @pytest.fixture(autouse=True)
@@ -394,6 +394,7 @@ def _event(event_id, turn_id="t1", purpose="chat"):
         output_tokens=2,
         cache_read_tokens=3,
         cache_write_tokens=1,
+        cache_write_1h_tokens=1,
         ts=datetime(2026, 7, 1, tzinfo=timezone.utc),
     )
 
@@ -405,11 +406,12 @@ async def test_record_events_is_idempotent_on_event_id():
         await store.record_events([_event("e1"), _event("e2", purpose="title")])
 
         rows = store._conn.execute(
-            "SELECT id, turn_id, purpose, input_tokens, cache_read_tokens, event_ts FROM token_usage_events ORDER BY id"
+            "SELECT id, turn_id, purpose, input_tokens, cache_read_tokens, cache_write_1h_tokens, event_ts "
+            "FROM token_usage_events ORDER BY id"
         ).fetchall()
         assert rows == [
-            ("e1", "t1", "chat", 10, 3, "2026-07-01T00:00:00+00:00"),
-            ("e2", "t1", "title", 10, 3, "2026-07-01T00:00:00+00:00"),
+            ("e1", "t1", "chat", 10, 3, 1, "2026-07-01T00:00:00+00:00"),
+            ("e2", "t1", "title", 10, 3, 1, "2026-07-01T00:00:00+00:00"),
         ]
     finally:
         await store.close()
@@ -419,8 +421,8 @@ async def test_aggregates_sum_priced_turns_and_count_unpriced_ones():
     store = await _open_sqlite_store()
     try:
         ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
-        await store.record_turn("t1", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=250)
-        await store.record_turn("t2", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=750)
+        await store.record_turn("t1", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=250, currency="USD")
+        await store.record_turn("t2", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=750, currency="USD")
         await store.record_turn("t3", "s", "alice", "model-a", 1, 1, ts)
 
         (by_model,) = await store.aggregate_by_model()
@@ -428,6 +430,24 @@ async def test_aggregates_sum_priced_turns_and_count_unpriced_ones():
 
         assert (by_model["estimated_cost_micros"], by_model["unpriced_turn_count"]) == (1_000, 1)
         assert (by_user["estimated_cost_micros"], by_user["unpriced_turn_count"]) == (1_000, 1)
+        assert (by_model["currency"], by_user["currency"]) == ("USD", "USD")
+    finally:
+        await store.close()
+
+
+async def test_aggregates_do_not_sum_costs_across_currencies():
+    store = await _open_sqlite_store()
+    try:
+        ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        await store.record_turn("t1", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=250, currency="USD")
+        await store.record_turn("t2", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=750, currency="EUR")
+
+        (by_model,) = await store.aggregate_by_model()
+        (by_user,) = await store.aggregate_by_user()
+        (by_day,) = await store.aggregate_by_day(ts - timedelta(days=1), ts + timedelta(days=1))
+
+        for row in (by_model, by_user, by_day):
+            assert (row["estimated_cost_micros"], row["currency"], row["unpriced_turn_count"]) == (None, None, 0)
     finally:
         await store.close()
 
@@ -759,7 +779,9 @@ class _FakeCursor:
 
         def _cost(rows):
             priced = [v[9] for v in rows if v[9] is not None]
-            return [sum(priced) if priced else None, len(rows) - len(priced)]
+            currencies = {v[10] for v in rows if v[10] is not None}
+            shared = next(iter(currencies)) if len(currencies) == 1 else None
+            return [sum(priced) if priced and shared else None, len(rows) - len(priced), shared]
 
         if "WHERE user_id = %s" in sql:
             user_id, limit, offset = params

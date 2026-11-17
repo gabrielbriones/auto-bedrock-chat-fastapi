@@ -347,7 +347,8 @@ def _prepare_lc_messages(message_dicts: List[Dict], chat_config: Any, model_id: 
 
 def _cache_usage(usage_metadata: Any) -> Dict[str, int]:
     """Prompt-cache token counts; see :func:`autolangchat.usage.ledger.cache_token_counts`."""
-    return cache_token_counts(usage_metadata)
+    counts = cache_token_counts(usage_metadata)
+    return {key: counts[key] for key in ("cache_read_tokens", "cache_write_tokens") if key in counts}
 
 
 def _from_langchain_message(ai_msg: Any) -> Dict:

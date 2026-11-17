@@ -43,6 +43,44 @@ def test_estimate_cost_returns_none_for_unknown_model():
     assert estimate_cost([_event()]) is None
 
 
+def test_one_hour_cache_writes_use_their_own_rate():
+    table = {
+        "pricing_revision": "test-v1",
+        "currency": "USD",
+        "models": {
+            "anthropic:model-a": {
+                "input_per_million": 3,
+                "output_per_million": 15,
+                "cache_read_per_million": 0.3,
+                "cache_write_per_million": 3.75,
+                "cache_write_1h_per_million": 6,
+            }
+        },
+    }
+
+    # 100k writes: 40k at the 1h rate (240_000) and 60k at the 5m rate (225_000).
+    estimate = estimate_cost([_event(cache_write_1h_tokens=40_000)], table)
+
+    assert estimate is not None
+    assert estimate.estimated_cost_micros == 4_035_000 - 375_000 + 225_000 + 240_000
+
+
+def test_one_hour_cache_writes_without_a_rate_are_unpriced():
+    table = {
+        "models": {
+            "anthropic:model-a": {
+                "input_per_million": 3,
+                "output_per_million": 15,
+                "cache_read_per_million": 0.3,
+                "cache_write_per_million": 3.75,
+            }
+        },
+    }
+
+    assert estimate_cost([_event(cache_write_1h_tokens=1)], table) is None
+    assert estimate_cost([_event()], table) is not None
+
+
 _TABLE = {
     "pricing_revision": "test-v2",
     "currency": "USD",

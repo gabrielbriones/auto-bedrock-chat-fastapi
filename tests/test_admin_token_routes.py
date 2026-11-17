@@ -71,6 +71,7 @@ class _FakeTokenUsageStore:
                 "turn_count": 2,
                 "estimated_cost_micros": 1_250,
                 "unpriced_turn_count": 1,
+                "currency": "USD",
             }
         ]
         self.by_user = [
@@ -99,6 +100,7 @@ class _FakeTokenUsageStore:
                 "turn_count": 1,
                 "estimated_cost_micros": None,
                 "unpriced_turn_count": 1,
+                "currency": None,
             }
         ]
         self.top_users = [
@@ -110,6 +112,7 @@ class _FakeTokenUsageStore:
                 "cache_write_tokens": 10,
                 "estimated_cost_micros": 9_000,
                 "unpriced_turn_count": 0,
+                "currency": "USD",
             }
         ]
         self.list_by_user_calls = []

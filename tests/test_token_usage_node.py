@@ -276,6 +276,19 @@ class TestTokenUsageNode:
         assert turn_ids == ["turn-1", "turn-2", "turn-1"]
 
     @pytest.mark.asyncio
+    async def test_a_successful_write_replays_only_one_queued_write(self):
+        store = _store(AsyncMock(side_effect=[RuntimeError("down")] * 3 + [None] * 3))
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        for turn in ("turn-1", "turn-2", "turn-3", "turn-4"):
+            await token_usage_node(_state(message_id=turn), config)
+
+        turn_ids = [call.kwargs["turn_id"] for call in store.record_turn.await_args_list]
+        assert turn_ids == ["turn-1", "turn-2", "turn-3", "turn-4", "turn-1"]
+
+    @pytest.mark.asyncio
     async def test_no_op_state_update_when_messages_empty(self):
         """Edge case: no messages at all -- must not raise on messages[:-1]
         and must not fabricate a messages list out of nothing."""

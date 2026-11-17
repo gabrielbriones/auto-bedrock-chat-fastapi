@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS token_usage_events (
     output_tokens       INTEGER     NOT NULL CHECK (output_tokens >= 0),
     cache_read_tokens   INTEGER     NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
     cache_write_tokens  INTEGER     NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
+    -- Subset of cache_write_tokens written with the one-hour TTL.
+    cache_write_1h_tokens INTEGER   NOT NULL DEFAULT 0 CHECK (cache_write_1h_tokens >= 0),
     event_ts            TIMESTAMPTZ NOT NULL
 );
 

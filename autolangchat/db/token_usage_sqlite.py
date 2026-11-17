@@ -29,8 +29,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Summed cost of priced turns (NULL when none are priced) and the count of unpriced turns.
-_COST_AGGREGATES = "SUM(estimated_cost_micros), SUM(CASE WHEN estimated_cost_micros IS NULL THEN 1 ELSE 0 END)"
+# Summed cost of priced turns, the count of unpriced turns, and the shared currency. Cost and
+# currency are NULL when no turn is priced or the priced turns span more than one currency.
+_COST_AGGREGATES = (
+    "CASE WHEN MIN(currency) = MAX(currency) THEN SUM(estimated_cost_micros) END, "
+    "SUM(CASE WHEN estimated_cost_micros IS NULL THEN 1 ELSE 0 END), "
+    "CASE WHEN MIN(currency) = MAX(currency) THEN MIN(currency) END"
+)
 
 # Single source of truth for columns added after ``token_usage`` first shipped;
 # they are intentionally absent from the .sql DDL. Cache counts are SUBSETS of
@@ -237,8 +242,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         sql = """
             INSERT OR IGNORE INTO token_usage_events
                 (id, turn_id, purpose, provider, model_id, input_tokens, output_tokens,
-                 cache_read_tokens, cache_write_tokens, event_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, event_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         rows = [
             (
@@ -251,6 +256,7 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 e.output_tokens,
                 e.cache_read_tokens,
                 e.cache_write_tokens,
+                e.cache_write_1h_tokens,
                 _dt_to_iso(e.ts),
             )
             for e in events
@@ -319,6 +325,7 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "turn_count": r[5],
                 "estimated_cost_micros": r[6],
                 "unpriced_turn_count": r[7],
+                "currency": r[8],
             }
             for r in rows
         ]
@@ -350,6 +357,7 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "turn_count": r[5],
                 "estimated_cost_micros": r[6],
                 "unpriced_turn_count": r[7],
+                "currency": r[8],
             }
             for r in rows
         ]
@@ -377,6 +385,7 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "cache_write_tokens": r[4],
                 "estimated_cost_micros": r[5],
                 "unpriced_turn_count": r[6],
+                "currency": r[7],
             }
             for r in rows
         ]

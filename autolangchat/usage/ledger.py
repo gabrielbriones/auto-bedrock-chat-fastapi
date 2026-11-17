@@ -24,8 +24,10 @@ def cache_token_counts(usage_metadata: Any) -> Dict[str, int]:
     ``cacheWriteInputTokens`` into ``input_tokens``, so these are subsets of
     it, not additions. Cache writes are reported either as ``cache_creation``
     or, when Bedrock breaks them down by TTL, as ``ephemeral_5m/1h_input_tokens``
-    (with ``cache_creation`` then zeroed), so all three are summed. Returns
-    ``{}`` when the provider reported no input-token details.
+    (with ``cache_creation`` then zeroed), so all three are summed;
+    ``cache_write_1h_tokens`` keeps the one-hour subset, which is priced
+    differently. Returns ``{}`` when the provider reported no input-token
+    details.
     """
     details = usage_metadata.get("input_token_details") if isinstance(usage_metadata, dict) else None
     if not isinstance(details, dict) or not details:
@@ -35,6 +37,7 @@ def cache_token_counts(usage_metadata: Any) -> Dict[str, int]:
         "cache_write_tokens": _token_count(details.get("cache_creation"))
         + _token_count(details.get("ephemeral_5m_input_tokens"))
         + _token_count(details.get("ephemeral_1h_input_tokens")),
+        "cache_write_1h_tokens": _token_count(details.get("ephemeral_1h_input_tokens")),
     }
 
 
@@ -50,6 +53,8 @@ class UsageEvent:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # Subset of cache_write_tokens written with the one-hour TTL.
+    cache_write_1h_tokens: int = 0
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -58,10 +63,18 @@ class UsageEvent:
             raise ValueError("turn_id must not be empty")
         if self.purpose not in {"chat", "summarization", "retry", "title", "embedding"}:
             raise ValueError(f"unsupported usage purpose: {self.purpose}")
-        for field_name in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+        for field_name in (
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "cache_write_1h_tokens",
+        ):
             value = getattr(self, field_name)
             if not isinstance(value, int) or value < 0:
                 raise ValueError(f"{field_name} must be a non-negative integer")
+        if self.cache_write_1h_tokens > self.cache_write_tokens:
+            raise ValueError("cache_write_1h_tokens must not exceed cache_write_tokens")
 
     def to_dict(self) -> Dict[str, object]:
         result = asdict(self)
@@ -87,6 +100,7 @@ class UsageLedger:
         output_tokens: int = 0,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
     ) -> UsageEvent:
         event = UsageEvent(
             turn_id=self.turn_id,
@@ -97,6 +111,7 @@ class UsageLedger:
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
+            cache_write_1h_tokens=cache_write_1h_tokens,
         )
         with self._lock:
             self._events.append(event)
@@ -121,6 +136,7 @@ class UsageLedger:
             output_tokens=_token_count(usage_metadata.get("output_tokens")),
             cache_read_tokens=cache.get("cache_read_tokens", 0),
             cache_write_tokens=cache.get("cache_write_tokens", 0),
+            cache_write_1h_tokens=cache.get("cache_write_1h_tokens", 0),
         )
 
     @property
