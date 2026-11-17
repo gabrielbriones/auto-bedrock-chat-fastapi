@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS conversations (
     is_archived     BOOLEAN     NOT NULL DEFAULT false
 );
 
+-- Final per-turn usage summaries keyed by assistant message id, for turns
+-- whose checkpointed summary was still pending (see token-usage-tracking).
+ALTER TABLE conversations
+ADD COLUMN IF NOT EXISTS final_usage JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_conv_user
     ON conversations (user_id);
 

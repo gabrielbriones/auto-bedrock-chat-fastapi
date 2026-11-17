@@ -41,7 +41,7 @@ from .exceptions import (
 )
 from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo
-from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
+from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop, with_final_usage
 from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
@@ -62,14 +62,9 @@ class _PendingTurnUsage(NamedTuple):
     user_id: Optional[str]
     model_id: str
     chat_config: ChatConfig
-    # Thread whose checkpointed assistant message carries the pending usage.
-    thread_id: Optional[str] = None
+    # Conversation whose checkpointed assistant message carries the pending usage.
+    conversation_id: Optional[str] = None
 
-
-# A later turn on the thread holds its own copy of the history, so the final usage is written
-# back once it has finished.
-_USAGE_CHECKPOINT_ATTEMPTS = 60
-_USAGE_CHECKPOINT_RETRY_SECONDS = 5.0
 
 # Upper bound on conversation_list's ``limit`` — mirrors the REST
 # GET /chat/conversations endpoint's ``Query(50, ge=1, le=200)`` cap, so a
@@ -1048,7 +1043,7 @@ class WebSocketChatHandler:
                         user_id=session.user_id,
                         model_id=graph_metadata.get("model_id") or effective_config.model_id,
                         chat_config=effective_config,
-                        thread_id=thread_id,
+                        conversation_id=conversation_id,
                     ),
                 )
 
@@ -1841,6 +1836,7 @@ class WebSocketChatHandler:
             (checkpoint_state.values or {}).get("messages", []) if checkpoint_state else []
         )
 
+        raw_messages = with_final_usage(raw_messages, await self._final_usage(session.metadata.get("conversation_id")))
         history = self._format_history_messages(raw_messages)
 
         await self._send_message(
@@ -2406,14 +2402,14 @@ class WebSocketChatHandler:
     async def _finalize_turn_usage(
         self, websocket: WebSocket, turn_usage: _PendingTurnUsage, turn: Optional[_LiveTurn] = None
     ) -> None:
-        """Upsert the turn's final usage row (when enabled) and send ``usage_updated``."""
+        """Upsert the turn's final usage row (when enabled), keep the summary for history and send ``usage_updated``."""
         ledger = turn_usage.ledger
         if not ledger.events:
             return
-        summary: Optional[Dict[str, Any]] = None
         try:
             chat_config = turn_usage.chat_config
             summary, estimate = summarize_usage(ledger, final=True, pricing_table=chat_config.pricing_table)
+            await self._keep_final_usage(turn_usage.conversation_id, ledger.turn_id, summary)
             if self.token_usage_store is not None and chat_config.token_usage_enabled:
                 await persist_turn_usage(
                     self.token_usage_store,
@@ -2438,34 +2434,30 @@ class WebSocketChatHandler:
                 await self._send_to_viewers([websocket], [updated], timeout=_OWN_SEND_TIMEOUT_SECONDS)
         except Exception:
             logger.warning("Failed to finalize usage for turn_id=%s", ledger.turn_id, exc_info=True)
-        if turn_usage.thread_id is not None and summary is not None:
-            await self._checkpoint_final_usage(turn_usage.thread_id, ledger.turn_id, summary)
 
-    async def _checkpoint_final_usage(self, thread_id: str, message_id: str, usage: Dict[str, Any]) -> None:
-        """Replace the pending usage on the checkpointed assistant message so reloaded history shows the final totals."""
-        cfg: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+    async def _keep_final_usage(self, conversation_id: Optional[str], message_id: str, usage: Dict[str, Any]) -> None:
+        """Store the final summary beside the conversation, where history loads pick it up.
+
+        The checkpointed message keeps its pending summary: rewriting the checkpoint here could
+        overwrite a turn another worker is checkpointing.
+        """
+        if conversation_id is None or self.conversation_store is None:
+            return
         try:
-            for _ in range(_USAGE_CHECKPOINT_ATTEMPTS):
-                async with self._thread_lock(thread_id):
-                    # Turns start under this lock, so none can begin between the check and the write.
-                    if not self.in_progress(thread_id):
-                        checkpoint_state = await self.chat_graph.aget_state(cfg)
-                        messages = ((checkpoint_state.values or {}).get("messages") or []) if checkpoint_state else []
-                        updated = [
-                            (
-                                {**message, "metadata": {**message["metadata"], "usage": usage}}
-                                if (message.get("metadata") or {}).get("message_id") == message_id
-                                else message
-                            )
-                            for message in messages
-                        ]
-                        if updated != messages:
-                            await self.chat_graph.aupdate_state(cfg, {"messages": updated})
-                        return
-                await asyncio.sleep(_USAGE_CHECKPOINT_RETRY_SECONDS)
-            logger.warning("Gave up writing final usage for turn_id=%s: thread stayed busy", message_id)
+            await self.conversation_store.set_final_usage(conversation_id, message_id, usage)
         except Exception:
-            logger.warning("Failed to checkpoint final usage for turn_id=%s", message_id, exc_info=True)
+            logger.warning("Failed to keep final usage for turn_id=%s", message_id, exc_info=True)
+
+    async def _final_usage(self, conversation_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
+        """Final usage summaries of ``conversation_id`` by message id; empty if unavailable."""
+        if conversation_id is None or self.conversation_store is None:
+            return {}
+        try:
+            final_usage = await self.conversation_store.get_final_usage(conversation_id)
+        except Exception:
+            logger.warning("Failed to read final usage for conversation_id=%s", conversation_id, exc_info=True)
+            return {}
+        return final_usage if isinstance(final_usage, dict) else {}
 
     async def _handle_conversation_list(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_list`` request — return the user's conversations."""
@@ -2614,6 +2606,7 @@ class WebSocketChatHandler:
                             )
 
                 # A running turn is shown from its own frames below, not from what it has checkpointed so far.
+                raw_messages = with_final_usage(raw_messages, await self._final_usage(conversation_id))
                 history = self._format_history_messages(
                     raw_messages if live is None else _before_running_turn(raw_messages, live.user_message_id)
                 )

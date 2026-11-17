@@ -194,6 +194,19 @@ class PostgresConversationStore(BaseConversationStore):
             await conn.commit()
         return updated
 
+    async def set_final_usage(self, conversation_id: str, message_id: str, usage: Dict[str, Any]) -> None:
+        # One statement, so summaries written by different workers merge instead of overwriting.
+        sql = "UPDATE conversations SET final_usage = final_usage || %s WHERE id = %s"
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(sql, (self._Jsonb({message_id: usage}), conversation_id))
+            await conn.commit()
+
+    async def get_final_usage(self, conversation_id: str) -> Dict[str, Dict[str, Any]]:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT final_usage FROM conversations WHERE id = %s", (conversation_id,))
+            row = await cur.fetchone()
+        return (row[0] or {}) if row else {}
+
     async def record_turn(self, conversation_id: str) -> None:
         sql = "UPDATE conversations SET message_count = message_count + 1, updated_at = now() WHERE id = %s"
         async with self._pool.connection() as conn, conn.cursor() as cur:

@@ -346,6 +346,21 @@ class TestTokenUsageNode:
         assert _usage(result)["input_tokens"] == 120
         store.record_turn.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_cost_is_unknown_without_a_ledger_even_for_a_priced_model(self):
+        """The metadata totals cannot say which model or cache TTL each round used."""
+        store = _store()
+        config = {
+            "configurable": {"chat_config": _TokenUsageConfig(), "token_usage_store": store, "thread_id": "thread-1"}
+        }
+
+        result = await token_usage_node(_state(model_id="anthropic.claude-sonnet-4-5-20250929-v1:0"), config)
+
+        assert (_usage(result)["estimated_cost"], _usage(result)["currency"]) == (None, None)
+        assert _usage(result)["input_tokens"] == 120
+        _, kwargs = store.record_turn.await_args
+        assert (kwargs["estimated_cost_micros"], kwargs["currency"]) == (None, None)
+
 
 class TestTokenUsageNodeWithLedger:
     @pytest.mark.asyncio

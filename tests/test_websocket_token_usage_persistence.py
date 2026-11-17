@@ -28,6 +28,7 @@ for _name in [n for n in list(sys.modules) if n == "autolangchat" or n.startswit
     if getattr(sys.modules.get(_name), "__spec__", None) is None:
         del sys.modules[_name]
 
+from autolangchat.history import with_final_usage  # noqa: E402
 from autolangchat.usage.ledger import UsageLedger  # noqa: E402
 from autolangchat.websocket_handler import WebSocketChatHandler, _PendingTurnUsage  # noqa: E402
 
@@ -326,46 +327,46 @@ def _checkpointed_history():
     return [{"role": "user", "content": "q"}, pending, other]
 
 
-def test_final_usage_replaces_the_pending_usage_in_the_checkpointed_message():
+def test_final_usage_is_kept_with_the_conversation_and_the_checkpoint_is_left_alone():
     handler = _title_handler()
-    handler.chat_graph.aget_state = AsyncMock(
-        return_value=SimpleNamespace(values={"messages": _checkpointed_history()})
-    )
+    handler.conversation_store.set_final_usage = AsyncMock()
     handler.chat_graph.aupdate_state = AsyncMock()
-    turn_usage = _turn_usage(_ledger_with_chat_and_summaries(), enabled=False)._replace(thread_id="conv-1")
+    turn_usage = _turn_usage(_ledger_with_chat_and_summaries(), enabled=False)._replace(conversation_id="conv-1")
 
     asyncio.run(_run_title(handler, turn_usage))
 
-    (cfg, update), _ = handler.chat_graph.aupdate_state.await_args
-    assert cfg == {"configurable": {"thread_id": "conv-1"}}
-    messages = update["messages"]
-    assert messages[1]["metadata"]["usage"]["final"] is True
-    assert messages[1]["metadata"]["usage"]["input_tokens"] == 550
-    assert messages[2] == _checkpointed_history()[2]
+    (conversation_id, message_id, usage), _ = handler.conversation_store.set_final_usage.await_args
+    assert (conversation_id, message_id) == ("conv-1", "msg-abc")
+    assert (usage["input_tokens"], usage["final"]) == (550, True)
+    handler.chat_graph.aupdate_state.assert_not_awaited()
 
 
-def test_final_usage_waits_for_a_running_turn_before_touching_the_checkpoint(monkeypatch):
-    monkeypatch.setattr(sys.modules[WebSocketChatHandler.__module__], "_USAGE_CHECKPOINT_RETRY_SECONDS", 0)
+def test_usage_updated_is_still_sent_when_the_final_usage_cannot_be_kept():
     handler = _title_handler()
-    handler.chat_graph.aget_state = AsyncMock(
-        return_value=SimpleNamespace(values={"messages": _checkpointed_history()})
-    )
-    handler.chat_graph.aupdate_state = AsyncMock()
-    handler._in_flight_threads["conv-1"] = 1
-    state_reads = []
+    handler.conversation_store.set_final_usage = AsyncMock(side_effect=RuntimeError("db down"))
+    turn_usage = _turn_usage(_ledger_with_chat_and_summaries(), enabled=False)._replace(conversation_id="conv-1")
 
-    async def _turn_finishes_after_two_polls():
-        for _ in range(2):
-            state_reads.append(handler.chat_graph.aupdate_state.await_count)
-            await asyncio.sleep(0)
-        handler._in_flight_threads.pop("conv-1")
+    sent = asyncio.run(_run_title(handler, turn_usage))
 
-    async def _run():
-        finisher = asyncio.create_task(_turn_finishes_after_two_polls())
-        await handler._checkpoint_final_usage("conv-1", "msg-abc", {"final": True})
-        await finisher
+    assert [m["usage"]["final"] for m in sent if m.get("type") == "usage_updated"] == [True]
 
-    asyncio.run(_run())
 
-    assert state_reads == [0, 0]
-    handler.chat_graph.aupdate_state.assert_awaited_once()
+def test_loaded_history_shows_the_kept_final_usage_in_place_of_the_pending_one():
+    handler = _title_handler()
+    handler.conversation_store.get_final_usage = AsyncMock(return_value={"msg-abc": {"final": True}})
+    history = _checkpointed_history()
+
+    shown = with_final_usage(history, asyncio.run(handler._final_usage("conv-1")))
+
+    assert shown[1]["metadata"] == {"message_id": "msg-abc", "usage": {"final": True}}
+    assert (shown[0], shown[2]) == (history[0], history[2])
+    # The checkpointed messages themselves are not modified.
+    assert history[1]["metadata"]["usage"] == {"final": False}
+
+
+def test_history_is_unchanged_when_the_final_usage_cannot_be_read():
+    handler = _title_handler()
+    handler.conversation_store.get_final_usage = AsyncMock(side_effect=RuntimeError("db down"))
+    history = _checkpointed_history()
+
+    assert with_final_usage(history, asyncio.run(handler._final_usage("conv-1"))) == history

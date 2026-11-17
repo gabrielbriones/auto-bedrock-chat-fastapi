@@ -32,6 +32,7 @@ server in CI, mirroring the ``tests/test_token_usage_store.py`` approach):
       backend's SQL.
 """
 
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 
@@ -192,6 +193,59 @@ async def test_delete_conversations_empty_list_is_a_noop():
         await store.create_conversation("c1", "alice")
         assert await store.delete_conversations("alice", []) == []
         assert await store.get_conversation("c1") is not None
+    finally:
+        await store.close()
+
+
+async def test_final_usage_is_merged_per_message_and_goes_with_the_conversation():
+    store = await _open_store()
+    try:
+        await store.create_conversation("c1", "alice", metadata={"k": "v"})
+        assert await store.get_final_usage("c1") == {}
+
+        await store.set_final_usage("c1", "m1", {"input_tokens": 5, "estimated_cost": None, "final": True})
+        await store.set_final_usage("c1", "m2", {"input_tokens": 7, "final": True})
+        # A metadata replace must not drop the summaries.
+        await store.update_conversation("c1", metadata={"other": 1})
+
+        assert await store.get_final_usage("c1") == {
+            "m1": {"input_tokens": 5, "estimated_cost": None, "final": True},
+            "m2": {"input_tokens": 7, "final": True},
+        }
+        assert "final_usage" not in await store.get_conversation("c1")
+
+        await store.delete_conversation("c1")
+        assert await store.get_final_usage("c1") == {}
+    finally:
+        await store.close()
+
+
+async def test_set_final_usage_for_a_missing_conversation_is_a_noop():
+    store = await _open_store()
+    try:
+        await store.set_final_usage("gone", "m1", {"final": True})
+        assert await store.get_final_usage("gone") == {}
+    finally:
+        await store.close()
+
+
+async def test_final_usage_column_is_added_to_an_existing_database(tmp_path):
+    db_path = str(tmp_path / "conversations.db")
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(
+        "CREATE TABLE conversations (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT, "
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, message_count INTEGER NOT NULL DEFAULT 0, "
+        "metadata TEXT NOT NULL DEFAULT '{}', is_archived INTEGER NOT NULL DEFAULT 0)"
+    )
+    legacy.execute("INSERT INTO conversations (id, user_id, created_at, updated_at) VALUES ('c1', 'alice', 't', 't')")
+    legacy.commit()
+    legacy.close()
+
+    store = SQLiteConversationStore(db_path=db_path)
+    await store.open()
+    try:
+        await store.set_final_usage("c1", "m1", {"final": True})
+        assert await store.get_final_usage("c1") == {"m1": {"final": True}}
     finally:
         await store.close()
 
@@ -359,8 +413,9 @@ class _FakeConversationCursor:
     ``(id, user_id, title, created_at, updated_at, message_count, metadata, is_archived)``.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, final_usage=None):
         self._rows = rows
+        self._final_usage = final_usage if final_usage is not None else {}
         self._result = []
         self.rowcount = 0
 
@@ -408,6 +463,17 @@ class _FakeConversationCursor:
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+            return
+
+        if "final_usage = final_usage || %s" in sql:
+            patch, conv_id = params
+            if conv_id in self._rows:
+                self._final_usage.setdefault(conv_id, {}).update(patch.obj)
+            return
+
+        if sql.strip().startswith("SELECT final_usage"):
+            (conv_id,) = params
+            self._result = [(self._final_usage.get(conv_id, {}),)] if conv_id in self._rows else []
             return
 
         if sql.strip().startswith("UPDATE conversations SET"):
@@ -486,8 +552,9 @@ class _FakeConversationCursor:
 
 
 class _FakeConversationConnection:
-    def __init__(self, rows):
+    def __init__(self, rows, final_usage):
         self._rows = rows
+        self._final_usage = final_usage
         self.commits = 0
 
     async def __aenter__(self):
@@ -497,7 +564,7 @@ class _FakeConversationConnection:
         return False
 
     def cursor(self):
-        return _FakeConversationCursor(self._rows)
+        return _FakeConversationCursor(self._rows, self._final_usage)
 
     async def commit(self):
         self.commits += 1
@@ -508,9 +575,10 @@ class _FakeConversationPool:
 
     def __init__(self):
         self.rows = {}
+        self.final_usage = {}
 
     def connection(self):
-        return _FakeConversationConnection(self.rows)
+        return _FakeConversationConnection(self.rows, self.final_usage)
 
 
 def _make_postgres_store(max_conversations_per_user=100):
@@ -523,6 +591,21 @@ def _make_postgres_store(max_conversations_per_user=100):
     store._Jsonb = Jsonb
     store._max_conversations_per_user = max_conversations_per_user
     return store
+
+
+async def test_postgres_final_usage_is_merged_per_message():
+    store = _make_postgres_store()
+    await store.create_conversation("conv-1", "alice")
+
+    await store.set_final_usage("conv-1", "m1", {"input_tokens": 5, "final": True})
+    await store.set_final_usage("conv-1", "m2", {"input_tokens": 7, "final": True})
+    await store.set_final_usage("gone", "m1", {"final": True})
+
+    assert await store.get_final_usage("conv-1") == {
+        "m1": {"input_tokens": 5, "final": True},
+        "m2": {"input_tokens": 7, "final": True},
+    }
+    assert await store.get_final_usage("gone") == {}
 
 
 async def test_postgres_create_and_get_conversation_round_trip():

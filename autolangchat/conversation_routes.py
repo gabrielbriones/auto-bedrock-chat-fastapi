@@ -45,7 +45,7 @@ from .admin.admin_auth import AdminIdentity
 from .artifacts import ArtifactStore
 from .db.conversation_base import BaseConversationStore
 from .exceptions import ConversationNotFoundError
-from .history import format_history_messages, has_recent_tool_loop
+from .history import format_history_messages, has_recent_tool_loop, with_final_usage
 from .models import (
     ConversationCreateRequest,
     ConversationDeleteAllResponse,
@@ -245,7 +245,12 @@ def register_conversation_routes(
         else:
             raw_messages = checkpoint_values.get("messages", [])
 
-        formatted = _format_history_messages(raw_messages)
+        try:
+            final_usage = await conversation_store.get_final_usage(conversation_id)
+        except Exception:
+            logger.warning("Failed to read final usage for conversation_id=%s", conversation_id, exc_info=True)
+            final_usage = {}
+        formatted = _format_history_messages(with_final_usage(raw_messages, final_usage))
 
         if before:
             cursor_idx = next((i for i, m in enumerate(formatted) if m.message_id == before), None)

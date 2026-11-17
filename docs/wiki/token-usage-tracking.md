@@ -79,7 +79,9 @@ Each event carries `turn_id`, `provider`, `model_id`, `input_tokens`,
 `output_tokens`, `cache_read_tokens`, `cache_write_tokens` and a timestamp.
 Measurement happens regardless of `token_usage_enabled`; that setting only
 controls persistence. Callers that invoke the graph without a ledger get a
-single `chat` event built from the turn's accumulated metadata.
+single `chat` event built from the turn's accumulated metadata. Those totals
+no longer say which model or cache TTL each round used, so that turn's
+estimated cost is always unknown (`null`).
 
 `token_usage_node` sums the ledger, prices it and attaches the result to the
 final assistant message as `metadata.usage`, which the WebSocket handler sends
@@ -99,6 +101,13 @@ conversation already has a title), the handler records the `title` event,
 upserts the turn's row with `final = true` and sends a
 [`usage_updated`](websocket-client.md#usage_updated) frame carrying the final
 totals. Every other turn is `final: true` straight away.
+
+The checkpointed assistant message keeps the pending summary: checkpoints are
+shared across workers, so rewriting one after the turn could overwrite a turn
+running elsewhere. The final summary is instead stored on the conversation's
+row in the conversation store (`final_usage`, keyed by message id), whether or
+not usage persistence is enabled, and `conversation_load`, `history` and
+`GET /conversations/{id}/messages` return it in place of the pending one.
 
 Stand-alone admin synthesis (`FeedbackSynthesizer`) is never recorded into a
 chat turn: each synthesis or ingestion operation collects its calls in its own

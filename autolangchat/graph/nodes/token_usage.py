@@ -16,7 +16,8 @@ requires a ``token_usage_store`` and ``chat_config.token_usage_enabled``.
 Inputs from ``config["configurable"]``:
     chat_config             — ChatConfig (required)
     usage_ledger            — per-turn UsageLedger; when absent, one ``chat``
-                              event is synthesized from the turn metadata
+                              event is synthesized from the turn metadata and
+                              its cost is reported as unknown
     usage_finalized_later   — True when the caller will record more events
                               after the graph (e.g. a title call), so the
                               summary is marked ``final: false``
@@ -84,6 +85,7 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
     last_metadata = last_message.get("metadata") or {}
 
     ledger = configurable.get("usage_ledger")
+    per_call = ledger is not None
     if ledger is None:
         ledger = _ledger_from_metadata(metadata, last_metadata.get("message_id") or str(uuid.uuid4()), model_id)
         if ledger is None:
@@ -97,6 +99,9 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
             final=not configurable.get("usage_finalized_later", False),
             pricing_table=pricing_table if isinstance(pricing_table, Mapping) else None,
         )
+        if not per_call:
+            # The aggregate no longer says which model or cache TTL each round used.
+            summary, estimate = {**summary, "estimated_cost": None, "currency": None}, None
         updated_metadata["usage"] = summary
         await _persist(configurable, chat_config, ledger, model_id, estimate, summary["final"])
 

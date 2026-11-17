@@ -118,6 +118,18 @@ class BaseConversationStore(ABC):
         """
         return False
 
+    async def set_final_usage(self, conversation_id: str, message_id: str, usage: Dict[str, Any]) -> None:
+        """Keep the final usage summary of the turn that produced ``message_id``.
+
+        Kept here rather than in the checkpoint, which a turn on another
+        worker may be rewriting. A no-op for a conversation that no longer
+        exists, and for stores that do not override it.
+        """
+
+    async def get_final_usage(self, conversation_id: str) -> Dict[str, Dict[str, Any]]:
+        """Return the summaries kept by :meth:`set_final_usage`, keyed by message id."""
+        return {}
+
     @abstractmethod
     async def record_turn(self, conversation_id: str) -> None:
         """Increment ``message_count`` and bump ``updated_at`` for a turn.

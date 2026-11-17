@@ -41,6 +41,20 @@ def has_recent_tool_loop(messages: List[Dict[str, Any]]) -> bool:
     return datetime.now(ts.tzinfo) - ts < TOOL_LOOP_LEASE
 
 
+def with_final_usage(messages: List[Dict[str, Any]], final_usage: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """``messages`` with each pending usage summary replaced by its final one, keyed by message id."""
+    if not final_usage:
+        return messages
+    return [
+        (
+            {**message, "metadata": {**message["metadata"], "usage": final_usage[message["metadata"]["message_id"]]}}
+            if (message.get("metadata") or {}).get("message_id") in final_usage
+            else message
+        )
+        for message in messages
+    ]
+
+
 def _user_content(message: Dict[str, Any]) -> Any:
     """What the user sent, also for a message the graph replaced by an artifact marker."""
     content = message.get("content", "")
