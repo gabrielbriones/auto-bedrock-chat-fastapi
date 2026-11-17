@@ -24,7 +24,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, TypeVar
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, TypeVar
 from uuid import UUID, uuid4
 
 from ..db.feedback_base import BaseFeedbackStore
@@ -55,7 +55,7 @@ _T = TypeVar("_T")
 
 
 @asynccontextmanager
-async def _usage_scope(operation: str) -> AsyncIterator[None]:
+async def _usage_scope(operation: str) -> AsyncGenerator[None, None]:
     if _operation_ledger.get() is not None:
         yield
         return
