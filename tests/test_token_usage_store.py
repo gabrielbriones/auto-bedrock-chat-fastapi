@@ -956,6 +956,10 @@ async def test_postgres_apply_schema_migrates_cache_token_columns():
         assert f"ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS {column}" in normalized
     assert "ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS final BOOLEAN NOT NULL DEFAULT TRUE" in normalized
     assert "CREATE TABLE IF NOT EXISTS token_usage_events" in normalized
+    assert (
+        "ALTER TABLE token_usage_events ADD COLUMN IF NOT EXISTS cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0"
+        in normalized
+    )
     assert store._pool.last_connection.commits == 1
 
 

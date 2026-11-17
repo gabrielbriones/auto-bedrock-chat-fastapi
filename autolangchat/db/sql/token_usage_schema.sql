@@ -93,5 +93,9 @@ CREATE TABLE IF NOT EXISTS token_usage_events (
     event_ts            TIMESTAMPTZ NOT NULL
 );
 
+-- Migration: tables created before the one-hour cache-write column existed.
+ALTER TABLE token_usage_events
+ADD COLUMN IF NOT EXISTS cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_1h_tokens >= 0);
+
 CREATE INDEX IF NOT EXISTS idx_token_usage_events_turn
     ON token_usage_events (turn_id);
