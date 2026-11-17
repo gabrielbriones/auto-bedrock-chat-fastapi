@@ -5,11 +5,13 @@
 > See [Token Management](token-management) for the context-window budget
 > system.
 
-Every chat turn already reports `input_tokens` and `output_tokens` — accumulated
-across any LLM tool-call rounds — in the `ai_response` WebSocket payload's
-`metadata`. When enabled, the plugin additionally persists those counts per
-turn to a `TokenUsageStore` backend (SQLite or Postgres), so they can be
-queried later for usage dashboards, cost attribution, or auditing.
+Every chat turn reports its usage in the `ai_response` WebSocket payload's
+`metadata.usage` — the sum of **every** AI call the turn caused (chat rounds,
+retries, summarization chunks and the conversation title) plus an estimated
+cost — whether or not persistence is enabled. When enabled, the plugin
+additionally persists those counts per turn and per call to a
+`TokenUsageStore` backend (SQLite or Postgres), so they can be queried later
+for usage dashboards, cost attribution, or auditing.
 
 ---
 
@@ -55,25 +57,108 @@ still delivered normally, just without the persisted record for that turn.
 | `token_usage_storage_type`  | `AUTOCHAT_TOKEN_USAGE_STORAGE_TYPE`  | `sqlite` | `sqlite` (zero-config) or `postgres`                                                           |
 | `token_usage_database_path` | `AUTOCHAT_TOKEN_USAGE_DATABASE_PATH` | `None`   | SQLite file path; falls back to `feedback_database_path`, then `KB_DATABASE_PATH`              |
 | `token_usage_postgres_url`  | `AUTOCHAT_TOKEN_USAGE_POSTGRES_URL`  | `None`   | Falls back to `AUTOCHAT_FEEDBACK_POSTGRES_URL`, then `AUTOCHAT_KB_POSTGRES_URL`                |
-| `token_usage_write_timeout` | `AUTOCHAT_TOKEN_USAGE_WRITE_TIMEOUT` | `5.0`    | Seconds before the per-turn `record_turn()` write is abandoned (turn still completes normally) |
+| `token_usage_write_timeout` | `AUTOCHAT_TOKEN_USAGE_WRITE_TIMEOUT` | `5.0`    | Seconds before a usage write is abandoned and queued for retry (turn still completes normally) |
+| `pricing_table`             | `AUTOCHAT_PRICING_TABLE`             | `None`   | JSON pricing table replacing the packaged one (see [Pricing](#pricing))                         |
+
+---
+
+## Per-turn usage and cost
+
+Every plugin-owned AI call caused by a turn is recorded as one **usage event**
+in a per-turn `UsageLedger` (`autolangchat/usage/ledger.py`), passed to the
+graph as `config["configurable"]["usage_ledger"]`:
+
+| `purpose`       | Recorded by                                                                    |
+| --------------- | ------------------------------------------------------------------------------ |
+| `chat`          | `llm_call_node`, once per tool-call round                                      |
+| `retry`         | `llm_call_node`, for emergency re-truncation, fallback-model and inference-profile retries (with the model that actually answered) |
+| `summarization` | `MessagePreprocessor`, once per AI summarization chunk                         |
+| `title`         | The WebSocket handler's conversation auto-titling                              |
+
+Each event carries `turn_id`, `provider`, `model_id`, `input_tokens`,
+`output_tokens`, `cache_read_tokens`, `cache_write_tokens` and a timestamp.
+Measurement happens regardless of `token_usage_enabled`; that setting only
+controls persistence. Callers that invoke the graph without a ledger get a
+single `chat` event built from the turn's accumulated metadata.
+
+`token_usage_node` sums the ledger, prices it and attaches the result to the
+final assistant message as `metadata.usage`, which the WebSocket handler sends
+in `ai_response.metadata.usage`:
+
+```json
+{ "input_tokens": 1320, "output_tokens": 280, "cache_read": 400, "cache_write": 0,
+  "estimated_cost": 0.00792, "currency": "USD", "final": false }
+```
+
+### Final vs pending
+
+The conversation title is generated after `ai_response` is sent, so on the
+turn that creates a conversation the live summary is **pending**
+(`final: false`). Once the title call finishes (or is skipped because the
+conversation already has a title), the handler records the `title` event,
+upserts the turn's row with `final = true` and sends a
+[`usage_updated`](websocket-client.md#usage_updated) frame carrying the final
+totals. Every other turn is `final: true` straight away.
+
+Stand-alone admin synthesis (`FeedbackSynthesizer`) records into its own
+administrative ledger, never into a chat turn.
+
+### Pricing
+
+`autolangchat/usage/pricing.py` prices each event with its own model, so a
+fallback-model retry is billed at the fallback model's rate. Rates come from
+the packaged, versioned `autolangchat/usage/pricing.json`, or from
+`AUTOCHAT_PRICING_TABLE` when set:
+
+```json
+{
+  "pricing_revision": "2026-11-12-v1",
+  "currency": "USD",
+  "models": {
+    "anthropic:anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "input_per_million": 3.0,
+      "output_per_million": 15.0,
+      "cache_read_per_million": 0.3,
+      "cache_write_per_million": 3.75
+    }
+  }
+}
+```
+
+Keys are `provider:model_id`; a region-prefixed inference-profile id
+(`us.anthropic.…`) falls back to the bare model's entry when it has no entry of
+its own. If **any** event in a turn uses a model missing from the table, the
+estimate is unknown: `estimated_cost` is `null` (never `0`) and
+`estimated_cost_micros` is stored as `NULL`. Uncached input is priced as
+`input_tokens - cache_read_tokens - cache_write_tokens` (see
+[Prompt-cache tokens](#prompt-cache-tokens)). The packaged table only lists
+models with published rates; set `AUTOCHAT_PRICING_TABLE` to price others.
 
 ---
 
 ## What gets recorded
 
-For each chat turn, one row is written with:
+For each chat turn, one `token_usage` row is written with:
 
 - `id` — the stable message id also sent to the client as `ai_response.message_id`
 - `session_id`, `user_id` — turn context (`user_id` is `None` for anonymous sessions)
 - `model_id` — the model that actually produced the response (reflects fallback-model substitution, if triggered)
-- `input_tokens`, `output_tokens` — accumulated across all tool-call rounds for that turn
+- `input_tokens`, `output_tokens` — summed over every usage event of the turn
 - `cache_read_tokens`, `cache_write_tokens` — prompt-cache tokens for that turn (see [Prompt-cache tokens](#prompt-cache-tokens)); `0` when nothing was cached
-- `turn_ts` — when the turn completed
+- `estimated_cost_micros`, `currency`, `pricing_revision` — the cost estimate in millionths of `currency`; `NULL` when any model was unpriced
+- `final` — `false` while the title call is still pending
+- `turn_ts` — when the turn's first AI call happened
 
-Writes are idempotent (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` keyed on
-`id`), and persistence failures are logged and swallowed rather than
-propagated — a token-usage write failure never prevents the chat response
-from being delivered.
+and one `token_usage_events` row per usage event (`id` is the event id,
+plus `turn_id`, `purpose`, `provider`, `model_id`, the four token counts and
+`event_ts`).
+
+`record_turn` is an upsert keyed on `id`: a pending row is replaced by the
+final one, while a final row is never overwritten, so retried writes are
+idempotent. Event writes ignore event ids that already exist. A failed write
+is logged and kept in a bounded in-memory retry queue (oldest dropped when
+full), replayed after the next successful write — a token-usage write failure
+never prevents the chat response from being delivered.
 
 ## Prompt-cache tokens
 
@@ -107,21 +192,23 @@ see [WebSocket Client](websocket-client.md)), in the stored rows, in every
 `/admin/tokens/*` response, and as separate **Cache read** / **Cache write**
 columns on the admin usage dashboard.
 
-Existing token-usage tables gain the two columns automatically (default `0`) the
-next time the store opens: SQLite always migrates on open; Postgres applies
-`ADD COLUMN IF NOT EXISTS` with the rest of its schema bootstrap.
+Existing token-usage tables gain the new columns automatically the next time
+the store opens: SQLite always migrates on open (`ALTER TABLE ... ADD COLUMN`
+for each missing column); Postgres applies `ADD COLUMN IF NOT EXISTS` with the
+rest of its schema bootstrap. Rows written before `final` existed default to
+`final = true`. The `token_usage_events` table is created by the schema
+bootstrap (`init_schema=True`); deployments that provision DDL themselves must
+apply the updated `token_usage_schema*.sql`.
 
 ## Recording mechanism
 
 Recording happens inside the compiled LangGraph `chat_graph` itself, in a
 terminal `token_usage_node` (runs after `citation_boost`, before `END`) —
 not in the WebSocket transport layer. This means _any_ caller of
-`chat_graph.ainvoke()` gets its usage recorded, not just
+`chat_graph.ainvoke()` gets its usage summarized and recorded, not just
 `WebSocketChatHandler` (e.g. a standalone script, a batch job, or a future
-REST endpoint).
-
-The node is a no-op unless all of the following are present in
-`config["configurable"]`:
+REST endpoint). The usage summary is always attached; persistence is a no-op
+unless all of the following are present in `config["configurable"]`:
 
 | Key                 | Required | Notes                                                    |
 | ------------------- | -------- | -------------------------------------------------------- |
@@ -151,6 +238,9 @@ Once enabled, recorded rows can be queried through the
 `/admin/tokens/*` endpoints (per-model summary, per-user history,
 per-day aggregates, and top-users ranking) — see
 [Admin API — Token Usage Analytics](admin-api#token-usage-analytics).
+Per-turn rows include `turn_id`, `estimated_cost_micros`, `currency`,
+`pricing_revision` and `final`; aggregates include the summed
+`estimated_cost_micros` of priced turns and `unpriced_turn_count`.
 Those routes are only registered when a token-usage store is configured,
 mirroring the Feedback/KB admin route groups.
 
@@ -158,4 +248,4 @@ mirroring the Feedback/KB admin route groups.
 
 Embedding-token tracking is not implemented: the Bedrock Titan and Cohere
 embedding APIs used by the [RAG feature](rag-feature) don't return a token
-count in their response bodies. Only LLM chat-turn tokens are tracked.
+count in their response bodies, so no `embedding` events are recorded yet.

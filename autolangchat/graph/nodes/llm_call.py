@@ -43,6 +43,7 @@ from ...exceptions import ContextWindowExceededError, ModelInvocationError
 from ...message_preprocessor import MessagePreprocessor
 from ...model_capabilities import DEFAULT_READ_TIMEOUT, build_bedrock_kwargs, supports_tool_calling
 from ...prompt_caching import apply_cache_points, prompt_caching_active, system_prefix_chars
+from ...usage.ledger import cache_token_counts
 from ..state import ChatState
 from ..tools.artifact_tools import GREP_CONTENT, READ_CONTENT_RANGE, artifact_tools_bound
 from .preprocess import prepare_message_artifacts
@@ -345,29 +346,8 @@ def _prepare_lc_messages(message_dicts: List[Dict], chat_config: Any, model_id: 
 
 
 def _cache_usage(usage_metadata: Any) -> Dict[str, int]:
-    """Prompt-cache token counts from ``usage_metadata["input_token_details"]``.
-
-    langchain-aws already folds Bedrock's ``cacheReadInputTokens`` and
-    ``cacheWriteInputTokens`` into ``input_tokens``, so these are subsets of
-    it, not additions. Cache writes are reported either as ``cache_creation``
-    or, when Bedrock breaks them down by TTL, as ``ephemeral_5m/1h_input_tokens``
-    (with ``cache_creation`` then zeroed), so all three are summed. Returns
-    ``{}`` when the provider reported no input-token details.
-    """
-    details = usage_metadata.get("input_token_details") if isinstance(usage_metadata, dict) else None
-    if not isinstance(details, dict) or not details:
-        return {}
-
-    def _count(key: str) -> int:
-        value = details.get(key)
-        return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-    return {
-        "cache_read_tokens": _count("cache_read"),
-        "cache_write_tokens": _count("cache_creation")
-        + _count("ephemeral_5m_input_tokens")
-        + _count("ephemeral_1h_input_tokens"),
-    }
+    """Prompt-cache token counts; see :func:`autolangchat.usage.ledger.cache_token_counts`."""
+    return cache_token_counts(usage_metadata)
 
 
 def _from_langchain_message(ai_msg: Any) -> Dict:
@@ -667,8 +647,10 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     """
     messages: List[Dict] = state.get("messages", [])
     metadata: Dict = dict(state.get("metadata") or {})
-    on_progress = (config.get("configurable") or {}).get("on_progress")
-    chat_config = config.get("configurable", {}).get("chat_config")
+    configurable = config.get("configurable") or {}
+    on_progress = configurable.get("on_progress")
+    usage_ledger = configurable.get("usage_ledger")
+    chat_config = configurable.get("chat_config")
 
     if chat_config is None:
         raise RuntimeError("llm_call_node: chat_config not found in configurable")
@@ -680,6 +662,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
     _log_conversation(messages, "LLM call — conversation state", provider=provider_for_model(primary_model))
 
     # --- Primary call ---
+    invocation_model_id = primary_model
+    invocation_purpose = "chat"
     try:
         llm = _build_llm(primary_model, chat_config)
         ai_msg = await _invoke_with_streaming(llm, lc_messages, on_progress)
@@ -720,6 +704,7 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                     _prepare_lc_messages(retruncated, chat_config, primary_model),
                     on_progress,
                 )
+                invocation_purpose = "retry"
                 metadata["fallback_model_used"] = False
             except ArtifactError:
                 raise
@@ -745,6 +730,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                         _prepare_lc_messages(messages, chat_config, fallback_model),
                         on_progress,
                     )
+                    invocation_model_id = fallback_model
+                    invocation_purpose = "retry"
                     metadata["fallback_model_used"] = True
                     metadata["fallback_model"] = fallback_model
                 except ArtifactError:
@@ -773,6 +760,8 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
                     messages, chat_config.model_copy(update={"model_id": profile_model_id}), config
                 )
                 ai_msg = await _invoke_with_streaming(llm_profile, lc_messages, on_progress)
+                invocation_model_id = profile_model_id
+                invocation_purpose = "retry"
                 metadata["fallback_model_used"] = False
                 metadata["inference_profile_model_id"] = profile_model_id
             except ArtifactError:
@@ -790,6 +779,12 @@ async def llm_call_node(state: ChatState, config: RunnableConfig) -> Dict[str, A
             raise _wrap_model_invocation_error(primary_model, exc, chat_config) from exc
 
     response_dict = _from_langchain_message(ai_msg)
+    if usage_ledger is not None:
+        usage_ledger.record_usage_metadata(
+            purpose=invocation_purpose,
+            model_id=response_dict["metadata"].get("model_id") or invocation_model_id,
+            usage_metadata=getattr(ai_msg, "usage_metadata", None),
+        )
 
     # Some models (notably Meta Llama, XMGPLAT-11193) emit a tool call as
     # plain response text -- `{"type": "function", "name": "download_file",

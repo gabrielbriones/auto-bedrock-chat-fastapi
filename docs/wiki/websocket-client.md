@@ -232,7 +232,15 @@ running turn (`turn_started` and its frames so far) so the client can follow it.
   "metadata": {
     "message_id": "f1c2…",
     "model_id": "us.anthropic.claude-sonnet-5",
-    "usage": { "input_tokens": 120, "output_tokens": 240, "cache_read_tokens": 0, "cache_write_tokens": 0 },
+    "usage": {
+      "input_tokens": 1320,
+      "output_tokens": 280,
+      "cache_read": 400,
+      "cache_write": 0,
+      "estimated_cost": 0.00792,
+      "currency": "USD",
+      "final": false
+    },
     "timestamp": "2026-01-01T10:00:05",
     "tool_call_rounds": 1,
     "total_tool_calls": 2,
@@ -265,7 +273,7 @@ final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
 | ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `message_id`            | `string` (UUID)          | Stable per-turn ID, also present at the top level of the `ai_response` payload.                                                                                                            |
 | `model_id`              | `string`                 | Active model ID. Written directly from server config and overwrites any value returned by the LLM.                                                                                         |
-| `usage`                 | `object`                 | Token usage for the **final** LLM call only: `{ "input_tokens": int\|null, "output_tokens": int\|null }`, plus `cache_read_tokens` / `cache_write_tokens` when the provider reports prompt-cache details. For multi-round totals use the top-level keys below. |
+| `usage`                 | `object`                 | Usage of **every** AI call caused by this turn (chat rounds, retries, summarization chunks): `input_tokens`, `output_tokens`, `cache_read`, `cache_write` (subsets of `input_tokens`), `estimated_cost` (`float\|null` — `null` when any model used is unpriced), `currency` (`string\|null`) and `final`. `final: false` means a later call (conversation title) will still be added; the updated totals then arrive in a [`usage_updated`](#usage_updated) frame. Absent when no call reported usage. See [Token Usage Tracking](token-usage-tracking.md#per-turn-usage-and-cost). |
 | `timestamp`             | `string` (ISO 8601)      | Timestamp of the final LLM call.                                                                                                                                                           |
 | `tool_call_rounds`      | `int` (default `0`)      | Number of tool-call loop iterations for this turn.                                                                                                                                         |
 | `total_tool_calls`      | `int` (default `0`)      | Total individual tool calls executed across all rounds.                                                                                                                                    |
@@ -274,8 +282,8 @@ final LLM message (`message_id`, `usage`, `timestamp`) and the WebSocket handler
 
 **Conditional — token totals (only when the model returns usage):**
 
-These are accumulated across all tool-call rounds. Note they are distinct from the
-nested `usage` dict, which reflects only the final LLM call.
+These are accumulated across all tool-call rounds of the chat model only. The
+nested `usage` object above also counts summarization, retries and the title call.
 
 | Key             | Type  | Condition                            | Description                                                      |
 | --------------- | ----- | ------------------------------------ | ---------------------------------------------------------------- |
@@ -306,6 +314,31 @@ as `null`) when Bedrock doesn't return one.
 > (`bool`), `fallback_model` (`string`, present only when `fallback_model_used` is
 > `true`), and `context_window_retries` (`int`). These are intentionally **not**
 > forwarded in the `ai_response` payload — clients will never receive them.
+
+#### `usage_updated`
+
+Sent after an `ai_response` whose `metadata.usage.final` was `false`, once the
+turn's remaining AI calls (currently the conversation title on the turn that
+created a conversation) have finished. `message_id` matches the earlier
+`ai_response.message_id`; `usage` has the same shape with `final: true` and
+replaces the earlier totals. Sent whether or not a title was generated.
+
+```json
+{
+  "type": "usage_updated",
+  "message_id": "f1c2…",
+  "usage": {
+    "input_tokens": 1410,
+    "output_tokens": 288,
+    "cache_read": 400,
+    "cache_write": 0,
+    "estimated_cost": 0.00831,
+    "currency": "USD",
+    "final": true
+  },
+  "timestamp": "2026-01-01T10:00:06"
+}
+```
 
 **Conversation lifecycle** (only sent when [conversation persistence](conversation-persistence) is enabled — see that page for the full protocol):
 

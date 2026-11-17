@@ -30,6 +30,7 @@ from ..defaults import CHARS_PER_TOKEN_ESTIMATE, RAW_CONTENT_SYNTHESIS_INPUT_FRA
 from ..model_capabilities import build_bedrock_kwargs, get_model_profile
 from ..models import FeedbackEntry, FeedbackListFilters, KBDocument, KBDocumentListFilters, ReviewStatus
 from ..rag.embedding_pipeline import TextChunker
+from ..usage.ledger import UsageLedger
 
 logger = logging.getLogger(__name__)
 
@@ -265,12 +266,15 @@ class FeedbackSynthesizer:
         chunk_overlap: int = 100,
         synthesis_system_prompt: Optional[str] = None,
         chat_config: Any = None,
+        usage_ledger: Optional[UsageLedger] = None,
     ) -> None:
         self.model_id = model_id
         self.embedding_model_id = embedding_model_id
         self._chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         self._system_prompt = synthesis_system_prompt or _SYNTHESIS_SYSTEM_PROMPT
         self._chat_config = chat_config
+        # Synthesis is not caused by a chat turn, so it never shares a turn's ledger.
+        self.usage_ledger = usage_ledger or UsageLedger(f"admin-synthesis:{uuid4()}")
 
     # ------------------------------------------------------------------
     # Public API
@@ -513,6 +517,9 @@ class FeedbackSynthesizer:
         )
         llm = ChatBedrockConverse(**llm_kwargs)
         ai_msg = await llm.ainvoke(lc_messages)
+        self.usage_ledger.record_usage_metadata(
+            purpose="summarization", model_id=model_id, usage_metadata=getattr(ai_msg, "usage_metadata", None)
+        )
         raw_content_val = ai_msg.content
         return (
             raw_content_val

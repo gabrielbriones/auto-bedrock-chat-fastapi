@@ -226,6 +226,43 @@ describe('ServerFrameSchema', () => {
     expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
   })
 
+  it('delivers an ai response whose usage is the per-turn summary with an estimated cost', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const frame = {
+      type: 'ai_response',
+      message_id: 'message-1',
+      message: 'answer',
+      tool_calls: [],
+      tool_results: [],
+      timestamp: '2026-11-12T12:00:00',
+      metadata: {
+        message_id: 'message-1',
+        usage: {
+          input_tokens: 1320,
+          output_tokens: 280,
+          cache_read: 400,
+          cache_write: 0,
+          estimated_cost: null,
+          currency: null,
+          final: false,
+        },
+        model_id: 'model-1',
+        model_name: 'Test model',
+        tool_call_rounds: 1,
+        total_tool_calls: 1,
+        preprocessing_applied: false,
+      },
+      conversation_id: 'conversation-1',
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.invalidFrameCount('ai_response')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
+  })
+
   it('delivers an anonymous ai response with no persisted conversation', () => {
     const bus = new MessageBus(logger())
     const subscriber = jest.fn()

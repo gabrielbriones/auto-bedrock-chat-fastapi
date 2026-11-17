@@ -1,116 +1,132 @@
-"""Token-usage recording node.
+"""Token-usage summary and recording node.
 
-Terminal node that persists per-turn token usage after the LLM (and any
-citation-boost bookkeeping) has completed. Runs for *every* ``chat_graph``
-caller -- WebSocket handler, standalone scripts, future callers -- instead of
-being tied to one particular transport, following the same "optional
-post-turn node, no-op unless configured" shape as ``citation_boost_node``.
+Terminal node that summarizes and (optionally) persists per-turn usage after
+the LLM (and any citation-boost bookkeeping) has completed. Runs for *every*
+``chat_graph`` caller -- WebSocket handler, standalone scripts, future
+callers -- instead of being tied to one particular transport.
 
-This runs at the end of the graph whenever a ``token_usage_store`` is
-provided via ``config["configurable"]`` and ``chat_config.token_usage_enabled``
-is True. It is a no-op otherwise, or when the turn never produced token
-counts (e.g. a provider response that omits usage metadata).
+Usage is measured regardless of ``token_usage_enabled``: the turn's
+:class:`~autolangchat.usage.ledger.UsageLedger` (one event per AI call --
+chat rounds, retries, summarization chunks) is summed and priced, and the
+summary is attached to the final assistant message as ``metadata["usage"]``
+(``input_tokens``, ``output_tokens``, ``cache_read``, ``cache_write``,
+``estimated_cost``, ``currency``, ``final``). Persistence additionally
+requires a ``token_usage_store`` and ``chat_config.token_usage_enabled``.
 
 Inputs from ``config["configurable"]``:
-    chat_config       — ChatConfig (required)
-    token_usage_store — BaseTokenUsageStore instance or None
-    thread_id         — LangGraph thread id; used as the session_id fallback
-    session_id        — optional explicit session id (overrides thread_id)
-    user_id           — optional explicit user id
+    chat_config             — ChatConfig (required)
+    usage_ledger            — per-turn UsageLedger; when absent, one ``chat``
+                              event is synthesized from the turn metadata
+    usage_finalized_later   — True when the caller will record more events
+                              after the graph (e.g. a title call), so the
+                              summary is marked ``final: false``
+    token_usage_store       — BaseTokenUsageStore instance or None
+    thread_id               — LangGraph thread id; used as the session_id fallback
+    session_id              — optional explicit session id (overrides thread_id)
+    user_id                 — optional explicit user id
 
-State read:
-    metadata  — top-level turn metadata (input_tokens/output_tokens/model_id,
-                plus optional cache_read_tokens/cache_write_tokens),
-                accumulated across tool-call rounds by llm_call_node.
-                ``input_tokens`` already includes cached prompt tokens; the
-                two cache counters are subsets of it and default to 0 when
-                absent (older checkpoints, providers without cache info).
-    messages  — the last message's own ``metadata`` dict carries message_id.
+The last message's ``message_id`` is set to the ledger's ``turn_id`` so the
+client, the persisted ``token_usage`` row and later ``usage_updated`` frames
+share one id.
 
-Returns ``{}`` in most cases -- no state mutation. When the last message has
-no ``message_id`` yet (normally only in tests; ``llm_call_node`` always sets
-one in real graph runs), returns an update writing the freshly generated id
-back into ``messages`` so it matches the ``turn_id`` just persisted.
-
-The store write itself is bounded by ``chat_config.token_usage_write_timeout``
-(default 5s) via ``asyncio.wait_for`` -- this node runs inline in chat_graph,
-so an unresponsive backend would otherwise add unbounded latency to every
-chat turn.
+Store writes are bounded by ``chat_config.token_usage_write_timeout``
+(default 5s); failed writes are queued for retry (see
+:mod:`autolangchat.usage.persistence`).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional
 
 from langchain_core.runnables import RunnableConfig
 
+from ...context_budget import provider_for_model
+from ...usage.ledger import UsageLedger
+from ...usage.persistence import persist_turn_usage
+from ...usage.pricing import summarize_usage
 from ..state import ChatState
 
 logger = logging.getLogger(__name__)
 
 
-async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
-    """Record per-turn token usage via ``token_usage_store.record_turn(...)``."""
-    configurable: Dict[str, Any] = config.get("configurable") or {}
-    chat_config = configurable.get("chat_config")
-    token_usage_store = configurable.get("token_usage_store")
-
-    if token_usage_store is None or chat_config is None or not getattr(chat_config, "token_usage_enabled", False):
-        return {}
-
-    metadata: Dict[str, Any] = state.get("metadata") or {}
+def _ledger_from_metadata(metadata: Mapping[str, Any], turn_id: str, model_id: str) -> Optional[UsageLedger]:
+    """Single ``chat`` event from accumulated turn metadata, for callers without a ledger."""
     input_tokens = metadata.get("input_tokens")
     output_tokens = metadata.get("output_tokens")
     if input_tokens is None or output_tokens is None:
+        return None
+    ledger = UsageLedger(turn_id)
+    ledger.record(
+        purpose="chat",
+        provider=provider_for_model(model_id),
+        model_id=model_id,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=metadata.get("cache_read_tokens") or 0,
+        cache_write_tokens=metadata.get("cache_write_tokens") or 0,
+    )
+    return ledger
+
+
+async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
+    """Attach the turn's usage summary to the last message and persist it when enabled."""
+    configurable: Dict[str, Any] = config.get("configurable") or {}
+    chat_config = configurable.get("chat_config")
+    if chat_config is None:
         return {}
 
+    metadata: Dict[str, Any] = state.get("metadata") or {}
+    model_id = metadata.get("model_id") or chat_config.model_id
     messages = state.get("messages") or []
     last_message = messages[-1] if messages else {}
-    # Fall back to a fresh id only if the graph didn't produce one (tests).
-    existing_message_id = (last_message.get("metadata") or {}).get("message_id")
-    message_id = existing_message_id or str(uuid.uuid4())
+    last_metadata = last_message.get("metadata") or {}
 
+    ledger = configurable.get("usage_ledger")
+    if ledger is None:
+        ledger = _ledger_from_metadata(metadata, last_metadata.get("message_id") or str(uuid.uuid4()), model_id)
+        if ledger is None:
+            return {}
+
+    updated_metadata = {**last_metadata, "message_id": ledger.turn_id}
+    if ledger.events:
+        pricing_table = getattr(chat_config, "pricing_table", None)
+        summary, estimate = summarize_usage(
+            ledger,
+            final=not configurable.get("usage_finalized_later", False),
+            pricing_table=pricing_table if isinstance(pricing_table, Mapping) else None,
+        )
+        updated_metadata["usage"] = summary
+        await _persist(configurable, chat_config, ledger, model_id, estimate, summary["final"])
+
+    if not messages or updated_metadata == last_metadata:
+        return {}
+    return {"messages": [*messages[:-1], {**last_message, "metadata": updated_metadata}]}
+
+
+async def _persist(
+    configurable: Mapping[str, Any],
+    chat_config: Any,
+    ledger: UsageLedger,
+    model_id: str,
+    estimate: Any,
+    final: bool,
+) -> None:
+    store = configurable.get("token_usage_store")
+    if store is None or not getattr(chat_config, "token_usage_enabled", False):
+        return
     session_id = configurable.get("session_id") or configurable.get("thread_id")
     if not session_id:
-        # BaseTokenUsageStore.record_turn requires a non-null session_id;
-        # neither an explicit session_id nor a thread_id fallback is
-        # available, so there is nothing safe to record.
-        return {}
-    user_id = configurable.get("user_id")
-
-    try:
-        await asyncio.wait_for(
-            token_usage_store.record_turn(
-                turn_id=message_id,
-                session_id=session_id,
-                user_id=user_id,
-                model_id=metadata.get("model_id") or chat_config.model_id,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                turn_ts=datetime.now(timezone.utc),
-                cache_read_tokens=metadata.get("cache_read_tokens") or 0,
-                cache_write_tokens=metadata.get("cache_write_tokens") or 0,
-            ),
-            timeout=getattr(chat_config, "token_usage_write_timeout", 5.0),
-        )
-    except asyncio.TimeoutError:
-        logger.warning("Timed out recording token usage for turn_id=%s", message_id)
-    except Exception:
-        logger.exception("Failed to record token usage for turn_id=%s", message_id)
-
-    if existing_message_id or not messages:
-        return {}
-
-    # Write the generated id back so callers with their own independent
-    # message_id fallback (e.g. websocket_handler.py) see the same value
-    # that was just persisted as turn_id, instead of minting a second,
-    # different UUID and breaking correlation.
-    updated_last_message = {
-        **last_message,
-        "metadata": {**(last_message.get("metadata") or {}), "message_id": message_id},
-    }
-    return {"messages": [*messages[:-1], updated_last_message]}
+        # record_turn requires a non-null session_id.
+        return
+    await persist_turn_usage(
+        store,
+        ledger,
+        session_id=session_id,
+        user_id=configurable.get("user_id"),
+        model_id=model_id,
+        estimate=estimate,
+        final=final,
+        timeout=getattr(chat_config, "token_usage_write_timeout", 5.0),
+    )

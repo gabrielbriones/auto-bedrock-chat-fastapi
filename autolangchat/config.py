@@ -1132,6 +1132,18 @@ class ChatConfig(BaseSettings):
         ),
     )
 
+    pricing_table: Optional[Dict[str, Any]] = Field(
+        default=None,
+        alias="AUTOCHAT_PRICING_TABLE",
+        description=(
+            "Optional JSON pricing table replacing the packaged "
+            "``autolangchat/usage/pricing.json``: ``pricing_revision``, "
+            "``currency`` and ``models`` keyed by ``provider:model_id`` with "
+            "``input/output/cache_read/cache_write_per_million`` rates. Turns "
+            "using a model missing from the table report ``estimated_cost: null``."
+        ),
+    )
+
     # ------------------------------------------------------------------
     # Conversation Storage Backend
     # ------------------------------------------------------------------

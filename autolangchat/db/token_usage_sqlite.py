@@ -20,11 +20,17 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from importlib import resources
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from .token_usage_base import BaseTokenUsageStore
 
+if TYPE_CHECKING:
+    from ..usage.ledger import UsageEvent
+
 logger = logging.getLogger(__name__)
+
+# Summed cost of priced turns (NULL when none are priced) and the count of unpriced turns.
+_COST_AGGREGATES = "SUM(estimated_cost_micros), SUM(CASE WHEN estimated_cost_micros IS NULL THEN 1 ELSE 0 END)"
 
 # Single source of truth for columns added after ``token_usage`` first shipped;
 # they are intentionally absent from the .sql DDL. Cache counts are SUBSETS of
@@ -32,6 +38,11 @@ logger = logging.getLogger(__name__)
 _ADDED_COLUMNS = (
     ("cache_read_tokens", "INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0)"),
     ("cache_write_tokens", "INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0)"),
+    ("estimated_cost_micros", "INTEGER CHECK (estimated_cost_micros IS NULL OR estimated_cost_micros >= 0)"),
+    ("currency", "TEXT"),
+    ("pricing_revision", "TEXT"),
+    # Rows written before this column existed were complete when written.
+    ("final", "INTEGER NOT NULL DEFAULT 1 CHECK (final IN (0, 1))"),
 )
 
 
@@ -181,12 +192,27 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         turn_ts: datetime,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        estimated_cost_micros: Optional[int] = None,
+        currency: Optional[str] = None,
+        pricing_revision: Optional[str] = None,
+        final: bool = True,
     ) -> None:
         sql = """
-            INSERT OR IGNORE INTO token_usage
+            INSERT INTO token_usage
                 (id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,
-                 cache_read_tokens, cache_write_tokens)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cache_read_tokens, cache_write_tokens, estimated_cost_micros, currency,
+                 pricing_revision, final)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                cache_read_tokens = excluded.cache_read_tokens,
+                cache_write_tokens = excluded.cache_write_tokens,
+                estimated_cost_micros = excluded.estimated_cost_micros,
+                currency = excluded.currency,
+                pricing_revision = excluded.pricing_revision,
+                final = excluded.final
+            WHERE token_usage.final = 0
         """
         params = (
             turn_id,
@@ -198,8 +224,38 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
             _dt_to_iso(turn_ts),
             cache_read_tokens,
             cache_write_tokens,
+            estimated_cost_micros,
+            currency,
+            pricing_revision,
+            int(final),
         )
         await asyncio.to_thread(self._execute_write, sql, params)
+
+    async def record_events(self, events: Sequence[UsageEvent]) -> None:
+        if not events:
+            return
+        sql = """
+            INSERT OR IGNORE INTO token_usage_events
+                (id, turn_id, purpose, provider, model_id, input_tokens, output_tokens,
+                 cache_read_tokens, cache_write_tokens, event_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        rows = [
+            (
+                e.event_id,
+                e.turn_id,
+                e.purpose,
+                e.provider,
+                e.model_id,
+                e.input_tokens,
+                e.output_tokens,
+                e.cache_read_tokens,
+                e.cache_write_tokens,
+                _dt_to_iso(e.ts),
+            )
+            for e in events
+        ]
+        await asyncio.to_thread(self._execute_many, sql, rows)
 
     # ------------------------------------------------------------------
     # Queries
@@ -217,7 +273,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
             raise ValueError("offset must be non-negative")
         sql = """
             SELECT session_id, model_id, input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens, turn_ts
+                   cache_read_tokens, cache_write_tokens, turn_ts,
+                   id, estimated_cost_micros, currency, pricing_revision, final
             FROM token_usage
             WHERE user_id = ?
             ORDER BY turn_ts DESC, id ASC
@@ -233,14 +290,20 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "cache_read_tokens": r[4],
                 "cache_write_tokens": r[5],
                 "turn_ts": r[6],
+                "turn_id": r[7],
+                "estimated_cost_micros": r[8],
+                "currency": r[9],
+                "pricing_revision": r[10],
+                "final": bool(r[11]),
             }
             for r in rows
         ]
 
     async def aggregate_by_model(self) -> List[Dict[str, Any]]:
-        sql = """
+        sql = f"""
             SELECT model_id, SUM(input_tokens), SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*),
+                   {_COST_AGGREGATES}
             FROM token_usage
             GROUP BY model_id
             ORDER BY model_id ASC
@@ -254,6 +317,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "cache_read_tokens": r[3],
                 "cache_write_tokens": r[4],
                 "turn_count": r[5],
+                "estimated_cost_micros": r[6],
+                "unpriced_turn_count": r[7],
             }
             for r in rows
         ]
@@ -265,9 +330,10 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
     ) -> List[Dict[str, Any]]:
         if end <= start:
             raise ValueError("end must be after start")
-        sql = """
+        sql = f"""
             SELECT substr(turn_ts, 1, 10) AS day, SUM(input_tokens), SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*),
+                   {_COST_AGGREGATES}
             FROM token_usage
             WHERE turn_ts >= ? AND turn_ts < ?
             GROUP BY day
@@ -282,6 +348,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "cache_read_tokens": r[3],
                 "cache_write_tokens": r[4],
                 "turn_count": r[5],
+                "estimated_cost_micros": r[6],
+                "unpriced_turn_count": r[7],
             }
             for r in rows
         ]
@@ -289,9 +357,10 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
     async def aggregate_by_user(self, limit: int = 10) -> List[Dict[str, Any]]:
         if limit <= 0:
             raise ValueError("limit must be positive")
-        sql = """
+        sql = f"""
             SELECT user_id, SUM(input_tokens), SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_write_tokens)
+                   SUM(cache_read_tokens), SUM(cache_write_tokens),
+                   {_COST_AGGREGATES}
             FROM token_usage
             WHERE user_id IS NOT NULL
             GROUP BY user_id
@@ -306,6 +375,8 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
                 "output_tokens": r[2],
                 "cache_read_tokens": r[3],
                 "cache_write_tokens": r[4],
+                "estimated_cost_micros": r[5],
+                "unpriced_turn_count": r[6],
             }
             for r in rows
         ]
@@ -320,6 +391,17 @@ class SQLiteTokenUsageStore(BaseTokenUsageStore):
         with self._lock:
             try:
                 self._conn.execute(sql, params)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def _execute_many(self, sql: str, rows: List[tuple]) -> None:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        with self._lock:
+            try:
+                self._conn.executemany(sql, rows)
                 self._conn.commit()
             except Exception:
                 self._conn.rollback()

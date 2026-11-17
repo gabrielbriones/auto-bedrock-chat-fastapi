@@ -11,7 +11,7 @@ import uuid
 import weakref
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -46,11 +46,23 @@ from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
+from .usage import UsageLedger, persist_turn_usage, summarize_usage
 
 if TYPE_CHECKING:
     from .sso.sso_session_store import SSOSessionStore
 
 logger = logging.getLogger(__name__)
+
+
+class _PendingTurnUsage(NamedTuple):
+    """A turn's ledger plus what is needed to finalize it after the response."""
+
+    ledger: UsageLedger
+    session_id: str
+    user_id: Optional[str]
+    model_id: str
+    chat_config: ChatConfig
+
 
 # Upper bound on conversation_list's ``limit`` — mirrors the REST
 # GET /chat/conversations endpoint's ``Query(50, ge=1, le=200)`` cap, so a
@@ -815,6 +827,8 @@ class WebSocketChatHandler:
                 return
             if started is not None:
                 started.set()
+            usage_ledger = UsageLedger()
+            title_pending = conversation_just_created and conversation_id is not None
             try:
                 graph_state = await self.chat_graph.ainvoke(
                     {"user_message": user_message},
@@ -831,6 +845,8 @@ class WebSocketChatHandler:
                             "session_id": session.session_id,
                             "user_id": session.user_id,
                             **({"user_message_id": live_turn.user_message_id} if live_turn is not None else {}),
+                            "usage_ledger": usage_ledger,
+                            "usage_finalized_later": title_pending,
                             **artifact_config,
                         }
                     },
@@ -998,8 +1014,9 @@ class WebSocketChatHandler:
             # Auto-title a freshly created conversation in the background so
             # title-generation latency never delays the ai_response that was
             # just sent above. Fires once per conversation (only on the turn
-            # that created it).
-            if conversation_just_created and conversation_id is not None:
+            # that created it). The title call counts toward this turn, so the
+            # task also finalizes the turn's usage (``usage_updated``).
+            if title_pending:
                 self._spawn_title_task(
                     websocket,
                     conversation_id,
@@ -1008,12 +1025,19 @@ class WebSocketChatHandler:
                         {"role": "assistant", "content": content},
                     ],
                     turn=live_turn,
+                    turn_usage=_PendingTurnUsage(
+                        ledger=usage_ledger,
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                        model_id=graph_metadata.get("model_id") or effective_config.model_id,
+                        chat_config=effective_config,
+                    ),
                 )
 
-            # Token usage is now recorded inside the graph itself by
+            # Token usage is recorded inside the graph itself by
             # token_usage_node (runs for every chat_graph caller, not just
-            # this handler) — see token_usage_store in the ainvoke() config
-            # above. Nothing to do here.
+            # this handler) and attached to the final message as
+            # metadata["usage"], which response_metadata already carries.
 
         except asyncio.CancelledError:
             if live_turn is not None and self._live_turns.get(conversation_id) is live_turn:
@@ -2207,9 +2231,12 @@ class WebSocketChatHandler:
         conversation_id: str,
         messages: List[Dict[str, Any]],
         turn: Optional[_LiveTurn] = None,
+        turn_usage: Optional[_PendingTurnUsage] = None,
     ) -> None:
         """Start auto-titling for ``conversation_id``, tracked so a rename can cancel it."""
-        task = self._spawn_background_task(self._generate_and_apply_title(websocket, conversation_id, messages, turn))
+        task = self._spawn_background_task(
+            self._generate_and_apply_title(websocket, conversation_id, messages, turn, turn_usage)
+        )
         self._pending_title_tasks[conversation_id] = task
 
         def _forget(t: "asyncio.Task[Any]") -> None:
@@ -2243,7 +2270,7 @@ class WebSocketChatHandler:
         except ImportError:
             return None
 
-        model_id = self.config.conversation_title_model_id or self.config.model_id
+        model_id = self._title_model_id()
         kwargs = build_bedrock_kwargs(
             model_id,
             self.config,
@@ -2261,12 +2288,16 @@ class WebSocketChatHandler:
             logger.warning("Failed to build title-generation LLM client", exc_info=True)
             return None
 
+    def _title_model_id(self) -> str:
+        return self.config.conversation_title_model_id or self.config.model_id
+
     async def _generate_and_apply_title(
         self,
         websocket: WebSocket,
         conversation_id: str,
         messages: List[Dict[str, Any]],
         turn: Optional[_LiveTurn] = None,
+        turn_usage: Optional[_PendingTurnUsage] = None,
     ) -> None:
         """Fire-and-forget: title a freshly created conversation and notify the client.
 
@@ -2286,13 +2317,23 @@ class WebSocketChatHandler:
         is still unset, and ``conversation_titled`` is not sent otherwise.
         ``asyncio.CancelledError`` (from ``_cancel_pending_title``)
         propagates so the task ends as cancelled.
+
+        With ``turn_usage``, the title call is recorded in the initiating
+        turn's ledger and the turn is finalized (``usage_updated``) whether
+        or not a title was generated. That frame reaches the same tabs as
+        ``conversation_titled``.
         """
         try:
             conversation = await self.conversation_store.get_conversation(conversation_id)
             if conversation is None or conversation.get("title"):
                 return
             llm_client = self._build_title_llm_client()
-            title = await generate_conversation_title(llm_client, messages)
+            title = await generate_conversation_title(
+                llm_client,
+                messages,
+                usage_ledger=turn_usage.ledger if turn_usage else None,
+                model_id=self._title_model_id(),
+            )
             owner = conversation.get("user_id")
             # Written and announced under the lock deletes take, so the title of a conversation
             # deleted meanwhile never reaches a tab after that delete's notice.
@@ -2316,6 +2357,44 @@ class WebSocketChatHandler:
                     await self._send_to_viewers([websocket], [titled], timeout=_OWN_SEND_TIMEOUT_SECONDS)
         except Exception:
             logger.warning("Conversation auto-titling failed for conversation_id=%s", conversation_id, exc_info=True)
+        finally:
+            if turn_usage is not None:
+                await self._finalize_turn_usage(websocket, turn_usage, turn)
+
+    async def _finalize_turn_usage(
+        self, websocket: WebSocket, turn_usage: _PendingTurnUsage, turn: Optional[_LiveTurn] = None
+    ) -> None:
+        """Upsert the turn's final usage row (when enabled) and send ``usage_updated``."""
+        ledger = turn_usage.ledger
+        if not ledger.events:
+            return
+        try:
+            chat_config = turn_usage.chat_config
+            summary, estimate = summarize_usage(ledger, final=True, pricing_table=chat_config.pricing_table)
+            if self.token_usage_store is not None and chat_config.token_usage_enabled:
+                await persist_turn_usage(
+                    self.token_usage_store,
+                    ledger,
+                    session_id=turn_usage.session_id,
+                    user_id=turn_usage.user_id,
+                    model_id=turn_usage.model_id,
+                    estimate=estimate,
+                    final=True,
+                    timeout=chat_config.token_usage_write_timeout,
+                )
+            updated = {
+                "type": "usage_updated",
+                "message_id": ledger.turn_id,
+                "usage": summary,
+                "timestamp": datetime.now().isoformat(),
+            }
+            # Same audience as the turn's ai_response: the verified sender's other tabs, then the origin.
+            if turn is not None:
+                await self._send_to_other_sessions(turn.user_id, websocket, updated)
+            if turn is None or self._origin_is_still_sender(turn):
+                await self._send_to_viewers([websocket], [updated], timeout=_OWN_SEND_TIMEOUT_SECONDS)
+        except Exception:
+            logger.warning("Failed to finalize usage for turn_id=%s", ledger.turn_id, exc_info=True)
 
     async def _handle_conversation_list(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_list`` request — return the user's conversations."""

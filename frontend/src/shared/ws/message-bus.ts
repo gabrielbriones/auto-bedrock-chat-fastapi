@@ -31,6 +31,12 @@ const metadataSchema = z
         // they must be listed or every cached answer would be dropped.
         cache_read_tokens: z.number().nullable().optional(),
         cache_write_tokens: z.number().nullable().optional(),
+        // Per-turn summary across every AI call of the turn (XMGPLAT-11865).
+        cache_read: z.number().optional(),
+        cache_write: z.number().optional(),
+        estimated_cost: z.number().nullable().optional(),
+        currency: z.string().nullable().optional(),
+        final: z.boolean().optional(),
       })
       .strict()
       .optional(),

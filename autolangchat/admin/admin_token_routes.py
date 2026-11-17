@@ -19,6 +19,12 @@ provider's prompt cache. Both are subsets of ``input_tokens``, which remains
 the total prompt-token count, so rankings on ``input_tokens + output_tokens``
 already include cached tokens.
 
+Cost fields: per-turn rows carry ``turn_id``, ``estimated_cost_micros``
+(``null`` when any model in the turn is unpriced), ``currency``,
+``pricing_revision`` and ``final`` (``false`` while post-response calls such
+as conversation titling are still pending). Aggregate rows carry the summed
+``estimated_cost_micros`` of priced turns plus ``unpriced_turn_count``.
+
 These routes only ever read from :class:`BaseTokenUsageStore`; they never
 write, so there is no audit-log entry to emit (unlike the feedback PATCH
 endpoint).

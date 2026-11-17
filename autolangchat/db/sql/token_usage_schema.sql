@@ -52,6 +52,20 @@ ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cac
 ALTER TABLE token_usage
 ADD COLUMN IF NOT EXISTS cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0);
 
+-- Migration: per-turn cost estimate and pending/final state. Rows written
+-- before `final` existed were complete when written, hence DEFAULT TRUE.
+ALTER TABLE token_usage
+ADD COLUMN IF NOT EXISTS estimated_cost_micros BIGINT CHECK (estimated_cost_micros IS NULL OR estimated_cost_micros >= 0);
+
+ALTER TABLE token_usage
+ADD COLUMN IF NOT EXISTS currency TEXT;
+
+ALTER TABLE token_usage
+ADD COLUMN IF NOT EXISTS pricing_revision TEXT;
+
+ALTER TABLE token_usage
+ADD COLUMN IF NOT EXISTS final BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE INDEX IF NOT EXISTS idx_token_usage_turn_ts
     ON token_usage (turn_ts DESC);
 
@@ -60,3 +74,22 @@ CREATE INDEX IF NOT EXISTS idx_token_usage_session
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_user_turn_ts
     ON token_usage (user_id, turn_ts DESC);
+
+-- One row per AI invocation attributed to a turn (chat, retry,
+-- summarization, title, embedding). `id` is the client-generated event id,
+-- so replayed writes are ignored.
+CREATE TABLE IF NOT EXISTS token_usage_events (
+    id                  TEXT PRIMARY KEY,
+    turn_id             TEXT        NOT NULL,
+    purpose             TEXT        NOT NULL,
+    provider            TEXT        NOT NULL,
+    model_id            TEXT        NOT NULL,
+    input_tokens        INTEGER     NOT NULL CHECK (input_tokens >= 0),
+    output_tokens       INTEGER     NOT NULL CHECK (output_tokens >= 0),
+    cache_read_tokens   INTEGER     NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
+    cache_write_tokens  INTEGER     NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
+    event_ts            TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_events_turn
+    ON token_usage_events (turn_id);

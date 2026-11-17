@@ -36,6 +36,7 @@ from autolangchat.graph.nodes.preprocess import (
     prepare_message_artifacts,
     preprocess_node,
 )
+from autolangchat.usage.ledger import UsageLedger
 
 LLAMA_3_3 = "meta.llama3-3-70b-instruct-v1:0"
 INFERENCE_PROFILE_ERROR = (
@@ -325,6 +326,28 @@ class TestLLMCallNodeErrorPaths:
         assert result["metadata"]["fallback_model_used"] is True
         assert result["metadata"]["fallback_model"] == chat_config.fallback_model
         assert result["metadata"]["message_context_budget"]["model_id"] == chat_config.fallback_model
+
+    @pytest.mark.asyncio
+    async def test_fallback_retry_is_recorded_as_a_retry_on_the_fallback_model(self):
+        chat_config = _config(model_id=LLAMA_3_3, fallback_model="us.anthropic.claude-sonnet-5")
+        failing_llm = MagicMock()
+        failing_llm.ainvoke = AsyncMock(side_effect=Exception("Input is too long for requested model"))
+        reply = _ai_message()
+        reply.usage_metadata = {"input_tokens": 70, "output_tokens": 9}
+        working_llm = MagicMock()
+        working_llm.ainvoke = AsyncMock(return_value=reply)
+        ledger = UsageLedger("turn-1")
+        config = {"configurable": {"chat_config": chat_config, "usage_ledger": ledger}}
+
+        with patch(
+            "autolangchat.graph.nodes.llm_call._build_llm",
+            side_effect=[failing_llm, failing_llm, working_llm],
+        ):
+            await llm_call_node(_state(), config)
+
+        (event,) = ledger.events
+        assert (event.purpose, event.model_id, event.provider) == ("retry", chat_config.fallback_model, "anthropic")
+        assert (event.input_tokens, event.output_tokens) == (70, 9)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("role", ["user", "tool"])
