@@ -216,7 +216,6 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
     # unset), no tools, and top_p only when no temperature is in effect
     # (avoids Claude ValidationException when both are set).
     llm_client = None
-    summarizer_model_id = None
     if getattr(chat_config, "enable_ai_summarization", False):
         # Deferred to avoid a cycle with the LLM node's retry preparation.
         from .llm_call import _build_llm
@@ -245,7 +244,6 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
             }
         )
         llm_client = _build_llm(summarizer_config.model_id, summarizer_config)
-        summarizer_model_id = summarizer_config.model_id
         logger.debug(
             "preprocess_node: AI summarization enabled — LLM client built "
             "(model=%s, temperature=%s, max_tokens=%s, top_p=%s)",
@@ -259,7 +257,6 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
         config=chat_config,
         llm_client=llm_client,
         usage_ledger=configurable.get("usage_ledger"),
-        usage_model_id=summarizer_model_id,
     )
     processed = await preprocessor.preprocess_messages(
         messages=messages,

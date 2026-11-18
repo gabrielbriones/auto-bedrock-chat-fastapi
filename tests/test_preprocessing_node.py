@@ -368,15 +368,14 @@ class TestMarkerExemptFromTruncation:
     async def test_each_summarization_call_is_recorded_in_the_turn_ledger(self, tight_config):
         ledger = UsageLedger("turn-1")
         llm = MagicMock()
+        llm.model_id = "anthropic.summarizer"
         llm.ainvoke = AsyncMock(
             side_effect=[
                 _summary_response({"input_tokens": 40, "output_tokens": 5}),
                 _summary_response({"input_tokens": 30, "output_tokens": 4}),
             ]
         )
-        processor = MessagePreprocessor(
-            config=tight_config, llm_client=llm, usage_ledger=ledger, usage_model_id="anthropic.summarizer"
-        )
+        processor = MessagePreprocessor(config=tight_config, llm_client=llm, usage_ledger=ledger)
 
         await processor._summarize_with_llm("G" * 200, 20)
         await processor._summarize_with_llm("H" * 200, 20)
