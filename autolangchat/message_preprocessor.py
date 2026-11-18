@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .config import ChatConfig
+    from .usage.ledger import UsageLedger
 
 from .defaults import (
     ARTIFACT_MARKER_ENTRY_KEY,
@@ -265,6 +266,7 @@ class MessagePreprocessor:
         self,
         config: ChatConfig,
         llm_client: Any = None,
+        usage_ledger: Optional[UsageLedger] = None,
     ):
         """Initialize the message preprocessor.
 
@@ -277,9 +279,11 @@ class MessagePreprocessor:
             llm_client: Optional LLM transport client for AI
                 summarization.  ``None`` disables AI summarization --
                 plain-text fallback is used instead.
+            usage_ledger: Optional per-turn ledger for summarization calls.
         """
         self.config = config
         self.llm_client = llm_client
+        self.usage_ledger = usage_ledger
         self._on_progress: Optional[Callable] = None
         self._system_prompt: Optional[str] = None
         self._user_query: Optional[str] = None
@@ -810,6 +814,13 @@ class MessagePreprocessor:
         ]
 
         ai_msg = await self.llm_client.ainvoke(lc_messages)
+
+        if self.usage_ledger is not None:
+            self.usage_ledger.record_usage_metadata(
+                purpose="summarization",
+                model_id=getattr(self.llm_client, "model_id", None) or getattr(self.config, "model_id", "unknown"),
+                usage_metadata=getattr(ai_msg, "usage_metadata", None),
+            )
 
         raw = ai_msg.content
         if isinstance(raw, list):

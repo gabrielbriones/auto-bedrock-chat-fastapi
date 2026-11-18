@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from .usage.ledger import UsageLedger
+
 logger = logging.getLogger(__name__)
 
 _TITLE_SYSTEM_PROMPT = (
@@ -38,7 +40,13 @@ _MAX_TRANSCRIPT_MESSAGES = 4
 _FALLBACK_TITLE = "New Conversation"
 
 
-async def generate_conversation_title(llm_client: Optional[Any], messages: List[Dict[str, Any]]) -> str:
+async def generate_conversation_title(
+    llm_client: Optional[Any],
+    messages: List[Dict[str, Any]],
+    *,
+    usage_ledger: Optional[UsageLedger] = None,
+    model_id: Optional[str] = None,
+) -> str:
     """Generate a short conversation title from the first turn(s).
 
     Parameters
@@ -52,6 +60,9 @@ async def generate_conversation_title(llm_client: Optional[Any], messages: List[
         Internal dict-format conversation messages (``{"role": ..., "content": ...}``),
         in chronological order — the same shape used throughout
         :mod:`autolangchat.graph`.
+    usage_ledger, model_id:
+        When both are given, the title call's ``usage_metadata`` is recorded
+        as a ``title`` event priced with ``model_id``.
 
     Returns
     -------
@@ -77,6 +88,10 @@ async def generate_conversation_title(llm_client: Optional[Any], messages: List[
             HumanMessage(content=transcript),
         ]
         result = await llm_client.ainvoke(lc_messages)
+        if usage_ledger is not None and model_id:
+            usage_ledger.record_usage_metadata(
+                purpose="title", model_id=model_id, usage_metadata=getattr(result, "usage_metadata", None)
+            )
         title = _sanitize_title(_extract_text(result))
         return title or fallback
     except Exception:

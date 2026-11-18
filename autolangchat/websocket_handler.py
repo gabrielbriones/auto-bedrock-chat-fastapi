@@ -11,7 +11,7 @@ import uuid
 import weakref
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -41,16 +41,30 @@ from .exceptions import (
 )
 from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo
-from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop
+from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop, with_final_usage
 from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
+from .usage import UsageLedger, persist_turn_usage, summarize_usage
 
 if TYPE_CHECKING:
     from .sso.sso_session_store import SSOSessionStore
 
 logger = logging.getLogger(__name__)
+
+
+class _PendingTurnUsage(NamedTuple):
+    """A turn's ledger plus what is needed to finalize it after the response."""
+
+    ledger: UsageLedger
+    session_id: str
+    user_id: Optional[str]
+    model_id: str
+    chat_config: ChatConfig
+    # Conversation whose checkpointed assistant message carries the pending usage.
+    conversation_id: Optional[str] = None
+
 
 # Upper bound on conversation_list's ``limit`` — mirrors the REST
 # GET /chat/conversations endpoint's ``Query(50, ge=1, le=200)`` cap, so a
@@ -642,6 +656,8 @@ class WebSocketChatHandler:
         thread_id: Optional[str] = None
         conversation_id: Optional[str] = None
         live_turn: Optional[_LiveTurn] = None
+        # Set only while the graph runs: a failure then leaves calls the usage node never recorded.
+        unrecorded_turn_usage: Optional[_PendingTurnUsage] = None
         try:
             # Check if authentication is required before sending messages to LLM
             if self.config.require_tool_auth:
@@ -815,6 +831,15 @@ class WebSocketChatHandler:
                 return
             if started is not None:
                 started.set()
+            usage_ledger = UsageLedger()
+            title_pending = conversation_just_created and conversation_id is not None
+            unrecorded_turn_usage = _PendingTurnUsage(
+                ledger=usage_ledger,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                model_id=effective_config.model_id,
+                chat_config=effective_config,
+            )
             try:
                 graph_state = await self.chat_graph.ainvoke(
                     {"user_message": user_message},
@@ -831,6 +856,8 @@ class WebSocketChatHandler:
                             "session_id": session.session_id,
                             "user_id": session.user_id,
                             **({"user_message_id": live_turn.user_message_id} if live_turn is not None else {}),
+                            "usage_ledger": usage_ledger,
+                            "usage_finalized_later": title_pending,
                             **artifact_config,
                         }
                     },
@@ -841,6 +868,7 @@ class WebSocketChatHandler:
                     self._in_flight_threads[thread_id] = remaining
                 else:
                     self._in_flight_threads.pop(thread_id, None)
+            unrecorded_turn_usage = None
             if live_turn is not None:
                 async with self._thread_lock(thread_id):
                     live_turn.answered = True
@@ -998,8 +1026,9 @@ class WebSocketChatHandler:
             # Auto-title a freshly created conversation in the background so
             # title-generation latency never delays the ai_response that was
             # just sent above. Fires once per conversation (only on the turn
-            # that created it).
-            if conversation_just_created and conversation_id is not None:
+            # that created it). The title call counts toward this turn, so the
+            # task also finalizes the turn's usage (``usage_updated``).
+            if title_pending:
                 self._spawn_title_task(
                     websocket,
                     conversation_id,
@@ -1008,12 +1037,20 @@ class WebSocketChatHandler:
                         {"role": "assistant", "content": content},
                     ],
                     turn=live_turn,
+                    turn_usage=_PendingTurnUsage(
+                        ledger=usage_ledger,
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                        model_id=graph_metadata.get("model_id") or effective_config.model_id,
+                        chat_config=effective_config,
+                        conversation_id=conversation_id,
+                    ),
                 )
 
-            # Token usage is now recorded inside the graph itself by
+            # Token usage is recorded inside the graph itself by
             # token_usage_node (runs for every chat_graph caller, not just
-            # this handler) — see token_usage_store in the ainvoke() config
-            # above. Nothing to do here.
+            # this handler) and attached to the final message as
+            # metadata["usage"], which response_metadata already carries.
 
         except asyncio.CancelledError:
             if live_turn is not None and self._live_turns.get(conversation_id) is live_turn:
@@ -1026,6 +1063,9 @@ class WebSocketChatHandler:
         except Exception as e:
             logger.error(f"Error processing chat message: {str(e)}")
             self._total_errors += 1
+
+            if unrecorded_turn_usage is not None:
+                await self._persist_failed_turn_usage(unrecorded_turn_usage)
 
             if thread_id is not None:
                 await self._close_interrupted_turn(thread_id)
@@ -1796,6 +1836,7 @@ class WebSocketChatHandler:
             (checkpoint_state.values or {}).get("messages", []) if checkpoint_state else []
         )
 
+        raw_messages = with_final_usage(raw_messages, await self._final_usage(session.metadata.get("conversation_id")))
         history = self._format_history_messages(raw_messages)
 
         await self._send_message(
@@ -2207,9 +2248,12 @@ class WebSocketChatHandler:
         conversation_id: str,
         messages: List[Dict[str, Any]],
         turn: Optional[_LiveTurn] = None,
+        turn_usage: Optional[_PendingTurnUsage] = None,
     ) -> None:
         """Start auto-titling for ``conversation_id``, tracked so a rename can cancel it."""
-        task = self._spawn_background_task(self._generate_and_apply_title(websocket, conversation_id, messages, turn))
+        task = self._spawn_background_task(
+            self._generate_and_apply_title(websocket, conversation_id, messages, turn, turn_usage)
+        )
         self._pending_title_tasks[conversation_id] = task
 
         def _forget(t: "asyncio.Task[Any]") -> None:
@@ -2243,7 +2287,7 @@ class WebSocketChatHandler:
         except ImportError:
             return None
 
-        model_id = self.config.conversation_title_model_id or self.config.model_id
+        model_id = self._title_model_id()
         kwargs = build_bedrock_kwargs(
             model_id,
             self.config,
@@ -2261,12 +2305,16 @@ class WebSocketChatHandler:
             logger.warning("Failed to build title-generation LLM client", exc_info=True)
             return None
 
+    def _title_model_id(self) -> str:
+        return self.config.conversation_title_model_id or self.config.model_id
+
     async def _generate_and_apply_title(
         self,
         websocket: WebSocket,
         conversation_id: str,
         messages: List[Dict[str, Any]],
         turn: Optional[_LiveTurn] = None,
+        turn_usage: Optional[_PendingTurnUsage] = None,
     ) -> None:
         """Fire-and-forget: title a freshly created conversation and notify the client.
 
@@ -2286,13 +2334,23 @@ class WebSocketChatHandler:
         is still unset, and ``conversation_titled`` is not sent otherwise.
         ``asyncio.CancelledError`` (from ``_cancel_pending_title``)
         propagates so the task ends as cancelled.
+
+        With ``turn_usage``, the title call is recorded in the initiating
+        turn's ledger and the turn is finalized (``usage_updated``) whether
+        or not a title was generated. That frame reaches the same tabs as
+        ``conversation_titled``.
         """
         try:
             conversation = await self.conversation_store.get_conversation(conversation_id)
             if conversation is None or conversation.get("title"):
                 return
             llm_client = self._build_title_llm_client()
-            title = await generate_conversation_title(llm_client, messages)
+            title = await generate_conversation_title(
+                llm_client,
+                messages,
+                usage_ledger=turn_usage.ledger if turn_usage else None,
+                model_id=self._title_model_id(),
+            )
             owner = conversation.get("user_id")
             # Written and announced under the lock deletes take, so the title of a conversation
             # deleted meanwhile never reaches a tab after that delete's notice.
@@ -2316,6 +2374,92 @@ class WebSocketChatHandler:
                     await self._send_to_viewers([websocket], [titled], timeout=_OWN_SEND_TIMEOUT_SECONDS)
         except Exception:
             logger.warning("Conversation auto-titling failed for conversation_id=%s", conversation_id, exc_info=True)
+        finally:
+            if turn_usage is not None:
+                await asyncio.shield(
+                    self._spawn_background_task(self._finalize_turn_usage(websocket, turn_usage, turn))
+                )
+
+    async def _persist_failed_turn_usage(self, turn_usage: _PendingTurnUsage) -> None:
+        """Best-effort final usage row for the calls a failed turn made before it raised."""
+        chat_config = turn_usage.chat_config
+        ledger = turn_usage.ledger
+        if not ledger.events or self.token_usage_store is None or not chat_config.token_usage_enabled:
+            return
+        try:
+            _, estimate = summarize_usage(ledger, final=True, pricing_table=chat_config.pricing_table)
+            await persist_turn_usage(
+                self.token_usage_store,
+                ledger,
+                session_id=turn_usage.session_id,
+                user_id=turn_usage.user_id,
+                model_id=turn_usage.model_id,
+                estimate=estimate,
+                final=True,
+                timeout=chat_config.token_usage_write_timeout,
+            )
+        except Exception:
+            logger.warning("Failed to persist usage of failed turn_id=%s", ledger.turn_id, exc_info=True)
+
+    async def _finalize_turn_usage(
+        self, websocket: WebSocket, turn_usage: _PendingTurnUsage, turn: Optional[_LiveTurn] = None
+    ) -> None:
+        """Upsert the turn's final usage row (when enabled), keep the summary for history and send ``usage_updated``."""
+        ledger = turn_usage.ledger
+        if not ledger.events:
+            return
+        try:
+            chat_config = turn_usage.chat_config
+            summary, estimate = summarize_usage(ledger, final=True, pricing_table=chat_config.pricing_table)
+            await self._keep_final_usage(turn_usage.conversation_id, ledger.turn_id, summary)
+            if self.token_usage_store is not None and chat_config.token_usage_enabled:
+                await persist_turn_usage(
+                    self.token_usage_store,
+                    ledger,
+                    session_id=turn_usage.session_id,
+                    user_id=turn_usage.user_id,
+                    model_id=turn_usage.model_id,
+                    estimate=estimate,
+                    final=True,
+                    timeout=chat_config.token_usage_write_timeout,
+                )
+            updated = {
+                "type": "usage_updated",
+                "message_id": ledger.turn_id,
+                "usage": summary,
+                "timestamp": datetime.now().isoformat(),
+            }
+            # Same audience as the turn's ai_response: the verified sender's other tabs, then the origin.
+            if turn is not None:
+                await self._send_to_other_sessions(turn.user_id, websocket, updated)
+            if turn is None or self._origin_is_still_sender(turn):
+                await self._send_to_viewers([websocket], [updated], timeout=_OWN_SEND_TIMEOUT_SECONDS)
+        except Exception:
+            logger.warning("Failed to finalize usage for turn_id=%s", ledger.turn_id, exc_info=True)
+
+    async def _keep_final_usage(self, conversation_id: Optional[str], message_id: str, usage: Dict[str, Any]) -> None:
+        """Store the final summary beside the conversation, where history loads pick it up.
+
+        The checkpointed message keeps its pending summary: rewriting the checkpoint here could
+        overwrite a turn another worker is checkpointing.
+        """
+        if conversation_id is None or self.conversation_store is None:
+            return
+        try:
+            await self.conversation_store.set_final_usage(conversation_id, message_id, usage)
+        except Exception:
+            logger.warning("Failed to keep final usage for turn_id=%s", message_id, exc_info=True)
+
+    async def _final_usage(self, conversation_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
+        """Final usage summaries of ``conversation_id`` by message id; empty if unavailable."""
+        if conversation_id is None or self.conversation_store is None:
+            return {}
+        try:
+            final_usage = await self.conversation_store.get_final_usage(conversation_id)
+        except Exception:
+            logger.warning("Failed to read final usage for conversation_id=%s", conversation_id, exc_info=True)
+            return {}
+        return final_usage if isinstance(final_usage, dict) else {}
 
     async def _handle_conversation_list(self, websocket: WebSocket, data: Dict[str, Any]) -> None:
         """Handle a ``conversation_list`` request — return the user's conversations."""
@@ -2464,6 +2608,7 @@ class WebSocketChatHandler:
                             )
 
                 # A running turn is shown from its own frames below, not from what it has checkpointed so far.
+                raw_messages = with_final_usage(raw_messages, await self._final_usage(conversation_id))
                 history = self._format_history_messages(
                     raw_messages if live is None else _before_running_turn(raw_messages, live.user_message_id)
                 )

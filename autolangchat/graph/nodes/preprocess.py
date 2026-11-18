@@ -198,11 +198,12 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
     receives typing indicators during AI summarisation.
     """
     messages: List[Dict] = state.get("messages", [])
-    on_progress = (config.get("configurable") or {}).get("on_progress")
+    configurable = config.get("configurable") or {}
+    on_progress = configurable.get("on_progress")
     metadata: Dict = dict(state.get("metadata") or {})
 
     # Retrieve the ChatConfig stored in the graph's configurable namespace
-    chat_config = config.get("configurable", {}).get("chat_config")
+    chat_config = configurable.get("chat_config")
     if chat_config is None:
         logger.warning("preprocess_node: chat_config not in configurable; skipping preprocessing")
         return {}
@@ -252,7 +253,11 @@ async def preprocess_node(state: ChatState, config: RunnableConfig) -> Dict[str,
             summarizer_config.top_p,
         )
 
-    preprocessor = MessagePreprocessor(config=chat_config, llm_client=llm_client)
+    preprocessor = MessagePreprocessor(
+        config=chat_config,
+        llm_client=llm_client,
+        usage_ledger=configurable.get("usage_ledger"),
+    )
     processed = await preprocessor.preprocess_messages(
         messages=messages,
         on_progress=on_progress,

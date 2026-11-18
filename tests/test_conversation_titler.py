@@ -14,21 +14,24 @@ Covers ``generate_conversation_title``:
 """
 
 from autolangchat.conversation_titler import _TITLE_SYSTEM_PROMPT, generate_conversation_title
+from autolangchat.usage.ledger import UsageLedger
 
 
 class _FakeAIMessage:
-    def __init__(self, content):
+    def __init__(self, content, usage_metadata=None):
         self.content = content
+        self.usage_metadata = usage_metadata
 
 
 class _FakeLLM:
-    def __init__(self, response_content):
+    def __init__(self, response_content, usage_metadata=None):
         self.response_content = response_content
+        self.usage_metadata = usage_metadata
         self.calls = []
 
     async def ainvoke(self, messages):
         self.calls.append(messages)
-        return _FakeAIMessage(self.response_content)
+        return _FakeAIMessage(self.response_content, self.usage_metadata)
 
 
 class _FailingLLM:
@@ -90,3 +93,22 @@ async def test_caps_overlong_llm_output():
     title = await generate_conversation_title(llm, _messages())
     assert len(title) <= 83  # 80-char cap + "..."
     assert title.endswith("...")
+
+
+async def test_records_title_usage_in_the_turn_ledger():
+    ledger = UsageLedger("turn-1")
+    llm = _FakeLLM("Okta SSO Setup", usage_metadata={"input_tokens": 90, "output_tokens": 6})
+
+    await generate_conversation_title(llm, _messages(), usage_ledger=ledger, model_id="anthropic.title-model")
+
+    (event,) = ledger.events
+    assert (event.turn_id, event.purpose, event.model_id) == ("turn-1", "title", "anthropic.title-model")
+    assert (event.input_tokens, event.output_tokens) == (90, 6)
+
+
+async def test_failed_title_call_records_nothing():
+    ledger = UsageLedger("turn-1")
+
+    await generate_conversation_title(_FailingLLM(), _messages(), usage_ledger=ledger, model_id="anthropic.m")
+
+    assert ledger.events == []

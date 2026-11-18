@@ -1,0 +1,14 @@
+{
+  "type": "usage_updated",
+  "timestamp": "2026-08-25T12:00:06Z",
+  "message_id": "m-1",
+  "usage": {
+    "input_tokens": 1410,
+    "output_tokens": 288,
+    "cache_read": 400,
+    "cache_write": 0,
+    "estimated_cost": 0.00831,
+    "currency": "USD",
+    "final": true
+  }
+}

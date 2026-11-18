@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import types
@@ -203,6 +204,40 @@ async def test_synthesize_raw_content_calls_llm_when_model_has_no_known_profile(
 
     assert result == "a concise summary"
     ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_each_operation_collects_usage_in_its_own_released_ledger():
+    synth = FeedbackSynthesizer(model_id="anthropic.claude-test")
+    usage = {"input_tokens": 10, "output_tokens": 2}
+    ainvoke = AsyncMock(return_value=MagicMock(content="summary", usage_metadata=usage))
+    seen = []
+
+    with patch.dict(
+        sys.modules,
+        {
+            "langchain_aws": types.SimpleNamespace(ChatBedrockConverse=lambda **kwargs: MagicMock(ainvoke=ainvoke)),
+            "langchain_core.messages": types.SimpleNamespace(SystemMessage=MagicMock, HumanMessage=MagicMock),
+        },
+    ):
+        original = synth_mod._operation_ledger.get
+
+        async def _run():
+            await synth.synthesize_raw_content(content="hello", title="Doc")
+
+        async def _run_and_capture():
+            token_ledger = None
+            async with synth_mod._usage_scope("probe"):
+                token_ledger = original()
+                await _run()
+            seen.append(token_ledger)
+
+        await asyncio.gather(_run_and_capture(), _run_and_capture())
+
+    assert len(seen) == 2 and seen[0] is not seen[1]
+    assert all(len(ledger.events) == 1 for ledger in seen)
+    assert synth_mod._operation_ledger.get() is None
+    assert not hasattr(synth, "usage_ledger")
 
 
 @pytest.mark.asyncio

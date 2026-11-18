@@ -14,11 +14,22 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from importlib import resources
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from .token_usage_base import BaseTokenUsageStore
 
+if TYPE_CHECKING:
+    from ..usage.ledger import UsageEvent
+
 logger = logging.getLogger(__name__)
+
+# Summed cost of priced turns, the count of unpriced turns, and the shared currency. Cost and
+# currency are NULL when no turn is priced or the priced turns span more than one currency.
+_COST_AGGREGATES = (
+    "CASE WHEN MIN(currency) = MAX(currency) THEN SUM(estimated_cost_micros)::BIGINT END, "
+    "COUNT(*) FILTER (WHERE estimated_cost_micros IS NULL), "
+    "CASE WHEN MIN(currency) = MAX(currency) THEN MIN(currency) END"
+)
 
 
 _MISSING_DEPS_MSG = (
@@ -114,13 +125,27 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         turn_ts: datetime,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        estimated_cost_micros: Optional[int] = None,
+        currency: Optional[str] = None,
+        pricing_revision: Optional[str] = None,
+        final: bool = True,
     ) -> None:
         sql = """
             INSERT INTO token_usage
                 (id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,
-                 cache_read_tokens, cache_write_tokens)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
+                 cache_read_tokens, cache_write_tokens, estimated_cost_micros, currency,
+                 pricing_revision, final)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                input_tokens = EXCLUDED.input_tokens,
+                output_tokens = EXCLUDED.output_tokens,
+                cache_read_tokens = EXCLUDED.cache_read_tokens,
+                cache_write_tokens = EXCLUDED.cache_write_tokens,
+                estimated_cost_micros = EXCLUDED.estimated_cost_micros,
+                currency = EXCLUDED.currency,
+                pricing_revision = EXCLUDED.pricing_revision,
+                final = EXCLUDED.final
+            WHERE NOT token_usage.final
         """
         params = (
             turn_id,
@@ -132,10 +157,45 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
             turn_ts,
             cache_read_tokens,
             cache_write_tokens,
+            estimated_cost_micros,
+            currency,
+            pricing_revision,
+            final,
         )
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
+            await conn.commit()
+
+    async def record_events(self, events: Sequence[UsageEvent]) -> None:
+        if not events:
+            return
+        sql = """
+            INSERT INTO token_usage_events
+                (id, turn_id, purpose, provider, model_id, input_tokens, output_tokens,
+                 cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, event_ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+        """
+        rows = [
+            (
+                e.event_id,
+                e.turn_id,
+                e.purpose,
+                e.provider,
+                e.model_id,
+                e.input_tokens,
+                e.output_tokens,
+                e.cache_read_tokens,
+                e.cache_write_tokens,
+                e.cache_write_1h_tokens,
+                e.ts,
+            )
+            for e in events
+        ]
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(sql, rows)
             await conn.commit()
 
     # ------------------------------------------------------------------
@@ -154,7 +214,8 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
             raise ValueError("offset must be non-negative")
         sql = """
             SELECT session_id, model_id, input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens, turn_ts
+                   cache_read_tokens, cache_write_tokens, turn_ts,
+                   id, estimated_cost_micros, currency, pricing_revision, final
             FROM token_usage
             WHERE user_id = %s
             ORDER BY turn_ts DESC, id ASC
@@ -178,14 +239,20 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 # Matches aggregate_by_day's explicit UTC bucketing and the
                 # SQLite backend's always-UTC TEXT storage.
                 "turn_ts": r[6].astimezone(timezone.utc).isoformat() if hasattr(r[6], "astimezone") else r[6],
+                "turn_id": r[7],
+                "estimated_cost_micros": r[8],
+                "currency": r[9],
+                "pricing_revision": r[10],
+                "final": bool(r[11]),
             }
             for r in rows
         ]
 
     async def aggregate_by_model(self) -> List[Dict[str, Any]]:
-        sql = """
+        sql = f"""
             SELECT model_id, SUM(input_tokens), SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*),
+                   {_COST_AGGREGATES}
             FROM token_usage
             GROUP BY model_id
             ORDER BY model_id ASC
@@ -202,6 +269,9 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "cache_read_tokens": r[3],
                 "cache_write_tokens": r[4],
                 "turn_count": r[5],
+                "estimated_cost_micros": r[6],
+                "unpriced_turn_count": r[7],
+                "currency": r[8],
             }
             for r in rows
         ]
@@ -219,10 +289,11 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
         # UTC (it persists whatever tz-aware datetime the caller supplies),
         # so this explicit conversion is what actually guarantees UTC
         # bucketing here, independent of DB session settings.
-        sql = """
+        sql = f"""
             SELECT (turn_ts AT TIME ZONE 'UTC')::date AS day,
                    SUM(input_tokens), SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*)
+                   SUM(cache_read_tokens), SUM(cache_write_tokens), COUNT(*),
+                   {_COST_AGGREGATES}
             FROM token_usage
             WHERE turn_ts >= %s AND turn_ts < %s
             GROUP BY day
@@ -240,6 +311,9 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "cache_read_tokens": r[3],
                 "cache_write_tokens": r[4],
                 "turn_count": r[5],
+                "estimated_cost_micros": r[6],
+                "unpriced_turn_count": r[7],
+                "currency": r[8],
             }
             for r in rows
         ]
@@ -247,9 +321,10 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
     async def aggregate_by_user(self, limit: int = 10) -> List[Dict[str, Any]]:
         if limit <= 0:
             raise ValueError("limit must be positive")
-        sql = """
+        sql = f"""
             SELECT user_id, SUM(input_tokens), SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_write_tokens)
+                   SUM(cache_read_tokens), SUM(cache_write_tokens),
+                   {_COST_AGGREGATES}
             FROM token_usage
             WHERE user_id IS NOT NULL
             GROUP BY user_id
@@ -267,6 +342,9 @@ class PostgresTokenUsageStore(BaseTokenUsageStore):
                 "output_tokens": r[2],
                 "cache_read_tokens": r[3],
                 "cache_write_tokens": r[4],
+                "estimated_cost_micros": r[5],
+                "unpriced_turn_count": r[6],
+                "currency": r[7],
             }
             for r in rows
         ]

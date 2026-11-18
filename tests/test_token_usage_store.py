@@ -26,6 +26,7 @@ dependencies) to be importable.
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -52,6 +53,14 @@ token_usage_postgres_mod = load_module(
 
 SQLiteTokenUsageStore = token_usage_sqlite_mod.SQLiteTokenUsageStore
 PostgresTokenUsageStore = token_usage_postgres_mod.PostgresTokenUsageStore
+
+# Cost/final fields of a row written without a cost estimate.
+_UNPRICED_TURN = {"estimated_cost_micros": None, "currency": None, "pricing_revision": None, "final": True}
+
+
+def _unpriced(count):
+    """Cost fields of an aggregate over ``count`` unpriced turns."""
+    return {"estimated_cost_micros": None, "unpriced_turn_count": count, "currency": None}
 
 
 @pytest.fixture(autouse=True)
@@ -274,6 +283,7 @@ async def test_open_migrates_legacy_table_missing_cache_columns(monkeypatch, ini
                 "cache_read_tokens": 60,
                 "cache_write_tokens": 20,
                 "turn_count": 2,
+                **_unpriced(2),
             }
         ]
         rows = await store.list_by_user("alice")
@@ -302,6 +312,142 @@ async def test_column_migration_skips_missing_table():
     await store.open()
     try:
         assert _columns(store._conn) == []
+    finally:
+        await store.close()
+
+
+async def test_open_migrates_legacy_table_with_cost_and_final_columns(monkeypatch):
+    store = await _open_legacy_sqlite_store(monkeypatch)
+    try:
+        assert {"estimated_cost_micros", "currency", "pricing_revision", "final"} <= set(_columns(store._conn))
+        (legacy,) = await store.list_by_user("alice")
+        # Rows written before the column existed were complete when written.
+        assert legacy["final"] is True
+        assert legacy["estimated_cost_micros"] is None
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# SQLite store — upsert and events
+# ---------------------------------------------------------------------------
+
+
+async def _record_pending_then(store, **final_overrides):
+    ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    await store.record_turn(
+        "t1", "sess-1", "alice", "model-a", 100, 10, ts, estimated_cost_micros=500, currency="USD", final=False
+    )
+    kwargs = {"input_tokens": 130, "output_tokens": 14, "estimated_cost_micros": 600, "final": True}
+    kwargs.update(final_overrides)
+    await store.record_turn("t1", "sess-1", "alice", "model-a", turn_ts=ts, currency="USD", **kwargs)
+
+
+async def test_record_turn_upserts_pending_row_with_final_totals():
+    store = await _open_sqlite_store()
+    try:
+        await _record_pending_then(store)
+
+        (row,) = await store.list_by_user("alice")
+        assert (row["input_tokens"], row["output_tokens"], row["estimated_cost_micros"], row["final"]) == (
+            130,
+            14,
+            600,
+            True,
+        )
+        assert row["turn_ts"] == "2026-07-01T00:00:00+00:00"
+    finally:
+        await store.close()
+
+
+async def test_record_turn_never_overwrites_a_final_row():
+    store = await _open_sqlite_store()
+    try:
+        await _record_pending_then(store)
+        # A queued retry of the earlier pending write replays after the final one.
+        await store.record_turn(
+            "t1",
+            "sess-1",
+            "alice",
+            "model-a",
+            100,
+            10,
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+            estimated_cost_micros=500,
+            final=False,
+        )
+
+        (row,) = await store.list_by_user("alice")
+        assert (row["input_tokens"], row["estimated_cost_micros"], row["final"]) == (130, 600, True)
+    finally:
+        await store.close()
+
+
+def _event(event_id, turn_id="t1", purpose="chat"):
+    return SimpleNamespace(
+        event_id=event_id,
+        turn_id=turn_id,
+        purpose=purpose,
+        provider="anthropic",
+        model_id="model-a",
+        input_tokens=10,
+        output_tokens=2,
+        cache_read_tokens=3,
+        cache_write_tokens=1,
+        cache_write_1h_tokens=1,
+        ts=datetime(2026, 7, 1, tzinfo=timezone.utc),
+    )
+
+
+async def test_record_events_is_idempotent_on_event_id():
+    store = await _open_sqlite_store()
+    try:
+        await store.record_events([_event("e1"), _event("e2", purpose="title")])
+        await store.record_events([_event("e1"), _event("e2", purpose="title")])
+
+        rows = store._conn.execute(
+            "SELECT id, turn_id, purpose, input_tokens, cache_read_tokens, cache_write_1h_tokens, event_ts "
+            "FROM token_usage_events ORDER BY id"
+        ).fetchall()
+        assert rows == [
+            ("e1", "t1", "chat", 10, 3, 1, "2026-07-01T00:00:00+00:00"),
+            ("e2", "t1", "title", 10, 3, 1, "2026-07-01T00:00:00+00:00"),
+        ]
+    finally:
+        await store.close()
+
+
+async def test_aggregates_sum_priced_turns_and_count_unpriced_ones():
+    store = await _open_sqlite_store()
+    try:
+        ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        await store.record_turn("t1", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=250, currency="USD")
+        await store.record_turn("t2", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=750, currency="USD")
+        await store.record_turn("t3", "s", "alice", "model-a", 1, 1, ts)
+
+        (by_model,) = await store.aggregate_by_model()
+        (by_user,) = await store.aggregate_by_user()
+
+        assert (by_model["estimated_cost_micros"], by_model["unpriced_turn_count"]) == (1_000, 1)
+        assert (by_user["estimated_cost_micros"], by_user["unpriced_turn_count"]) == (1_000, 1)
+        assert (by_model["currency"], by_user["currency"]) == ("USD", "USD")
+    finally:
+        await store.close()
+
+
+async def test_aggregates_do_not_sum_costs_across_currencies():
+    store = await _open_sqlite_store()
+    try:
+        ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        await store.record_turn("t1", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=250, currency="USD")
+        await store.record_turn("t2", "s", "alice", "model-a", 1, 1, ts, estimated_cost_micros=750, currency="EUR")
+
+        (by_model,) = await store.aggregate_by_model()
+        (by_user,) = await store.aggregate_by_user()
+        (by_day,) = await store.aggregate_by_day(ts - timedelta(days=1), ts + timedelta(days=1))
+
+        for row in (by_model, by_user, by_day):
+            assert (row["estimated_cost_micros"], row["currency"], row["unpriced_turn_count"]) == (None, None, 0)
     finally:
         await store.close()
 
@@ -338,6 +484,8 @@ async def test_list_by_user_returns_rows_newest_first():
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
                 "turn_ts": "2026-07-01T14:00:00+00:00",
+                "turn_id": "t2",
+                **_UNPRICED_TURN,
             },
             {
                 "session_id": "sess-1",
@@ -347,6 +495,8 @@ async def test_list_by_user_returns_rows_newest_first():
                 "cache_read_tokens": 4,
                 "cache_write_tokens": 2,
                 "turn_ts": "2026-07-01T10:00:00+00:00",
+                "turn_id": "t1",
+                **_UNPRICED_TURN,
             },
         ]
     finally:
@@ -400,6 +550,7 @@ async def test_aggregate_by_model_sums_and_counts_per_model():
                 "cache_read_tokens": 64,
                 "cache_write_tokens": 32,
                 "turn_count": 2,
+                **_unpriced(2),
             },
             {
                 "model_id": "model-b",
@@ -408,6 +559,7 @@ async def test_aggregate_by_model_sums_and_counts_per_model():
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
                 "turn_count": 1,
+                **_unpriced(1),
             },
         ]
     finally:
@@ -430,6 +582,7 @@ async def test_aggregate_by_day_buckets_by_utc_date():
                 "cache_read_tokens": 4,
                 "cache_write_tokens": 2,
                 "turn_count": 2,
+                **_unpriced(2),
             },
             {
                 "date": "2026-07-02",
@@ -438,6 +591,7 @@ async def test_aggregate_by_day_buckets_by_utc_date():
                 "cache_read_tokens": 60,
                 "cache_write_tokens": 30,
                 "turn_count": 1,
+                **_unpriced(1),
             },
         ]
     finally:
@@ -460,6 +614,7 @@ async def test_aggregate_by_day_excludes_rows_outside_range():
                 "cache_read_tokens": 4,
                 "cache_write_tokens": 2,
                 "turn_count": 2,
+                **_unpriced(2),
             }
         ]
     finally:
@@ -489,6 +644,7 @@ async def test_aggregate_by_user_ranks_by_combined_tokens_desc():
                 "output_tokens": 200,
                 "cache_read_tokens": 60,
                 "cache_write_tokens": 30,
+                **_unpriced(1),
             },
             {
                 "user_id": "alice",
@@ -496,6 +652,7 @@ async def test_aggregate_by_user_ranks_by_combined_tokens_desc():
                 "output_tokens": 25,
                 "cache_read_tokens": 4,
                 "cache_write_tokens": 2,
+                **_unpriced(2),
             },
         ]
     finally:
@@ -514,6 +671,7 @@ async def test_aggregate_by_user_respects_limit():
                 "output_tokens": 200,
                 "cache_read_tokens": 60,
                 "cache_write_tokens": 30,
+                **_unpriced(1),
             }
         ]
     finally:
@@ -572,21 +730,24 @@ class _FakeCursor:
 
     ``full_row_tuple`` order matches the store's INSERT column list:
     ``(id, session_id, user_id, model_id, input_tokens, output_tokens, turn_ts,
-    cache_read_tokens, cache_write_tokens)``.
+    cache_read_tokens, cache_write_tokens, estimated_cost_micros, currency,
+    pricing_revision, final)``.
 
     Supports:
 
-    * ``INSERT ... ON CONFLICT DO NOTHING`` — a no-op when ``id`` already
-      exists in ``rows`` (mirrors real Postgres semantics).
+    * ``INSERT ... ON CONFLICT DO UPDATE ... WHERE NOT final`` — updates the
+      counters/cost of a pending row only (mirrors real Postgres semantics).
+    * ``INSERT INTO token_usage_events ... ON CONFLICT DO NOTHING``.
     * The four read-only queries used by ``list_by_user``,
       ``aggregate_by_model``, ``aggregate_by_day``, and ``aggregate_by_user``,
       distinguished by a short substring unique to each query in the store's
       SQL text (rather than a real SQL parser).
     """
 
-    def __init__(self, rows, executed_ddl=None):
+    def __init__(self, rows, executed_ddl=None, events=None):
         self._rows = rows
         self._executed_ddl = executed_ddl if executed_ddl is not None else []
+        self._events = events if events is not None else {}
         self._result = []
 
     async def __aenter__(self):
@@ -595,6 +756,11 @@ class _FakeCursor:
     async def __aexit__(self, *exc):
         return False
 
+    async def executemany(self, sql, rows):
+        assert "INSERT INTO token_usage_events" in sql and "ON CONFLICT (id) DO NOTHING" in sql
+        for row in rows:
+            self._events.setdefault(row[0], tuple(row))
+
     async def execute(self, sql, params=()):
         if "CREATE TABLE IF NOT EXISTS token_usage" in sql:
             self._executed_ddl.append(sql)
@@ -602,11 +768,20 @@ class _FakeCursor:
 
         if "INSERT INTO token_usage" in sql:
             turn_id = str(params[0])
-            if turn_id not in self._rows:
+            existing = self._rows.get(turn_id)
+            if existing is None:
                 self._rows[turn_id] = tuple(params)
+            elif not existing[12]:
+                self._rows[turn_id] = (*existing[:4], *params[4:6], existing[6], *params[7:])
             return
 
         values = list(self._rows.values())
+
+        def _cost(rows):
+            priced = [v[9] for v in rows if v[9] is not None]
+            currencies = {v[10] for v in rows if v[10] is not None}
+            shared = next(iter(currencies)) if len(currencies) == 1 else None
+            return [sum(priced) if priced and shared else None, len(rows) - len(priced), shared]
 
         if "WHERE user_id = %s" in sql:
             user_id, limit, offset = params
@@ -619,20 +794,16 @@ class _FakeCursor:
             matched.sort(key=lambda v: v[0])
             matched.sort(key=lambda v: v[6], reverse=True)
             page = matched[offset : offset + limit]
-            self._result = [(v[1], v[3], v[4], v[5], v[7], v[8], v[6]) for v in page]
+            self._result = [(v[1], v[3], v[4], v[5], v[7], v[8], v[6], v[0], v[9], v[10], v[11], v[12]) for v in page]
             return
 
         if "GROUP BY model_id" in sql:
             by_model = {}
             for v in values:
-                model_id = v[3]
-                agg = by_model.setdefault(model_id, [0, 0, 0, 0, 0])
-                agg[0] += v[4]
-                agg[1] += v[5]
-                agg[2] += v[7]
-                agg[3] += v[8]
-                agg[4] += 1
-            self._result = [(model_id, *agg) for model_id, agg in sorted(by_model.items())]
+                by_model.setdefault(v[3], []).append(v)
+            self._result = [
+                (model_id, *_sums(rows), len(rows), *_cost(rows)) for model_id, rows in sorted(by_model.items())
+            ]
             return
 
         if "GROUP BY day" in sql:
@@ -647,33 +818,22 @@ class _FakeCursor:
                 # turn_ts would bucket by the wrong calendar day here while
                 # the real store still buckets correctly, masking a bug.
                 day = turn_ts.astimezone(timezone.utc).date() if hasattr(turn_ts, "astimezone") else turn_ts
-                agg = by_day.setdefault(day, [0, 0, 0, 0, 0])
-                agg[0] += v[4]
-                agg[1] += v[5]
-                agg[2] += v[7]
-                agg[3] += v[8]
-                agg[4] += 1
-            self._result = [(day, *agg) for day, agg in sorted(by_day.items())]
+                by_day.setdefault(day, []).append(v)
+            self._result = [(day, *_sums(rows), len(rows), *_cost(rows)) for day, rows in sorted(by_day.items())]
             return
 
         if "GROUP BY user_id" in sql:
             (limit,) = params
             by_user = {}
             for v in values:
-                user_id = v[2]
-                if user_id is None:
-                    continue
-                agg = by_user.setdefault(user_id, [0, 0, 0, 0])
-                agg[0] += v[4]
-                agg[1] += v[5]
-                agg[2] += v[7]
-                agg[3] += v[8]
+                if v[2] is not None:
+                    by_user.setdefault(v[2], []).append(v)
             # Emulate ORDER BY (combined) DESC, user_id ASC: sort by the
             # ascending tie-breaker first, then stable-sort by the
             # descending primary key.
             ranked = sorted(by_user.items(), key=lambda kv: kv[0])
-            ranked.sort(key=lambda kv: kv[1][0] + kv[1][1], reverse=True)
-            self._result = [(user_id, *agg) for user_id, agg in ranked[:limit]]
+            ranked.sort(key=lambda kv: sum(_sums(kv[1])[:2]), reverse=True)
+            self._result = [(user_id, *_sums(rows), *_cost(rows)) for user_id, rows in ranked[:limit]]
             return
 
         raise AssertionError(f"unrecognized query in fake cursor: {sql!r}")
@@ -682,10 +842,16 @@ class _FakeCursor:
         return self._result
 
 
+def _sums(rows):
+    """Summed (input, output, cache_read, cache_write) tokens."""
+    return [sum(v[i] for v in rows) for i in (4, 5, 7, 8)]
+
+
 class _FakeConnection:
-    def __init__(self, rows, executed_ddl):
+    def __init__(self, rows, executed_ddl, events):
         self._rows = rows
         self._executed_ddl = executed_ddl
+        self._events = events
         self.commits = 0
 
     async def __aenter__(self):
@@ -695,7 +861,7 @@ class _FakeConnection:
         return False
 
     def cursor(self):
-        return _FakeCursor(self._rows, self._executed_ddl)
+        return _FakeCursor(self._rows, self._executed_ddl, self._events)
 
     async def commit(self):
         self.commits += 1
@@ -706,11 +872,12 @@ class _FakePool:
 
     def __init__(self):
         self.rows = {}
+        self.events = {}
         self.executed_ddl = []
         self.last_connection = None
 
     def connection(self):
-        conn = _FakeConnection(self.rows, self.executed_ddl)
+        conn = _FakeConnection(self.rows, self.executed_ddl, self.events)
         self.last_connection = conn
         return conn
 
@@ -747,6 +914,10 @@ async def test_postgres_record_turn_inserts_a_row():
         ts,
         0,
         0,
+        None,
+        None,
+        None,
+        True,
     )
     assert store._pool.last_connection.commits == 1
 
@@ -767,7 +938,7 @@ async def test_postgres_record_turn_persists_cache_token_counts():
         cache_write_tokens=150,
     )
 
-    assert store._pool.rows["turn-1"][7:] == (800, 150)
+    assert store._pool.rows["turn-1"][7:9] == (800, 150)
 
 
 async def test_postgres_apply_schema_migrates_cache_token_columns():
@@ -781,7 +952,37 @@ async def test_postgres_apply_schema_migrates_cache_token_columns():
     normalized = " ".join(ddl.split())
     for column in ("cache_read_tokens", "cache_write_tokens"):
         assert f"ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS {column} INTEGER NOT NULL DEFAULT 0" in normalized
+    for column in ("estimated_cost_micros BIGINT", "currency TEXT", "pricing_revision TEXT"):
+        assert f"ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS {column}" in normalized
+    assert "ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS final BOOLEAN NOT NULL DEFAULT TRUE" in normalized
+    assert "CREATE TABLE IF NOT EXISTS token_usage_events" in normalized
+    assert (
+        "ALTER TABLE token_usage_events ADD COLUMN IF NOT EXISTS cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0"
+        in normalized
+    )
     assert store._pool.last_connection.commits == 1
+
+
+async def test_postgres_record_turn_upserts_pending_row_but_not_final_row():
+    store = _make_postgres_store()
+    ts = datetime(2026, 7, 1, tzinfo=timezone.utc)
+
+    await store.record_turn("t1", "s", "alice", "model-a", 100, 10, ts, estimated_cost_micros=500, final=False)
+    await store.record_turn("t1", "s", "alice", "model-a", 130, 14, ts, estimated_cost_micros=600, final=True)
+    await store.record_turn("t1", "s", "alice", "model-a", 100, 10, ts, estimated_cost_micros=500, final=False)
+
+    row = store._pool.rows["t1"]
+    assert (row[4], row[5], row[9], row[12]) == (130, 14, 600, True)
+
+
+async def test_postgres_record_events_inserts_each_event_once():
+    store = _make_postgres_store()
+
+    await store.record_events([_event("e1"), _event("e2")])
+    await store.record_events([_event("e1")])
+
+    assert sorted(store._pool.events) == ["e1", "e2"]
+    assert store._pool.events["e1"][1:3] == ("t1", "chat")
 
 
 async def test_postgres_duplicate_turn_id_does_not_overwrite():
@@ -816,7 +1017,7 @@ async def test_postgres_duplicate_turn_id_does_not_overwrite():
     row = store._pool.rows["turn-1"]
     assert row[4] == 10
     assert row[5] == 20
-    assert row[7:] == (4, 2)
+    assert row[7:9] == (4, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -851,6 +1052,8 @@ async def test_postgres_list_by_user_returns_rows_newest_first():
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
             "turn_ts": "2026-07-01T14:00:00+00:00",
+            "turn_id": "t2",
+            **_UNPRICED_TURN,
         },
         {
             "session_id": "sess-1",
@@ -860,6 +1063,8 @@ async def test_postgres_list_by_user_returns_rows_newest_first():
             "cache_read_tokens": 4,
             "cache_write_tokens": 2,
             "turn_ts": "2026-07-01T10:00:00+00:00",
+            "turn_id": "t1",
+            **_UNPRICED_TURN,
         },
     ]
 
@@ -913,6 +1118,8 @@ async def test_postgres_list_by_user_normalizes_turn_ts_to_utc():
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
             "turn_ts": "2026-07-01T10:00:00+00:00",
+            "turn_id": "t-tz",
+            **_UNPRICED_TURN,
         }
     ]
 
@@ -931,6 +1138,7 @@ async def test_postgres_aggregate_by_model_sums_and_counts_per_model():
             "cache_read_tokens": 64,
             "cache_write_tokens": 32,
             "turn_count": 2,
+            **_unpriced(2),
         },
         {
             "model_id": "model-b",
@@ -939,6 +1147,7 @@ async def test_postgres_aggregate_by_model_sums_and_counts_per_model():
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
             "turn_count": 1,
+            **_unpriced(1),
         },
     ]
 
@@ -960,6 +1169,7 @@ async def test_postgres_aggregate_by_day_buckets_by_date():
             "cache_read_tokens": 4,
             "cache_write_tokens": 2,
             "turn_count": 2,
+            **_unpriced(2),
         },
         {
             "date": "2026-07-02",
@@ -968,6 +1178,7 @@ async def test_postgres_aggregate_by_day_buckets_by_date():
             "cache_read_tokens": 60,
             "cache_write_tokens": 30,
             "turn_count": 1,
+            **_unpriced(1),
         },
     ]
 
@@ -996,6 +1207,7 @@ async def test_postgres_aggregate_by_day_excludes_rows_outside_range():
             "cache_read_tokens": 4,
             "cache_write_tokens": 2,
             "turn_count": 2,
+            **_unpriced(2),
         }
     ]
 
@@ -1026,6 +1238,7 @@ async def test_postgres_aggregate_by_day_buckets_by_utc_date_not_local():
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
             "turn_count": 1,
+            **_unpriced(1),
         }
     ]
 
@@ -1043,8 +1256,16 @@ async def test_postgres_aggregate_by_user_ranks_by_combined_tokens_desc():
             "output_tokens": 200,
             "cache_read_tokens": 60,
             "cache_write_tokens": 30,
+            **_unpriced(1),
         },
-        {"user_id": "alice", "input_tokens": 15, "output_tokens": 25, "cache_read_tokens": 4, "cache_write_tokens": 2},
+        {
+            "user_id": "alice",
+            "input_tokens": 15,
+            "output_tokens": 25,
+            "cache_read_tokens": 4,
+            "cache_write_tokens": 2,
+            **_unpriced(2),
+        },
     ]
 
 
@@ -1055,7 +1276,14 @@ async def test_postgres_aggregate_by_user_respects_limit():
     rows = await store.aggregate_by_user(limit=1)
 
     assert rows == [
-        {"user_id": "bob", "input_tokens": 100, "output_tokens": 200, "cache_read_tokens": 60, "cache_write_tokens": 30}
+        {
+            "user_id": "bob",
+            "input_tokens": 100,
+            "output_tokens": 200,
+            "cache_read_tokens": 60,
+            "cache_write_tokens": 30,
+            **_unpriced(1),
+        }
     ]
 
 

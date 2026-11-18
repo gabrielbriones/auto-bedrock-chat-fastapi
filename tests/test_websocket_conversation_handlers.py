@@ -52,6 +52,7 @@ from autolangchat.artifacts import ArtifactError
 from autolangchat.config import ChatConfig
 from autolangchat.history import TOOL_LOOP_LEASE
 from autolangchat.session_manager import ChatSessionManager
+from autolangchat.usage.ledger import UsageLedger
 from autolangchat.websocket_handler import WebSocketChatHandler
 
 
@@ -886,6 +887,43 @@ async def test_title_and_rename_reach_every_tab_of_the_user():
         for ws in (sender, other_tab):
             assert [f["type"] for f in _sent(ws)] == ["conversation_titled", "conversation_renamed"]
             assert _sent(ws)[1]["title"] == "Mine"
+        assert _sent(stranger) == []
+    finally:
+        await harness.handler.shutdown()
+        await store.close()
+
+
+async def test_final_usage_reaches_every_tab_of_the_sender_but_no_stranger():
+    store = await _make_store()
+    harness = _LiveTurnHarness(store, _make_chat_graph())
+    try:
+        await store.create_conversation("conv-1", "alice")
+        sender = await harness.connect("alice", "conv-1")
+        other_tab = await harness.connect("alice")
+        stranger = await harness.connect("bob")
+        harness.handler._build_title_llm_client = lambda: None
+        ledger = UsageLedger("turn-1")
+        ledger.record(purpose="chat", provider="anthropic", model_id="anthropic.m", input_tokens=10, output_tokens=2)
+        turn_usage = websocket_handler._PendingTurnUsage(
+            ledger=ledger,
+            session_id="s",
+            user_id="alice",
+            model_id="anthropic.m",
+            chat_config=SimpleNamespace(pricing_table=None, token_usage_enabled=False, token_usage_write_timeout=1.0),
+        )
+
+        created_by = websocket_handler._LiveTurn(origin=sender, user_id="alice", user_message="Tune L2", started_at="")
+        await harness.handler._generate_and_apply_title(
+            sender, "conv-1", [{"role": "user", "content": "Tune L2"}], turn=created_by, turn_usage=turn_usage
+        )
+
+        for ws in (sender, other_tab):
+            (updated,) = _frames(ws, "usage_updated")
+            assert (updated["message_id"], updated["usage"]["input_tokens"], updated["usage"]["final"]) == (
+                "turn-1",
+                10,
+                True,
+            )
         assert _sent(stranger) == []
     finally:
         await harness.handler.shutdown()

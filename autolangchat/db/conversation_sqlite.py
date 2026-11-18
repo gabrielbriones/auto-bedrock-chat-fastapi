@@ -133,7 +133,19 @@ class SQLiteConversationStore(BaseConversationStore):
             ddl = resources.files(self.SCHEMA_RESOURCE[0]).joinpath(self.SCHEMA_RESOURCE[1]).read_text(encoding="utf-8")
             conn.executescript(ddl)
             conn.commit()
+        self._migrate_columns_locked(conn)
         self._conn = conn
+
+    @staticmethod
+    def _migrate_columns_locked(conn: sqlite3.Connection) -> None:
+        """Add ``final_usage`` to a ``conversations`` table created before it existed."""
+        # Write-lock before reading the schema so another process opening the same
+        # file can't add the column in between (duplicate column name).
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+            if existing and "final_usage" not in existing:
+                conn.execute("ALTER TABLE conversations ADD COLUMN final_usage TEXT NOT NULL DEFAULT '{}'")
 
     async def close(self) -> None:
         await asyncio.to_thread(self._close_sync)
@@ -249,6 +261,35 @@ class SQLiteConversationStore(BaseConversationStore):
             except Exception:
                 self._conn.rollback()
                 raise
+
+    async def set_final_usage(self, conversation_id: str, message_id: str, usage: Dict[str, Any]) -> None:
+        await asyncio.to_thread(self._set_final_usage_sync, conversation_id, message_id, usage)
+
+    def _set_final_usage_sync(self, conversation_id: str, message_id: str, usage: Dict[str, Any]) -> None:
+        self._ensure_open_sync()
+        assert self._conn is not None
+        with self._lock:
+            try:
+                # Write-locked before the read so another process cannot change the row in between.
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT final_usage FROM conversations WHERE id = ?", (conversation_id,)
+                ).fetchone()
+                if row is not None:
+                    merged = {**json.loads(row[0] or "{}"), message_id: usage}
+                    self._conn.execute(
+                        "UPDATE conversations SET final_usage = ? WHERE id = ?", (json.dumps(merged), conversation_id)
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    async def get_final_usage(self, conversation_id: str) -> Dict[str, Dict[str, Any]]:
+        row = await asyncio.to_thread(
+            self._fetchone, "SELECT final_usage FROM conversations WHERE id = ?", (conversation_id,)
+        )
+        return json.loads(row[0] or "{}") if row else {}
 
     async def record_turn(self, conversation_id: str) -> None:
         await asyncio.to_thread(self._record_turn_sync, conversation_id)

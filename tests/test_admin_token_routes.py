@@ -69,6 +69,9 @@ class _FakeTokenUsageStore:
                 "cache_read_tokens": 6,
                 "cache_write_tokens": 2,
                 "turn_count": 2,
+                "estimated_cost_micros": 1_250,
+                "unpriced_turn_count": 1,
+                "currency": "USD",
             }
         ]
         self.by_user = [
@@ -80,6 +83,11 @@ class _FakeTokenUsageStore:
                 "cache_read_tokens": 3,
                 "cache_write_tokens": 1,
                 "turn_ts": "2026-01-15T00:00:00+00:00",
+                "turn_id": "turn-1",
+                "estimated_cost_micros": 625,
+                "currency": "USD",
+                "pricing_revision": "rev-1",
+                "final": False,
             }
         ]
         self.by_day = [
@@ -90,6 +98,9 @@ class _FakeTokenUsageStore:
                 "cache_read_tokens": 3,
                 "cache_write_tokens": 1,
                 "turn_count": 1,
+                "estimated_cost_micros": None,
+                "unpriced_turn_count": 1,
+                "currency": None,
             }
         ]
         self.top_users = [
@@ -99,6 +110,9 @@ class _FakeTokenUsageStore:
                 "output_tokens": 200,
                 "cache_read_tokens": 40,
                 "cache_write_tokens": 10,
+                "estimated_cost_micros": 9_000,
+                "unpriced_turn_count": 0,
+                "currency": "USD",
             }
         ]
         self.list_by_user_calls = []
@@ -160,17 +174,7 @@ def test_tokens_by_user_returns_expected_shape():
     assert resp.status_code == 200
     assert resp.json() == {
         "user_id": "alice",
-        "items": [
-            {
-                "session_id": "sess-1",
-                "model_id": "m1",
-                "input_tokens": 5,
-                "output_tokens": 5,
-                "cache_read_tokens": 3,
-                "cache_write_tokens": 1,
-                "turn_ts": "2026-01-15T00:00:00+00:00",
-            }
-        ],
+        "items": _FakeTokenUsageStore().by_user,
     }
     assert store.list_by_user_calls == [("alice", 50, 0)]
 
@@ -283,6 +287,28 @@ def test_cache_token_fields_default_to_zero_when_store_rows_omit_them():
         (item,) = resp.json()["items"]
         assert item["cache_read_tokens"] == 0
         assert item["cache_write_tokens"] == 0
+
+
+def test_cost_fields_default_when_store_rows_omit_them():
+    """Rows from stores/fakes that predate the cost columns must still validate."""
+    store = _FakeTokenUsageStore()
+    for rows in (store.summary, store.by_user, store.by_day, store.top_users):
+        for row in rows:
+            for key in ("turn_id", "estimated_cost_micros", "currency", "pricing_revision", "final"):
+                row.pop(key, None)
+            row.pop("unpriced_turn_count", None)
+    client = _build_app(store)
+
+    (summary,) = client.get("/bedrock-chat/admin/tokens/summary").json()["items"]
+    (turn,) = client.get("/bedrock-chat/admin/tokens/by-user", params={"user_id": "alice"}).json()["items"]
+
+    assert (summary["estimated_cost_micros"], summary["unpriced_turn_count"]) == (None, 0)
+    assert (turn["turn_id"], turn["estimated_cost_micros"], turn["currency"], turn["final"]) == (
+        None,
+        None,
+        None,
+        True,
+    )
 
 
 def test_openapi_documents_cache_token_fields():

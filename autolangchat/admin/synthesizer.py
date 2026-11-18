@@ -15,13 +15,16 @@ Typical usage::
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, TypeVar
 from uuid import UUID, uuid4
 
 from ..db.feedback_base import BaseFeedbackStore
@@ -30,6 +33,7 @@ from ..defaults import CHARS_PER_TOKEN_ESTIMATE, RAW_CONTENT_SYNTHESIS_INPUT_FRA
 from ..model_capabilities import build_bedrock_kwargs, get_model_profile
 from ..models import FeedbackEntry, FeedbackListFilters, KBDocument, KBDocumentListFilters, ReviewStatus
 from ..rag.embedding_pipeline import TextChunker
+from ..usage.ledger import UsageLedger
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,35 @@ _UNTAGGED_TAG = "untagged"
 
 # Page size used when fetching pending entries from the feedback store.
 _PAGE_SIZE = 1_000
+
+# Usage of the administrative operation running in this task; operations never share one.
+_operation_ledger: ContextVar[Optional[UsageLedger]] = ContextVar("synthesis_usage_ledger", default=None)
+
+_T = TypeVar("_T")
+
+
+@asynccontextmanager
+async def _usage_scope(operation: str) -> AsyncGenerator[None, None]:
+    if _operation_ledger.get() is not None:
+        yield
+        return
+    ledger = UsageLedger(f"admin-synthesis:{uuid4()}")
+    token = _operation_ledger.set(ledger)
+    try:
+        yield
+    finally:
+        _operation_ledger.reset(token)
+        if ledger.events:
+            logger.info("%s usage: %s", operation, ledger.summary())
+
+
+def _usage_scoped(func: Callable[..., Awaitable[_T]]) -> Callable[..., Awaitable[_T]]:
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> _T:
+        async with _usage_scope(func.__name__):
+            return await func(*args, **kwargs)
+
+    return wrapper
 
 
 class SynthesisAction(str, Enum):
@@ -276,6 +309,7 @@ class FeedbackSynthesizer:
     # Public API
     # ------------------------------------------------------------------
 
+    @_usage_scoped
     async def synthesize_all(
         self,
         feedback_store: BaseFeedbackStore,
@@ -354,6 +388,7 @@ class FeedbackSynthesizer:
 
         return run_result
 
+    @_usage_scoped
     async def synthesize_entry(
         self,
         feedback_id: UUID,
@@ -411,6 +446,7 @@ class FeedbackSynthesizer:
             feedback_store=feedback_store,
         )
 
+    @_usage_scoped
     async def synthesize_raw_content(
         self,
         content: str,
@@ -513,6 +549,11 @@ class FeedbackSynthesizer:
         )
         llm = ChatBedrockConverse(**llm_kwargs)
         ai_msg = await llm.ainvoke(lc_messages)
+        ledger = _operation_ledger.get()
+        if ledger is not None:
+            ledger.record_usage_metadata(
+                purpose="summarization", model_id=model_id, usage_metadata=getattr(ai_msg, "usage_metadata", None)
+            )
         raw_content_val = ai_msg.content
         return (
             raw_content_val

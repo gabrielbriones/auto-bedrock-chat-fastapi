@@ -24,6 +24,7 @@ from autolangchat.message_preprocessor import (
     is_artifact_marker_entry,
     is_artifact_marker_message,
 )
+from autolangchat.usage.ledger import UsageLedger
 
 # What an artifact marker says, whether it stands in for a tool result or for a user message.
 _GENERIC_MARKER_MESSAGE = "Large content stored as a session artifact; only a preview is shown below."
@@ -93,6 +94,13 @@ def _ai_response(content: str = "ok"):
     msg.tool_calls = []
     msg.response_metadata = {"model_id": "mock"}
     msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    return msg
+
+
+def _summary_response(usage_metadata: Dict[str, Any]):
+    msg = MagicMock()
+    msg.content = "summary"
+    msg.usage_metadata = usage_metadata
     return msg
 
 
@@ -355,6 +363,27 @@ class TestMarkerExemptFromTruncation:
 
         assert seen and all(t.startswith("F") for t in seen)
         assert result[2]["tool_results"][0] == marker
+
+    @pytest.mark.asyncio
+    async def test_each_summarization_call_is_recorded_in_the_turn_ledger(self, tight_config):
+        ledger = UsageLedger("turn-1")
+        llm = MagicMock()
+        llm.model_id = "anthropic.summarizer"
+        llm.ainvoke = AsyncMock(
+            side_effect=[
+                _summary_response({"input_tokens": 40, "output_tokens": 5}),
+                _summary_response({"input_tokens": 30, "output_tokens": 4}),
+            ]
+        )
+        processor = MessagePreprocessor(config=tight_config, llm_client=llm, usage_ledger=ledger)
+
+        await processor._summarize_with_llm("G" * 200, 20)
+        await processor._summarize_with_llm("H" * 200, 20)
+
+        assert [(e.purpose, e.model_id, e.input_tokens) for e in ledger.events] == [
+            ("summarization", "anthropic.summarizer", 40),
+            ("summarization", "anthropic.summarizer", 30),
+        ]
 
     @pytest.mark.asyncio
     async def test_content_mirror_still_carries_marker_after_sibling_truncation(self, tight_config):

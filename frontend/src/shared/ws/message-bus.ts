@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import type { LogContext, Logger } from '@/shared/logging/logger'
 import { toolCallEndFrameSchema, toolCallStartFrameSchema } from '@/shared/ws/tool-frames'
+import { usageSchema, usageUpdatedFrameSchema } from '@/shared/ws/usage-frames'
 
 export type ContextId = 'iam' | 'messaging' | 'feedback' | 'model-config' | 'conversation'
 
@@ -22,18 +23,7 @@ const metadataSchema = z
     // against a live backend response). Kept optional: a rejected frame is dropped silently by
     // `receive`, which freezes the UI on "AI is typing", so metadata is never worth failing on.
     message_id: z.string().optional(),
-    usage: z
-      .object({
-        // Bedrock's usage_metadata is read with `.get()`, so either count can arrive as null.
-        input_tokens: z.number().nullable().optional(),
-        output_tokens: z.number().nullable().optional(),
-        // Prompt-caching subsets of input_tokens (XMGPLAT-11867); this object is `.strict()`, so
-        // they must be listed or every cached answer would be dropped.
-        cache_read_tokens: z.number().nullable().optional(),
-        cache_write_tokens: z.number().nullable().optional(),
-      })
-      .strict()
-      .optional(),
+    usage: usageSchema.optional(),
     timestamp: z.string().min(1).optional(),
     model_id: z.string(),
     model_name: z.string(),
@@ -144,6 +134,7 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   toolCallStartFrameSchema,
   toolCallEndFrameSchema,
   aiResponseFrameSchema,
+  usageUpdatedFrameSchema,
   serverFrame('error').extend({ message: z.string() }),
   serverFrame('pong'),
   serverFrame('history').extend({ messages: z.array(messageSchema) }),
@@ -217,6 +208,7 @@ export const FRAME_OWNER = {
   tool_call_start: 'messaging',
   tool_call_end: 'messaging',
   ai_response: 'messaging',
+  usage_updated: 'messaging',
   error: 'messaging',
   pong: 'messaging',
   history: 'messaging',

@@ -24,7 +24,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+
+if TYPE_CHECKING:
+    from ..usage.ledger import UsageEvent
 
 
 class BaseTokenUsageStore(ABC):
@@ -55,17 +58,28 @@ class BaseTokenUsageStore(ABC):
         turn_ts: datetime,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        estimated_cost_micros: Optional[int] = None,
+        currency: Optional[str] = None,
+        pricing_revision: Optional[str] = None,
+        final: bool = True,
     ) -> None:
-        """Persist one turn's token counts.
+        """Insert or update one turn's token counts.
 
         ``input_tokens`` is the total prompt-token count, including cache
         tokens; ``cache_read_tokens`` / ``cache_write_tokens`` are subsets of
         it (see the module docstring) and default to ``0`` for providers or
-        turns without prompt-cache information.
+        turns without prompt-cache information. ``estimated_cost_micros`` is
+        ``None`` when any of the turn's models is unpriced.
 
-        Idempotent: a duplicate ``turn_id`` is silently ignored rather than
-        raising, so callers may safely retry after a transient failure
-        without risking double-counting.
+        Upsert keyed by ``turn_id``: only a pending (``final=False``) row is
+        updated; once a row is final, later writes for the same ``turn_id``
+        are ignored, so replays and retries are idempotent.
+        """
+
+    async def record_events(self, events: Sequence["UsageEvent"]) -> None:
+        """Persist per-invocation usage events, ignoring event ids already stored.
+
+        Backends without an events table may leave this as a no-op.
         """
 
     @abstractmethod
@@ -80,7 +94,9 @@ class BaseTokenUsageStore(ABC):
         Each row is a ``dict`` with keys ``session_id``, ``model_id``,
         ``input_tokens``, ``output_tokens``, ``cache_read_tokens``,
         ``cache_write_tokens``, ``turn_ts`` (an ISO-8601 string). The two
-        cache counters are subsets of ``input_tokens``. Pagination follows the same contract as
+        cache counters are subsets of ``input_tokens``. Rows also carry
+        ``turn_id``, ``estimated_cost_micros``, ``currency``,
+        ``pricing_revision`` and ``final``. Pagination follows the same contract as
         :meth:`~autolangchat.db.feedback_base.BaseFeedbackStore.list_pending`:
         ``limit`` must be positive, ``offset`` non-negative.
         """
@@ -92,7 +108,11 @@ class BaseTokenUsageStore(ABC):
         Each row is a ``dict`` with keys ``model_id``, ``input_tokens``
         (summed), ``output_tokens`` (summed), ``cache_read_tokens`` (summed),
         ``cache_write_tokens`` (summed), ``turn_count``. The cache counters
-        are subsets of ``input_tokens``.
+        are subsets of ``input_tokens``. Like every aggregate, rows also carry
+        ``estimated_cost_micros`` (summed over priced turns, ``None`` when
+        none are priced or the priced turns use more than one currency),
+        ``currency`` (that shared currency, else ``None``) and
+        ``unpriced_turn_count``.
         """
 
     @abstractmethod

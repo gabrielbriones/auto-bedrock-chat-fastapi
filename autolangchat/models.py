@@ -463,6 +463,11 @@ class ErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+_AGGREGATE_CURRENCY_DESCRIPTION = (
+    "Currency of the summed cost; null when no turn is priced or priced turns use more than one currency"
+)
+
+
 class TokenSummaryItem(BaseModel):
     """Aggregate token usage for a single model, across all recorded turns.
 
@@ -481,6 +486,11 @@ class TokenSummaryItem(BaseModel):
         default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
     )
     turn_count: int = Field(ge=0)
+    estimated_cost_micros: Optional[int] = Field(
+        default=None, ge=0, description="Summed estimated cost of priced turns, in micros of their currency"
+    )
+    unpriced_turn_count: int = Field(default=0, ge=0, description="Turns with an unknown cost estimate")
+    currency: Optional[str] = Field(default=None, description=_AGGREGATE_CURRENCY_DESCRIPTION)
 
 
 class TokenSummaryResponse(BaseModel):
@@ -510,6 +520,13 @@ class TokenByUserItem(BaseModel):
         default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
     )
     turn_ts: str
+    turn_id: Optional[str] = None
+    estimated_cost_micros: Optional[int] = Field(
+        default=None, ge=0, description="Estimated cost in micros of `currency`; null when any model is unpriced"
+    )
+    currency: Optional[str] = None
+    pricing_revision: Optional[str] = None
+    final: bool = Field(default=True, description="False while post-response calls (e.g. title) are pending")
 
 
 class TokenByUserResponse(BaseModel):
@@ -539,6 +556,11 @@ class TokenByDayItem(BaseModel):
         default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
     )
     turn_count: int = Field(ge=0)
+    estimated_cost_micros: Optional[int] = Field(
+        default=None, ge=0, description="Summed estimated cost of priced turns, in micros of their currency"
+    )
+    unpriced_turn_count: int = Field(default=0, ge=0, description="Turns with an unknown cost estimate")
+    currency: Optional[str] = Field(default=None, description=_AGGREGATE_CURRENCY_DESCRIPTION)
 
 
 class TokenByDayResponse(BaseModel):
@@ -563,6 +585,11 @@ class TokenTopUserItem(BaseModel):
     cache_write_tokens: int = Field(
         default=0, ge=0, description="Prompt tokens written to the prompt cache (subset of input_tokens)"
     )
+    estimated_cost_micros: Optional[int] = Field(
+        default=None, ge=0, description="Summed estimated cost of priced turns, in micros of their currency"
+    )
+    unpriced_turn_count: int = Field(default=0, ge=0, description="Turns with an unknown cost estimate")
+    currency: Optional[str] = Field(default=None, description=_AGGREGATE_CURRENCY_DESCRIPTION)
 
 
 class TokenTopUsersResponse(BaseModel):
