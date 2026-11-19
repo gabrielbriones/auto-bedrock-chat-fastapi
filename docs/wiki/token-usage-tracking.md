@@ -58,7 +58,7 @@ still delivered normally, just without the persisted record for that turn.
 | `token_usage_database_path` | `AUTOCHAT_TOKEN_USAGE_DATABASE_PATH` | `None`   | SQLite file path; falls back to `feedback_database_path`, then `KB_DATABASE_PATH`              |
 | `token_usage_postgres_url`  | `AUTOCHAT_TOKEN_USAGE_POSTGRES_URL`  | `None`   | Falls back to `AUTOCHAT_FEEDBACK_POSTGRES_URL`, then `AUTOCHAT_KB_POSTGRES_URL`                |
 | `token_usage_write_timeout` | `AUTOCHAT_TOKEN_USAGE_WRITE_TIMEOUT` | `5.0`    | Seconds before a usage write is abandoned and queued for retry (turn still completes normally) |
-| `pricing_table`             | `AUTOCHAT_PRICING_TABLE`             | `None`   | JSON pricing table replacing the packaged one (see [Pricing](#pricing))                         |
+| `pricing_table`             | `AUTOCHAT_PRICING_TABLE`             | `None`   | JSON pricing table replacing the packaged one (see [Pricing](#pricing))                        |
 
 ---
 
@@ -68,12 +68,12 @@ Every plugin-owned AI call caused by a turn is recorded as one **usage event**
 in a per-turn `UsageLedger` (`autolangchat/usage/ledger.py`), passed to the
 graph as `config["configurable"]["usage_ledger"]`:
 
-| `purpose`       | Recorded by                                                                    |
-| --------------- | ------------------------------------------------------------------------------ |
-| `chat`          | `llm_call_node`, once per tool-call round                                      |
+| `purpose`       | Recorded by                                                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `chat`          | `llm_call_node`, once per tool-call round                                                                                          |
 | `retry`         | `llm_call_node`, for emergency re-truncation, fallback-model and inference-profile retries (with the model that actually answered) |
-| `summarization` | `MessagePreprocessor`, once per AI summarization chunk                         |
-| `title`         | The WebSocket handler's conversation auto-titling                              |
+| `summarization` | `MessagePreprocessor`, once per AI summarization chunk                                                                             |
+| `title`         | The WebSocket handler's conversation auto-titling                                                                                  |
 
 Each event carries `turn_id`, `provider`, `model_id`, `input_tokens`,
 `output_tokens`, `cache_read_tokens`, `cache_write_tokens` and a timestamp.
@@ -88,9 +88,29 @@ final assistant message as `metadata.usage`, which the WebSocket handler sends
 in `ai_response.metadata.usage`:
 
 ```json
-{ "input_tokens": 1320, "output_tokens": 280, "cache_read": 400, "cache_write": 0,
-  "estimated_cost": 0.00792, "currency": "USD", "final": false }
+{
+  "input_tokens": 1320,
+  "output_tokens": 280,
+  "cache_read": 400,
+  "cache_write": 0,
+  "by_purpose": { "chat": { "input_tokens": 1320, "output_tokens": 280 } },
+  "estimated_cost": 0.00792,
+  "currency": "USD",
+  "final": false
+}
 ```
+
+`by_purpose` splits the input/output totals by the purpose of each call
+(`chat`, `summarization`, `retry`, `title`, `embedding`), listing only the
+purposes that made a call; the chat UI shows it in the
+[usage label tooltip](chat-ui.md#per-message-usage-label).
+
+`context` (`{"used_tokens", "max_tokens"}`) says how full the conversation
+leaves the model's input window: the latest `chat`/`retry` call's
+`input_tokens + output_tokens` (what the next turn starts from) against the
+model profile's `max_input_tokens`. It is omitted when that window is unknown,
+when the turn made no chat call, and for callers without a per-call ledger
+(whose summed metadata cannot say how big the latest prompt was).
 
 ### Final vs pending
 
@@ -148,6 +168,34 @@ one-hour TTL (`prompt_cache_ttl="1h"`) are priced at
 that rate and the turn wrote one-hour cache entries. The packaged table only lists
 models with published rates; set `AUTOCHAT_PRICING_TABLE` to price others.
 
+Models whose price rises with prompt size (Claude Haiku 5.5 above 100k input
+tokens, OpenAI GPT-6 family above 272k) carry a `long_context` block with an
+`above_input_tokens` threshold and the rates that replace the base ones. Each
+call is tiered on its own, and its prompt size is its whole `input_tokens`
+(cache reads and writes included):
+
+```json
+"anthropic:anthropic.claude-haiku-5-5": {
+  "input_per_million": 0.1,
+  "output_per_million": 0.5,
+  "cache_read_per_million": 0.01,
+  "cache_write_per_million": 0.125,
+  "cache_write_1h_per_million": 0.2,
+  "long_context": {
+    "above_input_tokens": 100000,
+    "input_per_million": 0.5,
+    "output_per_million": 2.5,
+    "cache_read_per_million": 0.05,
+    "cache_write_per_million": 0.625,
+    "cache_write_1h_per_million": 1.0
+  }
+}
+```
+
+Packaged rates are the providers' published list prices (Anthropic and OpenAI
+API). Amazon Bedrock bills OpenAI and Anthropic models itself, and its
+regional endpoints can carry a premium, so treat the estimate as indicative.
+
 ---
 
 ## What gets recorded
@@ -183,12 +231,12 @@ separately (`inputTokens` excludes cached tokens), while LangChain's
 `usage_metadata` folds all three into `input_tokens` and breaks the cached part
 out in `input_token_details`. The chat graph keeps that convention:
 
-| Field                | Meaning                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| `input_tokens`       | **All** prompt tokens: uncached + cache read + cache write                         |
-| `cache_read_tokens`  | Prompt tokens served from the cache (`input_token_details.cache_read`)             |
-| `cache_write_tokens` | Prompt tokens written to the cache (`cache_creation`, or the per-TTL breakdown)    |
-| `output_tokens`      | Generated tokens                                                                   |
+| Field                | Meaning                                                                         |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `input_tokens`       | **All** prompt tokens: uncached + cache read + cache write                      |
+| `cache_read_tokens`  | Prompt tokens served from the cache (`input_token_details.cache_read`)          |
+| `cache_write_tokens` | Prompt tokens written to the cache (`cache_creation`, or the per-TTL breakdown) |
+| `output_tokens`      | Generated tokens                                                                |
 
 So uncached input is `input_tokens - cache_read_tokens - cache_write_tokens`,
 and an estimated cost is:

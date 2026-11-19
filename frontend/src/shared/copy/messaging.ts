@@ -1,3 +1,5 @@
+import type { UsagePurpose } from '@/shared/ws/usage-frames'
+
 // FR-DS-011 / NFR-I18N-001 — every user-facing `messaging` string is a typed constant here, never
 // inline in JSX. Phase 3 covers the connection badge, the composer and a naive transcript only;
 // streaming, tool activity and citation copy arrive with SPEC-012's Phase 4 requirements.
@@ -42,6 +44,44 @@ export const MESSAGING_COPY = {
     jumpToLatest: 'Jump to latest',
     jumpToLatestUnread: (count: number) => `Jump to latest, ${count} unread`,
     unreadCount: (count: number) => `${count}`,
+  },
+
+  usage: {
+    tokens: (input: string, output: string) => `Tokens ${input} in / ${output} out`,
+    estimated: (amount: string) => `Estimated ${amount}`,
+    withPending: (label: string) => `${label} · pending`,
+    inOut: (input: string, output: string) => `${input} in / ${output} out`,
+    purposes: {
+      chat: 'Chat',
+      summarization: 'Summarization',
+      retry: 'Retries',
+      title: 'Title',
+      embedding: 'Embedding',
+    } satisfies Readonly<Record<UsagePurpose, string>>,
+    cacheRead: 'Cache read',
+    cacheWrite: 'Cache write',
+    total: 'Total',
+    unpriced: 'No price estimate for this model',
+    pendingDetail: 'Final total pending',
+    // Screen readers get the whole breakdown, since the tooltip is not announced.
+    readTokens: (input: string, output: string) => `${input} input tokens, ${output} output tokens`,
+    readPurpose: (purpose: string, input: string, output: string) =>
+      `${purpose}: ${input} input, ${output} output`,
+    readCache: (read: string, write: string) => `Cache read ${read} tokens, cache write ${write} tokens`,
+    readAll: (parts: readonly string[]) => `Token usage. ${parts.join('. ')}.`,
+  },
+
+  session: {
+    title: 'This conversation',
+    noEstimate: 'No price estimate',
+    tokens: (amount: string) => `${amount} tokens`,
+    contextPercent: (percent: string) => `${percent} context`,
+    answers: 'Answers',
+    unpriced: (count: number) => `${count} ${count === 1 ? 'answer has' : 'answers have'} no price and ${count === 1 ? 'is' : 'are'} not included`,
+    context: 'Context window',
+    contextUsed: (used: string, max: string) => `${used} of ${max} tokens`,
+    contextMeter: 'Context window used',
+    read: (parts: readonly string[]) => `Conversation usage. ${parts.join('. ')}.`,
   },
 
   welcome: {

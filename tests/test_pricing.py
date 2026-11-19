@@ -81,6 +81,53 @@ def test_one_hour_cache_writes_without_a_rate_are_unpriced():
     assert estimate_cost([_event()], table) is not None
 
 
+_TIERED = {
+    "models": {
+        "anthropic:model-a": {
+            "input_per_million": 1,
+            "output_per_million": 5,
+            "cache_read_per_million": 0.1,
+            "cache_write_per_million": 1.25,
+            "long_context": {
+                "above_input_tokens": 100_000,
+                "input_per_million": 5,
+                "output_per_million": 25,
+                "cache_read_per_million": 0.5,
+                "cache_write_per_million": 6.25,
+            },
+        }
+    },
+}
+
+
+def test_long_context_rates_apply_per_call_above_the_threshold():
+    at_threshold = _event(input_tokens=100_000, output_tokens=1_000, cache_read_tokens=0, cache_write_tokens=0)
+    above = _event(input_tokens=100_001, output_tokens=1_000, cache_read_tokens=0, cache_write_tokens=0)
+
+    assert estimate_cost([at_threshold], _TIERED).estimated_cost_micros == 100_000 + 5_000
+    assert estimate_cost([above], _TIERED).estimated_cost_micros == 500_005 + 25_000
+    assert estimate_cost([at_threshold, above], _TIERED).estimated_cost_micros == 105_000 + 525_005
+
+
+def test_cached_tokens_count_towards_the_long_context_threshold():
+    # 50k uncached + 60k cache read: the prompt is 110k, so every part uses the long-context rates.
+    event = _event(input_tokens=110_000, output_tokens=0, cache_read_tokens=60_000, cache_write_tokens=0)
+
+    assert estimate_cost([event], _TIERED).estimated_cost_micros == 250_000 + 30_000
+
+
+def test_packaged_table_prices_current_anthropic_and_openai_models():
+    for provider, model_id in (
+        ("anthropic", "us.anthropic.claude-sonnet-5"),
+        ("anthropic", "global.anthropic.claude-opus-5-5"),
+        ("anthropic", "us.anthropic.claude-haiku-5-5"),
+        ("openai", "us.openai.gpt-6.1-sol"),
+        ("openai", "openai.gpt-6-luna"),
+    ):
+        event = _event(provider=provider, model_id=model_id, cache_read_tokens=0, cache_write_tokens=0)
+        assert estimate_cost([event]) is not None, model_id
+
+
 _TABLE = {
     "pricing_revision": "test-v2",
     "currency": "USD",
@@ -167,6 +214,7 @@ def test_summarize_usage_reports_null_cost_for_unknown_models():
         "output_tokens": 5,
         "cache_read": 0,
         "cache_write": 0,
+        "by_purpose": {"chat": {"input_tokens": 10, "output_tokens": 5}},
         "estimated_cost": None,
         "currency": None,
         "final": False,

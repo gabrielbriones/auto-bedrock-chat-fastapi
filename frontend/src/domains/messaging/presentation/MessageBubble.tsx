@@ -11,6 +11,7 @@ import { MarkdownView } from '@/domains/messaging/presentation/MarkdownView'
 import { stripReasoningBlocks } from '@/domains/messaging/presentation/redaction'
 import { ToolCallList } from '@/domains/messaging/presentation/ToolCallList'
 import { rowsFromActivity, rowsFromLive } from '@/domains/messaging/presentation/tool-call-rows'
+import { UsageLabel } from '@/domains/messaging/presentation/UsageLabel'
 
 const { transcript: COPY } = MESSAGING_COPY
 
@@ -83,6 +84,21 @@ function InFlightBubble({ entry }: { readonly entry: TranscriptEntry }) {
   )
 }
 
+function BubbleFooter({ entry, feedback }: { readonly entry: TranscriptEntry; readonly feedback: ReactNode }) {
+  const usage = entry.message.role === 'assistant' ? (entry.activity?.usage ?? null) : null
+
+  if (feedback === null && usage === null) {
+    return null
+  }
+
+  return (
+    <div className={cn('flex flex-wrap items-end gap-x-4 gap-y-2', feedback === null && 'mt-3')}>
+      {feedback}
+      <UsageLabel usage={usage} />
+    </div>
+  )
+}
+
 export const MessageBubble = memo(function MessageBubble({ entry, renderFeedback }: MessageBubbleProps) {
   const { message } = entry
   // An interrupted turn's text stopped mid-token, so it stays plain for the same reason a stream does.
@@ -135,7 +151,7 @@ export const MessageBubble = memo(function MessageBubble({ entry, renderFeedback
         </p>
       ) : null}
       {entry.activity !== null ? <KbCitations citations={entry.activity.citations} /> : null}
-      {canRenderFeedback ? renderFeedback(message.id) : null}
+      <BubbleFooter entry={entry} feedback={canRenderFeedback ? renderFeedback(message.id) : null} />
     </article>
   )
 }, sameEntry)

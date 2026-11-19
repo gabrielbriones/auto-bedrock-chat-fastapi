@@ -1,10 +1,12 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
 import type { MessageId } from '@/shared/kernel/branded'
 
+import { sessionUsage } from '@/domains/messaging/domain/session-usage'
 import { MessageComposer } from '@/domains/messaging/presentation/MessageComposer'
+import { SessionUsageSummary } from '@/domains/messaging/presentation/SessionUsageSummary'
 import { Transcript } from '@/domains/messaging/presentation/Transcript'
 import { composerAvailability } from '@/domains/messaging/presentation/composer-policy'
 
@@ -28,6 +30,7 @@ export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessage
   const { bootstrap, chatSession, notifications } = useContainer()
   const { connection, transcript, awaitingResponse } = useContainerStore('chatSession')
   const [draft, setDraft] = useState('')
+  const usage = useMemo(() => sessionUsage(transcript), [transcript])
 
   const availability = composerAvailability(
     {
@@ -66,7 +69,12 @@ export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessage
         awaitingResponse={awaitingResponse}
         onChange={setDraft}
         onSend={send}
-        toolbar={composerToolbar}
+        toolbar={
+          <>
+            {composerToolbar}
+            <SessionUsageSummary usage={usage} />
+          </>
+        }
       />
     </div>
   )

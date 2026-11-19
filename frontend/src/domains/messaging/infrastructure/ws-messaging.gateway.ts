@@ -1,5 +1,6 @@
 import type { MessageBus, ServerFrame } from '@/shared/ws/message-bus'
 import type { SendResult, SocketClient, Unsubscribe } from '@/shared/ws/socket-client'
+import { USAGE_PURPOSES, usageSchema, type WireUsage } from '@/shared/ws/usage-frames'
 import { Instant } from '@/shared/kernel/instant'
 import { isOk } from '@/shared/kernel/result'
 
@@ -8,7 +9,8 @@ import type {
   MessagingEvent,
   MessagingGateway,
 } from '@/domains/messaging/application/ports'
-import type { KbCitation, ToolCall, ToolResult, TurnActivity } from '@/domains/messaging/domain/turn'
+import type { KbCitation, ToolCall, ToolResult, TurnActivity, TurnUsage } from '@/domains/messaging/domain/turn'
+import { createTokenCount } from '@/domains/telemetry/domain/public'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
 
 type SocketWriter = Pick<SocketClient, 'send'>
@@ -53,10 +55,48 @@ const historyInstants = (messages: readonly HistoryFrameMessage[], fallback: str
   return resolved
 }
 
-const emptyActivity = (): TurnActivity => ({ toolCalls: [], toolResults: [], citations: [], truncated: false })
+const emptyActivity = (): TurnActivity => ({ toolCalls: [], toolResults: [], citations: [], truncated: false, usage: null })
 
 const hasActivity = (activity: TurnActivity): boolean =>
   activity.toolCalls.length > 0 || activity.toolResults.length > 0
+
+// Two wire shapes share `usage`: the turn summary (`cache_read`, `final`, ...) and, when no ledger ran,
+// the last call's own counts (`cache_read_tokens`). The latter has no `final`: nothing follows it.
+const turnUsage = (usage: WireUsage | undefined): TurnUsage | null => {
+  if (usage === undefined) {
+    return null
+  }
+
+  const input = usage.input_tokens ?? null
+  const output = usage.output_tokens ?? null
+  if (input === null && output === null) {
+    return null
+  }
+
+  return {
+    tokens: createTokenCount(
+      input ?? 0,
+      output ?? 0,
+      usage.cache_read ?? usage.cache_read_tokens ?? 0,
+      usage.cache_write ?? usage.cache_write_tokens ?? 0,
+    ),
+    byPurpose: USAGE_PURPOSES.flatMap((purpose) => {
+      const totals = usage.by_purpose?.[purpose]
+      return totals === undefined ? [] : [{ purpose, tokens: createTokenCount(totals.input_tokens, totals.output_tokens) }]
+    }),
+    estimatedCost: usage.estimated_cost ?? null,
+    currency: usage.currency ?? null,
+    final: usage.final ?? true,
+    context:
+      usage.context === undefined ? null : { usedTokens: usage.context.used_tokens, maxTokens: usage.context.max_tokens },
+  }
+}
+
+// History metadata is an untyped record, so its usage is validated here rather than by the bus.
+const historyUsage = (metadata: Record<string, unknown>): TurnUsage | null => {
+  const parsed = usageSchema.safeParse(metadata.usage)
+  return parsed.success ? turnUsage(parsed.data) : null
+}
 
 // The checkpoint is the graph's raw message list: the system prompt, then per turn a user message,
 // zero or more `assistant`(tool_calls) / `tool`(results) pairs, and the answering assistant message.
@@ -97,12 +137,14 @@ const historyMessages = (
 
         // XMGPLAT-11977: a turn the server closed as interrupted shows as a notice, not its tool round.
         const interrupted = message.metadata.interrupted === true
+        const usage = interrupted ? null : historyUsage(message.metadata)
+        const keepActivity = !interrupted && (usage !== null || hasActivity(pending))
         loaded.push({
           id: message.message_id ?? null,
           role: 'assistant',
           text: interrupted ? '' : message.content,
           at,
-          activity: hasActivity(pending) && !interrupted ? pending : null,
+          activity: keepActivity ? { ...pending, usage } : null,
           ...(interrupted ? { interrupted } : {}),
         })
         pending = emptyActivity()
@@ -206,6 +248,7 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
             toolResults: toolResults(frame.tool_results ?? []),
             citations: citations(frame.metadata?.kb_sources ?? []),
             truncated: frame.metadata?.preprocessing_applied === true,
+            usage: turnUsage(frame.metadata?.usage),
             configuredModel: {
               id: frame.metadata?.model_id ?? '',
               name: frame.metadata?.model_name ?? frame.metadata?.model_id ?? '',
@@ -213,6 +256,10 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
           }
     case 'error':
       return { kind: 'failed', text: frame.message }
+    case 'usage_updated': {
+      const usage = turnUsage(frame.usage)
+      return usage === null ? null : { kind: 'usage-updated', messageId: frame.message_id, usage }
+    }
     case 'conversation_loaded':
       return {
         kind: 'history-loaded',

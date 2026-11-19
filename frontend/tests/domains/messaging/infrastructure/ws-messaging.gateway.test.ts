@@ -120,9 +120,164 @@ describe('WsMessagingGateway', () => {
         toolResults: [],
         citations: [],
         truncated: false,
+        usage: null,
         configuredModel: { id: 'claude', name: 'Claude' },
       },
     ])
+  })
+
+  describe('per-message usage', () => {
+    const metadata = (usage: Record<string, unknown>) =>
+      ({
+        model_id: 'claude',
+        model_name: 'Claude',
+        tool_call_rounds: 0,
+        total_tool_calls: 0,
+        preprocessing_applied: false,
+        usage,
+      }) as Extract<ServerFrame, { type: 'ai_response' }>['metadata']
+
+    it('maps the turn usage summary of an answer, pending until final', () => {
+      const { emit, events } = createHarness()
+
+      emit(
+        answer({
+          metadata: metadata({
+            input_tokens: 1320,
+            output_tokens: 280,
+            cache_read: 400,
+            cache_write: 12,
+            by_purpose: {
+              chat: { input_tokens: 1200, output_tokens: 250 },
+              summarization: { input_tokens: 120, output_tokens: 30 },
+            },
+            estimated_cost: 0.00792,
+            currency: 'USD',
+            final: false,
+          }),
+        }),
+      )
+
+      expect(events[0]).toMatchObject({
+        kind: 'answered',
+        usage: {
+          tokens: { input: 1320, output: 280, cacheRead: 400, cacheWrite: 12, total: 1600 },
+          byPurpose: [
+            { purpose: 'chat', tokens: { input: 1200, output: 250 } },
+            { purpose: 'summarization', tokens: { input: 120, output: 30 } },
+          ],
+          estimatedCost: 0.00792,
+          currency: 'USD',
+          final: false,
+        },
+      })
+    })
+
+    it('reads a per-call usage without a ledger as final, with its cache subsets', () => {
+      const { emit, events } = createHarness()
+
+      emit(answer({ metadata: metadata({ input_tokens: 6143, output_tokens: 102, cache_read_tokens: 5120 }) }))
+
+      expect(events[0]).toMatchObject({
+        usage: {
+          tokens: { input: 6143, output: 102, cacheRead: 5120, cacheWrite: 0 },
+          byPurpose: [],
+          estimatedCost: null,
+          currency: null,
+          final: true,
+        },
+      })
+    })
+
+    it('reports no usage when neither token count is known', () => {
+      const { emit, events } = createHarness()
+
+      emit(answer({ metadata: metadata({ input_tokens: null, output_tokens: null }) }))
+
+      expect(events[0]).toMatchObject({ kind: 'answered', usage: null })
+    })
+
+    it('maps usage_updated to the final usage of its message', () => {
+      const { emit, events } = createHarness()
+
+      emit({
+        type: 'usage_updated',
+        timestamp: TIMESTAMP,
+        message_id: 'm-1',
+        usage: { input_tokens: 1410, output_tokens: 288, cache_read: 400, cache_write: 0, estimated_cost: null, currency: null, final: true },
+      })
+
+      expect(events).toEqual([
+        {
+          kind: 'usage-updated',
+          messageId: 'm-1',
+          usage: {
+            tokens: { input: 1410, output: 288, cacheRead: 400, cacheWrite: 0, total: 1698 },
+            byPurpose: [],
+            estimatedCost: null,
+            currency: null,
+            final: true,
+            context: null,
+          },
+        },
+      ])
+    })
+
+    it('maps the context fill when the server knows the model window', () => {
+      const { emit, events } = createHarness()
+
+      emit(
+        answer({
+          metadata: metadata({ input_tokens: 10, output_tokens: 5, context: { used_tokens: 126_000, max_tokens: 1_000_000 } }),
+        }),
+      )
+
+      expect(events[0]).toMatchObject({ usage: { context: { usedTokens: 126_000, maxTokens: 1_000_000 } } })
+    })
+
+    it('hydrates persisted usage on a loaded answer, even without tool activity', () => {
+      const { emit, events } = createHarness()
+
+      emit({
+        type: 'conversation_loaded',
+        timestamp: TIMESTAMP,
+        conversation_id: 'c-2',
+        conversation: {},
+        messages: [
+          {
+            message_id: 'm-3',
+            role: 'assistant',
+            content: 'Done.',
+            timestamp: TIMESTAMP,
+            tool_calls: [],
+            tool_results: [],
+            metadata: { usage: { input_tokens: 10, output_tokens: 5, estimated_cost: 0.0001, currency: 'USD', final: true } },
+          },
+          {
+            message_id: 'm-4',
+            role: 'assistant',
+            content: 'Older server.',
+            timestamp: TIMESTAMP,
+            tool_calls: [],
+            tool_results: [],
+            metadata: { usage: { unexpected: true } },
+          },
+        ],
+      })
+
+      expect(events[0]).toMatchObject({
+        messages: [
+          {
+            id: 'm-3',
+            activity: {
+              toolCalls: [],
+              usage: { tokens: { input: 10, output: 5 }, estimatedCost: 0.0001, currency: 'USD', final: true },
+            },
+          },
+          { id: 'm-4', activity: null },
+        ],
+      })
+    })
   })
 
   it('maps an anonymous ai_response to an answer without a conversation id', () => {

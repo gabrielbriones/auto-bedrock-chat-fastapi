@@ -70,6 +70,7 @@ const renderAt = (path: string, permission: SystemNotificationPermission = 'gran
         toolResults: [],
         citations: [],
         truncated: false,
+        usage: null,
         configuredModel: { id: 'm', name: 'M' },
       })
     })

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from ..context_budget import provider_for_model
+from ..model_capabilities import get_model_profile
 
 UsagePurpose = Literal["chat", "summarization", "retry", "title", "embedding"]
 
@@ -152,3 +153,27 @@ class UsageLedger:
             "cache_read": sum(event.cache_read_tokens for event in events),
             "cache_write": sum(event.cache_write_tokens for event in events),
         }
+
+    def purpose_summary(self) -> Dict[str, Dict[str, int]]:
+        """Input/output totals per purpose, for the purposes that made a call."""
+        totals: Dict[str, Dict[str, int]] = {}
+        for event in self.events:
+            purpose = totals.setdefault(event.purpose, {"input_tokens": 0, "output_tokens": 0})
+            purpose["input_tokens"] += event.input_tokens
+            purpose["output_tokens"] += event.output_tokens
+        return totals
+
+    def context_fill(self) -> Optional[Dict[str, int]]:
+        """How full the conversation leaves its model's input window, or ``None`` when unknown.
+
+        The latest ``chat``/``retry`` call's prompt plus its answer is what the next turn starts from;
+        ``None`` without such a call or when the model's ``max_input_tokens`` is not known.
+        """
+        calls = [event for event in self.events if event.purpose in ("chat", "retry")]
+        if not calls:
+            return None
+        latest = calls[-1]
+        window = get_model_profile(latest.model_id).get("max_input_tokens")
+        if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
+            return None
+        return {"used_tokens": latest.input_tokens + latest.output_tokens, "max_tokens": window}
