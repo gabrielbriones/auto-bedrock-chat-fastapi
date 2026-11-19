@@ -2,6 +2,8 @@ import type { ConversationId, TurnId } from '@/shared/kernel/branded'
 import { err, ok, type Result } from '@/shared/kernel/result'
 
 import type { ChatMessage } from '@/domains/messaging/domain/message'
+import type { UsagePurpose } from '@/shared/ws/usage-frames'
+
 import type { TokenCount } from '@/domains/telemetry/domain/public'
 
 // DESIGN-001 §3.1. The typing frame enters `streaming`; T-071 applies its cumulative text.
@@ -45,7 +47,7 @@ export type KbCitation = {
 
 /** One call purpose (`chat`, `summarization`, `title`, ...) of a turn's usage. */
 export type PurposeUsage = {
-  readonly purpose: string
+  readonly purpose: UsagePurpose
   readonly tokens: TokenCount
 }
 

@@ -337,6 +337,24 @@ describe('ServerFrameSchema', () => {
     expect(subscriber).not.toHaveBeenCalled()
   })
 
+  it('rejects a per-purpose breakdown keyed by a purpose the backend does not define', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+
+    bus.receive(
+      JSON.stringify({
+        type: 'usage_updated',
+        message_id: 'message-1',
+        timestamp: '2026-11-12T12:00:06',
+        usage: { input_tokens: 1, output_tokens: 1, by_purpose: { reranking: { input_tokens: 1, output_tokens: 1 } } },
+      }),
+    )
+
+    expect(bus.invalidFrameCount('usage_updated')).toBe(1)
+    expect(subscriber).not.toHaveBeenCalled()
+  })
+
   it('delivers an anonymous ai response with no persisted conversation', () => {
     const bus = new MessageBus(logger())
     const subscriber = jest.fn()

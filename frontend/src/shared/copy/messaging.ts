@@ -1,3 +1,5 @@
+import type { UsagePurpose } from '@/shared/ws/usage-frames'
+
 // FR-DS-011 / NFR-I18N-001 — every user-facing `messaging` string is a typed constant here, never
 // inline in JSX. Phase 3 covers the connection badge, the composer and a naive transcript only;
 // streaming, tool activity and citation copy arrive with SPEC-012's Phase 4 requirements.
@@ -44,7 +46,6 @@ export const MESSAGING_COPY = {
     unreadCount: (count: number) => `${count}`,
   },
 
-  // XMGPLAT-11866: an estimate, never a bill, so no string here may call it a "cost".
   usage: {
     tokens: (input: string, output: string) => `Tokens ${input} in / ${output} out`,
     estimated: (amount: string) => `Estimated ${amount}`,
@@ -56,7 +57,7 @@ export const MESSAGING_COPY = {
       retry: 'Retries',
       title: 'Title',
       embedding: 'Embedding',
-    } as Readonly<Partial<Record<string, string>>>,
+    } satisfies Readonly<Record<UsagePurpose, string>>,
     cacheRead: 'Cache read',
     cacheWrite: 'Cache write',
     total: 'Total',

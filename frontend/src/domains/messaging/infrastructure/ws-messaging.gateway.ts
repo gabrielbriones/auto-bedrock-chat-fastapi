@@ -1,6 +1,6 @@
 import type { MessageBus, ServerFrame } from '@/shared/ws/message-bus'
 import type { SendResult, SocketClient, Unsubscribe } from '@/shared/ws/socket-client'
-import { usageSchema, type WireUsage } from '@/shared/ws/usage-frames'
+import { USAGE_PURPOSES, usageSchema, type WireUsage } from '@/shared/ws/usage-frames'
 import { Instant } from '@/shared/kernel/instant'
 import { isOk } from '@/shared/kernel/result'
 
@@ -80,10 +80,10 @@ const turnUsage = (usage: WireUsage | undefined): TurnUsage | null => {
       usage.cache_read ?? usage.cache_read_tokens ?? 0,
       usage.cache_write ?? usage.cache_write_tokens ?? 0,
     ),
-    byPurpose: Object.entries(usage.by_purpose ?? {}).map(([purpose, totals]) => ({
-      purpose,
-      tokens: createTokenCount(totals.input_tokens, totals.output_tokens),
-    })),
+    byPurpose: USAGE_PURPOSES.flatMap((purpose) => {
+      const totals = usage.by_purpose?.[purpose]
+      return totals === undefined ? [] : [{ purpose, tokens: createTokenCount(totals.input_tokens, totals.output_tokens) }]
+    }),
     estimatedCost: usage.estimated_cost ?? null,
     currency: usage.currency ?? null,
     final: usage.final ?? true,

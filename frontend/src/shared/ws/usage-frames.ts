@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+// Mirrors the backend's `UsagePurpose`; the order is the one the UI lists them in.
+export const USAGE_PURPOSES = ['chat', 'summarization', 'retry', 'title', 'embedding'] as const
+export type UsagePurpose = (typeof USAGE_PURPOSES)[number]
+
 // `.strict()`: every key the backend can send must be listed, or a frame carrying it is dropped.
 export const usageSchema = z
   .object({
@@ -12,9 +16,9 @@ export const usageSchema = z
     // Per-turn summary across every AI call of the turn (XMGPLAT-11865).
     cache_read: z.number().optional(),
     cache_write: z.number().optional(),
-    // Keyed by call purpose (`chat`, `summarization`, `title`, ...); only purposes that made a call.
+    // Only the purposes that made a call.
     by_purpose: z
-      .record(z.string(), z.object({ input_tokens: z.number(), output_tokens: z.number() }).strict())
+      .partialRecord(z.enum(USAGE_PURPOSES), z.object({ input_tokens: z.number(), output_tokens: z.number() }).strict())
       .optional(),
     // Latest chat call's prompt + answer against the model's input window; absent when the window is unknown.
     context: z.object({ used_tokens: z.number(), max_tokens: z.number() }).strict().optional(),

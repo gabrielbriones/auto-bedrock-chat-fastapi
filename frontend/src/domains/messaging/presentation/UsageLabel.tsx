@@ -2,20 +2,16 @@ import { Coins } from 'lucide-react'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MESSAGING_COPY } from '@/shared/copy/messaging'
+import { USAGE_PURPOSES } from '@/shared/ws/usage-frames'
 
 import type { PurposeUsage, TurnUsage } from '@/domains/messaging/domain/turn'
 import { formatEstimatedCost, formatTokenCount } from '@/domains/telemetry/domain/public'
 
 const { usage: COPY } = MESSAGING_COPY
 
-const PURPOSE_ORDER = ['chat', 'summarization', 'retry', 'title', 'embedding']
+const rank = (purpose: PurposeUsage['purpose']): number => USAGE_PURPOSES.indexOf(purpose)
 
-const rank = (purpose: string): number => {
-  const index = PURPOSE_ORDER.indexOf(purpose)
-  return index === -1 ? PURPOSE_ORDER.length : index
-}
-
-const purposeName = (purpose: string): string => COPY.purposes[purpose] ?? purpose
+const purposeName = (purpose: PurposeUsage['purpose']): string => COPY.purposes[purpose]
 
 const exact = (value: number): string => formatTokenCount(value, 'exact')
 
