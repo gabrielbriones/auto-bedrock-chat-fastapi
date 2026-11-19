@@ -79,7 +79,7 @@ export type TurnActivity = {
   readonly usage: TurnUsage | null
 }
 
-const NO_ACTIVITY: TurnActivity = {
+export const NO_ACTIVITY: TurnActivity = {
   toolCalls: [],
   toolResults: [],
   citations: [],

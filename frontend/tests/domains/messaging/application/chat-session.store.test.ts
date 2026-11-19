@@ -164,6 +164,19 @@ describe('ChatSessionStore', () => {
 
       expect(store.getSnapshot().transcript[0]?.activity?.usage).toEqual(usageOf(130, true))
     })
+
+    it('settles a loaded answer that had no activity or usage', () => {
+      const { store, emit } = createHarness()
+      emit({
+        kind: 'history-loaded',
+        conversationId: 'c-2',
+        messages: [{ id: 'm-3', role: 'assistant', text: 'Done.', at: fixedInstant(), activity: null }],
+      })
+
+      emit({ kind: 'usage-updated', messageId: 'm-3', usage: usageOf(130, true) })
+
+      expect(store.getSnapshot().transcript[0]?.activity?.usage).toEqual(usageOf(130, true))
+    })
   })
 
   describe('connection state (FR-MSG-002)', () => {

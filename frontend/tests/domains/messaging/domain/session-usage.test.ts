@@ -85,4 +85,21 @@ describe('sessionUsage', () => {
       pending: true,
     })
   })
+
+  it('drops the context reading when a newer completed answer reports no usage', () => {
+    const older = usage({ context: { usedTokens: 110, maxTokens: 1_000 } })
+
+    expect(sessionUsage([entry(older, 'assistant', 1), entry(null, 'assistant', 2)])?.context).toBeNull()
+  })
+
+  it('skips interrupted and transient entries when reading the latest context', () => {
+    const older = usage({ context: { usedTokens: 110, maxTokens: 1_000 } })
+    const interrupted: TranscriptEntry = { ...entry(null, 'assistant', 2), interrupted: 'connection-lost' }
+    const transient: TranscriptEntry = { ...entry(null, 'assistant', 3), transient: true }
+
+    expect(sessionUsage([entry(older, 'assistant', 1), interrupted, transient])?.context).toEqual({
+      usedTokens: 110,
+      maxTokens: 1_000,
+    })
+  })
 })

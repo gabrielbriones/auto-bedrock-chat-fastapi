@@ -23,12 +23,22 @@ const usages = (entries: readonly TranscriptEntry[]): TurnUsage[] =>
     entry.message.role === 'assistant' && entry.activity?.usage ? [entry.activity.usage] : [],
   )
 
+const isCompletedAnswer = (entry: TranscriptEntry): boolean =>
+  entry.message.role === 'assistant' &&
+  !entry.transient &&
+  !entry.progress &&
+  !entry.pending &&
+  !entry.streaming &&
+  entry.interrupted === null
+
 export const sessionUsage = (entries: readonly TranscriptEntry[]): SessionUsage | null => {
   const all = usages(entries)
-  const latest = all.at(-1)
-  if (latest === undefined) {
+  if (all.length === 0) {
     return null
   }
+
+  // Independent of `all`: a newer answer without usage must not leave an older reading standing.
+  const latestAnswer = entries.filter(isCompletedAnswer).at(-1)
 
   const currency = all.find((usage) => usage.estimatedCost !== null)?.currency ?? null
   // A second currency cannot be added to the first, so it counts as unpriced.
@@ -48,6 +58,6 @@ export const sessionUsage = (entries: readonly TranscriptEntry[]): SessionUsage 
     unpricedAnswers: all.length - priced.length,
     answers: all.length,
     pending: all.some((usage) => !usage.final),
-    context: latest.context,
+    context: latestAnswer?.activity?.usage?.context ?? null,
   }
 }

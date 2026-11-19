@@ -1,5 +1,5 @@
 import type { HistoryMessage } from '@/domains/messaging/domain/transcript'
-import type { Turn, TurnActivity, TurnUsage } from '@/domains/messaging/domain/turn'
+import { NO_ACTIVITY, type Turn, type TurnActivity, type TurnUsage } from '@/domains/messaging/domain/turn'
 import type { MessagingEvent } from '@/domains/messaging/application/ports'
 
 export const answeredActivity = (event: Extract<MessagingEvent, { kind: 'answered' }>): TurnActivity => ({
@@ -17,13 +17,18 @@ export const settleTurnUsage = (turns: readonly Turn[], id: string, usage: TurnU
     ? turns.map((turn) => (turn.response?.id === id ? { ...turn, activity: { ...turn.activity, usage } } : turn))
     : turns
 
+// A loaded answer may have no activity yet: the chat call reported no usage but a later call (the title) did.
 export const settleHistoryUsage = (
   history: readonly HistoryMessage[],
   id: string,
   usage: TurnUsage,
-): readonly HistoryMessage[] =>
-  history.some((entry) => entry.message.id === id && entry.activity !== null)
+): readonly HistoryMessage[] => {
+  const settles = (entry: HistoryMessage): boolean =>
+    entry.message.id === id && entry.message.role === 'assistant' && entry.interrupted !== true
+
+  return history.some(settles)
     ? history.map((entry) =>
-        entry.message.id === id && entry.activity !== null ? { ...entry, activity: { ...entry.activity, usage } } : entry,
+        settles(entry) ? { ...entry, activity: { ...(entry.activity ?? NO_ACTIVITY), usage } } : entry,
       )
     : history
+}
