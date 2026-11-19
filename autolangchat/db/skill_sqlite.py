@@ -158,8 +158,11 @@ class SQLiteSkillStore(BaseSkillStore):
                         updated_by,
                     ),
                 )
-                self._conn.commit()
+                # Read back before committing: the open write transaction holds
+                # SQLite's write lock, so another worker sharing the file cannot
+                # change or delete the row between the write and this read.
                 row = self._conn.execute(_SELECT_ONE_SQL, (skill.name,)).fetchone()
+                self._conn.commit()
             except sqlite3.IntegrityError as exc:
                 self._conn.rollback()
                 raise SkillAlreadyExistsError(f"Skill {skill.name!r} already exists") from exc
@@ -200,8 +203,9 @@ class SQLiteSkillStore(BaseSkillStore):
                 if cur.rowcount == 0:
                     self._conn.rollback()
                     raise SkillNotFoundError(f"Skill {name!r} not found")
-                self._conn.commit()
+                # Read back before committing, as in _create_sync.
                 row = self._conn.execute(_SELECT_ONE_SQL, (name,)).fetchone()
+                self._conn.commit()
             except SkillNotFoundError:
                 raise
             except Exception:

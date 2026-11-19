@@ -99,8 +99,8 @@ curl -sS -X POST https://app.example.com/chat/admin/skills \
         "name": "job-triage",
         "display_name": "Job triage",
         "description": "Triage a failed job",
-        "instructions": "Investigate job {{JOB_ID}} and summarise the root cause.",
-        "parameters": [{"name": "JOB_ID", "label": "Job ID", "required": true}]
+        "instructions": "Investigate job {{job_id}} and summarise the root cause.",
+        "parameters": [{"name": "job_id", "label": "Job ID", "required": true}]
       }'
 ```
 
@@ -121,7 +121,7 @@ independent of `admin_enabled`.
       "description": "Triage a failed job",
       "parameters": [
         {
-          "name": "JOB_ID",
+          "name": "job_id",
           "label": "Job ID",
           "required": true,
           "input_type": "text"

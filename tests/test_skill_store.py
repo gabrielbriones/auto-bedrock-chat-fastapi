@@ -390,6 +390,28 @@ async def test_sqlite_skills_survive_reopening_the_database(tmp_path):
     await second.close()
 
 
+async def test_sqlite_writes_read_the_row_back_before_committing(tmp_path):
+    # Another worker sharing the file could change the row between COMMIT and a
+    # later SELECT; reading inside the write transaction (which holds SQLite's
+    # write lock) returns exactly what this call wrote.
+    store = SQLiteSkillStore(str(tmp_path / "skills.db"))
+    await store.open()
+    statements = []
+    store._conn.set_trace_callback(statements.append)
+
+    operations = [
+        lambda: store.create_skill(_skill()),
+        lambda: store.replace_skill(_skill(display_name="New")),
+        lambda: store.set_enabled("triage", False),
+    ]
+    for operation in operations:
+        statements.clear()
+        await operation()
+        verbs = [statement.split()[0].upper() for statement in statements]
+        assert verbs.index("SELECT") < verbs.index("COMMIT"), statements
+    await store.close()
+
+
 async def test_sqlite_opens_lazily_on_first_use(tmp_path):
     store = SQLiteSkillStore(str(tmp_path / "skills.db"))
     assert await store.list_skills() == []

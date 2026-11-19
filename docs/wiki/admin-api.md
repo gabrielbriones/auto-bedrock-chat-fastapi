@@ -615,7 +615,7 @@ The user-facing counterpart, `GET {chat_endpoint}/skills/catalog`, is **not** an
 ```bash
 curl -sS -X PUT -H 'Content-Type: application/json' -b cookies.txt \
   https://app.example.com/chat/admin/skills/job-triage \
-  -d '{"display_name": "Job triage", "instructions": "Investigate job {{JOB_ID}}."}'
+  -d '{"display_name": "Job triage", "instructions": "Investigate job {{job_id}}."}'
 ```
 
 ---
