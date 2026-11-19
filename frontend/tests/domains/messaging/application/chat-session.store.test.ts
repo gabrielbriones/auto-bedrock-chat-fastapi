@@ -108,7 +108,7 @@ describe('ChatSessionStore', () => {
     expect(store.getSnapshot().configuredModel).toEqual({ id: 'model-1', name: 'Model 1' })
   })
 
-  describe('per-message usage (XMGPLAT-11866)', () => {
+  describe('per-message usage', () => {
     const responseEntry = (store: ChatSessionStore) =>
       store.getSnapshot().transcript.find((entry) => entry.message.role === 'assistant')
 

@@ -46,7 +46,6 @@ function Row({ label, value }: { readonly label: string; readonly value: string 
   )
 }
 
-// Absent usage (older servers, failed or interrupted turns) renders nothing at all.
 export function UsageLabel({ usage }: { readonly usage: TurnUsage | null }) {
   if (usage === null) {
     return null

@@ -314,7 +314,7 @@ describe('MessageBubble', () => {
     expect(results.violations.map((violation) => violation.id)).toEqual([])
   })
 
-  describe('usage label (XMGPLAT-11866)', () => {
+  describe('usage label', () => {
     const usage = (overrides: Partial<TurnUsage> = {}): TurnUsage => ({
       tokens: createTokenCount(1234, 340, 400, 12),
       byPurpose: [

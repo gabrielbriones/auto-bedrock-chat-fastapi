@@ -71,7 +71,6 @@ export const MESSAGING_COPY = {
     readAll: (parts: readonly string[]) => `Token usage. ${parts.join('. ')}.`,
   },
 
-  // The open conversation's running totals and how full the model's input window is.
   session: {
     title: 'This conversation',
     noEstimate: 'No price estimate',

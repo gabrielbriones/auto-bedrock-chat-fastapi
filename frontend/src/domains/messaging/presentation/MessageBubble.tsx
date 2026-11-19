@@ -84,7 +84,6 @@ function InFlightBubble({ entry }: { readonly entry: TranscriptEntry }) {
   )
 }
 
-// Feedback on the left, usage on the right, bottom-aligned with the feedback buttons.
 function BubbleFooter({ entry, feedback }: { readonly entry: TranscriptEntry; readonly feedback: ReactNode }) {
   const usage = entry.message.role === 'assistant' ? (entry.activity?.usage ?? null) : null
 

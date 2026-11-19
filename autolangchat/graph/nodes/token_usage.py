@@ -99,9 +99,8 @@ async def token_usage_node(state: ChatState, config: RunnableConfig) -> Dict[str
             final=not configurable.get("usage_finalized_later", False),
             pricing_table=pricing_table if isinstance(pricing_table, Mapping) else None,
         )
+
         if not per_call:
-            # The aggregate no longer says which model or cache TTL each round used, nor how big the
-            # latest prompt was.
             summary, estimate = {**summary, "estimated_cost": None, "currency": None}, None
             summary.pop("context", None)
         updated_metadata["usage"] = summary

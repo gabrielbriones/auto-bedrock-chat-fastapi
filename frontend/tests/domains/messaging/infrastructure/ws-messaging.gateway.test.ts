@@ -126,7 +126,7 @@ describe('WsMessagingGateway', () => {
     ])
   })
 
-  describe('per-message usage (XMGPLAT-11866)', () => {
+  describe('per-message usage', () => {
     const metadata = (usage: Record<string, unknown>) =>
       ({
         model_id: 'claude',

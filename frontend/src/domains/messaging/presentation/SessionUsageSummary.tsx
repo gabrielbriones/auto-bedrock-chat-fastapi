@@ -70,7 +70,6 @@ function Row({ label, value }: { readonly label: string; readonly value: string 
   )
 }
 
-// Renders nothing until an answer in this conversation has reported usage.
 export function SessionUsageSummary({ usage }: { readonly usage: SessionUsage | null }) {
   if (usage === null) {
     return null

@@ -289,7 +289,6 @@ describe('ServerFrameSchema', () => {
     expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
   })
 
-  // XMGPLAT-11866: the per-purpose breakdown behind the chat usage tooltip.
   it('delivers a usage update carrying its per-purpose breakdown', () => {
     const bus = new MessageBus(logger())
     const subscriber = jest.fn()
