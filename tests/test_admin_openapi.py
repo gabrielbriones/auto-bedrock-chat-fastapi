@@ -50,12 +50,22 @@ synthesis_routes_mod = load_module(
         "autolangchat.admin.synthesizer": synth_mod,
     },
 )
+skill_routes_mod = load_module(
+    "autolangchat.admin.admin_skill_routes",
+    "admin/admin_skill_routes.py",
+    extra_modules={
+        "autolangchat.exceptions": exceptions_mod,
+        "autolangchat.models": models_mod,
+        "autolangchat.admin.admin_errors": admin_errors_mod,
+    },
+)
 
 AdminAPIError = exceptions_mod.AdminAPIError
 register_admin_error_handlers = admin_errors_mod.register_admin_error_handlers
 register_admin_feedback_routes = feedback_routes_mod.register_admin_feedback_routes
 register_admin_kb_routes = kb_routes_mod.register_admin_kb_routes
 register_admin_synthesis_routes = synthesis_routes_mod.register_admin_synthesis_routes
+register_admin_skill_routes = skill_routes_mod.register_admin_skill_routes
 
 
 class _FakeFeedbackStore:
@@ -134,6 +144,13 @@ def _build_admin_app(*, authenticated=True):
         require_admin=require_admin,
         synthesizer=MagicMock(),
         embedding_client=MagicMock(),
+    )
+    register_admin_skill_routes(
+        app,
+        prefix="/bedrock-chat/admin",
+        get_skill_store=lambda: None,
+        require_admin=require_admin,
+        chat_config=SimpleNamespace(),
     )
     return app
 
@@ -241,3 +258,36 @@ class TestLiveErrorEnvelope:
         body = resp.json()
         assert body["code"] == "not_authenticated"
         assert isinstance(body["detail"], str)
+
+
+class TestOpenAPISkillRoutes:
+    def test_skill_paths_and_schemas_present(self):
+        schema = TestClient(_build_admin_app()).get("/openapi.json").json()
+        paths = schema["paths"]
+        base = "/bedrock-chat/admin/skills"
+
+        assert set(paths[base]) == {"get", "post"}
+        assert set(paths[f"{base}/{{name}}"]) == {"get", "put", "delete"}
+        assert "post" in paths[f"{base}/{{name}}/enable"]
+        assert "post" in paths[f"{base}/{{name}}/disable"]
+
+        assert "SkillListResponse" in _schema_ref(paths[base]["get"]["responses"]["200"])
+        assert "Skill" in _schema_ref(paths[base]["post"]["responses"]["201"])
+        assert (
+            "SkillReplaceRequest"
+            in paths[f"{base}/{{name}}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        )
+        assert "204" in paths[f"{base}/{{name}}"]["delete"]["responses"]
+
+    def test_skill_write_routes_document_error_envelopes(self):
+        schema = TestClient(_build_admin_app()).get("/openapi.json").json()
+        post = schema["paths"]["/bedrock-chat/admin/skills"]["post"]["responses"]
+
+        for status in ("401", "403", "409", "503"):
+            assert "ErrorResponse" in _schema_ref(post[status])
+
+    def test_skill_list_schema_has_no_instructions_but_detail_has(self):
+        schemas = TestClient(_build_admin_app()).get("/openapi.json").json()["components"]["schemas"]
+
+        assert "instructions" not in schemas["SkillSummary"]["properties"]
+        assert "instructions" in schemas["Skill"]["properties"]

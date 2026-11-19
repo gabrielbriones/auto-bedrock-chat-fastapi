@@ -304,3 +304,23 @@ class TestArtifactEnvVars:
         for value in ("0", str(ceiling + 1)):
             with pytest.raises(ValidationError):
                 _load_config(**{name: value})
+
+
+class TestSkillEnvVars:
+    def test_persistence_enabled_by_default_and_can_be_disabled(self):
+        assert _load_config().skills_persistence_enabled is True
+        assert _load_config(AUTOCHAT_SKILLS_PERSISTENCE_ENABLED="false").skills_persistence_enabled is False
+
+    @pytest.mark.parametrize(
+        "name,field,default",
+        [
+            ("AUTOCHAT_SKILL_INSTRUCTIONS_MAX_CHARS", "skill_instructions_max_chars", 32000),
+            ("AUTOCHAT_SKILL_DESCRIPTION_MAX_CHARS", "skill_description_max_chars", 300),
+            ("AUTOCHAT_SKILL_MAX_PARAMETERS", "skill_max_parameters", 20),
+        ],
+    )
+    def test_limits_have_defaults_and_must_be_positive(self, name, field, default):
+        assert getattr(_load_config(), field) == default
+        assert getattr(_load_config(**{name: "123"}), field) == 123
+        with pytest.raises(ValidationError):
+            _load_config(**{name: "0"})

@@ -103,6 +103,23 @@ counter semantics and deployment limitations.
 
 ---
 
+## Skill Storage
+
+Skills are admin-managed instruction sets kept in a database (`BaseSkillStore`, with SQLite and Postgres
+backends). `AutoLangChatPlugin` builds the store in `__init__` via `create_skill_store(config)`, which infers
+the backend and database from the stores the app already uses, opens it during `startup()` and closes it on
+shutdown. If it cannot be built or opened, skills are disabled and chat is unaffected.
+
+Two HTTP surfaces sit on the store: the admin routes (`/admin/skills*`, behind `require_admin`, registered
+only when the admin API is enabled) and a user catalog (`GET {chat_endpoint}/skills/catalog`, enabled skills
+without their instructions). Both resolve the store per request, because routes are registered before the
+store is opened. Skills are independent of [Preset Prompts](preset-prompts), and nothing in the chat graph
+loads them yet.
+
+See [Skills](skills) for the model, limits, configuration and API.
+
+---
+
 ## Supported Models
 
 | Model Family          | Example Model ID                               | Parser                   |

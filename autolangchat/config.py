@@ -23,6 +23,9 @@ from .defaults import (
     DEFAULT_MAX_TRUNCATION_RECURSION,
     DEFAULT_PRESERVE_SYSTEM_MESSAGE,
     DEFAULT_SESSION_TIMEOUT,
+    DEFAULT_SKILL_DESCRIPTION_MAX_CHARS,
+    DEFAULT_SKILL_INSTRUCTIONS_MAX_CHARS,
+    DEFAULT_SKILL_MAX_PARAMETERS,
     DEFAULT_TIMEOUT,
     DEFAULT_TOOL_RESPONSE_MAX_BYTES,
     HISTORY_MSG_LENGTH_THRESHOLD_FRACTION,
@@ -1243,6 +1246,43 @@ class ChatConfig(BaseSettings):
             "missing optional dependency, etc.), the feature is silently "
             "disabled rather than crashing the app."
         ),
+    )
+
+    # ------------------------------------------------------------------
+    # Skills Storage Backend
+    # ------------------------------------------------------------------
+
+    skills_persistence_enabled: bool = Field(
+        default=True,
+        alias="AUTOCHAT_SKILLS_PERSISTENCE_ENABLED",
+        description=(
+            "Master switch for the admin-managed skill store. When True, the plugin "
+            "calls ``db.create_skill_store(config)`` to build a ``BaseSkillStore``; "
+            "the backend, connection URL and file path are inferred from whichever "
+            "database the app already uses. If no usable backend can be built at "
+            "runtime, the feature is disabled rather than crashing the app."
+        ),
+    )
+
+    skill_instructions_max_chars: int = Field(
+        default=DEFAULT_SKILL_INSTRUCTIONS_MAX_CHARS,
+        alias="AUTOCHAT_SKILL_INSTRUCTIONS_MAX_CHARS",
+        gt=0,
+        description="Maximum length of a skill's instructions text.",
+    )
+
+    skill_description_max_chars: int = Field(
+        default=DEFAULT_SKILL_DESCRIPTION_MAX_CHARS,
+        alias="AUTOCHAT_SKILL_DESCRIPTION_MAX_CHARS",
+        gt=0,
+        description="Maximum length of a skill's description (shown in the user catalog).",
+    )
+
+    skill_max_parameters: int = Field(
+        default=DEFAULT_SKILL_MAX_PARAMETERS,
+        alias="AUTOCHAT_SKILL_MAX_PARAMETERS",
+        gt=0,
+        description="Maximum number of parameters a skill may declare.",
     )
 
     # ------------------------------------------------------------------

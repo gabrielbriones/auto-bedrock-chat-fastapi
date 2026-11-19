@@ -402,6 +402,13 @@ class AutoLangChatPlugin:
         logger.debug("Checking user settings store configuration and initializing...")
         self._user_settings_store = create_user_settings_store(self.config)
 
+        # Admin-managed skill store. Like the user-settings store, the backend
+        # is inferred from the app's existing database; ``None`` when skills
+        # are disabled or no usable backend exists. Opened in startup().
+        from .db import create_skill_store
+
+        self._skill_store = create_skill_store(self.config)
+
         # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
@@ -915,6 +922,22 @@ class AutoLangChatPlugin:
             logger.info(
                 "Conversation REST routes skipped: conversation_persistence_enabled=False " "or backend not configured"
             )
+
+        # User skill catalog (enabled skills, never their instructions). Only
+        # registered when a skill store is wired; independent of
+        # ``admin_enabled`` like the conversation routes above. The store is
+        # resolved per request because it is opened later, in startup().
+        if getattr(self, "_skill_store", None) is not None:
+            from .skill_catalog_routes import register_skill_catalog_route
+
+            register_skill_catalog_route(
+                self.app,
+                prefix=self.config.chat_endpoint,
+                get_skill_store=lambda: getattr(self, "_skill_store", None),
+                require_catalog_user=self._build_require_skill_catalog_user(),
+            )
+        else:
+            logger.info("Skill catalog route skipped: skills disabled or backend not configured")
 
         # Admin endpoints. Reserve the
         # ``/admin/synthesis/*`` prefix for the synthesis provenance endpoint(s).
@@ -1660,6 +1683,23 @@ class AutoLangChatPlugin:
 
         return require_conversation_user
 
+    def _build_require_skill_catalog_user(self) -> Callable[[Request], Any]:
+        """Build the auth dependency for ``GET {chat_endpoint}/skills/catalog``.
+
+        Same identity resolution as the conversation endpoints (401 when no
+        identity can be resolved), except that when ``require_tool_auth`` is
+        False no authentication is configured at all, so no identity is
+        required — mirroring the anonymous-admin behaviour of the admin API.
+        """
+        require_conversation_user = self._build_require_conversation_user()
+
+        async def require_catalog_user(request: Request) -> Any:
+            if not self.config.require_tool_auth:
+                return None
+            return await require_conversation_user(request)
+
+        return require_catalog_user
+
     def _setup_admin_routes(self):
         """Register the ``/admin/*`` HTTP block for the Expert Review API.
 
@@ -1906,7 +1946,7 @@ class AutoLangChatPlugin:
         # Capability probe — GET /admin/_capabilities
         #
         # Always returns 200 {is_admin, anonymous, token_usage_enabled,
-        # kb_source_ingestion_enabled}. Never raises a 403 so the Chat UI
+        # kb_source_ingestion_enabled, skills_enabled}. Never raises a 403 so the Chat UI
         # can silently hide the Dashboard button rather than surfacing an
         # error to non-admin users.  When ``require_tool_auth=False``, the
         # anonymous-admin escape hatch is unconditional: identity is
@@ -1924,6 +1964,10 @@ class AutoLangChatPlugin:
         # KB Sources nav item: it reflects whether ``_kb_store`` is
         # configured, matching the condition under which
         # ``/admin/kb/sources/*`` is registered at all.
+        #
+        # ``skills_enabled`` reflects whether ``_skill_store`` is configured
+        # and open, matching the condition under which the skill routes are
+        # registered.
         # ----------------------------------------------------------------
 
         @self.app.get(
@@ -1932,7 +1976,7 @@ class AutoLangChatPlugin:
             summary="Capability probe — is the current caller an admin?",
         )
         async def get_admin_capabilities(request: Request) -> JSONResponse:
-            """Return ``{is_admin, anonymous, token_usage_enabled, kb_source_ingestion_enabled}`` — always 200, never 403.
+            """Return ``{is_admin, anonymous, token_usage_enabled, kb_source_ingestion_enabled, skills_enabled}`` — always 200, never 403.
 
             Used by the Chat UI on page load to decide whether to show
             the Dashboard button.  When ``require_tool_auth=False``, the
@@ -1943,13 +1987,16 @@ class AutoLangChatPlugin:
             ``kb_source_ingestion_enabled`` are independent of the
             admin/auth outcome — they reflect whether a token-usage store
             and a KB store (respectively) are configured on this plugin
-            instance.
+            instance. ``skills_enabled`` likewise reflects whether the skill
+            store is configured and open.
             """
             token_usage_enabled = getattr(self, "_token_usage_store", None) is not None
             kb_source_ingestion_enabled = getattr(self, "_kb_store", None) is not None
+            skills_enabled = getattr(self, "_skill_store", None) is not None
             caps = {
                 "token_usage_enabled": token_usage_enabled,
                 "kb_source_ingestion_enabled": kb_source_ingestion_enabled,
+                "skills_enabled": skills_enabled,
             }
             if not self.config.require_tool_auth:
                 return JSONResponse({"is_admin": True, "anonymous": True, **caps})
@@ -2066,6 +2113,22 @@ class AutoLangChatPlugin:
                 "Admin token routes skipped: token_usage_store is not configured "
                 "(token_usage_enabled=False or backend init failed)"
             )
+
+        # Skill management endpoints. Only registered when a skill store is
+        # wired; the store is resolved per request (it is opened later, in
+        # startup(), and may be disabled if that fails).
+        if getattr(self, "_skill_store", None) is not None:
+            from .admin.admin_skill_routes import register_admin_skill_routes
+
+            register_admin_skill_routes(
+                self.app,
+                prefix=admin_prefix,
+                get_skill_store=lambda: getattr(self, "_skill_store", None),
+                require_admin=require_admin,
+                chat_config=self.config,
+            )
+        else:
+            logger.info("Admin skill routes skipped: skills disabled or backend not configured")
 
         logger.info("Admin routes registered (prefix=%s)", admin_prefix)
 
@@ -2235,6 +2298,9 @@ class AutoLangChatPlugin:
 
         # 6b. Open the user-settings-store connection pool
         await self._startup_open_user_settings_store()
+
+        # 6b'. Open the skill store
+        await self._startup_open_skill_store()
 
         # 6c. Schedule the background checkpoint-expiry sweep. Scheduled only
         # now (after the conversation store is opened, above) so its
@@ -2448,6 +2514,29 @@ class AutoLangChatPlugin:
             self._user_settings_store = None
             self.websocket_handler.user_settings_store = None
 
+    async def _startup_open_skill_store(self) -> None:
+        """Open the SkillStore; on failure, close it and disable skills.
+
+        A failure only disables the skills feature (``skills_enabled`` is
+        false); chat is unaffected.
+        """
+        if self._skill_store is None:
+            return
+        try:
+            await self._skill_store.open()
+            logger.info("SkillStore opened")
+        except Exception as exc:
+            logger.error(
+                "Failed to open SkillStore: %s; disabling skills.",
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self._skill_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Error while closing partially-opened SkillStore")
+            self._skill_store = None
+
     async def _purge_conversations_for_threads(self, thread_ids: List[str]) -> None:
         """Delete the conversation metadata row for each purged checkpoint thread_id.
 
@@ -2561,6 +2650,10 @@ class AutoLangChatPlugin:
             if self._user_settings_store is not None:
                 await self._user_settings_store.close()
                 self._user_settings_store = None
+
+            if getattr(self, "_skill_store", None) is not None:
+                await self._skill_store.close()
+                self._skill_store = None
 
             from .graph.checkpointer import close_checkpointer as _close_cp
 
