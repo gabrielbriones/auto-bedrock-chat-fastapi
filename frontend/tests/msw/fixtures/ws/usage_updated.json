@@ -7,6 +7,10 @@
     "output_tokens": 288,
     "cache_read": 400,
     "cache_write": 0,
+    "by_purpose": {
+      "chat": { "input_tokens": 1320, "output_tokens": 280 },
+      "title": { "input_tokens": 90, "output_tokens": 8 }
+    },
     "estimated_cost": 0.00831,
     "currency": "USD",
     "final": true

@@ -82,6 +82,7 @@ class TestTokenUsageNode:
             "output_tokens": 240,
             "cache_read": 0,
             "cache_write": 0,
+            "by_purpose": {"chat": {"input_tokens": 120, "output_tokens": 240}},
             "estimated_cost": None,
             "currency": None,
             "final": True,

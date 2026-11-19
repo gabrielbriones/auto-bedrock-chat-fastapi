@@ -59,6 +59,7 @@ const harness = (activeId: ConversationId | null) => {
       toolResults: [],
       citations: [],
       truncated: false,
+      usage: null,
       configuredModel: { id: 'm', name: 'M' },
     })
   }

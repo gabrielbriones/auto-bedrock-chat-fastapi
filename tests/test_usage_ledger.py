@@ -22,6 +22,43 @@ def test_ledger_keeps_each_invocation_and_sums_usage():
         "cache_read": 15,
         "cache_write": 0,
     }
+    assert ledger.purpose_summary() == {
+        "chat": {"input_tokens": 100, "output_tokens": 20},
+        "summarization": {"input_tokens": 50, "output_tokens": 10},
+    }
+
+
+def test_purpose_summary_sums_repeated_purposes_and_omits_unused_ones():
+    ledger = UsageLedger("turn-1")
+    ledger.record(purpose="chat", provider="anthropic", model_id="model-a", input_tokens=100, output_tokens=20)
+    ledger.record(purpose="chat", provider="anthropic", model_id="model-a", input_tokens=40, output_tokens=5)
+
+    assert ledger.purpose_summary() == {"chat": {"input_tokens": 140, "output_tokens": 25}}
+    assert UsageLedger("turn-2").purpose_summary() == {}
+
+
+def test_context_fill_is_the_latest_chat_call_against_the_model_window():
+    ledger = UsageLedger("turn-1")
+    model = "us.anthropic.claude-sonnet-5"
+    ledger.record(purpose="chat", provider="anthropic", model_id=model, input_tokens=1_000, output_tokens=50)
+    ledger.record(purpose="chat", provider="anthropic", model_id=model, input_tokens=1_400, output_tokens=200)
+    ledger.record(purpose="title", provider="anthropic", model_id=model, input_tokens=90, output_tokens=8)
+
+    fill = ledger.context_fill()
+
+    assert fill is not None
+    assert fill["used_tokens"] == 1_600
+    assert fill["max_tokens"] > fill["used_tokens"]
+
+
+def test_context_fill_is_unknown_without_a_chat_call_or_a_known_window():
+    no_chat = UsageLedger("turn-1")
+    no_chat.record(purpose="title", provider="anthropic", model_id="us.anthropic.claude-sonnet-5", input_tokens=9)
+    unknown_model = UsageLedger("turn-2")
+    unknown_model.record(purpose="chat", provider="mystery", model_id="mystery.model", input_tokens=9)
+
+    assert no_chat.context_fill() is None
+    assert unknown_model.context_fill() is None
 
 
 def test_ledger_rejects_negative_counts():

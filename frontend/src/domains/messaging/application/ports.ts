@@ -1,7 +1,7 @@
 import type { ConnectionState, SendResult, Unsubscribe } from '@/shared/ws/socket-client'
 import type { Instant } from '@/shared/kernel/instant'
 import type { MessageRole } from '@/domains/messaging/domain/message'
-import type { KbCitation, ToolCall, ToolResult, TurnActivity } from '@/domains/messaging/domain/turn'
+import type { KbCitation, ToolCall, ToolResult, TurnActivity, TurnUsage } from '@/domains/messaging/domain/turn'
 
 export type LoadedHistoryMessage = {
   readonly id: string | null
@@ -27,8 +27,11 @@ export type MessagingEvent =
       readonly toolResults: readonly ToolResult[]
       readonly citations: readonly KbCitation[]
       readonly truncated: boolean
+      readonly usage: TurnUsage | null
       readonly configuredModel: { readonly id: string; readonly name: string }
     }
+  /** The final usage of an answer that arrived with `final: false`, matched by its message id. */
+  | { readonly kind: 'usage-updated'; readonly messageId: string; readonly usage: TurnUsage }
   | { readonly kind: 'failed'; readonly text: string }
   /** A turn this tab did not send is running on the conversation it shows; its frames follow. */
   | { readonly kind: 'turn-observed'; readonly text: string; readonly conversationId: string }

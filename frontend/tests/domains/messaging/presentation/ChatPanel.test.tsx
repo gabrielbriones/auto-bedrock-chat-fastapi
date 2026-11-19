@@ -70,6 +70,7 @@ const renderPanel = (
         toolResults: [],
         citations: [],
         truncated: false,
+        usage: null,
         configuredModel: { id: 'claude', name: 'Claude' },
       })
     },

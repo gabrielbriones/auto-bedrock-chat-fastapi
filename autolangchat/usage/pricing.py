@@ -71,6 +71,7 @@ def estimate_cost(
         model = _lookup_model(models, event.provider, event.model_id)
         if model is None:
             return None
+        model = _tier_for(model, event.input_tokens)
         currency = str(model.get("currency", table.get("currency", "USD")))
         currencies.add(currency)
         if len(currencies) != 1:
@@ -113,10 +114,14 @@ def summarize_usage(
     estimate = estimate_cost(ledger.events, pricing_table)
     summary: Dict[str, Any] = {
         **ledger.summary(),
+        "by_purpose": ledger.purpose_summary(),
         "estimated_cost": estimate.estimated_cost if estimate else None,
         "currency": estimate.currency if estimate else None,
         "final": final,
     }
+    context = ledger.context_fill()
+    if context is not None:
+        summary["context"] = context
     return summary, estimate
 
 
@@ -128,6 +133,16 @@ def _lookup_model(models: Mapping[str, Any], provider: str, model_id: str) -> Op
         if region_prefix is not None:
             model = models.get(f"{provider}:{model_id[len(region_prefix) + 1:]}")
     return model if isinstance(model, Mapping) else None
+
+
+def _tier_for(model: Mapping[str, Any], input_tokens: int) -> Mapping[str, Any]:
+    """The model's ``long_context`` rates when the call's whole prompt (cached tokens included) exceeds
+    its ``above_input_tokens``; each call is tiered on its own."""
+    tier = model.get("long_context")
+    threshold = tier.get("above_input_tokens") if isinstance(tier, Mapping) else None
+    if not isinstance(threshold, int) or input_tokens <= threshold:
+        return model
+    return {**model, **tier}
 
 
 def _rate(model: Mapping[str, Any], category: str) -> Optional[Decimal]:

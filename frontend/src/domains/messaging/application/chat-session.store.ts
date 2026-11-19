@@ -34,6 +34,7 @@ import type {
   MessagingEvent,
   MessagingGateway,
 } from '@/domains/messaging/application/ports'
+import { answeredActivity, settleHistoryUsage, settleTurnUsage } from '@/domains/messaging/application/answer-activity'
 import { toHistory } from '@/domains/messaging/application/loaded-history'
 
 export type ChatSessionSnapshot = {
@@ -194,6 +195,11 @@ export class ChatSessionStore {
       case 'tool-finished':
         this.#updatePending((turn) => finishLiveTool(turn, event.id, event.error, event.durationMs))
         return
+      case 'usage-updated':
+        this.#turns = settleTurnUsage(this.#turns, event.messageId, event.usage)
+        this.#history = settleHistoryUsage(this.#history, event.messageId, event.usage)
+        this.#emit()
+        return
       case 'history-loaded':
         this.#history = toHistory(event)
         this.#seq = this.#history.length
@@ -222,12 +228,7 @@ export class ChatSessionStore {
         turn,
         event.messageId === null ? response : { ...response, id: messageId(event.messageId) },
         event.conversationId === null ? turn.conversationId : conversationId(event.conversationId),
-        {
-          toolCalls: event.toolCalls,
-          toolResults: event.toolResults,
-          citations: event.citations,
-          truncated: event.truncated,
-        },
+        answeredActivity(event),
       ),
     )
     this.#announceSettled(pending.id)

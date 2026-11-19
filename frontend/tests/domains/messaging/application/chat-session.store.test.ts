@@ -6,6 +6,8 @@ import type { ConnectionState } from '@/shared/ws/socket-client'
 
 import { ChatSessionStore } from '@/domains/messaging/application/chat-session.store'
 import type { MessagingEvent } from '@/domains/messaging/application/ports'
+import type { TurnUsage } from '@/domains/messaging/domain/turn'
+import { createTokenCount } from '@/domains/telemetry/domain/public'
 
 const fixedInstant = () => {
   const instant = Instant.fromIso('2026-08-28T10:00:00Z')
@@ -75,7 +77,7 @@ const createHarness = (initial: ConnectionState = state('open')) => {
   }
 }
 
-const answered = (text: string): MessagingEvent => ({
+const answered = (text: string, usage: TurnUsage | null = null): MessagingEvent => ({
   kind: 'answered',
   text,
   messageId: 'm-1',
@@ -84,7 +86,17 @@ const answered = (text: string): MessagingEvent => ({
   toolResults: [],
   citations: [],
   truncated: false,
+  usage,
   configuredModel: { id: 'model-1', name: 'Model 1' },
+})
+
+const usageOf = (input: number, final: boolean): TurnUsage => ({
+  tokens: createTokenCount(input, 10),
+  byPurpose: [],
+  estimatedCost: null,
+  currency: null,
+  final,
+  context: null,
 })
 
 describe('ChatSessionStore', () => {
@@ -94,6 +106,64 @@ describe('ChatSessionStore', () => {
     emit(answered('response'))
 
     expect(store.getSnapshot().configuredModel).toEqual({ id: 'model-1', name: 'Model 1' })
+  })
+
+  describe('per-message usage (XMGPLAT-11866)', () => {
+    const responseEntry = (store: ChatSessionStore) =>
+      store.getSnapshot().transcript.find((entry) => entry.message.role === 'assistant')
+
+    it('keeps the usage an answer arrived with on its response entry', () => {
+      const { store, emit } = createHarness()
+      store.send('hi')
+
+      emit(answered('hello', usageOf(100, false)))
+
+      expect(responseEntry(store)?.activity?.usage).toEqual(usageOf(100, false))
+    })
+
+    it('settles the answer usage when its final totals arrive', () => {
+      const { store, emit } = createHarness()
+      store.send('hi')
+      emit(answered('hello', usageOf(100, false)))
+
+      emit({ kind: 'usage-updated', messageId: 'm-1', usage: usageOf(130, true) })
+
+      expect(responseEntry(store)?.activity?.usage).toEqual(usageOf(130, true))
+    })
+
+    it('ignores final totals for an answer it does not hold', () => {
+      const { store, emit } = createHarness()
+      store.send('hi')
+      emit(answered('hello', usageOf(100, false)))
+      const before = store.getSnapshot().transcript
+
+      emit({ kind: 'usage-updated', messageId: 'unknown', usage: usageOf(130, true) })
+
+      expect(store.getSnapshot().transcript.map((entry) => entry.activity)).toEqual(
+        before.map((entry) => entry.activity),
+      )
+    })
+
+    it('settles a loaded answer reopened before its final totals arrived', () => {
+      const { store, emit } = createHarness()
+      emit({
+        kind: 'history-loaded',
+        conversationId: 'c-2',
+        messages: [
+          {
+            id: 'm-3',
+            role: 'assistant',
+            text: 'Done.',
+            at: fixedInstant(),
+            activity: { toolCalls: [], toolResults: [], citations: [], truncated: false, usage: usageOf(100, false) },
+          },
+        ],
+      })
+
+      emit({ kind: 'usage-updated', messageId: 'm-3', usage: usageOf(130, true) })
+
+      expect(store.getSnapshot().transcript[0]?.activity?.usage).toEqual(usageOf(130, true))
+    })
   })
 
   describe('connection state (FR-MSG-002)', () => {
@@ -440,6 +510,7 @@ describe('ChatSessionStore', () => {
         toolResults: [],
         citations: [],
         truncated: false,
+        usage: null,
       }
 
       emit({

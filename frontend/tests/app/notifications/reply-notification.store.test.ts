@@ -36,6 +36,7 @@ const answered = (text: string, id: string | null = 'c-1'): MessagingEvent => ({
   toolResults: [],
   citations: [],
   truncated: false,
+  usage: null,
   configuredModel: { id: 'model-1', name: 'Model 1' },
 })
 

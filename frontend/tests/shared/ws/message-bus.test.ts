@@ -289,6 +289,54 @@ describe('ServerFrameSchema', () => {
     expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
   })
 
+  // XMGPLAT-11866: the per-purpose breakdown behind the chat usage tooltip.
+  it('delivers a usage update carrying its per-purpose breakdown', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+    const frame = {
+      type: 'usage_updated',
+      message_id: 'message-1',
+      timestamp: '2026-11-12T12:00:06',
+      usage: {
+        input_tokens: 1410,
+        output_tokens: 288,
+        cache_read: 400,
+        cache_write: 0,
+        by_purpose: {
+          chat: { input_tokens: 1320, output_tokens: 280 },
+          title: { input_tokens: 90, output_tokens: 8 },
+        },
+        estimated_cost: 0.00831,
+        currency: 'USD',
+        final: true,
+      },
+    }
+
+    bus.receive(JSON.stringify(frame))
+
+    expect(bus.invalidFrameCount('usage_updated')).toBe(0)
+    expect(subscriber).toHaveBeenCalledExactlyOnceWith(frame)
+  })
+
+  it('rejects a per-purpose breakdown with unknown keys, since usage is strict', () => {
+    const bus = new MessageBus(logger())
+    const subscriber = jest.fn()
+    bus.subscribe(subscriber)
+
+    bus.receive(
+      JSON.stringify({
+        type: 'usage_updated',
+        message_id: 'message-1',
+        timestamp: '2026-11-12T12:00:06',
+        usage: { input_tokens: 1, output_tokens: 1, by_purpose: { chat: { input_tokens: 1, output_tokens: 1, cost: 2 } } },
+      }),
+    )
+
+    expect(bus.invalidFrameCount('usage_updated')).toBe(1)
+    expect(subscriber).not.toHaveBeenCalled()
+  })
+
   it('delivers an anonymous ai response with no persisted conversation', () => {
     const bus = new MessageBus(logger())
     const subscriber = jest.fn()

@@ -44,6 +44,46 @@ export const MESSAGING_COPY = {
     unreadCount: (count: number) => `${count}`,
   },
 
+  // XMGPLAT-11866: an estimate, never a bill, so no string here may call it a "cost".
+  usage: {
+    tokens: (input: string, output: string) => `Tokens ${input} in / ${output} out`,
+    estimated: (amount: string) => `Estimated ${amount}`,
+    withPending: (label: string) => `${label} · pending`,
+    inOut: (input: string, output: string) => `${input} in / ${output} out`,
+    purposes: {
+      chat: 'Chat',
+      summarization: 'Summarization',
+      retry: 'Retries',
+      title: 'Title',
+      embedding: 'Embedding',
+    } as Readonly<Partial<Record<string, string>>>,
+    cacheRead: 'Cache read',
+    cacheWrite: 'Cache write',
+    total: 'Total',
+    unpriced: 'No price estimate for this model',
+    pendingDetail: 'Final total pending',
+    // Screen readers get the whole breakdown, since the tooltip is not announced.
+    readTokens: (input: string, output: string) => `${input} input tokens, ${output} output tokens`,
+    readPurpose: (purpose: string, input: string, output: string) =>
+      `${purpose}: ${input} input, ${output} output`,
+    readCache: (read: string, write: string) => `Cache read ${read} tokens, cache write ${write} tokens`,
+    readAll: (parts: readonly string[]) => `Token usage. ${parts.join('. ')}.`,
+  },
+
+  // The open conversation's running totals and how full the model's input window is.
+  session: {
+    title: 'This conversation',
+    noEstimate: 'No price estimate',
+    tokens: (amount: string) => `${amount} tokens`,
+    contextPercent: (percent: string) => `${percent} context`,
+    answers: 'Answers',
+    unpriced: (count: number) => `${count} ${count === 1 ? 'answer has' : 'answers have'} no price and ${count === 1 ? 'is' : 'are'} not included`,
+    context: 'Context window',
+    contextUsed: (used: string, max: string) => `${used} of ${max} tokens`,
+    contextMeter: 'Context window used',
+    read: (parts: readonly string[]) => `Conversation usage. ${parts.join('. ')}.`,
+  },
+
   welcome: {
     label: 'Welcome',
     suggestionsLabel: 'Suggested prompts',

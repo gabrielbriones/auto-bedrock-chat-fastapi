@@ -2,6 +2,7 @@ import type { ConversationId, TurnId } from '@/shared/kernel/branded'
 import { err, ok, type Result } from '@/shared/kernel/result'
 
 import type { ChatMessage } from '@/domains/messaging/domain/message'
+import type { TokenCount } from '@/domains/telemetry/domain/public'
 
 // DESIGN-001 §3.1. The typing frame enters `streaming`; T-071 applies its cumulative text.
 export type TurnStatus = 'composing' | 'sent' | 'streaming' | 'answered' | 'failed' | 'abandoned'
@@ -42,6 +43,30 @@ export type KbCitation = {
   readonly score: number
 }
 
+/** One call purpose (`chat`, `summarization`, `title`, ...) of a turn's usage. */
+export type PurposeUsage = {
+  readonly purpose: string
+  readonly tokens: TokenCount
+}
+
+/** How full the conversation leaves the model's input window, as of this answer. */
+export type ContextFill = {
+  readonly usedTokens: number
+  readonly maxTokens: number
+}
+
+/** Every AI call a turn caused, summed; `final` is false while a later call can still add to it. */
+export type TurnUsage = {
+  readonly tokens: TokenCount
+  readonly byPurpose: readonly PurposeUsage[]
+  /** Null when any model used is unpriced: unknown, never zero. */
+  readonly estimatedCost: number | null
+  readonly currency: string | null
+  readonly final: boolean
+  /** Null when the model's input window is unknown. */
+  readonly context: ContextFill | null
+}
+
 export type TurnActivity = {
   readonly toolCalls: readonly ToolCall[]
   readonly toolResults: readonly ToolResult[]
@@ -50,6 +75,8 @@ export type TurnActivity = {
   readonly truncated: boolean
   /** How long each call took, by tool call id, when it was watched live. */
   readonly toolDurationsMs?: Readonly<Record<string, number>>
+  /** Null when the server reported none (older servers, failed turns). */
+  readonly usage: TurnUsage | null
 }
 
 const NO_ACTIVITY: TurnActivity = {
@@ -57,6 +84,7 @@ const NO_ACTIVITY: TurnActivity = {
   toolResults: [],
   citations: [],
   truncated: false,
+  usage: null,
 }
 
 // A turn can end without an answer two ways, and they read differently to the user: the frame never

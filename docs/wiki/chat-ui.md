@@ -30,6 +30,40 @@ release wheels by `.github/workflows/release.yml`). Build it with
 - **Authentication modal** — UI for providing credentials (bearer token, API key, basic auth, OAuth2)
 - **Session management** — clear history, ping, logout
 - **Preset prompt buttons** — one-click buttons that send pre-defined prompts; see [Preset Prompts](preset-prompts.md)
+- **Per-message usage label** — token usage of each answer, with its estimated price on hover; see [below](#per-message-usage-label)
+
+### Per-message usage label
+
+Every assistant answer whose `ai_response.metadata.usage` (or persisted history `metadata.usage`) is present shows a
+small muted line under the bubble, `Tokens 1.2k in / 340 out`, summing **every** AI call of the turn (see
+[Token Usage Tracking](token-usage-tracking.md#per-turn-usage-and-cost)). While `final` is `false` it is suffixed
+`· pending`.
+
+- **Pending → final**: on the turn that creates a conversation, the title call runs after the answer, so the label
+  stays pending until the [`usage_updated`](websocket-client.md#usage_updated) frame with the same `message_id`
+  replaces it. A `usage_updated` for an answer the client does not hold is ignored. Reloading the conversation shows
+  the persisted final totals.
+- **Hover card**: hovering or clicking/tapping the label opens a card headed by the estimate (`Estimated $0.0123`, or
+  "No price estimate for this model" when `estimated_cost` is null — never $0), then the input/output split by
+  purpose (chat, summarization, retries, title, embedding — from `usage.by_purpose`), cache read and cache write
+  tokens and the exact total. Screen readers get the same breakdown as the label's accessible name.
+- **Hidden** for user messages, failed or interrupted turns, and answers without `usage` (e.g. older servers).
+- The value is an **estimate**, so the UI never labels it a "cost". Sub-cent amounts keep four decimals; a positive
+  amount below `0.0001` reads `<$0.0001`.
+
+### Conversation usage
+
+Once any answer in the open conversation has reported usage, the composer toolbar shows a compact summary beside the
+model picker, e.g. `13% context $0.3124`, updated as each answer (and each `usage_updated`) arrives:
+
+- **Estimate**: the sum of the answers' estimates. Answers without a price (or priced in another currency) are left
+  out and counted in the card; with no priced answer it shows the token total instead (`162k tokens`).
+- **Context**: how full the model's input window is after the latest answer (`usage.context`), coloured amber from
+  75% and red from 90%. Shown only when the server knows the model's window; it is taken from the latest answer alone,
+  so switching to a model with an unknown window hides it rather than showing a stale reading.
+- **Card** (hover or click): the estimate, total input/output, cache read/write, the number of answers counted and the
+  context meter with exact token counts.
+- Answers loaded from history count too, as long as they were stored with usage.
 
 ---
 
