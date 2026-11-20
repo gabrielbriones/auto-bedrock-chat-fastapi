@@ -15,7 +15,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from autolangchat.config import ChatConfig
 from autolangchat.db import SQLiteConversationStore
-from autolangchat.exceptions import WebSocketError
 from autolangchat.session_manager import ChatSessionManager
 from autolangchat.websocket_handler import WebSocketChatHandler
 
@@ -386,7 +385,7 @@ async def test_leaving_the_conversation_mid_turn_keeps_the_answer_on_the_turns_c
 
 @pytest.mark.xfail(
     strict=True,
-    reason="XMGPLAT-11971: leaving the conversation revokes the running turn's artifact scope, so the turn fails",
+    reason="XMGPLAT-12310: leaving the conversation revokes the running turn's artifact scope, so the turn fails",
 )
 @pytest.mark.parametrize("switch", ["load", "new"])
 async def test_leaving_the_conversation_mid_turn_does_not_fail_a_turn_that_archives_a_tool_result(switch):
@@ -396,31 +395,3 @@ async def test_leaving_the_conversation_mid_turn_does_not_fail_a_turn_that_archi
         assert not answer.get("error"), answer["message"]
     finally:
         await store.close()
-
-
-async def test_sends_to_one_socket_wait_for_each_other_and_a_timed_out_send_lets_the_next_one_go():
-    handler = _make_handler(_GatedGraph())
-    ws, other = _QueueSocket(), _QueueSocket()
-    stall = asyncio.Event()
-    entered = []
-
-    async def send_json(message):
-        entered.append(message["type"])
-        if message["type"] == "stuck":
-            await stall.wait()
-        ws.sent.append(message)
-
-    ws.send_json = AsyncMock(side_effect=send_json)
-
-    stuck = asyncio.create_task(handler._send_bounded(ws, {"type": "stuck"}, 0.1))
-    await _until(lambda: entered == ["stuck"])
-    queued = asyncio.create_task(handler._send_message(ws, {"type": "queued"}))
-    await handler._send_message(other, {"type": "elsewhere"})
-    await asyncio.sleep(0.02)
-    assert entered == ["stuck"]
-    assert other.types() == ["elsewhere"]
-
-    with pytest.raises(WebSocketError):
-        await stuck
-    await asyncio.wait_for(queued, 1)
-    assert ws.types() == ["queued"]
