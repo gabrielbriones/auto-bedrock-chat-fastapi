@@ -45,6 +45,7 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
     plugin._conversation_store = None
     plugin._conversation_store_open_failed = False
     plugin._user_settings_store = None
+    plugin._skill_store = None
     plugin._mcp_session_manager = None
     plugin._mcp_exit_stack = None
     plugin.config = SimpleNamespace(
@@ -490,6 +491,51 @@ async def test_expiry_loop_deletes_conversations_for_purged_threads(patch_checkp
 
     conversation_store.delete_conversation.assert_any_await("conv-1")
     conversation_store.delete_conversation.assert_any_await("conv-2")
+
+    await _cancel_new_tasks(before)
+    await plugin.shutdown()
+
+
+def _fake_skill_store(**method_overrides):
+    return SimpleNamespace(
+        open=AsyncMock(),
+        close=AsyncMock(),
+        **method_overrides,
+    )
+
+
+async def test_startup_opens_and_shutdown_closes_skill_store(patch_checkpointer):
+    store = _fake_skill_store()
+    plugin = _make_plugin(_skill_store=store)
+    before = asyncio.all_tasks()
+
+    await plugin.startup()
+    await plugin.startup()  # idempotent: must not reopen
+
+    store.open.assert_awaited_once()
+    assert plugin._skill_store is store
+
+    await _cancel_new_tasks(before)
+    await plugin.shutdown()
+
+    store.close.assert_awaited_once()
+    assert plugin._skill_store is None
+
+
+async def test_startup_disables_skills_when_store_fails_to_open(patch_checkpointer, caplog):
+    store = _fake_skill_store()
+    store.open.side_effect = RuntimeError("db down")
+    plugin = _make_plugin(_skill_store=store)
+    before = asyncio.all_tasks()
+
+    with caplog.at_level(logging.ERROR, logger="autolangchat.plugin"):
+        await plugin.startup()
+
+    # Chat still starts; the half-opened store is closed and skills are off.
+    assert plugin._started is True
+    store.close.assert_awaited_once()
+    assert plugin._skill_store is None
+    assert any("Failed to open SkillStore" in r.message for r in caplog.records)
 
     await _cancel_new_tasks(before)
     await plugin.shutdown()

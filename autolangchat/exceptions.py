@@ -190,6 +190,29 @@ class ConversationNotFoundError(ConversationError):
 
 
 # ---------------------------------------------------------------------------
+# Skill store
+# ---------------------------------------------------------------------------
+
+
+class SkillError(AutoLangChatError):
+    """Base exception for skill-store operations."""
+
+    pass
+
+
+class SkillNotFoundError(SkillError):
+    """Raised when a skill cannot be located by name."""
+
+    pass
+
+
+class SkillAlreadyExistsError(SkillError):
+    """Raised when creating a skill whose name is already taken."""
+
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Admin API
 # ---------------------------------------------------------------------------
 

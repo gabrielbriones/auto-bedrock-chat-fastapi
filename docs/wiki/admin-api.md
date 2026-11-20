@@ -15,6 +15,8 @@ feature and the knowledge base. It exposes two route groups under
 - **Token Usage Analytics** — `/admin/tokens/*` — query recorded
   per-turn token usage (see [Token Usage Tracking](token-usage-tracking)
   for how the underlying data gets recorded).
+- **Skill Management** — `/admin/skills/*` — create, edit, enable/disable
+  and delete admin-managed [skills](skills).
 - **Capability probe** — `GET /admin/_capabilities` — tells the Chat UI
   whether the current caller is an admin; always 200.
 
@@ -166,14 +168,20 @@ All endpoints sit under `/admin/`. Responses use a flat error envelope:
 
 ### Capability probe
 
-| Method | Path                   | Description                                                                                                           |
-| ------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous, token_usage_enabled, kb_source_ingestion_enabled}` — **always 200**, never 403 or 401. |
+| Method | Path                   | Description                                                                                                                           |
+| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/_capabilities` | Returns `{is_admin, anonymous, token_usage_enabled, kb_source_ingestion_enabled, skills_enabled}` — **always 200**, never 403 or 401. |
 
 Response shape:
 
 ```json
-{ "is_admin": true, "anonymous": false, "token_usage_enabled": true, "kb_source_ingestion_enabled": true }
+{
+  "is_admin": true,
+  "anonymous": false,
+  "token_usage_enabled": true,
+  "kb_source_ingestion_enabled": true,
+  "skills_enabled": true
+}
 ```
 
 | Field                         | Type    | Notes                                                                                                                                                                                                                                                                         |
@@ -182,6 +190,8 @@ Response shape:
 | `anonymous`                   | boolean | `true` when `require_tool_auth=false` — the escape hatch is unconditional; identity resolution is bypassed entirely.                                                                                                                                                          |
 | `token_usage_enabled`         | boolean | `true` when a token-usage store is configured (`_token_usage_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the Token Usage nav item when no store is configured.                                                                |
 | `kb_source_ingestion_enabled` | boolean | `true` when a KB store is configured (`_kb_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide the KB Sources nav item when KB ingestion isn't set up (matches the condition under which `/admin/kb/sources/*` is registered at all). |
+
+| `skills_enabled` | boolean | `true` when the skill store is configured and opened successfully (`_skill_store is not None`), independent of admin/auth outcome. Used by the Admin Dashboard to hide skill management when skills are unavailable (see [Skills](skills)). |
 
 The Chat UI calls this endpoint on page load. If `is_admin=true` it
 reveals the Dashboard button in the header; otherwise the button stays
@@ -572,6 +582,42 @@ curl -sS -b cookies.txt \
 }
 ```
 
+### Skill Management
+
+Registered only when `admin_enabled=true` **and** the skill store is configured (see [Skills](skills) for the
+model, limits and `AUTOCHAT_SKILL*` settings). If the store is disabled after startup (for example because it
+failed to open), the routes stay mounted but answer `503 skills_unavailable`.
+
+| Method | Path                           | Description                                                                                     |
+| ------ | ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| GET    | `/admin/skills`                | List all skills (enabled or not) **without** `instructions`. Returns `{items: [SkillSummary]}`. |
+| POST   | `/admin/skills`                | Create a skill. Returns `201` with the `Skill`. `409 skill_exists` if the name is taken.        |
+| GET    | `/admin/skills/{name}`         | One skill, including `instructions`.                                                            |
+| PUT    | `/admin/skills/{name}`         | Replace the whole content (`display_name`, `description`, `instructions`, `parameters`).        |
+| DELETE | `/admin/skills/{name}`         | Permanently delete a skill. Returns `204`.                                                      |
+| POST   | `/admin/skills/{name}/enable`  | Enable a skill. Returns the `Skill`.                                                            |
+| POST   | `/admin/skills/{name}/disable` | Disable a skill. Returns the `Skill`.                                                           |
+
+Behaviour worth knowing:
+
+- `PUT` is a **full replace**: omitted optional fields reset to their defaults, and the last write wins (there is
+  no versioning). The body may not contain `name`, so a skill cannot be renamed. `enabled` and `created_at` are
+  preserved; use the enable/disable routes to toggle availability.
+- Request bodies reject unknown fields (`422`). Exceeding a configured limit (`skill_instructions_max_chars`,
+  `skill_description_max_chars`, `skill_max_parameters`) returns `400 invalid_skill`.
+- A name that cannot be a valid skill name is simply `404 not_found` in the path.
+- `updated_by` records the admin's `user_id`; with `require_tool_auth=false` every caller is the anonymous admin
+  (see [Anonymous admin escape hatch](#anonymous-admin-escape-hatch-development-only)).
+
+The user-facing counterpart, `GET {chat_endpoint}/skills/catalog`, is **not** an admin route; see
+[Skills — User catalog](skills#user-catalog).
+
+```bash
+curl -sS -X PUT -H 'Content-Type: application/json' -b cookies.txt \
+  https://app.example.com/chat/admin/skills/job-triage \
+  -d '{"display_name": "Job triage", "instructions": "Investigate job {{job_id}}."}'
+```
+
 ---
 
 ## Examples
@@ -631,15 +677,18 @@ All admin errors share a single flat shape:
 | HTTP | `code`                                                             | When                                                                                                                    |
 | ---- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | 400  | `invalid_filters`                                                  | Bad date window, malformed query value.                                                                                 |
+| 400  | `invalid_skill`                                                    | A skill write exceeds a configured limit (instructions / description length, parameter count).                          |
 | 401  | `not_authenticated`                                                | No identity source resolved the caller.                                                                                 |
 | 403  | `not_admin`                                                        | Identity resolved but `AdminAuthorizer` rejected it.                                                                    |
 | 404  | `not_found` / `kb_source_not_found`                                | Target document id doesn't exist / no documents match a source name.                                                    |
 | 409  | `invalid_status_transition`                                        | Feedback PATCH attempts a forbidden review-status transition.                                                           |
 | 409  | `kb_source_run_already_in_progress`                                | Another KB source-ingestion run is already in flight, or the same source is being deleted.                              |
+| 409  | `skill_exists`                                                     | `POST /admin/skills` with a name that is already taken.                                                                 |
 | 422  | (validation error from FastAPI)                                    | Body / path / query failed Pydantic validation.                                                                         |
 | 422  | `no_files_uploaded` / `invalid_file_encoding` / `invalid_pdf_file` | KB source file upload has no files, one isn't UTF-8 text (and isn't a recognized PDF), or a PDF is corrupted/encrypted. |
 | 422  | `upload_too_large`                                                 | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                              |
 | 503  | `kb_source_ingestion_unavailable`                                  | KB source-ingestion routes called without an embedding client/model wired.                                              |
+| 503  | `skills_unavailable`                                               | A skill route was called but the skill store is unavailable (it failed to open at startup).                             |
 
 ---
 
@@ -650,16 +699,21 @@ Every state-changing admin request emits a structured log line on the
 up. Storage in a dedicated DB table is out of scope; a host that wants
 persistence can attach a logging handler.
 
-| Action                   | Where          | Payload                                                                                                   |
-| ------------------------ | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `feedback.review.update` | PATCH feedback | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`                           |
-| `kb.document.update`     | PATCH KB doc   | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts`                        |
-| `kb.document.delete`     | DELETE KB doc  | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`                          |
-| `kb.source.delete`       | DELETE source  | `actor_user_id`, `target_id` (source), `deleted_count`, `chunks_deleted`, `ts`                            |
-| `kb.source.populate`     | POST KB source | `actor_user_id`, `target_id` (`run_id`), `source_name`, `source_type`, `phase` (`start`/`complete`), `ts` |
+| Action                           | Where          | Payload                                                                                                   |
+| -------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `feedback.review.update`         | PATCH feedback | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`                           |
+| `kb.document.update`             | PATCH KB doc   | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts`                        |
+| `kb.document.delete`             | DELETE KB doc  | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`                          |
+| `kb.source.delete`               | DELETE source  | `actor_user_id`, `target_id` (source), `deleted_count`, `chunks_deleted`, `ts`                            |
+| `kb.source.populate`             | POST KB source | `actor_user_id`, `target_id` (`run_id`), `source_name`, `source_type`, `phase` (`start`/`complete`), `ts` |
+| `skill.create`                   | POST skill     | `actor_user_id`, `target_id` (skill name), `enabled`, `ts`                                                |
+| `skill.replace`                  | PUT skill      | `actor_user_id`, `target_id` (skill name), `ts`                                                           |
+| `skill.enable` / `skill.disable` | POST skill     | `actor_user_id`, `target_id` (skill name), `ts`                                                           |
+| `skill.delete`                   | DELETE skill   | `actor_user_id`, `target_id` (skill name), `ts`                                                           |
 
 `content_hash` is SHA-256; full content is **not** logged so log lines
-stay bounded.
+stay bounded. Skill audit records never include a skill's `instructions`, and
+failed writes (validation errors, 404/409) are not audited.
 
 ---
 
@@ -705,6 +759,8 @@ ergonomic, but it is a foot-gun:
   side; the admin API is the reviewer side of the same loop.
 - [Feedback Synthesis](feedback-synthesis) — the
   `/admin/synthesis/*` routes that turn approved entries into KB articles.
+- [Skills](skills) — the model, limits and user catalog behind the
+  `/admin/skills/*` routes.
 - [Authentication](authentication) — `auth_verification_endpoint`
   contract, used here as one of the two admin identity sources.
 - [SSO](sso) — cookie-based identity, used here as the other admin

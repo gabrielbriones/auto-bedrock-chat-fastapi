@@ -108,3 +108,27 @@ def test_capabilities_kb_source_ingestion_enabled_true_when_kb_store_configured(
     resp = client.get("/chat/admin/_capabilities")
     assert resp.status_code == 200
     assert resp.json()["kb_source_ingestion_enabled"] is True
+
+
+def test_capabilities_skills_enabled_false_when_skill_store_none():
+    plugin = _make_bare_plugin(None)
+    resp = TestClient(plugin.app).get("/chat/admin/_capabilities")
+    assert resp.status_code == 200
+    assert resp.json()["skills_enabled"] is False
+
+
+def test_capabilities_skills_enabled_true_when_skill_store_configured():
+    plugin = _make_bare_plugin(None)
+    plugin._skill_store = SimpleNamespace()
+    resp = TestClient(plugin.app).get("/chat/admin/_capabilities")
+    assert resp.status_code == 200
+    assert resp.json()["skills_enabled"] is True
+
+
+def test_capabilities_skills_enabled_reported_even_when_not_admin():
+    plugin = _make_bare_plugin(None)
+    plugin._skill_store = SimpleNamespace()
+    plugin.config.require_tool_auth = True
+    body = TestClient(plugin.app).get("/chat/admin/_capabilities").json()
+    assert body["is_admin"] is False
+    assert body["skills_enabled"] is True

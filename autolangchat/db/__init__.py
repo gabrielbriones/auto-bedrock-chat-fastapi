@@ -15,12 +15,15 @@ plugin:
   :mod:`.conversation_postgres` — per-user conversation metadata storage.
 * :mod:`.user_settings_base`, :mod:`.user_settings_sqlite`,
   :mod:`.user_settings_postgres` — per-user chat settings storage.
+* :mod:`.skill_base`, :mod:`.skill_sqlite`, :mod:`.skill_postgres` —
+  admin-managed skill storage.
 
-The five factory functions exported here — :func:`create_kb_store`,
+The six factory functions exported here — :func:`create_kb_store`,
 :func:`create_feedback_store`, :func:`create_token_usage_store`,
-:func:`create_conversation_store`, and :func:`create_user_settings_store` —
-instantiate the backend selected by the matching
-``ChatConfig.*_storage_type`` field.
+:func:`create_conversation_store`, :func:`create_user_settings_store`, and
+:func:`create_skill_store` — instantiate the backend selected by the matching
+``ChatConfig.*_storage_type`` field (the user-settings and skill stores have
+no setting of their own and infer the backend from the sibling stores).
 
 The in-memory SSO session store remains at the top-level
 :mod:`autolangchat.sso.sso_session_store` module because it is a
@@ -44,6 +47,8 @@ from .feedback_base import (
 from .feedback_sqlite import SQLiteFeedbackStore
 from .kb_base import BaseKBStore
 from .kb_sqlite import SQLiteKBStore
+from .skill_base import BaseSkillStore
+from .skill_sqlite import SQLiteSkillStore
 from .token_usage_base import BaseTokenUsageStore
 from .token_usage_sqlite import SQLiteTokenUsageStore
 from .user_settings_base import BaseUserSettingsStore
@@ -63,6 +68,11 @@ try:  # optional [postgres] extra
     from .kb_postgres import PgVectorKBStore
 except ImportError:  # pragma: no cover
     PgVectorKBStore = None  # type: ignore[assignment,misc]
+
+try:  # optional [postgres] extra
+    from .skill_postgres import PostgresSkillStore
+except ImportError:  # pragma: no cover
+    PostgresSkillStore = None  # type: ignore[assignment,misc]
 
 try:  # optional [postgres] extra
     from .token_usage_postgres import PostgresTokenUsageStore
@@ -414,28 +424,98 @@ def create_user_settings_store(config: "ChatConfig") -> Optional[BaseUserSetting
     return SQLiteUserSettingsStore(db_path=db_path)
 
 
+# ---------------------------------------------------------------------------
+# Skill store factory
+# ---------------------------------------------------------------------------
+
+
+def create_skill_store(config: "ChatConfig") -> Optional[BaseSkillStore]:
+    """Build the skill store for the database the app already uses.
+
+    The backend (see :func:`_uses_postgres`) and its connection URL / file
+    path are resolved from the sibling stores' settings, exactly like
+    :func:`create_user_settings_store`, so enabling skills needs no extra
+    configuration beyond the ``skills_persistence_enabled`` opt-out.
+
+    Returns ``None`` when skills are disabled or when no usable backend can
+    be built in the current environment (missing connection URL, missing
+    optional dependency). Such cases are logged at WARNING so deployments
+    don't fail to boot just because skills are unavailable.
+
+    The caller is responsible for awaiting :meth:`BaseSkillStore.open` on the
+    returned instance and for closing it on shutdown.
+    """
+    if not config.skills_persistence_enabled:
+        return None
+
+    if _uses_postgres(config):
+        connection_url = (
+            config.conversation_postgres_url
+            or config.feedback_postgres_url
+            or config.token_usage_postgres_url
+            or config.kb_postgres_url
+        )
+        if not connection_url:
+            logger.warning(
+                "Skills need the Postgres backend (the other stores use it) but no "
+                "connection URL is available (AUTOCHAT_CONVERSATION_POSTGRES_URL, "
+                "AUTOCHAT_FEEDBACK_POSTGRES_URL, AUTOCHAT_TOKEN_USAGE_POSTGRES_URL, "
+                "AUTOCHAT_KB_POSTGRES_URL); skills disabled."
+            )
+            return None
+        try:
+            from .skill_postgres import PostgresSkillStore
+
+            return PostgresSkillStore(connection_url=connection_url)
+        except ImportError:
+            logger.warning(
+                "Skills need the Postgres backend but the [postgres] extra is not installed; skills disabled.",
+                exc_info=True,
+            )
+            return None
+
+    db_path = (
+        config.conversation_db_path
+        or config.feedback_database_path
+        or config.token_usage_database_path
+        or config.kb_database_path
+    )
+    if not db_path:
+        logger.warning(
+            "Skills need a SQLite database but none of AUTOCHAT_CONVERSATION_DB_PATH, "
+            "AUTOCHAT_FEEDBACK_DATABASE_PATH, AUTOCHAT_TOKEN_USAGE_DATABASE_PATH, or "
+            "KB_DATABASE_PATH is set; skills disabled."
+        )
+        return None
+    return SQLiteSkillStore(db_path=db_path)
+
+
 __all__ = [
     "AllowlistFeedbackAuthorizer",
     "AuthenticatedUserAuthorizer",
     "BaseConversationStore",
     "BaseFeedbackStore",
     "BaseKBStore",
+    "BaseSkillStore",
     "BaseTokenUsageStore",
     "BaseUserSettingsStore",
     "FeedbackAuthorizer",
     "PgVectorKBStore",
     "PostgresConversationStore",
     "PostgresFeedbackStore",
+    "PostgresSkillStore",
     "PostgresTokenUsageStore",
     "PostgresUserSettingsStore",
     "SQLiteConversationStore",
     "SQLiteFeedbackStore",
     "SQLiteKBStore",
+    "SQLiteSkillStore",
     "SQLiteTokenUsageStore",
     "SQLiteUserSettingsStore",
     "create_conversation_store",
     "create_feedback_store",
     "create_kb_store",
+    "create_skill_store",
     "create_token_usage_store",
     "create_user_settings_store",
 ]

@@ -174,6 +174,19 @@ constraints and the aggregate counters exposed under `sessions.artifacts` at
 >
 > Anonymous (unauthenticated) connections are unaffected — nothing is written and overrides stay session-scoped. If no usable database can be resolved, or the store cannot be opened at startup, the feature is disabled in place; chat keeps working with session-only overrides.
 
+### Skills
+
+| Env Variable                            | Default | Description                                                           |
+| --------------------------------------- | ------- | --------------------------------------------------------------------- |
+| `AUTOCHAT_SKILLS_PERSISTENCE_ENABLED`   | `true`  | Master switch for the admin-managed [skill](skills) store             |
+| `AUTOCHAT_SKILL_INSTRUCTIONS_MAX_CHARS` | `32000` | Maximum length of a skill's `instructions`                            |
+| `AUTOCHAT_SKILL_DESCRIPTION_MAX_CHARS`  | `300`   | Maximum length of a skill's `description` (shown in the user catalog) |
+| `AUTOCHAT_SKILL_MAX_PARAMETERS`         | `20`    | Maximum number of parameters a skill may declare                      |
+
+> There are no skill-specific storage settings. Like [persisted user settings](#persisted-user-settings), the backend and database are inferred from whatever the app already uses (Postgres when an enabled conversation/feedback/token-usage store is on `postgres`, or the KB is on `pgvector`; otherwise the SQLite file resolved from `AUTOCHAT_CONVERSATION_DB_PATH` → `AUTOCHAT_FEEDBACK_DATABASE_PATH` → `AUTOCHAT_TOKEN_USAGE_DATABASE_PATH` → `KB_DATABASE_PATH`). The three limits must be positive and are checked when a skill is created or replaced.
+>
+> If no usable database can be resolved, or the store cannot be opened at startup, skills are disabled in place and chat keeps working. The admin routes (`/admin/skills*`) additionally require `AUTOCHAT_ADMIN_ENABLED=true`. See [Skills](skills).
+
 ### Session Management
 
 | Env Variable                         | Default | Description                                                                               |

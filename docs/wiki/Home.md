@@ -17,6 +17,7 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 | [Tool Calling](tool-calling)                         | How tools are generated from OpenAPI specs and called by the AI                                                           |
 | [Chat UI](chat-ui)                                   | Built-in web chat interface, endpoints, and UI customization                                                              |
 | [Preset Prompts](preset-prompts)                     | One-click prompt buttons, YAML format, `{{JOB_ID}}` placeholder                                                           |
+| [Skills](skills)                                     | Admin-managed instruction sets: model, limits, admin REST API, user catalog                                               |
 | [WebSocket Client](websocket-client)                 | Python WebSocket client script, connection options, auth examples                                                         |
 | [Authentication](authentication)                     | All auth methods, credential flow, and verification endpoint                                                              |
 | [SSO (Single Sign-On)](sso)                          | OAuth2/OIDC SSO integration, provider examples, and troubleshooting                                                       |
@@ -38,6 +39,8 @@ The repository name is still `auto-bedrock-chat-fastapi`, but the actively devel
 **New to the project?** Start with [Architecture](architecture), then [FastAPI Plugin Integration](fastapi-plugin).
 
 **Adding preset prompt buttons to the UI?** See [Preset Prompts](preset-prompts).
+
+**Managing admin-defined skills at runtime?** See [Skills](skills).
 
 **Configuring the plugin?** See [Configuration](configuration).
 
