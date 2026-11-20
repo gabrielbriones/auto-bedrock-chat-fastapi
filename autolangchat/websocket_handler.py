@@ -270,6 +270,8 @@ class WebSocketChatHandler:
         self._user_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
         # Follower sockets that stopped reading: skipped until they disconnect.
         self._stalled_followers: "weakref.WeakSet[WebSocket]" = weakref.WeakSet()
+        # One send at a time per socket. Innermost lock: nothing else is acquired while it is held.
+        self._send_locks: "weakref.WeakKeyDictionary[WebSocket, asyncio.Lock]" = weakref.WeakKeyDictionary()
 
         self.http_client = httpx.AsyncClient(timeout=config.timeout)
 
@@ -1464,6 +1466,13 @@ class WebSocketChatHandler:
         if lock is None:
             lock = asyncio.Lock()
             self._user_locks[user_id] = lock
+        return lock
+
+    def _send_lock(self, websocket: WebSocket) -> asyncio.Lock:
+        lock = self._send_locks.get(websocket)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._send_locks[websocket] = lock
         return lock
 
     async def _close_interrupted_turn(self, thread_id: str) -> None:
@@ -3374,7 +3383,8 @@ class WebSocketChatHandler:
             # Mirrors Starlette's send_json serialization so the logged size matches the frame size.
             # payload_bytes = len(json.dumps(message, separators=(",", ":"), ensure_ascii=False, default=str).encode())
             # logger.info(f"WS send: type={message.get('type')} size={payload_bytes} bytes")
-            await websocket.send_json(message)
+            async with self._send_lock(websocket):
+                await websocket.send_json(message)
         except Exception as e:
             if log_errors:
                 logger.error(f"Failed to send message: {str(e)}")

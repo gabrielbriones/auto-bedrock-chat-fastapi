@@ -25,6 +25,7 @@ connection layer (no live server in CI), mirroring the existing
 
 import sys
 import types
+import weakref
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -351,6 +352,7 @@ def _make_integration_handler(config, http_client, session, messages, store):
     handler.chat_graph = _FakeChatGraph(messages)
     handler.feedback_authorizer = _FakeAuthorizer()
     handler._total_errors = 0
+    handler._send_locks = weakref.WeakKeyDictionary()
     return handler
 
 

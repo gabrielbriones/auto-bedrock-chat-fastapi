@@ -10,8 +10,13 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from autolangchat.config import ChatConfig
+from autolangchat.db import SQLiteConversationStore
+from autolangchat.exceptions import WebSocketError
+from autolangchat.session_manager import ChatSessionManager
 from autolangchat.websocket_handler import WebSocketChatHandler
 
 
@@ -284,3 +289,138 @@ async def test_a_failed_turn_reports_its_conversation():
     failure = next(m for m in ws.sent if m["type"] == "ai_response")
     assert failure["error"] is True
     assert failure["conversation_id"] == "c-1"
+
+
+class _CheckpointingGatedGraph(_GatedGraph):
+    """Checkpoints each turn on its own thread; with ``archive``, stores a tool result in the turn's artifact scope."""
+
+    def __init__(self, archive=False):
+        super().__init__()
+        self.archive = archive
+        self.checkpoints = {}
+
+    async def ainvoke(self, inputs, config):
+        configurable = config["configurable"]
+        self.running.set()
+        await self.release.wait()
+        if self.archive:
+            configurable["artifact_store"].put(configurable["artifact_scope"], "oversized tool result", {})
+        thread_id = configurable["thread_id"]
+        answer = {"role": "assistant", "content": "done", "metadata": {"message_id": f"{thread_id}-answer"}}
+        messages = self.checkpoints.setdefault(thread_id, [])
+        messages += [{"role": "user", "content": inputs["user_message"], "metadata": {}}, answer]
+        return {"messages": list(messages), "metadata": {}, "kb_results": []}
+
+    async def aget_state(self, cfg):
+        return SimpleNamespace(values={"messages": self.checkpoints.get(cfg["configurable"]["thread_id"], [])})
+
+
+# How a tab leaves conversation "a", and where that leaves it.
+_SWITCHES = {
+    "load": ({"type": "conversation_load", "conversation_id": "b"}, "b"),
+    "new": ({"type": "conversation_new"}, None),
+    "delete": ({"type": "conversation_delete", "conversation_id": "a"}, None),
+}
+
+
+async def _switch_mid_turn(graph, switch):
+    """Run a turn on conversation "a" and leave it as ``switch`` says while the turn runs.
+
+    Returns the frames sent, the tab's session and the conversation store once the loop has ended.
+    """
+    config = ChatConfig().model_copy(update={"conversation_persistence_enabled": True, "require_tool_auth": False})
+    manager = ChatSessionManager(config)
+    store = SQLiteConversationStore(db_path=":memory:")
+    await store.open()
+    for conversation_id in ("a", "b"):
+        await store.create_conversation(conversation_id, "alice")
+    handler = WebSocketChatHandler(session_manager=manager, config=config, chat_graph=graph, conversation_store=store)
+    ws = _QueueSocket()
+    await manager.create_session(ws, user_id="alice", is_authenticated=True)
+    session = await manager.get_session(ws)
+    session.mark_verified()
+    loop = asyncio.create_task(handler._message_loop(ws))
+    try:
+        await ws.inbox.put({"type": "conversation_load", "conversation_id": "a"})
+        await ws.inbox.put({"type": "chat", "message": "analyse"})
+        await asyncio.wait_for(graph.running.wait(), 2)
+
+        frame, after = _SWITCHES[switch]
+        await ws.inbox.put(frame)
+        handled = {
+            "load": lambda: ws.types().count("conversation_loaded") == 2,
+            "new": lambda: session.metadata["conversation_id"] is None,
+            "delete": lambda: "conversation_deleted" in ws.types(),
+        }[switch]
+        await _until(handled)
+        assert session.metadata["conversation_id"] == after
+
+        graph.release.set()
+        await _until(lambda: "ai_response" in ws.types())
+        await ws.inbox.put(None)
+        await asyncio.wait_for(loop, 2)
+        return ws.sent, session, store
+    finally:
+        if not loop.done():
+            loop.cancel()
+        await handler.shutdown()
+
+
+@pytest.mark.parametrize("switch", sorted(_SWITCHES))
+async def test_leaving_the_conversation_mid_turn_keeps_the_answer_on_the_turns_conversation(switch):
+    graph = _CheckpointingGatedGraph()
+    sent, session, store = await _switch_mid_turn(graph, switch)
+    try:
+        answer = next(m for m in sent if m["type"] == "ai_response")
+        assert answer["conversation_id"] == "a"
+        assert not answer.get("error")
+        # The turn never moves the tab back, nor writes into the conversation it moved to.
+        assert session.metadata["conversation_id"] == _SWITCHES[switch][1]
+        assert list(graph.checkpoints) == ["a"]
+        assert (await store.get_conversation("b"))["message_count"] == 0
+        recorded = await store.get_conversation("a")
+        assert recorded is None if switch == "delete" else recorded["message_count"] == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="XMGPLAT-11971: leaving the conversation revokes the running turn's artifact scope, so the turn fails",
+)
+@pytest.mark.parametrize("switch", ["load", "new"])
+async def test_leaving_the_conversation_mid_turn_does_not_fail_a_turn_that_archives_a_tool_result(switch):
+    sent, _, store = await _switch_mid_turn(_CheckpointingGatedGraph(archive=True), switch)
+    try:
+        answer = next(m for m in sent if m["type"] == "ai_response")
+        assert not answer.get("error"), answer["message"]
+    finally:
+        await store.close()
+
+
+async def test_sends_to_one_socket_wait_for_each_other_and_a_timed_out_send_lets_the_next_one_go():
+    handler = _make_handler(_GatedGraph())
+    ws, other = _QueueSocket(), _QueueSocket()
+    stall = asyncio.Event()
+    entered = []
+
+    async def send_json(message):
+        entered.append(message["type"])
+        if message["type"] == "stuck":
+            await stall.wait()
+        ws.sent.append(message)
+
+    ws.send_json = AsyncMock(side_effect=send_json)
+
+    stuck = asyncio.create_task(handler._send_bounded(ws, {"type": "stuck"}, 0.1))
+    await _until(lambda: entered == ["stuck"])
+    queued = asyncio.create_task(handler._send_message(ws, {"type": "queued"}))
+    await handler._send_message(other, {"type": "elsewhere"})
+    await asyncio.sleep(0.02)
+    assert entered == ["stuck"]
+    assert other.types() == ["elsewhere"]
+
+    with pytest.raises(WebSocketError):
+        await stuck
+    await asyncio.wait_for(queued, 1)
+    assert ws.types() == ["queued"]
