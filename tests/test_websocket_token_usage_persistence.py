@@ -38,6 +38,7 @@ def _make_handler(graph_state, token_usage_store=None):
     ``graph_state`` from the chat graph. Returns ``(handler, chat_graph)``
     so tests can inspect the ``ainvoke()`` call args."""
     config = MagicMock()
+    config.model_copy.return_value = config
     config.timeout = 30.0
     config.model_id = "us.anthropic.claude-sonnet-4-6"
     config.require_tool_auth = False

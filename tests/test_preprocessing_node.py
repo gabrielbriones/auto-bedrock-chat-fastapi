@@ -308,6 +308,22 @@ class TestArtifactMarkerHelpers:
 
 class TestMarkerExemptFromTruncation:
     @pytest.mark.asyncio
+    async def test_loaded_skill_is_never_truncated(self, tight_config):
+        skill = {
+            "tool_call_id": "s1",
+            "name": "load_skill",
+            "result": "S" * 5000,
+            "metadata": {"skill_ref": {"name": "triage", "revision": "1"}},
+        }
+        big = {"tool_call_id": "b1", "name": "other", "result": "D" * 5000}
+
+        result = await _processor(tight_config).preprocess_messages(_history(_tool_message(skill, big)))
+
+        entries = result[2]["tool_results"]
+        assert entries[0]["result"] == "S" * 5000
+        assert len(entries[1]["result"]) < 5000
+
+    @pytest.mark.asyncio
     async def test_stage1_keeps_marker_and_truncates_sibling(self, tight_config):
         marker = _marker_entry()
         big = {"tool_call_id": "b1", "name": "other", "result": "D" * 5000}

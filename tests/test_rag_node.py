@@ -164,3 +164,99 @@ async def test_rag_node_keeps_legacy_order_for_models_without_prompt_caching():
 
     assert result["messages"][0]["content"].endswith("BASE PROMPT")
     assert "metadata" not in result["messages"][0]
+
+
+# ---------------------------------------------------------------------------
+# Skills catalog (XMGPLAT-11860)
+# ---------------------------------------------------------------------------
+
+
+def _skills_config(chat_config, *names, bound=True, max_chars=4000, auth_context_text="AUTH CONTEXT"):
+    """``_rag_config`` plus a tool manager whose bound skill snapshot lists ``names``."""
+    chat_config.langchain_tools = [types.SimpleNamespace(name="load_skill" if bound else "list_jobs")]
+    chat_config.skill_catalog_max_chars = max_chars
+    entries = tuple(types.SimpleNamespace(name=name, description=f"{name} help") for name in names)
+    config = _rag_config(chat_config, auth_context_text=auth_context_text)
+    config["configurable"]["tool_manager"] = types.SimpleNamespace(
+        skill_snapshot=types.SimpleNamespace(entries=entries)
+    )
+    return config
+
+
+def _no_context(chat_config):
+    chat_config.enable_rag = False
+    return chat_config
+
+
+@pytest.mark.asyncio
+async def test_rag_node_appends_sorted_skill_catalog_after_base_prompt():
+    config = _skills_config(_no_context(_DummyChatConfig()), "beta", "alpha", auth_context_text=None)
+
+    content = (await rag_node(_user_turn(), config))["messages"][0]["content"]
+
+    assert content.startswith("BASE PROMPT\n\nAVAILABLE SKILLS:\n- alpha: alpha help\n- beta: beta help\n")
+    assert content.endswith(
+        "call the load_skill tool with the skill name (and its parameter values as strings) "
+        "before answering, then follow the instructions it returns."
+    )
+
+
+@pytest.mark.asyncio
+async def test_rag_node_prefers_the_turn_skill_snapshot_over_the_shared_tool_manager():
+    config = _skills_config(_no_context(_DummyChatConfig()), "newer", auth_context_text=None)
+    config["configurable"]["skill_snapshot"] = types.SimpleNamespace(
+        entries=(types.SimpleNamespace(name="turn", description="turn help"),)
+    )
+
+    content = (await rag_node(_user_turn(), config))["messages"][0]["content"]
+
+    assert "- turn: turn help" in content and "newer" not in content
+
+
+@pytest.mark.asyncio
+async def test_rag_node_keeps_catalog_after_base_prompt_when_context_comes_first():
+    content = (await rag_node(_user_turn(), _skills_config(_DummyChatConfig(), "alpha")))["messages"][0]["content"]
+
+    assert content.startswith("RELEVANT KNOWLEDGE BASE CONTEXT:")
+    assert content.index("AUTH CONTEXT") < content.index("BASE PROMPT\n\nAVAILABLE SKILLS:\n- alpha: alpha help")
+
+
+@pytest.mark.asyncio
+async def test_rag_node_caches_catalog_with_the_stable_prompt():
+    system = (await rag_node(_user_turn(), _skills_config(_CachingChatConfig(), "alpha")))["messages"][0]
+
+    content = system["content"]
+    prefix = content[: system["metadata"]["cache_prefix_chars"]]
+    assert prefix.startswith("BASE PROMPT\n\nAVAILABLE SKILLS:\n- alpha: alpha help")
+    assert prefix.endswith("then follow the instructions it returns.")
+    assert content[len(prefix) :].lstrip().startswith("RELEVANT KNOWLEDGE BASE CONTEXT:")
+    assert content.endswith("AUTH CONTEXT")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["no-skills", "not-bound", "no-tool-manager", "no-tool-calling"])
+async def test_rag_node_omits_catalog(case, monkeypatch):
+    chat_config = _no_context(_DummyChatConfig())
+    config = _skills_config(chat_config, *([] if case == "no-skills" else ["alpha"]), bound=case != "not-bound")
+    config["configurable"]["auth_context_text"] = None
+    if case == "no-tool-manager":
+        del config["configurable"]["tool_manager"]
+    if case == "no-tool-calling":
+        monkeypatch.setitem(rag_node.__globals__, "supports_tool_calling", lambda model_id: False)
+
+    result = await rag_node(_user_turn(), config)
+
+    assert result["messages"][0]["content"] == "BASE PROMPT"
+
+
+@pytest.mark.asyncio
+async def test_rag_node_bounds_the_catalog():
+    names = [f"skill-{i:02d}" for i in range(40)]
+    config = _skills_config(_no_context(_DummyChatConfig()), *names, max_chars=400, auth_context_text=None)
+
+    content = (await rag_node(_user_turn(), config))["messages"][0]["content"]
+
+    catalog = content[len("BASE PROMPT\n\n") :]
+    assert catalog.startswith("AVAILABLE SKILLS:")
+    assert len(catalog) <= 400
+    assert "more skill(s) not listed)" in catalog

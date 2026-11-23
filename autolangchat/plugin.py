@@ -22,9 +22,11 @@ from .graph.graph import build_chat_graph
 from .graph.tools.artifact_tools import build_artifact_tools
 from .graph.tools.generator import ToolsGenerator
 from .graph.tools.manager import ToolManager
+from .graph.tools.skill_tools import build_skill_tools
 from .model_capabilities import build_bedrock_kwargs
 from .rag.bedrock_embeddings import BedrockEmbeddingClient
 from .session_manager import ChatSessionManager
+from .skills.service import SkillService
 from .spa import dashboard_path, mount_spa
 from .websocket_handler import WebSocketChatHandler
 
@@ -280,6 +282,14 @@ class AutoLangChatPlugin:
         self.session_manager = ChatSessionManager(self.config)
         self.embedding_client = BedrockEmbeddingClient(self.config)
 
+        # Admin-managed skill store. Like the user-settings store, the backend
+        # is inferred from the app's existing database; ``None`` when skills
+        # are disabled or no usable backend exists. Opened in startup(). Built
+        # before the tools so ``load_skill`` can be registered.
+        from .db import create_skill_store
+
+        self._skill_store = create_skill_store(self.config)
+
         self._init_tools()
         self.app_base_url = self.tool_manager.base_url
 
@@ -402,13 +412,6 @@ class AutoLangChatPlugin:
         logger.debug("Checking user settings store configuration and initializing...")
         self._user_settings_store = create_user_settings_store(self.config)
 
-        # Admin-managed skill store. Like the user-settings store, the backend
-        # is inferred from the app's existing database; ``None`` when skills
-        # are disabled or no usable backend exists. Opened in startup().
-        from .db import create_skill_store
-
-        self._skill_store = create_skill_store(self.config)
-
         # Admin authorizer. Built unconditionally so
         # tests can introspect/swap it, but the ``/admin`` routes are only
         # registered when ``admin_enabled=True`` (see ``_setup_admin_routes``).
@@ -437,6 +440,7 @@ class AutoLangChatPlugin:
             token_usage_store=self._token_usage_store,
             conversation_store=self._conversation_store,
             user_settings_store=self._user_settings_store,
+            tool_manager=self.tool_manager,
         )
 
         # Check knowledge base status if RAG is enabled
@@ -459,10 +463,19 @@ class AutoLangChatPlugin:
 
         The generator parses the OpenAPI spec and produces execution metadata;
         the manager dispatches those over HTTP and the in-process internal
-        tools (session artifacts) by name. Internal names are reserved so a
-        colliding OpenAPI operation is skipped.
+        tools (session artifacts, ``load_skill``) by name. Internal names are
+        reserved so a colliding OpenAPI operation is skipped. ``load_skill`` is
+        registered whenever a skill store exists, but only bound to the model
+        while at least one skill is enabled (see :meth:`ToolManager.refresh`).
         """
         internal_tools = build_artifact_tools() if self.config.artifact_enabled else []
+        self._skill_service = None
+        if getattr(self, "_skill_store", None) is not None:
+            self._skill_service = SkillService(
+                lambda: getattr(self, "_skill_store", None),
+                param_value_max_chars=self.config.skill_param_value_max_chars,
+            )
+            internal_tools += build_skill_tools(self._skill_service)
         self._tools_generator = ToolsGenerator(  # retained for update_tools()
             app=self.app,
             config=self.config,
@@ -473,6 +486,7 @@ class AutoLangChatPlugin:
             config=self.config,
             base_url=self._tools_generator.get_api_base_url(),
             internal_tools=internal_tools,
+            skill_service=self._skill_service,
         )
 
     def _infer_variables_from_templates(self) -> list:
@@ -2126,6 +2140,7 @@ class AutoLangChatPlugin:
                 get_skill_store=lambda: getattr(self, "_skill_store", None),
                 require_admin=require_admin,
                 chat_config=self.config,
+                on_change=self._skill_service.mark_changed if getattr(self, "_skill_service", None) else None,
             )
         else:
             logger.info("Admin skill routes skipped: skills disabled or backend not configured")

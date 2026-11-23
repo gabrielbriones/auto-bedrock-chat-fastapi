@@ -93,6 +93,12 @@ def is_artifact_marker_entry(tr: Any) -> bool:
     return isinstance(tr, dict) and tr.get(ARTIFACT_MARKER_ENTRY_KEY) is True
 
 
+def is_skill_entry(tr: Any) -> bool:
+    """Whether a ``tool_results`` entry is a loaded skill (``load_skill`` checked it fits, so it is never cut short)."""
+    metadata = tr.get("metadata") if isinstance(tr, dict) else None
+    return isinstance(metadata, dict) and bool(metadata.get("skill_ref"))
+
+
 def is_artifact_marker_message(msg: Any) -> bool:
     """Whether a user message is itself an artifact marker, i.e. it replaced an oversized message."""
     return isinstance(msg, dict) and msg.get("role") == "user" and msg.get(ARTIFACT_MARKER_ENTRY_KEY) is True
@@ -1149,11 +1155,12 @@ class MessagePreprocessor:
 
         # Measure each entry's payload size. Artifact markers are exempt: truncating or
         # summarizing one would drop its handle, so they only reduce the budget left for the rest.
+        # Loaded skills are exempt too: the model must get their instructions whole.
         entries: List[tuple] = []  # (index, payload_key, payload_str, size)
         total_payload_size = 0
         marker_size = 0
         for j, tr in enumerate(tool_results_list):
-            if is_artifact_marker_entry(tr):
+            if is_artifact_marker_entry(tr) or is_skill_entry(tr):
                 marker_size += len(_get_tool_result_payload(tr)[1])
                 entries.append((j, "", "", 0))
             elif isinstance(tr, dict):

@@ -65,6 +65,7 @@ def register_admin_skill_routes(
     get_skill_store: Callable[[], Optional[BaseSkillStore]],
     require_admin: Callable,
     chat_config: Any,
+    on_change: Optional[Callable[[], None]] = None,
 ) -> APIRouter:
     """Register the ``/admin/skills*`` routes on ``app``.
 
@@ -83,6 +84,9 @@ def register_admin_skill_routes(
         :meth:`AutoLangChatPlugin._setup_admin_routes`.
     chat_config:
         Source of the ``skill_*_max_*`` limits, read on every write.
+    on_change:
+        Called after every successful write (``SkillService.mark_changed``),
+        so the chat runtime rebinds ``load_skill`` and the catalog.
 
     Returns
     -------
@@ -114,6 +118,8 @@ def register_admin_skill_routes(
             raise _not_found(name)
 
     def _audit(action: str, identity: Any, name: str, **extra: Any) -> None:
+        if on_change is not None:
+            on_change()
         audit_logger.info(
             action,
             extra={

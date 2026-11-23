@@ -81,7 +81,9 @@ _handler_stubs = {
     ),
     "autolangchat.graph": _stub_module("autolangchat.graph"),
     "autolangchat.graph.tools": _stub_module("autolangchat.graph.tools"),
-    "autolangchat.graph.tools.manager": _stub_module("autolangchat.graph.tools.manager", AuthInfo=object),
+    "autolangchat.graph.tools.manager": _stub_module(
+        "autolangchat.graph.tools.manager", AuthInfo=object, ToolManager=object
+    ),
     "autolangchat.session_manager": _stub_module(
         "autolangchat.session_manager", ChatSession=object, ChatSessionManager=object
     ),

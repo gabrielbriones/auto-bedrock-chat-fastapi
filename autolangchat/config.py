@@ -23,9 +23,11 @@ from .defaults import (
     DEFAULT_MAX_TRUNCATION_RECURSION,
     DEFAULT_PRESERVE_SYSTEM_MESSAGE,
     DEFAULT_SESSION_TIMEOUT,
+    DEFAULT_SKILL_CATALOG_MAX_CHARS,
     DEFAULT_SKILL_DESCRIPTION_MAX_CHARS,
     DEFAULT_SKILL_INSTRUCTIONS_MAX_CHARS,
     DEFAULT_SKILL_MAX_PARAMETERS,
+    DEFAULT_SKILL_PARAM_VALUE_MAX_CHARS,
     DEFAULT_TIMEOUT,
     DEFAULT_TOOL_RESPONSE_MAX_BYTES,
     HISTORY_MSG_LENGTH_THRESHOLD_FRACTION,
@@ -1283,6 +1285,23 @@ class ChatConfig(BaseSettings):
         alias="AUTOCHAT_SKILL_MAX_PARAMETERS",
         gt=0,
         description="Maximum number of parameters a skill may declare.",
+    )
+
+    skill_param_value_max_chars: int = Field(
+        default=DEFAULT_SKILL_PARAM_VALUE_MAX_CHARS,
+        alias="AUTOCHAT_SKILL_PARAM_VALUE_MAX_CHARS",
+        gt=0,
+        description="Maximum length of one parameter value passed to the ``load_skill`` tool.",
+    )
+
+    skill_catalog_max_chars: int = Field(
+        default=DEFAULT_SKILL_CATALOG_MAX_CHARS,
+        alias="AUTOCHAT_SKILL_CATALOG_MAX_CHARS",
+        gt=0,
+        description=(
+            "Maximum length of the 'Available skills' list appended to the system prompt. "
+            "Skills that do not fit are left out of the list (they can still be loaded by name)."
+        ),
     )
 
     # ------------------------------------------------------------------

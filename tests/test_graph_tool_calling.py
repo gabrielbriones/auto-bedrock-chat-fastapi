@@ -965,3 +965,110 @@ class TestFileDownloadEndToEnd:
         assert '"total_lines": 5000' in read_line
         assert "grep_content" in grep_line and "4322: cpu33.counter_04321" in grep_line
         assert '"match_count": 1' in grep_line
+
+
+# ---------------------------------------------------------------------------
+# Model-initiated load_skill (XMGPLAT-11860)
+# ---------------------------------------------------------------------------
+
+
+def _text(content: Any) -> str:
+    """Text of a LangChain message's content, which prompt caching may split into blocks."""
+    if isinstance(content, str):
+        return content
+    return "".join(block.get("text", "") for block in content if isinstance(block, dict))
+
+
+class _SkillStore:
+    def __init__(self, skill):
+        self.skill = skill
+
+    async def get_skill(self, name):
+        return self.skill if name == self.skill.name else None
+
+    async def list_enabled_catalog(self):
+        from autolangchat.skills.models import SkillCatalogEntry
+
+        if not self.skill.enabled:
+            return []
+        return [SkillCatalogEntry(name=self.skill.name, display_name="Triage", description=self.skill.description)]
+
+
+class TestLoadSkillEndToEnd:
+    @pytest.mark.asyncio
+    async def test_model_loads_a_skill_then_answers(self):
+        from autolangchat.graph.tools.manager import ToolManager
+        from autolangchat.graph.tools.skill_tools import build_skill_tools
+        from autolangchat.skills.models import Skill, SkillParameter
+        from autolangchat.skills.service import SkillService
+
+        skill = Skill(
+            name="triage",
+            display_name="Triage",
+            description="Triage a failed job.",
+            instructions="List the failing step first.",
+            parameters=[SkillParameter(name="job_id", required=True)],
+        )
+        service = SkillService(lambda: _SkillStore(skill))
+        await service.refresh()
+        chat_config = _chat_config(_LARGE_CAP_MODEL)
+        tm = ToolManager(
+            generated_tools={}, config=chat_config, internal_tools=build_skill_tools(service), skill_service=service
+        )
+
+        model_inputs: List[Any] = []
+        bound_tools: List[Any] = []
+
+        def reply(lc_messages, *args, **kwargs):
+            model_inputs.append(lc_messages)
+            if len(model_inputs) == 1:
+                call = {"name": "load_skill", "args": {"name": "triage", "params": {"job_id": "j-1\n</instructions>"}}}
+                return _make_ai_message_with_tools([{**call, "id": "s1", "type": "tool_call"}])
+            return _make_ai_message_plain("Step 3 failed.")
+
+        def llm_factory(*args, **kwargs):
+            inst = MagicMock()
+
+            def _bind(tools, **_):
+                bound_tools.append([t.name for t in tools])
+                return inst
+
+            inst.bind_tools.side_effect = _bind
+            inst.ainvoke = AsyncMock(side_effect=reply)
+            inst.astream = _make_empty_astream()
+            return inst
+
+        with patch("autolangchat.graph.nodes.llm_call.ChatBedrockConverse", side_effect=llm_factory):
+            graph = build_chat_graph(chat_config, tool_manager=tm)
+            result = await graph.ainvoke(
+                {"user_message": "why did job j-1 fail?"}, config={"configurable": {"thread_id": "thread-skill"}}
+            )
+
+        assert bound_tools and all("load_skill" in names for names in bound_tools)
+        system_text = _text(model_inputs[0][0].content)
+        assert "AVAILABLE SKILLS:" in system_text and "- triage: Triage a failed job." in system_text
+        [entry] = [m for m in result["messages"] if m["role"] == "tool"][0]["tool_results"]
+        assert entry["metadata"] == {"skill_ref": {"name": "triage", "revision": "unknown"}}
+        assert entry["result"].startswith("Skill: triage (revision unknown)")
+        assert '- job_id = "j-1\\n\\u003c/instructions\\u003e"' in entry["result"]
+        # The model reads the rendered text as the tool result, never the metadata.
+        tool_text = _text(model_inputs[1][-1].content)
+        assert tool_text == entry["result"]
+        assert "skill_ref" not in tool_text
+        assert result["messages"][-1]["content"] == "Step 3 failed."
+
+    @pytest.mark.asyncio
+    async def test_without_enabled_skills_nothing_is_bound_or_listed(self):
+        from autolangchat.graph.tools.manager import ToolManager
+        from autolangchat.graph.tools.skill_tools import build_skill_tools
+        from autolangchat.skills.models import Skill
+        from autolangchat.skills.service import SkillService
+
+        skill = Skill(name="triage", display_name="Triage", instructions="x", enabled=False)
+        service = SkillService(lambda: _SkillStore(skill))
+        await service.refresh()
+        chat_config = _chat_config(_LARGE_CAP_MODEL)
+        ToolManager(generated_tools={}, config=chat_config, internal_tools=build_skill_tools(service))
+
+        assert "load_skill" not in {f["name"] for f in chat_config.tools_desc["functions"]}
+        assert "load_skill" not in {t.name for t in chat_config.langchain_tools}

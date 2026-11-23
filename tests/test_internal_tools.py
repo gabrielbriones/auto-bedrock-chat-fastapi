@@ -1,6 +1,8 @@
 """In-process internal tools: the ``InternalTool`` / ``ToolContext`` seam."""
 
+import asyncio
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,7 +11,13 @@ import pytest
 
 import autolangchat.artifacts as artifacts_module
 from autolangchat.artifacts import ArtifactScope, ArtifactStore
-from autolangchat.defaults import ARTIFACT_READ_MAX_BYTES, ARTIFACT_READ_MAX_LINES, ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS
+from autolangchat.context_budget import ContextBudget
+from autolangchat.defaults import (
+    ARTIFACT_READ_MAX_BYTES,
+    ARTIFACT_READ_MAX_LINES,
+    ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS,
+    CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS,
+)
 from autolangchat.graph.tools.artifact_tools import (
     GREP_ARTIFACT_ALIAS,
     GREP_CONTENT,
@@ -25,10 +33,12 @@ from autolangchat.graph.tools.internal import (
     CONTEXT_EXHAUSTED,
     INVALID_ARGUMENTS,
     TOOL_UNAVAILABLE,
+    BatchClaims,
     InternalTool,
     ToolContext,
     tool_error,
 )
+from autolangchat.skills.prompt import LOAD_SKILL
 from tests.http_stubs import stub_http
 
 
@@ -218,7 +228,9 @@ class TestToolManagerInternalTools:
         )
 
         assert results == [{"tool_call_id": "c1", "name": "echo", "result": {"lines": "1: hi"}}]
-        handler.assert_awaited_once_with({"text": "hi"}, ctx)
+        call_ctx = handler.await_args.args[1]
+        assert call_ctx == replace(ctx, tool_name="echo", tool_call_id="c1")
+        assert call_ctx.claims is ctx.claims
         assert requests == []
 
     async def test_execute_tool_calls_without_context_is_unavailable(self):
@@ -451,8 +463,22 @@ class TestToolsExecutionNodeContext:
 
 
 def _budget(chars):
-    """A ContextBudget stand-in whose allowance is ``chars`` for every content kind."""
-    return SimpleNamespace(allowance_for=lambda kind: chars)
+    """A ContextBudget with room for one result of ``chars`` characters of any content kind."""
+    return ContextBudget(
+        model_id="",
+        provider="",
+        max_input_tokens=chars + CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS,
+        max_input_tokens_known=True,
+        reserved_output_tokens=0,
+        tool_schema_tokens=0,
+        message_tokens=0,
+        safety_margin_tokens=0,
+    )
+
+
+def _next_round(ctx):
+    """``ctx`` for a later tool batch: same budget, nothing claimed yet."""
+    return replace(ctx, claims=BatchClaims())
 
 
 def _artifact_ctx(text, *, budget=None, config=None):
@@ -464,9 +490,9 @@ def _artifact_ctx(text, *, budget=None, config=None):
 async def _page_bytes(ctx, handle, offset):
     pieces = []
     while offset is not None:
-        page = await read_content_range({"handle": handle, "start_byte": offset}, ctx)
+        page = await read_content_range({"handle": handle, "start_byte": offset}, _next_round(ctx))
         if ctx.context_budget is not None:
-            assert len(json.dumps(page)) <= ctx.context_budget.allowance_for("json")
+            assert len(json.dumps(page)) <= _next_round(ctx).free_chars()
         pieces.append(page["text"])
         offset = page["next_start_byte"]
     return "".join(pieces)
@@ -506,7 +532,7 @@ class TestReadContentRange:
         seen, start, pages = [], 1, 0
 
         while start is not None:
-            page = await read_content_range({"handle": handle, "start_line": start, "max_lines": 500}, ctx)
+            page = await read_content_range({"handle": handle, "start_line": start, "max_lines": 500}, _next_round(ctx))
             assert len(json.dumps(page)) <= allowance
             seen.extend(page["text"].split("\n"))
             pages += 1
@@ -801,6 +827,75 @@ async def test_artifact_tools_dispatch_through_tool_manager():
 
 
 # ---------------------------------------------------------------------------
+# One budget per tool batch
+# ---------------------------------------------------------------------------
+
+
+class TestBatchBudget:
+    def test_framing_of_the_result_is_charged(self):
+        ctx = ToolContext(artifact_store=None, artifact_scope=None, context_budget=_budget(1000), chat_config=None)
+
+        named = replace(ctx, tool_name="read_content_range", tool_call_id="tooluse_" + "x" * 22)
+
+        assert ctx.free_chars() == 1000
+        assert named.free_chars() < 1000
+
+    def test_claims_count_text_and_framing(self):
+        ctx = ToolContext(artifact_store=None, artifact_scope=None, context_budget=_budget(1000), chat_config=None)
+
+        assert ctx.claim(400)
+        assert ctx.free_chars() == 1000 - 400 - CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS
+        assert not ctx.claim(1000)
+        assert ctx.free_chars() == 1000 - 400 - CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS
+
+    def test_without_a_budget_everything_fits(self):
+        ctx = _ctx()
+
+        assert ctx.free_chars() is None
+        assert ctx.claim(10**9)
+
+    async def test_concurrent_reads_fit_the_budget_together(self):
+        ctx, handle = _artifact_ctx("".join(f"row {n:04d} {'x' * 40}\n" for n in range(1000)), budget=_budget(6000))
+
+        pages = await asyncio.gather(
+            read_content_range({"handle": handle}, replace(ctx, tool_call_id="c1")),
+            read_content_range({"handle": handle, "start_line": 500}, replace(ctx, tool_call_id="c2")),
+            grep_content({"handle": handle, "pattern": "row"}, replace(ctx, tool_call_id="c3")),
+        )
+
+        accepted = [p for p in pages if "error" not in p]
+        assert accepted
+        assert sum(len(json.dumps(p)) for p in accepted) <= 6000
+        assert all(p["error"] == CONTEXT_EXHAUSTED for p in pages if "error" in p)
+
+    async def test_manager_calls_share_one_batch_budget(self):
+        async def claim_1500(arguments, call_ctx):
+            return "y" * 1500 if call_ctx.claim(1500) else tool_error(CONTEXT_EXHAUSTED, "full")
+
+        manager, config = _manager([*build_artifact_tools(), _tool("echo", claim_1500, requires_session=False)])
+        store, scope = _live_scope()
+        handle = store.put(scope, "".join(f"{'z' * 60}\n" for _ in range(200)), {})
+        ctx = ToolContext(artifact_store=store, artifact_scope=scope, context_budget=_budget(4000), chat_config=config)
+
+        results = await manager.execute_tool_calls(
+            [
+                {"id": "c1", "name": READ_CONTENT_RANGE, "arguments": {"handle": handle}},
+                {"id": "c2", "name": "echo", "arguments": {"text": "x"}},
+            ],
+            tool_context=ctx,
+        )
+
+        read, echoed = (r["result"] for r in results)
+        # Whichever claims first, the other is trimmed or refused so that both fit together.
+        accepted = [len(json.dumps(read))] if "error" not in read else []
+        accepted += [len(echoed)] if echoed == "y" * 1500 else []
+        assert accepted
+        assert sum(accepted) <= 4000
+        assert echoed == "y" * 1500 or echoed == tool_error(CONTEXT_EXHAUSTED, "full")
+        assert ctx.claims.tokens <= ctx.context_budget.remaining_tokens
+
+
+# ---------------------------------------------------------------------------
 # Hidden aliases
 # ---------------------------------------------------------------------------
 
@@ -921,6 +1016,162 @@ class TestPluginRegistration:
         assert GREP_CONTENT not in described and GREP_CONTENT not in bound
         # Without the internal tool the OpenAPI operation keeps its name.
         assert plugin._tools_generator.get_tool_metadata(READ_CONTENT_RANGE) is not None
+
+
+# ---------------------------------------------------------------------------
+# load_skill binding refresh (XMGPLAT-11860)
+# ---------------------------------------------------------------------------
+
+
+class _SkillStore:
+    def __init__(self, *names):
+        self.enabled = set(names)
+        self.catalog_reads = 0
+
+    async def list_enabled_catalog(self):
+        from autolangchat.skills.models import SkillCatalogEntry
+
+        self.catalog_reads += 1
+        return [SkillCatalogEntry(name=n, display_name=n, description=f"{n} help") for n in sorted(self.enabled)]
+
+
+def _skill_plugin(store):
+    """``_plugin`` with a skill store, built the same way ``__init__`` orders it (store before tools)."""
+    from fastapi import FastAPI
+
+    from autolangchat.config import ChatConfig
+    from autolangchat.plugin import AutoLangChatPlugin
+
+    plugin = object.__new__(AutoLangChatPlugin)
+    plugin.app = FastAPI()
+    plugin.config = ChatConfig(model_id="test-model", AUTOCHAT_ENABLE_UI=False, AUTOCHAT_ARTIFACT_ENABLED=False)
+    plugin._skill_store = store
+    plugin._init_tools()
+    return plugin
+
+
+def _load_skill_bound(plugin):
+    described, bound = _bound_names(plugin)
+    assert (LOAD_SKILL in described) == (LOAD_SKILL in bound)
+    return LOAD_SKILL in bound
+
+
+class TestSkillToolBinding:
+    def test_no_skill_store_registers_nothing(self):
+        plugin = _skill_plugin(None)
+
+        assert plugin._skill_service is None
+        assert LOAD_SKILL not in plugin.tool_manager.internal_tools
+
+    async def test_registered_but_unbound_until_the_first_refresh(self):
+        plugin = _skill_plugin(_SkillStore("triage"))
+
+        assert LOAD_SKILL in plugin.tool_manager.internal_tools
+        assert not _load_skill_bound(plugin)
+
+        await plugin.tool_manager.refresh()
+
+        assert _load_skill_bound(plugin)
+        assert [e.name for e in plugin.tool_manager.skill_snapshot.entries] == ["triage"]
+
+    async def test_no_enabled_skills_keeps_it_unbound(self):
+        plugin = _skill_plugin(_SkillStore())
+
+        await plugin.tool_manager.refresh()
+
+        assert not _load_skill_bound(plugin)
+        assert plugin.tool_manager.skill_snapshot.version == 0
+
+    async def test_enabling_and_disabling_rebinds_without_restart(self):
+        store = _SkillStore()
+        plugin = _skill_plugin(store)
+        await plugin.tool_manager.refresh()
+
+        store.enabled.add("triage")
+        plugin._skill_service.mark_changed()
+        await plugin.tool_manager.refresh()
+        assert _load_skill_bound(plugin)
+
+        store.enabled.clear()
+        plugin._skill_service.mark_changed()
+        await plugin.tool_manager.refresh()
+        assert not _load_skill_bound(plugin)
+
+    async def test_unchanged_counter_neither_reads_nor_rebinds(self):
+        store = _SkillStore("triage")
+        plugin = _skill_plugin(store)
+        await plugin.tool_manager.refresh()
+        plugin.tool_manager.rebind = MagicMock()
+
+        await plugin.tool_manager.refresh()
+        await plugin.tool_manager.refresh()
+
+        assert store.catalog_reads == 1
+        plugin.tool_manager.rebind.assert_not_called()
+
+    async def test_rebinding_does_not_regenerate_the_http_tools(self):
+        store = _SkillStore()
+        plugin = _skill_plugin(store)
+        await plugin.tool_manager.refresh()
+        plugin.update_tools = AsyncMock()
+        generated = plugin.tool_manager._generated_tools
+
+        @plugin.app.get("/registered-late")
+        async def registered_late():
+            return {}
+
+        store.enabled.add("triage")
+        plugin._skill_service.mark_changed()
+        await plugin.tool_manager.refresh()
+
+        assert _load_skill_bound(plugin)
+        plugin.update_tools.assert_not_awaited()
+        assert plugin.tool_manager._generated_tools is generated
+        assert not any("registered_late" in name for name in _bound_names(plugin)[1])
+
+    async def test_returns_the_snapshot_the_binding_was_built_from(self):
+        plugin = _skill_plugin(_SkillStore("triage"))
+
+        snapshot = await plugin.tool_manager.refresh()
+
+        assert snapshot is plugin.tool_manager.skill_snapshot
+        assert [e.name for e in snapshot.entries] == ["triage"]
+
+    async def test_without_a_skill_service_returns_none(self):
+        plugin = _skill_plugin(None)
+
+        assert await plugin.tool_manager.refresh() is None
+
+
+class TestTurnToolRefresh:
+    def _handler(self, refresh):
+        from types import SimpleNamespace
+
+        from autolangchat.websocket_handler import WebSocketChatHandler
+
+        handler = object.__new__(WebSocketChatHandler)
+        handler.tool_manager = SimpleNamespace(refresh=refresh)
+        return handler
+
+    async def test_refreshes_the_tool_manager(self):
+        refresh = AsyncMock(return_value="snapshot")
+
+        assert await self._handler(refresh)._refresh_turn_tools() == "snapshot"
+
+        refresh.assert_awaited_once()
+
+    async def test_failure_is_logged_not_raised(self, caplog):
+        handler = self._handler(AsyncMock(side_effect=RuntimeError("store down")))
+
+        with caplog.at_level("WARNING", logger="autolangchat.websocket_handler"):
+            assert await handler._refresh_turn_tools() is None
+
+        assert "keeping the current binding" in caplog.text
+
+    async def test_handler_without_tool_manager(self):
+        from autolangchat.websocket_handler import WebSocketChatHandler
+
+        assert await object.__new__(WebSocketChatHandler)._refresh_turn_tools() is None
 
 
 async def test_invalid_utf8_reads_and_searches_predictably():
