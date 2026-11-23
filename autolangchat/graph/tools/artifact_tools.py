@@ -8,10 +8,12 @@ Sizing
 ------
 Tool results are inlined into the conversation as ``json.dumps`` output, which
 ASCII-escapes text (``é`` becomes six characters, ``\\n`` two). The handlers
-therefore size the returned text by its escaped length against the turn's
-``ContextBudget`` allowance (using the strictest content kind), on top of the
-``artifact_read_max_lines`` / ``artifact_read_max_bytes`` UTF-8 caps. When too
-little budget is left to return useful content they report
+therefore size the returned text by its escaped length against what the tool
+batch has left of the turn's ``ContextBudget`` (``ToolContext.free_chars``), on
+top of the ``artifact_read_max_lines`` / ``artifact_read_max_bytes`` UTF-8 caps.
+The room is read again after the store read, so results of the same batch that
+finished meanwhile are counted, and the result is then claimed from the batch
+budget. When too little budget is left to return useful content they report
 ``context_exhausted`` instead of reading.
 
 Errors
@@ -39,7 +41,6 @@ from ...defaults import (
     ARTIFACT_SEARCH_REGEX_MAX_LINE_CHARS,
     ARTIFACT_TOOL_DEFAULT_MAX_LINES,
     ARTIFACT_TOOL_DEFAULT_MAX_MATCHES,
-    CONTEXT_BUDGET_KINDS,
 )
 from ...model_capabilities import supports_tool_calling
 from .internal import ARTIFACT_UNAVAILABLE, CONTEXT_EXHAUSTED, INVALID_ARGUMENTS, InternalTool, ToolContext, tool_error
@@ -158,11 +159,19 @@ def _escaped_prefix(text: str, limit: int) -> str:
 
 def _text_room(ctx: ToolContext) -> Optional[int]:
     """Escaped characters of text the result may carry, or ``None`` without a budget."""
-    budget = ctx.context_budget
-    if budget is None:
-        return None
-    allowance = min(budget.allowance_for(kind) for kind in CONTEXT_BUDGET_KINDS)
-    return allowance - _ENVELOPE_RESERVE_CHARS
+    free = ctx.free_chars()
+    return None if free is None else free - _ENVELOPE_RESERVE_CHARS
+
+
+def _exhausted(room: Optional[int]) -> bool:
+    return room is not None and room < _MIN_TEXT_CHARS
+
+
+def _claimed(ctx: ToolContext, result: Dict[str, Any]) -> Dict[str, Any]:
+    """``result`` once its escaped size is claimed from the batch budget, else ``context_exhausted``."""
+    if not ctx.claim(len(json.dumps(result))):
+        return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
+    return result
 
 
 async def _call_store(method: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Tuple[Any, Any]:
@@ -203,7 +212,7 @@ async def read_content_range(arguments: Dict[str, Any], ctx: ToolContext) -> Dic
         return tool_error(INVALID_ARGUMENTS, str(error))
 
     room = _text_room(ctx)
-    if room is not None and room < _MIN_TEXT_CHARS:
+    if _exhausted(room):
         return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
     if byte_mode:
         return await _read_bytes(ctx, handle, start_byte, max_bytes, room)
@@ -228,6 +237,10 @@ async def _read_lines(
         return tool_error(
             INVALID_ARGUMENTS, f"start_line {start_line} is past the end of the artifact ({total_lines} lines)"
         )
+    # Results of this batch that finished during the read have claimed their share.
+    room = _text_room(ctx)
+    if _exhausted(room):
+        return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
 
     rendered: List[str] = []
     used = 0
@@ -274,7 +287,7 @@ async def _read_lines(
         if next_start_line is not None:
             hint += f", or skip to the next line with start_line={next_start_line}"
         result["hint"] = hint + "."
-    return result
+    return _claimed(ctx, result)
 
 
 async def _read_bytes(
@@ -289,19 +302,25 @@ async def _read_bytes(
     )
     if error:
         return error
+    room = _text_room(ctx)
+    if _exhausted(room):
+        return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
     text = chunk["text"]
     if room is not None and _escaped_len(text) > room:
         text = _escaped_prefix(text, room)
     end_byte = chunk["start_byte"] + len(text.encode("utf-8"))
     has_more = end_byte < chunk["total_bytes"]
-    return {
-        "text": text,
-        "start_byte": chunk["start_byte"],
-        "end_byte": end_byte,
-        "total_bytes": chunk["total_bytes"],
-        "has_more": has_more,
-        "next_start_byte": end_byte if has_more else None,
-    }
+    return _claimed(
+        ctx,
+        {
+            "text": text,
+            "start_byte": chunk["start_byte"],
+            "end_byte": end_byte,
+            "total_bytes": chunk["total_bytes"],
+            "has_more": has_more,
+            "next_start_byte": end_byte if has_more else None,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +348,7 @@ async def grep_content(arguments: Dict[str, Any], ctx: ToolContext) -> Dict[str,
         return tool_error(INVALID_ARGUMENTS, str(error))
 
     room = _text_room(ctx)
-    if room is not None and room < _MIN_TEXT_CHARS:
+    if _exhausted(room):
         return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
 
     found, error = await _call_store(
@@ -344,6 +363,9 @@ async def grep_content(arguments: Dict[str, Any], ctx: ToolContext) -> Dict[str,
     )
     if error:
         return error
+    room = _text_room(ctx)
+    if _exhausted(room):
+        return tool_error(CONTEXT_EXHAUSTED, _EXHAUSTED_MESSAGE)
 
     rendered: List[str] = []
     used = 0
@@ -385,7 +407,7 @@ async def grep_content(arguments: Dict[str, Any], ctx: ToolContext) -> Dict[str,
         )
     if hints:
         result["hint"] = " ".join(hints)
-    return result
+    return _claimed(ctx, result)
 
 
 # ---------------------------------------------------------------------------

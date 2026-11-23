@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 
@@ -522,7 +522,12 @@ class ToolManager:
             await _emit_start(tool_call, position)
             pending_indices.append(i)
             if internal_tool is not None:
-                coro = internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config))
+                call_context = replace(
+                    tool_context or _empty_tool_context(self._config),
+                    tool_name=function_name or "",
+                    tool_call_id=tool_call.get("id") or "",
+                )
+                coro = internal_tool.invoke(arguments, call_context)
             else:
                 coro = self._execute_single_tool_call(tool_metadata, arguments, auth_info)
             pending_coros.append(_run_and_report(tool_call, coro))

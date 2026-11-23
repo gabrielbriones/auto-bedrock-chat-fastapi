@@ -23,11 +23,13 @@ other failed tool call.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from ...artifacts import ArtifactScope, ArtifactStore
-from ...context_budget import ContextBudget
+from ...context_budget import ContextBudget, chars_per_token
+from ...defaults import CONTEXT_BUDGET_KIND_JSON, CONTEXT_BUDGET_KINDS, CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS
 
 TOOL_UNAVAILABLE = "tool_unavailable"
 ARTIFACT_UNAVAILABLE = "artifact_unavailable"
@@ -40,17 +42,65 @@ def tool_error(code: str, message: str) -> Dict[str, str]:
     return {"error": code, "message": message}
 
 
+@dataclass
+class BatchClaims:
+    """Tokens claimed by the accepted results of one tool batch, shared by its concurrent calls."""
+
+    tokens: int = 0
+
+
 @dataclass(frozen=True)
 class ToolContext:
-    """Per-turn state passed to internal tool handlers."""
+    """Per-turn state passed to internal tool handlers.
+
+    One context serves one batch of tool calls: results that budget their size claim it from the shared
+    ``claims``, so the batch's results fit ``context_budget`` together whatever order they complete in.
+    ``ToolManager`` gives each call a copy carrying its ``tool_name`` and ``tool_call_id`` (and the same
+    ``claims``), so the name and id the result is sent with are charged too.
+    """
 
     artifact_store: Optional[ArtifactStore]
     artifact_scope: Optional[ArtifactScope]
     context_budget: Optional[ContextBudget]
     chat_config: Any
     user_id: Optional[str] = None
-    # Characters already promised to results of the current batch, shared by its concurrent calls.
-    reserved_chars: Dict[str, int] = field(default_factory=dict, compare=False, repr=False)
+    tool_name: str = ""
+    tool_call_id: str = ""
+    claims: BatchClaims = field(default_factory=BatchClaims, compare=False, repr=False)
+
+    def free_chars(self) -> Optional[int]:
+        """Characters of result text this call may still return, or ``None`` without a budget.
+
+        What the batch's claimed results and this result's framing (message overhead, tool name and call id)
+        leave of the budget, at the densest chars/token ratio.
+        """
+        budget = self.context_budget
+        if budget is None:
+            return None
+        tokens = budget.remaining_tokens - self.claims.tokens - self._framing_tokens()
+        return max(0, math.floor(tokens * self._chars_per_token()))
+
+    def claim(self, chars: int) -> bool:
+        """Claim ``chars`` of result text plus its framing; ``False`` (nothing claimed) when it does not fit.
+
+        Do not ``await`` between sizing a result with :meth:`free_chars` and claiming it.
+        """
+        free = self.free_chars()
+        if free is None:
+            return True
+        if chars > free:
+            return False
+        self.claims.tokens += math.ceil(chars / self._chars_per_token()) + self._framing_tokens()
+        return True
+
+    def _framing_tokens(self) -> int:
+        name_and_id = self.context_budget.estimate(
+            f"{self.tool_name}{self.tool_call_id}", kind=CONTEXT_BUDGET_KIND_JSON
+        )
+        return CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS + name_and_id
+
+    def _chars_per_token(self) -> float:
+        return min(chars_per_token(kind, self.context_budget.provider) for kind in CONTEXT_BUDGET_KINDS)
 
 
 @dataclass(frozen=True)

@@ -208,8 +208,9 @@ A call is validated against the **current** stored skill:
 A blank value counts as not provided: the parameter's `default` is used, and a required parameter without a
 default is reported as missing (the message asks the model to get it from the user). Instructions are never
 truncated, including by the history preprocessing that shortens other oversized tool results; a skill that does
-not fit is refused. Skills loaded in the same batch of tool calls share one budget, measured on the text the
-model receives.
+not fit is refused. Skills loaded in the same batch of tool calls share one budget with the batch's artifact
+reads (`read_content_range`, `grep_content`); each result is charged its text as the model receives it plus its
+message framing, tool name and call id.
 
 ### Rendered format
 

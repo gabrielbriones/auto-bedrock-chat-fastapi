@@ -3,10 +3,13 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 
+from autolangchat.artifacts import ArtifactStore
+from autolangchat.context_budget import ContextBudget
+from autolangchat.defaults import CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS
+from autolangchat.graph.tools.artifact_tools import read_content_range
 from autolangchat.graph.tools.internal import CONTEXT_EXHAUSTED, INVALID_ARGUMENTS, ToolContext, ToolOutput
 from autolangchat.graph.tools.skill_tools import LOAD_SKILL_DESC, build_skill_tools
 from autolangchat.skills.models import Skill, SkillCatalogEntry, SkillParameter
@@ -368,7 +371,17 @@ def _ctx(budget=None, user_id="alice"):
 
 
 def _budget(chars):
-    return SimpleNamespace(allowance_for=lambda kind: chars)
+    """A ContextBudget with room for one result of ``chars`` characters of any content kind."""
+    return ContextBudget(
+        model_id="",
+        provider="",
+        max_input_tokens=chars + CONTEXT_BUDGET_PER_MESSAGE_OVERHEAD_TOKENS,
+        max_input_tokens_known=True,
+        reserved_output_tokens=0,
+        tool_schema_tokens=0,
+        message_tokens=0,
+        safety_margin_tokens=0,
+    )
 
 
 class TestLoadSkillTool:
@@ -457,3 +470,17 @@ class TestLoadSkillTool:
 
         assert (await tool.invoke({"name": "big"}, ctx))["error"] == CONTEXT_EXHAUSTED
         assert isinstance(await tool.invoke({"name": "small"}, ctx), ToolOutput)
+
+    async def test_artifact_reads_of_the_batch_count_against_the_load(self):
+        tool, _, _ = self._tool(_skill(instructions="x" * 300))
+        text_len = len((await tool.invoke({"name": "triage"}, _ctx())).result)
+        store = ArtifactStore()
+        store.register_connection("connection", "alice")
+        scope = store.activate("connection", "thread", "alice")
+        handle = store.put(scope, "z" * 5000, {})
+        ctx = ToolContext(
+            artifact_store=store, artifact_scope=scope, context_budget=_budget(text_len + 600), chat_config=None
+        )
+
+        assert "error" not in await read_content_range({"handle": handle}, ctx)
+        assert (await tool.invoke({"name": "triage"}, ctx))["error"] == CONTEXT_EXHAUSTED

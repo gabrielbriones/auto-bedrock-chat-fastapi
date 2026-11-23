@@ -6,16 +6,16 @@ parameter names can vary per skill without regenerating the tool. The tool is
 only advertised while the bound skill snapshot has at least one enabled skill.
 
 The result is the rendered skill text; the entry's ``metadata.skill_ref``
-records which skill and revision were loaded. A result that would not fit the
-turn's ``ContextBudget`` is refused with ``context_exhausted``: instructions
-are never cut short.
+records which skill and revision were loaded. A result that would not fit what
+the tool batch has left of the turn's ``ContextBudget`` (shared with the other
+internal tools of the batch) is refused with ``context_exhausted``:
+instructions are never cut short.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from ...defaults import CONTEXT_BUDGET_KINDS
 from ...skills.prompt import LOAD_SKILL
 from ...skills.service import SkillLoadError, SkillService
 from .internal import CONTEXT_EXHAUSTED, INVALID_ARGUMENTS, InternalTool, ToolContext, ToolOutput, tool_error
@@ -44,23 +44,6 @@ LOAD_SKILL_DESC: Dict[str, Any] = {
 }
 
 
-_RESERVED_KEY = "load_skill"
-
-
-def _reserve(text: str, ctx: ToolContext) -> bool:
-    """Whether ``text`` fits what is left of the turn's budget after the batch's earlier loads; reserves it if so."""
-    budget = ctx.context_budget
-    if budget is None:
-        return True
-    allowance = min(budget.allowance_for(kind) for kind in CONTEXT_BUDGET_KINDS)
-    reserved = ctx.reserved_chars.get(_RESERVED_KEY, 0)
-    # Raw length: the result string is what reaches the model. No await between check and update.
-    if reserved + len(text) > allowance:
-        return False
-    ctx.reserved_chars[_RESERVED_KEY] = reserved + len(text)
-    return True
-
-
 def make_load_skill_handler(service: SkillService):
     """Build the ``load_skill`` handler bound to ``service``."""
 
@@ -75,7 +58,8 @@ def make_load_skill_handler(service: SkillService):
             loaded = await service.load(arguments.get("name"), arguments.get("params"), actor=ctx.user_id)
         except SkillLoadError as error:
             return tool_error(error.code, error.message)
-        if not _reserve(loaded.rendered_text, ctx):
+        # Raw length: the result string is what reaches the model.
+        if not ctx.claim(len(loaded.rendered_text)):
             return tool_error(
                 CONTEXT_EXHAUSTED,
                 "Not enough context is left in this conversation to load this skill. "
