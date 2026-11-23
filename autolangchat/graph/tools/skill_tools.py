@@ -13,7 +13,6 @@ are never cut short.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List
 
 from ...defaults import CONTEXT_BUDGET_KINDS
@@ -45,13 +44,21 @@ LOAD_SKILL_DESC: Dict[str, Any] = {
 }
 
 
-def _fits(text: str, ctx: ToolContext) -> bool:
+_RESERVED_KEY = "load_skill"
+
+
+def _reserve(text: str, ctx: ToolContext) -> bool:
+    """Whether ``text`` fits what is left of the turn's budget after the batch's earlier loads; reserves it if so."""
     budget = ctx.context_budget
     if budget is None:
         return True
-    # Tool results are inlined as json.dumps output, so size the escaped text.
-    escaped = len(json.dumps(text)) - 2
-    return escaped <= min(budget.allowance_for(kind) for kind in CONTEXT_BUDGET_KINDS)
+    allowance = min(budget.allowance_for(kind) for kind in CONTEXT_BUDGET_KINDS)
+    reserved = ctx.reserved_chars.get(_RESERVED_KEY, 0)
+    # Raw length: the result string is what reaches the model. No await between check and update.
+    if reserved + len(text) > allowance:
+        return False
+    ctx.reserved_chars[_RESERVED_KEY] = reserved + len(text)
+    return True
 
 
 def make_load_skill_handler(service: SkillService):
@@ -68,7 +75,7 @@ def make_load_skill_handler(service: SkillService):
             loaded = await service.load(arguments.get("name"), arguments.get("params"), actor=ctx.user_id)
         except SkillLoadError as error:
             return tool_error(error.code, error.message)
-        if not _fits(loaded.rendered_text, ctx):
+        if not _reserve(loaded.rendered_text, ctx):
             return tool_error(
                 CONTEXT_EXHAUSTED,
                 "Not enough context is left in this conversation to load this skill. "

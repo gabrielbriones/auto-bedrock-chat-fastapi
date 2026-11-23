@@ -28,6 +28,7 @@ def _make_handler(graph_state):
     """Build a handler with all collaborators mocked, wired to return
     ``graph_state`` from the chat graph."""
     config = MagicMock()
+    config.model_copy.return_value = config
     config.timeout = 30.0
     config.model_id = "us.anthropic.claude-sonnet-5"
     config.require_tool_auth = False

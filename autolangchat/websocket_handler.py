@@ -11,7 +11,7 @@ import uuid
 import weakref
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -40,7 +40,7 @@ from .exceptions import (
     WebSocketError,
 )
 from .graph.nodes.llm_call import _generate_message_preview
-from .graph.tools.manager import AuthInfo
+from .graph.tools.manager import AuthInfo, ToolManager
 from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop, with_final_usage
 from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
@@ -235,7 +235,7 @@ class WebSocketChatHandler:
         conversation_store: Optional[BaseConversationStore] = None,
         user_settings_store: Optional[BaseUserSettingsStore] = None,
         sso_provider: Optional[Any] = None,
-        refresh_tools: Optional[Callable[[], Awaitable[None]]] = None,
+        tool_manager: Optional[ToolManager] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -252,8 +252,7 @@ class WebSocketChatHandler:
         self.conversation_store = conversation_store
         self.user_settings_store = user_settings_store
         self.sso_provider = sso_provider
-        # Rebinds the tools when the skill catalog changed; awaited once per turn.
-        self._refresh_tools = refresh_tools
+        self.tool_manager = tool_manager
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -702,7 +701,10 @@ class WebSocketChatHandler:
             )
 
             # Before the config snapshot below: model_copy is shallow and freezes langchain_tools.
-            await self._refresh_turn_tools()
+            # The copy and the skill snapshot are taken with no await in between, so they match;
+            # another connection's rebind during this turn cannot change either.
+            turn_skill_snapshot = await self._refresh_turn_tools()
+            turn_config = self.config.model_copy()
 
             # ------------------------------------------------------------------
             # Dynamic parameter overrides.
@@ -735,7 +737,7 @@ class WebSocketChatHandler:
                 merged_overrides: Dict[str, Any] = {}
             else:
                 merged_overrides = {**session.metadata.get("config_overrides", {}), **valid_message_overrides}
-            effective_config = self.config.model_copy(update=merged_overrides) if merged_overrides else self.config
+            effective_config = turn_config.model_copy(update=merged_overrides) if merged_overrides else turn_config
             # NOTE: `valid_message_overrides` is only what arrived inline on *this*
             # chat message's `config_overrides` field -- it's normally empty when
             # overrides come from the settings sidebar, since those are sent as a
@@ -858,6 +860,7 @@ class WebSocketChatHandler:
                             "embedding_client": self.embedding_client,
                             "auth_context_text": auth_context_text,
                             "chat_config": effective_config,
+                            "skill_snapshot": turn_skill_snapshot,
                             "token_usage_store": self.token_usage_store,
                             "session_id": session.session_id,
                             "user_id": session.user_id,
@@ -3450,16 +3453,20 @@ class WebSocketChatHandler:
             "tools": {},
         }
 
-    async def _refresh_turn_tools(self) -> None:
-        """Run the ``refresh_tools`` hook; a failure keeps the current binding instead of failing the turn."""
+    async def _refresh_turn_tools(self) -> Optional[Any]:
+        """Rebind the tools if the skill catalog changed and return the snapshot they were bound from.
+
+        A failure keeps the current binding instead of failing the turn (returns ``None``).
+        """
         # getattr: tests build handlers with __new__.
-        refresh = getattr(self, "_refresh_tools", None)
-        if refresh is None:
-            return
+        tool_manager = getattr(self, "tool_manager", None)
+        if tool_manager is None:
+            return None
         try:
-            await refresh()
+            return await tool_manager.refresh()
         except Exception:
             logger.warning("Could not refresh the tools for this turn; keeping the current binding", exc_info=True)
+            return None
 
     def _format_auth_context(self, user_info: Optional[Dict[str, Any]]) -> str:
         """Format authenticated user information for injection into system prompt."""

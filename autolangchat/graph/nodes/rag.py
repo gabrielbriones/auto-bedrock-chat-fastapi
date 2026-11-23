@@ -87,12 +87,19 @@ def _format_kb_context(kb_results: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _skill_catalog_text(tool_manager: Any, chat_config: Any) -> str:
-    """The skills catalog when ``load_skill`` is bound to this turn's model, else ``""``."""
+def _skill_catalog_text(configurable: Dict[str, Any], chat_config: Any) -> str:
+    """The skills catalog when ``load_skill`` is bound to this turn's model, else ``""``.
+
+    Uses the turn's own ``skill_snapshot`` when the caller captured one with its config, so
+    a rebind by another connection mid-turn cannot change the catalog.
+    """
     bound = {getattr(t, "name", None) for t in (getattr(chat_config, "langchain_tools", None) or [])}
     if LOAD_SKILL not in bound or not supports_tool_calling(getattr(chat_config, "model_id", None) or ""):
         return ""
-    entries = getattr(getattr(tool_manager, "skill_snapshot", None), "entries", None) or ()
+    snapshot = configurable.get("skill_snapshot")
+    if snapshot is None:
+        snapshot = getattr(configurable.get("tool_manager"), "skill_snapshot", None)
+    entries = getattr(snapshot, "entries", None) or ()
     max_chars = getattr(chat_config, "skill_catalog_max_chars", DEFAULT_SKILL_CATALOG_MAX_CHARS)
     return format_skill_catalog(entries, max_chars)
 
@@ -209,7 +216,7 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     kb_context_text = _format_kb_context(kb_results) if kb_results else ""
 
     base_system_prompt = chat_config.get_system_prompt() if chat_config else ""
-    catalog_text = _skill_catalog_text(configurable.get("tool_manager"), chat_config)
+    catalog_text = _skill_catalog_text(configurable, chat_config)
     stable_prompt = "\n\n".join(part for part in (base_system_prompt, catalog_text) if part)
 
     if prompt_caching_active(chat_config, getattr(chat_config, "model_id", None)) and (

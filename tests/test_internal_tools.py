@@ -975,7 +975,7 @@ class TestSkillToolBinding:
         assert LOAD_SKILL in plugin.tool_manager.internal_tools
         assert not _load_skill_bound(plugin)
 
-        await plugin.refresh_skill_tools()
+        await plugin.tool_manager.refresh()
 
         assert _load_skill_bound(plugin)
         assert [e.name for e in plugin.tool_manager.skill_snapshot.entries] == ["triage"]
@@ -983,7 +983,7 @@ class TestSkillToolBinding:
     async def test_no_enabled_skills_keeps_it_unbound(self):
         plugin = _skill_plugin(_SkillStore())
 
-        await plugin.refresh_skill_tools()
+        await plugin.tool_manager.refresh()
 
         assert not _load_skill_bound(plugin)
         assert plugin.tool_manager.skill_snapshot.version == 0
@@ -991,43 +991,78 @@ class TestSkillToolBinding:
     async def test_enabling_and_disabling_rebinds_without_restart(self):
         store = _SkillStore()
         plugin = _skill_plugin(store)
-        await plugin.refresh_skill_tools()
+        await plugin.tool_manager.refresh()
 
         store.enabled.add("triage")
         plugin._skill_service.mark_changed()
-        await plugin.refresh_skill_tools()
+        await plugin.tool_manager.refresh()
         assert _load_skill_bound(plugin)
 
         store.enabled.clear()
         plugin._skill_service.mark_changed()
-        await plugin.refresh_skill_tools()
+        await plugin.tool_manager.refresh()
         assert not _load_skill_bound(plugin)
 
     async def test_unchanged_counter_neither_reads_nor_rebinds(self):
         store = _SkillStore("triage")
         plugin = _skill_plugin(store)
-        await plugin.refresh_skill_tools()
-        plugin.update_tools = AsyncMock()
+        await plugin.tool_manager.refresh()
+        plugin.tool_manager.rebind = MagicMock()
 
-        await plugin.refresh_skill_tools()
-        await plugin.refresh_skill_tools()
+        await plugin.tool_manager.refresh()
+        await plugin.tool_manager.refresh()
 
         assert store.catalog_reads == 1
+        plugin.tool_manager.rebind.assert_not_called()
+
+    async def test_rebinding_does_not_regenerate_the_http_tools(self):
+        store = _SkillStore()
+        plugin = _skill_plugin(store)
+        await plugin.tool_manager.refresh()
+        plugin.update_tools = AsyncMock()
+        generated = plugin.tool_manager._generated_tools
+
+        @plugin.app.get("/registered-late")
+        async def registered_late():
+            return {}
+
+        store.enabled.add("triage")
+        plugin._skill_service.mark_changed()
+        await plugin.tool_manager.refresh()
+
+        assert _load_skill_bound(plugin)
         plugin.update_tools.assert_not_awaited()
+        assert plugin.tool_manager._generated_tools is generated
+        assert not any("registered_late" in name for name in _bound_names(plugin)[1])
+
+    async def test_returns_the_snapshot_the_binding_was_built_from(self):
+        plugin = _skill_plugin(_SkillStore("triage"))
+
+        snapshot = await plugin.tool_manager.refresh()
+
+        assert snapshot is plugin.tool_manager.skill_snapshot
+        assert [e.name for e in snapshot.entries] == ["triage"]
+
+    async def test_without_a_skill_service_returns_none(self):
+        plugin = _skill_plugin(None)
+
+        assert await plugin.tool_manager.refresh() is None
 
 
 class TestTurnToolRefresh:
     def _handler(self, refresh):
+        from types import SimpleNamespace
+
         from autolangchat.websocket_handler import WebSocketChatHandler
 
         handler = object.__new__(WebSocketChatHandler)
-        handler._refresh_tools = refresh
+        handler.tool_manager = SimpleNamespace(refresh=refresh)
         return handler
 
-    async def test_runs_the_hook(self):
-        refresh = AsyncMock()
+    async def test_refreshes_the_tool_manager(self):
+        refresh = AsyncMock(return_value="snapshot")
 
-        await self._handler(refresh)._refresh_turn_tools()
+        assert await self._handler(refresh)._refresh_turn_tools() == "snapshot"
 
         refresh.assert_awaited_once()
 
@@ -1035,14 +1070,14 @@ class TestTurnToolRefresh:
         handler = self._handler(AsyncMock(side_effect=RuntimeError("store down")))
 
         with caplog.at_level("WARNING", logger="autolangchat.websocket_handler"):
-            await handler._refresh_turn_tools()
+            assert await handler._refresh_turn_tools() is None
 
         assert "keeping the current binding" in caplog.text
 
-    async def test_handler_without_hook(self):
+    async def test_handler_without_tool_manager(self):
         from autolangchat.websocket_handler import WebSocketChatHandler
 
-        await object.__new__(WebSocketChatHandler)._refresh_turn_tools()
+        assert await object.__new__(WebSocketChatHandler)._refresh_turn_tools() is None
 
 
 async def test_invalid_utf8_reads_and_searches_predictably():

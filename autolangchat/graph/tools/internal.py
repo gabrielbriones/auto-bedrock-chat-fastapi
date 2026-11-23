@@ -49,6 +49,8 @@ class ToolContext:
     context_budget: Optional[ContextBudget]
     chat_config: Any
     user_id: Optional[str] = None
+    # Characters already promised to results of the current batch, shared by its concurrent calls.
+    reserved_chars: Dict[str, int] = field(default_factory=dict, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

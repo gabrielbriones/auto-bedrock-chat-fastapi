@@ -288,6 +288,27 @@ class ToolManager:
         self._config.tools_desc = tools_desc
         self._config.langchain_tools = self.generate_langchain_tools()
 
+    def rebind(self) -> None:
+        """Rebuild the bound tools from the existing generated tools, e.g. after an internal tool's availability changed."""
+        self._langchain_tools = None
+        self._sync_config()
+
+    async def refresh(self) -> Optional[Any]:
+        """Rebind when the skill catalog changed since the last binding; call once per turn.
+
+        Re-reads the enabled catalog only after a skill write bumped the service's change counter.
+        The HTTP tools are not regenerated, so routes registered after startup are not newly advertised.
+
+        Returns:
+            The catalog snapshot the current binding was built from, or ``None`` without a skill service.
+        """
+        if self._skill_service is None:
+            return None
+        snapshot = await self._skill_service.refresh()
+        if self.skill_snapshot is None or self.skill_snapshot.version != snapshot.version:
+            self.rebind()
+        return self.skill_snapshot
+
     async def call_tool(
         self,
         name: str,

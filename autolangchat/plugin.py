@@ -440,7 +440,7 @@ class AutoLangChatPlugin:
             token_usage_store=self._token_usage_store,
             conversation_store=self._conversation_store,
             user_settings_store=self._user_settings_store,
-            refresh_tools=self.refresh_skill_tools if self._skill_service is not None else None,
+            tool_manager=self.tool_manager,
         )
 
         # Check knowledge base status if RAG is enabled
@@ -466,7 +466,7 @@ class AutoLangChatPlugin:
         tools (session artifacts, ``load_skill``) by name. Internal names are
         reserved so a colliding OpenAPI operation is skipped. ``load_skill`` is
         registered whenever a skill store exists, but only bound to the model
-        while at least one skill is enabled (see :meth:`refresh_skill_tools`).
+        while at least one skill is enabled (see :meth:`ToolManager.refresh`).
         """
         internal_tools = build_artifact_tools() if self.config.artifact_enabled else []
         self._skill_service = None
@@ -2753,25 +2753,6 @@ class AutoLangChatPlugin:
         except Exception as e:
             logger.error(f"Failed to update tools: {str(e)}")
             raise AutoLangChatError(f"Tools update failed: {str(e)}")
-
-    async def refresh_skill_tools(self) -> None:
-        """Rebind the tools when the skill catalog changed since the last binding.
-
-        Called by the WebSocket handler at the start of every turn, before the
-        turn's config snapshot is taken. Re-reads the enabled catalog only
-        after a skill write bumped the service's change counter, and calls
-        :meth:`update_tools` only when that catalog is not the one the current
-        binding was built from, so ``load_skill`` and the system-prompt
-        catalog appear or disappear without a restart.
-        """
-        service = getattr(self, "_skill_service", None)
-        if service is None:
-            return
-        snapshot = await service.refresh()
-        bound = self.tool_manager.skill_snapshot
-        if bound is None or bound.version != snapshot.version:
-            self.tool_manager._langchain_tools = None
-            self.tool_manager._sync_config()
 
 
 def add_autolangchat(

@@ -186,7 +186,9 @@ class TestChatMessageOverrides:
         )
 
         effective_config = _effective_config(handler)
-        assert effective_config is handler.config
+        # A per-turn copy, so a tool rebind by another connection cannot change this turn's tools.
+        assert effective_config is not handler.config
+        assert effective_config == handler.config
         assert effective_config.temperature == 0.7
 
     def test_disabled_feature_gate_ignores_stale_session_overrides(self):
@@ -204,7 +206,7 @@ class TestChatMessageOverrides:
         asyncio.run(handler._handle_chat_message(websocket, {"message": "hi"}))
 
         effective_config = _effective_config(handler)
-        assert effective_config is handler.config
+        assert effective_config == handler.config
         assert effective_config.temperature == 0.7
         assert session.metadata.get("config_overrides", {}) == {}
 

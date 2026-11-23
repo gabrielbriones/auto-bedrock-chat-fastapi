@@ -202,6 +202,18 @@ async def test_rag_node_appends_sorted_skill_catalog_after_base_prompt():
 
 
 @pytest.mark.asyncio
+async def test_rag_node_prefers_the_turn_skill_snapshot_over_the_shared_tool_manager():
+    config = _skills_config(_no_context(_DummyChatConfig()), "newer", auth_context_text=None)
+    config["configurable"]["skill_snapshot"] = types.SimpleNamespace(
+        entries=(types.SimpleNamespace(name="turn", description="turn help"),)
+    )
+
+    content = (await rag_node(_user_turn(), config))["messages"][0]["content"]
+
+    assert "- turn: turn help" in content and "newer" not in content
+
+
+@pytest.mark.asyncio
 async def test_rag_node_keeps_catalog_after_base_prompt_when_context_comes_first():
     content = (await rag_node(_user_turn(), _skills_config(_DummyChatConfig(), "alpha")))["messages"][0]["content"]
 

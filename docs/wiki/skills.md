@@ -207,7 +207,9 @@ A call is validated against the **current** stored skill:
 
 A blank value counts as not provided: the parameter's `default` is used, and a required parameter without a
 default is reported as missing (the message asks the model to get it from the user). Instructions are never
-truncated; a skill that does not fit is refused.
+truncated, including by the history preprocessing that shortens other oversized tool results; a skill that does
+not fit is refused. Skills loaded in the same batch of tool calls share one budget, measured on the text the
+model receives.
 
 ### Rendered format
 

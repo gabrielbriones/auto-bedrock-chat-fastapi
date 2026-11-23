@@ -140,7 +140,9 @@ class SkillService:
                 logger.warning("Could not read the skill catalog; keeping the previous one", exc_info=True)
                 return self._snapshot
         # The version read before the store call: a write made meanwhile triggers another read.
-        self._snapshot = SkillCatalogSnapshot(version=version, entries=entries)
+        # A slower, older read must not replace a newer snapshot published meanwhile.
+        if version > self._snapshot.version:
+            self._snapshot = SkillCatalogSnapshot(version=version, entries=entries)
         return self._snapshot
 
     async def load(self, name: Any, params: Any = None, actor: Optional[str] = None) -> LoadedSkill:

@@ -1,5 +1,6 @@
 """SkillService (validation, rendering, escaping), the catalog text and the ``load_skill`` tool."""
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -294,6 +295,32 @@ class TestRefresh:
 
         assert snapshot.version == 0 and snapshot.entries == ()
 
+    async def test_a_slower_older_read_does_not_replace_a_newer_snapshot(self):
+        gate = asyncio.Event()
+        reads = []
+
+        class _SlowFirstStore(_FakeStore):
+            async def list_enabled_catalog(self):
+                reads.append(None)
+                if len(reads) == 1:
+                    await gate.wait()
+                    return []
+                return [_entry("a")]
+
+        store = _SlowFirstStore(_skill("a"))
+        service = SkillService(lambda: store)
+
+        older = asyncio.ensure_future(service.refresh())
+        await asyncio.sleep(0)
+        service.mark_changed()
+        newer = await service.refresh()
+        gate.set()
+        await older
+
+        assert newer.version == 1
+        assert service.snapshot is newer
+        assert [e.name for e in service.snapshot.entries] == ["a"]
+
 
 # ---------------------------------------------------------------------------
 # Catalog text
@@ -407,3 +434,26 @@ class TestLoadSkillTool:
 
         assert (await tool.invoke({"name": "triage"}, _ctx(_budget(200))))["error"] == CONTEXT_EXHAUSTED
         assert isinstance(await tool.invoke({"name": "triage"}, _ctx(_budget(10_000))), ToolOutput)
+
+    async def test_budget_is_measured_on_the_raw_text(self):
+        # 200 CJK characters are 1200 characters once ASCII-escaped, but 200 as the model receives them.
+        tool, _, _ = self._tool(_skill(instructions="漢" * 200))
+
+        assert isinstance(await tool.invoke({"name": "triage"}, _ctx(_budget(400))), ToolOutput)
+
+    async def test_concurrent_loads_share_one_budget(self):
+        tool, _, _ = self._tool(_skill(instructions="x" * 300))
+        text_len = len((await tool.invoke({"name": "triage"}, _ctx())).result)
+        ctx = _ctx(_budget(text_len + 50))
+
+        outcomes = await asyncio.gather(*(tool.invoke({"name": "triage"}, ctx) for _ in range(3)))
+
+        assert [isinstance(o, ToolOutput) for o in outcomes] == [True, False, False]
+        assert all(o["error"] == CONTEXT_EXHAUSTED for o in outcomes[1:])
+
+    async def test_a_refused_load_does_not_reserve_budget(self):
+        tool, _, _ = self._tool(_skill("big", instructions="x" * 500), _skill("small", instructions="y"))
+        ctx = _ctx(_budget(300))
+
+        assert (await tool.invoke({"name": "big"}, ctx))["error"] == CONTEXT_EXHAUSTED
+        assert isinstance(await tool.invoke({"name": "small"}, ctx), ToolOutput)
