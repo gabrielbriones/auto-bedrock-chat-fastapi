@@ -26,7 +26,7 @@ from ...auth_handler import AuthenticationHandler, Credentials
 from ...config import ChatConfig
 from ...exceptions import ToolError, ToolHTTPError
 from .bounded_decoding import ACCEPT_ENCODING, iter_decoded_chunks
-from .internal import InternalTool, ToolContext
+from .internal import InternalTool, ToolContext, ToolOutput
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,9 @@ class ToolManager:
             ``ToolsGenerator(reserved_names=...)`` so collisions are dropped at
             generation time and never reach MCP either. Tools with
             ``exposed=False`` (aliases) can be dispatched but are never bound.
+        skill_service: Optional ``SkillService`` whose catalog snapshot is
+            captured on every sync as :attr:`skill_snapshot`, the catalog the
+            bound ``load_skill`` tool (if any) was decided from.
 
     Example::
 
@@ -129,6 +132,7 @@ class ToolManager:
         config: Optional[ChatConfig] = None,
         base_url: str = "http://localhost:8000",
         internal_tools: Optional[Iterable[InternalTool]] = None,
+        skill_service: Optional[Any] = None,
     ):
         self._generated_tools = generated_tools
         self._internal_tools: Dict[str, InternalTool] = {}
@@ -136,6 +140,8 @@ class ToolManager:
             if tool.name in self._internal_tools:
                 raise ValueError(f"Duplicate internal tool name: {tool.name!r}")
             self._internal_tools[tool.name] = tool
+        self._skill_service = skill_service
+        self.skill_snapshot: Optional[Any] = None
         self._config = config or ChatConfig()
         self._base_url = base_url.rstrip("/")
         self._http_client = httpx.AsyncClient(timeout=self._config.timeout)
@@ -176,7 +182,7 @@ class ToolManager:
         return tools
 
     def _exposed_internal_tools(self) -> List[InternalTool]:
-        return [t for t in self._internal_tools.values() if t.exposed]
+        return [t for t in self._internal_tools.values() if t.advertised]
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -252,7 +258,10 @@ class ToolManager:
         def _internal_invoker(tool: InternalTool) -> Callable[[Dict[str, Any]], Awaitable[Any]]:
             # Invoked outside the graph there is no per-turn context, so
             # session-bound tools fail closed with tool_unavailable.
-            return lambda kwargs: tool.invoke(kwargs, _empty_tool_context(self._config))
+            async def _invoke(kwargs: Dict[str, Any]) -> Any:
+                return _unwrap(await tool.invoke(kwargs, _empty_tool_context(self._config)))
+
+            return _invoke
 
         self._langchain_tools = [
             _make_tool(func_name, tool_meta["function_desc"], _http_invoker(tool_meta))
@@ -264,8 +273,13 @@ class ToolManager:
     def _sync_config(self) -> None:
         """Populate ``config.tools_desc`` and ``config.langchain_tools`` from current state.
 
-        Includes the schemas of exposed internal tools so ``bind_tools`` sees them.
+        Includes the schemas of advertised internal tools so ``bind_tools`` sees
+        them. With a skill service, its current catalog snapshot is recorded as
+        :attr:`skill_snapshot`; ``load_skill`` is advertised only when that
+        snapshot has enabled skills.
         """
+        if self._skill_service is not None:
+            self.skill_snapshot = self._skill_service.snapshot
         tools_desc = {
             "type": "function",
             "functions": [t["function_desc"] for t in self._http_tools(log_collisions=True).values()]
@@ -330,7 +344,7 @@ class ToolManager:
 
         self._total_tool_calls_executed += 1
         if internal_tool is not None:
-            return await internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config))
+            return _unwrap(await internal_tool.invoke(arguments, tool_context or _empty_tool_context(self._config)))
         return await self._execute_single_tool_call(tool_metadata, arguments, auth_info)
 
     async def execute_tool_calls(
@@ -523,6 +537,9 @@ class ToolManager:
                 elif isinstance(outcome, Exception):
                     logger.error(f"Error executing tool call {function_name}: {str(outcome)}")
                     result_entry["error"] = str(outcome)
+                elif isinstance(outcome, ToolOutput):
+                    result_entry["result"] = outcome.result
+                    result_entry["metadata"] = dict(outcome.metadata)
                 else:
                     result_entry["result"] = outcome
                 results[idx] = result_entry
@@ -721,3 +738,8 @@ class ToolManager:
 def _empty_tool_context(config: Any) -> ToolContext:
     """Context for internal calls made without a live session (session-bound tools fail closed)."""
     return ToolContext(artifact_store=None, artifact_scope=None, context_budget=None, chat_config=config)
+
+
+def _unwrap(outcome: Any) -> Any:
+    """The result of an internal tool, without the metadata only tool result entries carry."""
+    return outcome.result if isinstance(outcome, ToolOutput) else outcome

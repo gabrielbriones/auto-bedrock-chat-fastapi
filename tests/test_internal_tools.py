@@ -29,6 +29,7 @@ from autolangchat.graph.tools.internal import (
     ToolContext,
     tool_error,
 )
+from autolangchat.skills.prompt import LOAD_SKILL
 from tests.http_stubs import stub_http
 
 
@@ -921,6 +922,127 @@ class TestPluginRegistration:
         assert GREP_CONTENT not in described and GREP_CONTENT not in bound
         # Without the internal tool the OpenAPI operation keeps its name.
         assert plugin._tools_generator.get_tool_metadata(READ_CONTENT_RANGE) is not None
+
+
+# ---------------------------------------------------------------------------
+# load_skill binding refresh (XMGPLAT-11860)
+# ---------------------------------------------------------------------------
+
+
+class _SkillStore:
+    def __init__(self, *names):
+        self.enabled = set(names)
+        self.catalog_reads = 0
+
+    async def list_enabled_catalog(self):
+        from autolangchat.skills.models import SkillCatalogEntry
+
+        self.catalog_reads += 1
+        return [SkillCatalogEntry(name=n, display_name=n, description=f"{n} help") for n in sorted(self.enabled)]
+
+
+def _skill_plugin(store):
+    """``_plugin`` with a skill store, built the same way ``__init__`` orders it (store before tools)."""
+    from fastapi import FastAPI
+
+    from autolangchat.config import ChatConfig
+    from autolangchat.plugin import AutoLangChatPlugin
+
+    plugin = object.__new__(AutoLangChatPlugin)
+    plugin.app = FastAPI()
+    plugin.config = ChatConfig(model_id="test-model", AUTOCHAT_ENABLE_UI=False, AUTOCHAT_ARTIFACT_ENABLED=False)
+    plugin._skill_store = store
+    plugin._init_tools()
+    return plugin
+
+
+def _load_skill_bound(plugin):
+    described, bound = _bound_names(plugin)
+    assert (LOAD_SKILL in described) == (LOAD_SKILL in bound)
+    return LOAD_SKILL in bound
+
+
+class TestSkillToolBinding:
+    def test_no_skill_store_registers_nothing(self):
+        plugin = _skill_plugin(None)
+
+        assert plugin._skill_service is None
+        assert LOAD_SKILL not in plugin.tool_manager.internal_tools
+
+    async def test_registered_but_unbound_until_the_first_refresh(self):
+        plugin = _skill_plugin(_SkillStore("triage"))
+
+        assert LOAD_SKILL in plugin.tool_manager.internal_tools
+        assert not _load_skill_bound(plugin)
+
+        await plugin.refresh_skill_tools()
+
+        assert _load_skill_bound(plugin)
+        assert [e.name for e in plugin.tool_manager.skill_snapshot.entries] == ["triage"]
+
+    async def test_no_enabled_skills_keeps_it_unbound(self):
+        plugin = _skill_plugin(_SkillStore())
+
+        await plugin.refresh_skill_tools()
+
+        assert not _load_skill_bound(plugin)
+        assert plugin.tool_manager.skill_snapshot.version == 0
+
+    async def test_enabling_and_disabling_rebinds_without_restart(self):
+        store = _SkillStore()
+        plugin = _skill_plugin(store)
+        await plugin.refresh_skill_tools()
+
+        store.enabled.add("triage")
+        plugin._skill_service.mark_changed()
+        await plugin.refresh_skill_tools()
+        assert _load_skill_bound(plugin)
+
+        store.enabled.clear()
+        plugin._skill_service.mark_changed()
+        await plugin.refresh_skill_tools()
+        assert not _load_skill_bound(plugin)
+
+    async def test_unchanged_counter_neither_reads_nor_rebinds(self):
+        store = _SkillStore("triage")
+        plugin = _skill_plugin(store)
+        await plugin.refresh_skill_tools()
+        plugin.update_tools = AsyncMock()
+
+        await plugin.refresh_skill_tools()
+        await plugin.refresh_skill_tools()
+
+        assert store.catalog_reads == 1
+        plugin.update_tools.assert_not_awaited()
+
+
+class TestTurnToolRefresh:
+    def _handler(self, refresh):
+        from autolangchat.websocket_handler import WebSocketChatHandler
+
+        handler = object.__new__(WebSocketChatHandler)
+        handler._refresh_tools = refresh
+        return handler
+
+    async def test_runs_the_hook(self):
+        refresh = AsyncMock()
+
+        await self._handler(refresh)._refresh_turn_tools()
+
+        refresh.assert_awaited_once()
+
+    async def test_failure_is_logged_not_raised(self, caplog):
+        handler = self._handler(AsyncMock(side_effect=RuntimeError("store down")))
+
+        with caplog.at_level("WARNING", logger="autolangchat.websocket_handler"):
+            await handler._refresh_turn_tools()
+
+        assert "keeping the current binding" in caplog.text
+
+    async def test_handler_without_hook(self):
+        from autolangchat.websocket_handler import WebSocketChatHandler
+
+        await object.__new__(WebSocketChatHandler)._refresh_turn_tools()
 
 
 async def test_invalid_utf8_reads_and_searches_predictably():

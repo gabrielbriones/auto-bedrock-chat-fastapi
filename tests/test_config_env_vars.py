@@ -317,6 +317,8 @@ class TestSkillEnvVars:
             ("AUTOCHAT_SKILL_INSTRUCTIONS_MAX_CHARS", "skill_instructions_max_chars", 32000),
             ("AUTOCHAT_SKILL_DESCRIPTION_MAX_CHARS", "skill_description_max_chars", 300),
             ("AUTOCHAT_SKILL_MAX_PARAMETERS", "skill_max_parameters", 20),
+            ("AUTOCHAT_SKILL_PARAM_VALUE_MAX_CHARS", "skill_param_value_max_chars", 4000),
+            ("AUTOCHAT_SKILL_CATALOG_MAX_CHARS", "skill_catalog_max_chars", 4000),
         ],
     )
     def test_limits_have_defaults_and_must_be_positive(self, name, field, default):

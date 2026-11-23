@@ -12,7 +12,9 @@ chat config).  It is built per request in ``tools_execution_node``; the
 
 Handler contract
 ----------------
-Handlers return a JSON-serialisable result (dict or string).  Expected
+Handlers return a JSON-serialisable result (dict or string), or a ``ToolOutput``
+to also attach metadata to the tool result entry (never shown to the model).
+Expected
 failures are reported by returning ``tool_error(code, message)`` rather than
 raising, so the model gets a stable ``{"error": code, "message": ...}`` shape.
 Unexpected exceptions propagate to ``ToolManager``, which reports them like any
@@ -21,7 +23,7 @@ other failed tool call.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from ...artifacts import ArtifactScope, ArtifactStore
@@ -46,6 +48,15 @@ class ToolContext:
     artifact_scope: Optional[ArtifactScope]
     context_budget: Optional[ContextBudget]
     chat_config: Any
+    user_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ToolOutput:
+    """A handler result plus ``metadata`` stored on its tool result entry."""
+
+    result: Any
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 InternalHandler = Callable[[Dict[str, Any], ToolContext], Awaitable[Any]]
@@ -64,6 +75,8 @@ class InternalTool:
             ``tool_unavailable`` when called without one.
         exposed: Whether the schema is advertised to the model. ``False`` for
             aliases that are dispatchable by name but never bound.
+        available: Optional predicate checked whenever tools are (re)bound; when
+            it returns ``False`` the tool is not advertised (it stays dispatchable).
     """
 
     name: str
@@ -71,6 +84,7 @@ class InternalTool:
     handler: InternalHandler
     requires_session: bool = True
     exposed: bool = True
+    available: Optional[Callable[[], bool]] = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -81,6 +95,11 @@ class InternalTool:
             )
         if not isinstance(self.function_desc.get("parameters"), dict):
             raise ValueError(f"InternalTool {self.name!r}: function_desc must define 'parameters'")
+
+    @property
+    def advertised(self) -> bool:
+        """Whether the schema is bound to the model right now."""
+        return self.exposed and (self.available is None or self.available())
 
     async def invoke(self, arguments: Dict[str, Any], ctx: ToolContext) -> Any:
         """Run the handler, failing closed when a session-bound tool has no session."""

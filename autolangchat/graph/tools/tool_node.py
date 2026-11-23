@@ -112,7 +112,13 @@ def _build_tool_context(
         except Exception:
             logger.warning("Could not compute the context budget for internal tools", exc_info=True)
 
-    return ToolContext(artifact_store=store, artifact_scope=scope, context_budget=budget, chat_config=chat_config)
+    return ToolContext(
+        artifact_store=store,
+        artifact_scope=scope,
+        context_budget=budget,
+        chat_config=chat_config,
+        user_id=configurable.get("user_id"),
+    )
 
 
 async def _handle_reactive_auth_expiration(

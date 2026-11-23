@@ -182,6 +182,8 @@ constraints and the aggregate counters exposed under `sessions.artifacts` at
 | `AUTOCHAT_SKILL_INSTRUCTIONS_MAX_CHARS` | `32000` | Maximum length of a skill's `instructions`                            |
 | `AUTOCHAT_SKILL_DESCRIPTION_MAX_CHARS`  | `300`   | Maximum length of a skill's `description` (shown in the user catalog) |
 | `AUTOCHAT_SKILL_MAX_PARAMETERS`         | `20`    | Maximum number of parameters a skill may declare                      |
+| `AUTOCHAT_SKILL_PARAM_VALUE_MAX_CHARS`  | `4000`  | Maximum length of one parameter value passed to `load_skill`          |
+| `AUTOCHAT_SKILL_CATALOG_MAX_CHARS`      | `4000`  | Maximum length of the "Available skills" list in the system prompt    |
 
 > There are no skill-specific storage settings. Like [persisted user settings](#persisted-user-settings), the backend and database are inferred from whatever the app already uses (Postgres when an enabled conversation/feedback/token-usage store is on `postgres`, or the KB is on `pgvector`; otherwise the SQLite file resolved from `AUTOCHAT_CONVERSATION_DB_PATH` → `AUTOCHAT_FEEDBACK_DATABASE_PATH` → `AUTOCHAT_TOKEN_USAGE_DATABASE_PATH` → `KB_DATABASE_PATH`). The three limits must be positive and are checked when a skill is created or replaced.
 >

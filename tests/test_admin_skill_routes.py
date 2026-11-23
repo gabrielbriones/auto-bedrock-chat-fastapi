@@ -38,7 +38,7 @@ def store(tmp_path):
     return SQLiteSkillStore(str(tmp_path / "skills.db"))
 
 
-def _make_client(store_ref, config=None):
+def _make_client(store_ref, config=None, on_change=None):
     app = FastAPI()
     register_admin_error_handlers(app)
 
@@ -51,6 +51,7 @@ def _make_client(store_ref, config=None):
         get_skill_store=lambda: store_ref(),
         require_admin=require_admin,
         chat_config=config or _limits(),
+        on_change=on_change,
     )
     return TestClient(app)
 
@@ -219,6 +220,23 @@ def test_failed_writes_are_not_audited(client, caplog):
         client.post(f"{PREFIX}/skills", json=_body(instructions="x" * 201))
         client.delete(f"{PREFIX}/skills/missing")
     assert [r for r in caplog.records if r.name == "bedrock.audit"] == []
+
+
+def test_on_change_runs_after_every_successful_write_only(store):
+    changes = []
+    client = _make_client(lambda: store, on_change=lambda: changes.append(1))
+
+    client.post(f"{PREFIX}/skills", json=_body())
+    client.put(f"{PREFIX}/skills/triage", json={"display_name": "N", "instructions": "i"})
+    client.post(f"{PREFIX}/skills/triage/disable")
+    client.post(f"{PREFIX}/skills/triage/enable")
+    client.delete(f"{PREFIX}/skills/triage")
+    assert len(changes) == 5
+
+    client.get(f"{PREFIX}/skills")
+    client.post(f"{PREFIX}/skills", json=_body(instructions="x" * 201))
+    client.delete(f"{PREFIX}/skills/missing")
+    assert len(changes) == 5
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import uuid
 import weakref
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -235,6 +235,7 @@ class WebSocketChatHandler:
         conversation_store: Optional[BaseConversationStore] = None,
         user_settings_store: Optional[BaseUserSettingsStore] = None,
         sso_provider: Optional[Any] = None,
+        refresh_tools: Optional[Callable[[], Awaitable[None]]] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -251,6 +252,8 @@ class WebSocketChatHandler:
         self.conversation_store = conversation_store
         self.user_settings_store = user_settings_store
         self.sso_provider = sso_provider
+        # Rebinds the tools when the skill catalog changed; awaited once per turn.
+        self._refresh_tools = refresh_tools
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -697,6 +700,9 @@ class WebSocketChatHandler:
                 auth_handler=session.auth_handler,
                 metadata=session.metadata,
             )
+
+            # Before the config snapshot below: model_copy is shallow and freezes langchain_tools.
+            await self._refresh_turn_tools()
 
             # ------------------------------------------------------------------
             # Dynamic parameter overrides.
@@ -3443,6 +3449,17 @@ class WebSocketChatHandler:
             "sessions": session_stats,
             "tools": {},
         }
+
+    async def _refresh_turn_tools(self) -> None:
+        """Run the ``refresh_tools`` hook; a failure keeps the current binding instead of failing the turn."""
+        # getattr: tests build handlers with __new__.
+        refresh = getattr(self, "_refresh_tools", None)
+        if refresh is None:
+            return
+        try:
+            await refresh()
+        except Exception:
+            logger.warning("Could not refresh the tools for this turn; keeping the current binding", exc_info=True)
 
     def _format_auth_context(self, user_info: Optional[Dict[str, Any]]) -> str:
         """Format authenticated user information for injection into system prompt."""

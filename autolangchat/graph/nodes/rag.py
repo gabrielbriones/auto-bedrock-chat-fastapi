@@ -22,6 +22,11 @@ base prompt comes first and the KB/auth context after it, with the split
 recorded in the message metadata so ``llm_call_node`` can put a cachePoint
 between them (see :mod:`autolangchat.prompt_caching`). Otherwise the context
 comes first, exactly as before caching existed.
+
+Skills catalog: when ``load_skill`` is bound for this turn, the compact
+"Available skills" list (from ``tool_manager.skill_snapshot``, the snapshot the
+binding was decided from) is appended right after the base prompt and counts
+as part of the stable prefix: it only changes when an admin edits a skill.
 """
 
 from __future__ import annotations
@@ -32,7 +37,10 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.runnables import RunnableConfig
 
+from ...defaults import DEFAULT_SKILL_CATALOG_MAX_CHARS
+from ...model_capabilities import supports_tool_calling
 from ...prompt_caching import build_system_message, prompt_caching_active
+from ...skills.prompt import LOAD_SKILL, format_skill_catalog
 from ..state import ChatState
 
 logger = logging.getLogger(__name__)
@@ -77,6 +85,16 @@ def _format_kb_context(kb_results: List[Dict[str, Any]]) -> str:
         "=" * 60,
     ]
     return "\n".join(parts)
+
+
+def _skill_catalog_text(tool_manager: Any, chat_config: Any) -> str:
+    """The skills catalog when ``load_skill`` is bound to this turn's model, else ``""``."""
+    bound = {getattr(t, "name", None) for t in (getattr(chat_config, "langchain_tools", None) or [])}
+    if LOAD_SKILL not in bound or not supports_tool_calling(getattr(chat_config, "model_id", None) or ""):
+        return ""
+    entries = getattr(getattr(tool_manager, "skill_snapshot", None), "entries", None) or ()
+    max_chars = getattr(chat_config, "skill_catalog_max_chars", DEFAULT_SKILL_CATALOG_MAX_CHARS)
+    return format_skill_catalog(entries, max_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -191,13 +209,15 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     kb_context_text = _format_kb_context(kb_results) if kb_results else ""
 
     base_system_prompt = chat_config.get_system_prompt() if chat_config else ""
+    catalog_text = _skill_catalog_text(configurable.get("tool_manager"), chat_config)
+    stable_prompt = "\n\n".join(part for part in (base_system_prompt, catalog_text) if part)
 
     if prompt_caching_active(chat_config, getattr(chat_config, "model_id", None)) and (
-        base_system_prompt or kb_context_text or auth_context_text
+        stable_prompt or kb_context_text or auth_context_text
     ):
         # Stable prompt first, per-turn context last: Bedrock caches prefixes,
         # so the base prompt stays cacheable even when retrieval changes.
-        system_message = build_system_message(base_system_prompt, [kb_context_text, auth_context_text])
+        system_message = build_system_message(stable_prompt, [kb_context_text, auth_context_text])
         logger.debug("Cache-ordered system prompt length: %d chars", len(system_message["content"]))
         preserved_messages = [msg for msg in messages if msg.get("role") != "system"]
         return {"messages": [system_message] + preserved_messages, "kb_results": kb_results}
@@ -205,16 +225,16 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     if not kb_context_text and not auth_context_text:
         # No RAG/auth context to inject, but still need to ensure the
         # configured system prompt is present in the messages.
-        if base_system_prompt:
+        if stable_prompt:
             preserved_messages = [msg for msg in messages if msg.get("role") != "system"]
             return {
-                "messages": [{"role": "system", "content": base_system_prompt}] + preserved_messages,
+                "messages": [{"role": "system", "content": stable_prompt}] + preserved_messages,
                 "kb_results": kb_results,
             }
         return {"kb_results": kb_results}
 
     context_parts = [p for p in [kb_context_text, auth_context_text] if p]
-    enhanced_system_prompt = "\n\n".join(context_parts + [base_system_prompt])
+    enhanced_system_prompt = "\n\n".join(context_parts + [stable_prompt])
 
     logger.debug("Enhanced system prompt length: %d chars", len(enhanced_system_prompt))
 
