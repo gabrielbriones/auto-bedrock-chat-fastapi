@@ -2770,7 +2770,8 @@ class AutoLangChatPlugin:
         snapshot = await service.refresh()
         bound = self.tool_manager.skill_snapshot
         if bound is None or bound.version != snapshot.version:
-            await self.update_tools()
+            self.tool_manager._langchain_tools = None
+            self.tool_manager._sync_config()
 
 
 def add_autolangchat(
