@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 from ..exceptions import SkillAlreadyExistsError
 from .models import Skill, SkillParameter, validate_skill_limits
@@ -39,7 +40,7 @@ def _option_value(option: Any) -> str | None:
 
 
 def _parameter(placeholder: str, variable: Mapping[str, Any]) -> SkillParameter:
-    hints: Dict[str, Any] = {key: variable[key] for key in _VARIABLE_FIELDS if variable.get(key) is not None}
+    hints: dict[str, Any] = {key: variable[key] for key in _VARIABLE_FIELDS if variable.get(key) is not None}
     if "options" in hints:
         if not isinstance(hints["options"], list):
             raise ValueError("variable options must be a list")
@@ -77,7 +78,7 @@ async def seed_preset_skills(
     instructions_max_chars: int,
     description_max_chars: int,
     max_parameters: int,
-) -> List[str]:
+) -> list[str]:
     """Create the default skill of every preset that has none; return the names created.
 
     An invalid preset is logged and skipped. A name that already exists,
@@ -85,7 +86,7 @@ async def seed_preset_skills(
     Store failures other than that conflict propagate.
     """
     variables = list(variables)
-    created: List[str] = []
+    created: list[str] = []
     for preset in presets:
         try:
             skill = preset_to_skill(preset, variables)
