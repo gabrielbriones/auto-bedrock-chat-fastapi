@@ -71,7 +71,7 @@ def preset_to_skill(preset: Mapping[str, Any], variables: Iterable[Mapping[str, 
 
 
 async def seed_preset_skills(
-    store: "BaseSkillStore",
+    store: BaseSkillStore,
     presets: Iterable[Mapping[str, Any]],
     variables: Iterable[Mapping[str, Any]],
     *,
