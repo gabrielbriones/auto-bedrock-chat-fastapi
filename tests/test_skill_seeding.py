@@ -30,7 +30,7 @@ VARIABLES = [
         "default": "abc",
     },
     {"name": "NEW_JOB_ID", "label": "New Job ID", "placeholder": "e.g. 2481e62f-..."},
-    {"name": "MODE", "label": "Mode", "input_type": "select", "options": ["fast", 2]},
+    {"name": "MODE", "label": "Mode", "input_type": "select", "options": ["fast", {"value": "windows", "label": "Windows"}, 2]},
 ]
 
 
@@ -85,7 +85,7 @@ def test_variable_hints_are_copied_and_other_fields_dropped():
         "placeholder": "e.g. e62f2481-...",
         "example": "",
     }
-    assert (mode.input_type, mode.options) == ("select", ["fast", "2"])
+    assert (mode.input_type, mode.options) == ("select", ["fast", "windows"])
 
 
 def test_only_placeholders_used_by_the_template_become_parameters():

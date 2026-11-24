@@ -29,12 +29,22 @@ _PLACEHOLDER_RE = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 _VARIABLE_FIELDS = ("label", "placeholder", "input_type", "options")
 
 
+def _option_value(option: Any) -> str | None:
+    """Return the string value of a preset select option (a string or a ``{value, label}`` record), else None."""
+    if isinstance(option, str):
+        return option
+    if isinstance(option, Mapping) and isinstance(option.get("value"), str):
+        return option["value"]
+    return None
+
+
 def _parameter(placeholder: str, variable: Mapping[str, Any]) -> SkillParameter:
     hints: Dict[str, Any] = {key: variable[key] for key in _VARIABLE_FIELDS if variable.get(key) is not None}
     if "options" in hints:
         if not isinstance(hints["options"], list):
             raise ValueError("variable options must be a list")
-        hints["options"] = [str(option) for option in hints["options"]]
+        values = (_option_value(option) for option in hints["options"])
+        hints["options"] = [value for value in values if value is not None]
     return SkillParameter(name=placeholder.lower(), required=True, **hints)
 
 
