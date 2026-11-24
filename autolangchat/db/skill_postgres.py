@@ -13,20 +13,33 @@ from __future__ import annotations
 
 import logging
 from importlib import resources
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from pydantic import ValidationError
 
-from ..exceptions import SkillAlreadyExistsError, SkillNotFoundError
-from ..skills.models import Skill, SkillCatalogEntry
+from ..exceptions import SkillAlreadyExistsError, SkillNotFoundError, SkillRevisionConflictError
+from ..skills.models import Skill, SkillCatalogEntry, SkillRevision, SkillRevisionSummary
 from .skill_base import BaseSkillStore
 
 logger = logging.getLogger(__name__)
 
-_COLUMNS = "name, display_name, description, instructions, parameters, enabled, created_at, updated_at, updated_by"
+_COLUMNS = (
+    "name, display_name, description, instructions, parameters, enabled, revision, created_at, updated_at, updated_by"
+)
 _SELECT_ONE_SQL = f"SELECT {_COLUMNS} FROM skills WHERE name = %s"
 _SELECT_ALL_SQL = f"SELECT {_COLUMNS} FROM skills ORDER BY name"
-_SELECT_CATALOG_SQL = "SELECT name, display_name, description, parameters FROM skills WHERE enabled ORDER BY name"
+_SELECT_CATALOG_SQL = (
+    "SELECT name, display_name, description, parameters, revision FROM skills WHERE enabled ORDER BY name"
+)
+_REVISION_COLUMNS = "name, revision, display_name, description, instructions, parameters, updated_at, updated_by"
+# Copies the current content of skill ``name`` into the history (inside the write transaction).
+_RECORD_REVISION_SQL = (
+    f"INSERT INTO skill_revisions ({_REVISION_COLUMNS}) SELECT {_REVISION_COLUMNS} FROM skills WHERE name = %s"
+)
+_SELECT_REVISIONS_SQL = (
+    "SELECT revision, updated_at, updated_by FROM skill_revisions WHERE name = %s ORDER BY revision DESC"
+)
+_SELECT_REVISION_SQL = f"SELECT {_REVISION_COLUMNS} FROM skill_revisions WHERE name = %s AND revision = %s"
 
 _MISSING_DEPS_MSG = (
     "PostgresSkillStore requires the optional PostgreSQL packages. "
@@ -34,7 +47,7 @@ _MISSING_DEPS_MSG = (
 )
 
 
-def _import_psycopg_async() -> Tuple[Any, Any, Any]:
+def _import_psycopg_async() -> tuple[Any, Any, Any]:
     """Return ``(psycopg, AsyncConnectionPool, Jsonb)`` or raise ``ImportError``."""
     try:
         import psycopg  # noqa: F401
@@ -110,33 +123,52 @@ class PostgresSkillStore(BaseSkillStore):
     # Reads
     # ------------------------------------------------------------------
 
-    async def list_skills(self) -> List[Skill]:
+    async def list_skills(self) -> list[Skill]:
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(_SELECT_ALL_SQL)
             rows = await cur.fetchall()
         return [skill for skill in (_row_to_skill(row) for row in rows) if skill is not None]
 
-    async def get_skill(self, name: str) -> Optional[Skill]:
+    async def get_skill(self, name: str) -> Skill | None:
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(_SELECT_ONE_SQL, (name,))
             row = await cur.fetchone()
         return _row_to_skill(row) if row else None
 
-    async def list_enabled_catalog(self) -> List[SkillCatalogEntry]:
+    async def list_enabled_catalog(self) -> list[SkillCatalogEntry]:
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(_SELECT_CATALOG_SQL)
             rows = await cur.fetchall()
         entries = (_row_to_catalog_entry(row) for row in rows)
         return [entry for entry in entries if entry is not None]
 
+    async def list_revisions(self, name: str) -> list[SkillRevisionSummary]:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT 1 FROM skills WHERE name = %s", (name,))
+            exists = await cur.fetchone()
+            await cur.execute(_SELECT_REVISIONS_SQL, (name,))
+            rows = await cur.fetchall()
+        if exists is None:
+            raise SkillNotFoundError(f"Skill {name!r} not found")
+        return [
+            SkillRevisionSummary(revision=revision, updated_at=updated_at, updated_by=updated_by)
+            for revision, updated_at, updated_by in rows
+        ]
+
+    async def get_revision(self, name: str, revision: int) -> SkillRevision | None:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(_SELECT_REVISION_SQL, (name, revision))
+            row = await cur.fetchone()
+        return _row_to_revision(row) if row else None
+
     # ------------------------------------------------------------------
     # Writes
     # ------------------------------------------------------------------
 
-    async def create_skill(self, skill: Skill, updated_by: Optional[str] = None) -> Skill:
+    async def create_skill(self, skill: Skill, updated_by: str | None = None) -> Skill:
         sql = f"""
             INSERT INTO skills ({_COLUMNS})
-                 VALUES (%s, %s, %s, %s, %s, %s, now(), now(), %s)
+                 VALUES (%s, %s, %s, %s, %s, %s, 1, now(), now(), %s)
             ON CONFLICT (name) DO NOTHING
               RETURNING {_COLUMNS}
         """
@@ -152,20 +184,17 @@ class PostgresSkillStore(BaseSkillStore):
         async with self._pool.connection() as conn, conn.cursor() as cur:
             await cur.execute(sql, params)
             row = await cur.fetchone()
+            if row is not None:
+                await cur.execute(_RECORD_REVISION_SQL, (skill.name,))
             await conn.commit()
         if row is None:
             raise SkillAlreadyExistsError(f"Skill {skill.name!r} already exists")
         return _require_skill(row, skill.name)
 
-    async def replace_skill(self, skill: Skill, updated_by: Optional[str] = None) -> Skill:
-        sql = f"""
-            UPDATE skills
-               SET display_name = %s, description = %s, instructions = %s,
-                   parameters = %s, updated_at = now(), updated_by = %s
-             WHERE name = %s
-         RETURNING {_COLUMNS}
-        """
-        params = (
+    async def replace_skill(
+        self, skill: Skill, updated_by: str | None = None, expected_revision: int | None = None
+    ) -> Skill:
+        params: tuple = (
             skill.display_name,
             skill.description,
             skill.instructions,
@@ -173,9 +202,36 @@ class PostgresSkillStore(BaseSkillStore):
             updated_by,
             skill.name,
         )
-        return await self._update_returning(sql, params, skill.name)
+        where = "name = %s"
+        if expected_revision is not None:
+            where += " AND revision = %s"
+            params += (expected_revision,)
+        sql = f"""
+            UPDATE skills
+               SET display_name = %s, description = %s, instructions = %s, parameters = %s,
+                   revision = revision + 1, updated_at = now(), updated_by = %s
+             WHERE {where}
+         RETURNING {_COLUMNS}
+        """
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(sql, params)
+            row = await cur.fetchone()
+            if row is None:
+                await cur.execute(_SELECT_ONE_SQL, (skill.name,))
+                current = await cur.fetchone()
+                await conn.rollback()
+                if current is None:
+                    raise SkillNotFoundError(f"Skill {skill.name!r} not found")
+                current_skill = _require_skill(current, skill.name)
+                raise SkillRevisionConflictError(
+                    f"Skill {skill.name!r} is at revision {current_skill.revision}, not {expected_revision}",
+                    current=current_skill,
+                )
+            await cur.execute(_RECORD_REVISION_SQL, (skill.name,))
+            await conn.commit()
+        return _require_skill(row, skill.name)
 
-    async def set_enabled(self, name: str, enabled: bool, updated_by: Optional[str] = None) -> Skill:
+    async def set_enabled(self, name: str, enabled: bool, updated_by: str | None = None) -> Skill:
         sql = f"""
             UPDATE skills
                SET enabled = %s, updated_at = now(), updated_by = %s
@@ -184,13 +240,15 @@ class PostgresSkillStore(BaseSkillStore):
         """
         return await self._update_returning(sql, (enabled, updated_by, name), name)
 
-    async def delete_skill(self, name: str) -> None:
+    async def delete_skill(self, name: str) -> int:
+        # skill_revisions rows go with it (ON DELETE CASCADE).
         async with self._pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute("DELETE FROM skills WHERE name = %s", (name,))
-            deleted = cur.rowcount
+            await cur.execute("DELETE FROM skills WHERE name = %s RETURNING revision", (name,))
+            row = await cur.fetchone()
             await conn.commit()
-        if deleted == 0:
+        if row is None:
             raise SkillNotFoundError(f"Skill {name!r} not found")
+        return row[0]
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -209,7 +267,7 @@ class PostgresSkillStore(BaseSkillStore):
         return self._Jsonb([parameter.model_dump() for parameter in skill.parameters])
 
 
-def _require_skill(row: Optional[tuple], name: str) -> Skill:
+def _require_skill(row: tuple | None, name: str) -> Skill:
     skill = _row_to_skill(row) if row is not None else None
     if skill is None:  # pragma: no cover - only reachable if the row was hand-corrupted mid-call
         raise RuntimeError(f"skills row for {name!r} is unreadable after write")
@@ -224,8 +282,10 @@ def _parameters_list(name: str, raw: Any) -> list:
     return raw
 
 
-def _row_to_skill(row: tuple) -> Optional[Skill]:
-    name, display_name, description, instructions, parameters, enabled, created_at, updated_at, updated_by = row
+def _row_to_skill(row: tuple) -> Skill | None:
+    name, display_name, description, instructions, parameters, enabled, revision, created_at, updated_at, updated_by = (
+        row
+    )
     try:
         return Skill(
             name=name,
@@ -234,6 +294,7 @@ def _row_to_skill(row: tuple) -> Optional[Skill]:
             instructions=instructions,
             parameters=_parameters_list(name, parameters),
             enabled=bool(enabled),
+            revision=revision,
             created_at=created_at,
             updated_at=updated_at,
             updated_by=updated_by,
@@ -243,14 +304,33 @@ def _row_to_skill(row: tuple) -> Optional[Skill]:
         return None
 
 
-def _row_to_catalog_entry(row: tuple) -> Optional[SkillCatalogEntry]:
-    name, display_name, description, parameters = row
+def _row_to_revision(row: tuple) -> SkillRevision | None:
+    name, revision, display_name, description, instructions, parameters, updated_at, updated_by = row
+    try:
+        return SkillRevision(
+            name=name,
+            revision=revision,
+            display_name=display_name,
+            description=description,
+            instructions=instructions,
+            parameters=_parameters_list(name, parameters),
+            updated_at=updated_at,
+            updated_by=updated_by,
+        )
+    except ValidationError:
+        logger.warning("Skipping unreadable skill revision row skill=%s revision=%s", name, revision, exc_info=True)
+        return None
+
+
+def _row_to_catalog_entry(row: tuple) -> SkillCatalogEntry | None:
+    name, display_name, description, parameters, revision = row
     try:
         return SkillCatalogEntry(
             name=name,
             display_name=display_name,
             description=description,
             parameters=_parameters_list(name, parameters),
+            revision=revision,
         )
     except ValidationError:
         logger.warning("Skipping unreadable skill catalog row skill=%s", name, exc_info=True)

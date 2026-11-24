@@ -60,8 +60,8 @@ def _more_line(count: int) -> str:
 
 
 def skill_revision(skill: Skill) -> str:
-    """The skill's revision: its ``updated_at`` timestamp (skills are not versioned yet)."""
-    return skill.updated_at.isoformat() if skill.updated_at else "unknown"
+    """The skill's stored revision number, as reported in ``skill_ref`` and the rendered skill."""
+    return str(skill.revision)
 
 
 def _quote_value(value: str) -> str:

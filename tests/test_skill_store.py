@@ -16,8 +16,9 @@ from pydantic import ValidationError
 from autolangchat.config import ChatConfig
 from autolangchat.db import SQLiteSkillStore, create_skill_store
 from autolangchat.db.skill_postgres import PostgresSkillStore
-from autolangchat.exceptions import SkillAlreadyExistsError, SkillNotFoundError
-from autolangchat.skills import Skill, SkillCreateRequest, SkillParameter, validate_skill_limits
+from autolangchat.exceptions import SkillAlreadyExistsError, SkillNotFoundError, SkillRevisionConflictError
+from autolangchat.skills import Skill, SkillCreateRequest, SkillParameter, SkillPatchRequest, validate_skill_limits
+from autolangchat.skills.models import CONTENT_FIELDS
 
 
 def _skill(name="triage", **overrides):
@@ -83,6 +84,22 @@ def test_validate_skill_limits():
             validate_skill_limits(skill, **{**limits, **override})
 
 
+def test_patch_request_needs_a_change_and_validates_like_content():
+    assert SkillPatchRequest(expected_revision=1, description="").changes() == {"description": ""}
+    for body in (
+        {"expected_revision": 1},
+        {"expected_revision": 1, "instructions": None},
+        {"description": "d"},
+        {"expected_revision": 0, "description": "d"},
+        {"expected_revision": 1, "instructions": "  "},
+        {"expected_revision": 1, "display_name": ""},
+        {"expected_revision": 1, "parameters": [{"name": "a"}, {"name": "a"}]},
+        {"expected_revision": 1, "name": "other", "description": "d"},
+    ):
+        with pytest.raises(ValidationError):
+            SkillPatchRequest(**body)
+
+
 # ---------------------------------------------------------------------------
 # Fake Postgres connection layer
 # ---------------------------------------------------------------------------
@@ -90,17 +107,20 @@ def test_validate_skill_limits():
 
 class _FakeSkillsCursor:
     """Fakes enough Postgres semantics to run ``PostgresSkillStore``'s SQL
-    against an in-memory ``{name: row_tuple}`` dict.
+    against an in-memory ``{name: row_tuple}`` dict plus a
+    ``{(name, revision): history_tuple}`` dict.
 
     ``row_tuple`` order matches the schema: ``(name, display_name,
-    description, instructions, parameters, enabled, created_at, updated_at,
+    description, instructions, parameters, enabled, revision, created_at,
+    updated_at, updated_by)``; ``history_tuple`` is ``(name, revision,
+    display_name, description, instructions, parameters, updated_at,
     updated_by)``.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, history):
         self._rows = rows
+        self._history = history
         self._result = []
-        self.rowcount = 0
 
     async def __aenter__(self):
         return self
@@ -111,58 +131,76 @@ class _FakeSkillsCursor:
     async def execute(self, sql, params=()):
         now = datetime.now(timezone.utc)
         sql = " ".join(sql.split())
+        rows, history = self._rows, self._history
 
         if sql.startswith("INSERT INTO skills"):
             name, display_name, description, instructions, parameters, enabled, updated_by = params
-            if name in self._rows:
+            if name in rows:
                 self._result = []
             else:
-                self._rows[name] = (
+                rows[name] = (
                     name,
                     display_name,
                     description,
                     instructions,
                     parameters.obj,
                     enabled,
+                    1,
                     now,
                     now,
                     updated_by,
                 )
-                self._result = [self._rows[name]]
+                self._result = [rows[name]]
+        elif sql.startswith("INSERT INTO skill_revisions"):
+            (name,) = params
+            row = rows[name]
+            assert (name, row[6]) not in history, "duplicate history primary key"
+            history[(name, row[6])] = (name, row[6], row[1], row[2], row[3], row[4], row[8], row[9])
         elif sql.startswith("UPDATE skills SET display_name"):
-            display_name, description, instructions, parameters, updated_by, name = params
-            row = self._rows.get(name)
+            display_name, description, instructions, parameters, updated_by, name, *expected = params
+            row = rows.get(name)
             self._result = []
-            if row:
-                self._rows[name] = (
+            if row and (not expected or row[6] == expected[0]):
+                rows[name] = (
                     name,
                     display_name,
                     description,
                     instructions,
                     parameters.obj,
                     row[5],
-                    row[6],
+                    row[6] + 1,
+                    row[7],
                     now,
                     updated_by,
                 )
-                self._result = [self._rows[name]]
+                self._result = [rows[name]]
         elif sql.startswith("UPDATE skills SET enabled"):
             enabled, updated_by, name = params
-            row = self._rows.get(name)
+            row = rows.get(name)
             self._result = []
             if row:
-                self._rows[name] = (*row[:5], enabled, row[6], now, updated_by)
-                self._result = [self._rows[name]]
+                rows[name] = (*row[:5], enabled, row[6], row[7], now, updated_by)
+                self._result = [rows[name]]
         elif sql.startswith("DELETE FROM skills"):
             (name,) = params
-            self.rowcount = 1 if self._rows.pop(name, None) is not None else 0
-        elif sql.startswith("SELECT name, display_name, description, parameters FROM skills WHERE enabled"):
-            self._result = [(r[0], r[1], r[2], r[4]) for _, r in sorted(self._rows.items()) if r[5]]
+            row = rows.pop(name, None)
+            for key in [key for key in history if key[0] == name]:  # ON DELETE CASCADE
+                del history[key]
+            self._result = [(row[6],)] if row else []
+        elif sql.startswith("SELECT 1 FROM skills"):
+            self._result = [(1,)] if params[0] in rows else []
+        elif sql.startswith("SELECT name, display_name, description, parameters, revision FROM skills WHERE enabled"):
+            self._result = [(r[0], r[1], r[2], r[4], r[6]) for _, r in sorted(rows.items()) if r[5]]
+        elif sql.startswith("SELECT revision, updated_at, updated_by FROM skill_revisions"):
+            self._result = [(h[1], h[6], h[7]) for k, h in sorted(history.items(), reverse=True) if k[0] == params[0]]
+        elif sql.startswith("SELECT") and "FROM skill_revisions" in sql:
+            found = history.get((params[0], params[1]))
+            self._result = [found] if found else []
         elif sql.startswith("SELECT") and "WHERE name = %s" in sql:
-            row = self._rows.get(params[0])
+            row = rows.get(params[0])
             self._result = [row] if row else []
         elif sql.startswith("SELECT"):
-            self._result = [r for _, r in sorted(self._rows.items())]
+            self._result = [r for _, r in sorted(rows.items())]
         else:
             raise AssertionError(f"unrecognized query in fake cursor: {sql!r}")
 
@@ -174,8 +212,8 @@ class _FakeSkillsCursor:
 
 
 class _FakeConnection:
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, pool):
+        self._pool = pool
 
     async def __aenter__(self):
         return self
@@ -184,18 +222,22 @@ class _FakeConnection:
         return False
 
     def cursor(self):
-        return _FakeSkillsCursor(self._rows)
+        return _FakeSkillsCursor(self._pool.rows, self._pool.history)
 
     async def commit(self):
+        pass
+
+    async def rollback(self):
         pass
 
 
 class _FakePool:
     def __init__(self):
         self.rows = {}
+        self.history = {}
 
     def connection(self):
-        return _FakeConnection(self.rows)
+        return _FakeConnection(self)
 
 
 def _make_postgres_store():
@@ -325,11 +367,122 @@ async def test_catalog_has_only_enabled_skills_and_no_instructions(store):
 
     assert [entry.name for entry in catalog] == ["b", "c"]
     assert catalog[0].parameters[0].name == "job"
-    assert set(catalog[0].model_dump()) == {"name", "display_name", "description", "parameters"}
+    assert set(catalog[0].model_dump()) == {"name", "display_name", "description", "parameters", "revision"}
 
     await store.set_enabled("a", True)
     await store.set_enabled("b", False)
     assert [entry.name for entry in await store.list_enabled_catalog()] == ["a", "c"]
+
+
+# ---------------------------------------------------------------------------
+# Revisions (both backends)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_starts_at_revision_1_with_a_history_entry(store):
+    created = await store.create_skill(_skill(revision=7), updated_by="alice")
+
+    assert created.revision == 1
+    [summary] = await store.list_revisions("triage")
+    assert (summary.revision, summary.updated_by) == (1, "alice")
+    first = await store.get_revision("triage", 1)
+    assert (first.instructions, first.parameters) == (created.instructions, created.parameters)
+
+
+async def test_every_content_write_is_a_new_revision_listed_newest_first(store):
+    await store.create_skill(_skill(), updated_by="alice")
+    await store.replace_skill(_skill(instructions="second"), updated_by="bob")
+    third = await store.replace_skill(_skill(instructions="third"), updated_by="carol")
+
+    assert third.revision == 3
+    assert (await store.get_skill("triage")).revision == 3
+    summaries = await store.list_revisions("triage")
+    assert [(s.revision, s.updated_by) for s in summaries] == [(3, "carol"), (2, "bob"), (1, "alice")]
+    assert (await store.get_revision("triage", 2)).instructions == "second"
+    assert (await store.get_revision("triage", 1)).instructions == "Look at {{JOB}}"
+    assert "instructions" not in summaries[0].model_dump()
+
+
+async def test_enable_and_disable_keep_the_revision(store):
+    await store.create_skill(_skill())
+    await store.replace_skill(_skill(instructions="second"))
+
+    assert (await store.set_enabled("triage", False)).revision == 2
+    assert (await store.set_enabled("triage", True)).revision == 2
+    assert len(await store.list_revisions("triage")) == 2
+
+
+async def test_replace_with_matching_expected_revision_succeeds(store):
+    await store.create_skill(_skill())
+
+    replaced = await store.replace_skill(_skill(instructions="new"), expected_revision=1)
+
+    assert (replaced.revision, replaced.instructions) == (2, "new")
+
+
+async def test_replace_with_stale_expected_revision_conflicts_and_changes_nothing(store):
+    await store.create_skill(_skill())
+    current = await store.replace_skill(_skill(instructions="second"), updated_by="bob")
+
+    with pytest.raises(SkillRevisionConflictError) as caught:
+        await store.replace_skill(_skill(instructions="stale"), expected_revision=1)
+
+    assert caught.value.current == current
+    assert await store.get_skill("triage") == current
+    assert [s.revision for s in await store.list_revisions("triage")] == [2, 1]
+
+
+async def test_replace_missing_skill_with_expected_revision_is_not_found(store):
+    with pytest.raises(SkillNotFoundError):
+        await store.replace_skill(_skill("nope"), expected_revision=1)
+
+
+async def test_restoring_an_old_revision_creates_a_new_one_and_keeps_history(store):
+    await store.create_skill(_skill())
+    await store.replace_skill(_skill(display_name="Second", instructions="second", parameters=[]))
+
+    old = await store.get_revision("triage", 1)
+    restored = await store.replace_skill(
+        Skill(name="triage", **old.model_dump(include=set(CONTENT_FIELDS))), updated_by="admin", expected_revision=2
+    )
+
+    assert restored.revision == 3
+    assert (restored.display_name, restored.instructions) == ("Triage", "Look at {{JOB}}")
+    assert restored.parameters == old.parameters
+    assert [s.revision for s in await store.list_revisions("triage")] == [3, 2, 1]
+    assert (await store.get_revision("triage", 2)).instructions == "second"
+
+
+async def test_revisions_of_a_missing_skill(store):
+    with pytest.raises(SkillNotFoundError):
+        await store.list_revisions("nope")
+    assert await store.get_revision("nope", 1) is None
+
+
+async def test_get_missing_revision_returns_none(store):
+    await store.create_skill(_skill())
+    assert await store.get_revision("triage", 2) is None
+
+
+async def test_delete_returns_the_revision_and_removes_history(store):
+    await store.create_skill(_skill())
+    await store.replace_skill(_skill(instructions="second"))
+
+    assert await store.delete_skill("triage") == 2
+
+    assert await store.get_revision("triage", 1) is None
+    recreated = await store.create_skill(_skill())
+    assert recreated.revision == 1
+    assert [s.revision for s in await store.list_revisions("triage")] == [1]
+
+
+async def test_catalog_reports_the_revision(store):
+    await store.create_skill(_skill())
+    await store.replace_skill(_skill(instructions="second"))
+
+    [entry] = await store.list_enabled_catalog()
+
+    assert entry.revision == 2
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +569,59 @@ async def test_sqlite_opens_lazily_on_first_use(tmp_path):
     store = SQLiteSkillStore(str(tmp_path / "skills.db"))
     assert await store.list_skills() == []
     await store.close()
+
+
+_PRE_REVISION_SQLITE_DDL = """
+CREATE TABLE skills (
+    name TEXT PRIMARY KEY, display_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL, parameters TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT
+);
+"""
+
+
+async def test_sqlite_migrates_a_pre_revision_database_without_data_loss(tmp_path):
+    path = str(tmp_path / "skills.db")
+    stamp = "2026-11-01T10:00:00+00:00"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(_PRE_REVISION_SQLITE_DDL)
+        conn.execute(
+            "INSERT INTO skills VALUES ('legacy', 'Legacy', 'old', 'old body', ?, 0, ?, ?, 'alice')",
+            (json.dumps([{"name": "job"}]), stamp, stamp),
+        )
+    conn.close()
+
+    for _ in range(2):  # the migration is idempotent
+        store = SQLiteSkillStore(path)
+        await store.open()
+        legacy = await store.get_skill("legacy")
+        assert (legacy.revision, legacy.enabled, legacy.instructions, legacy.updated_by) == (
+            1,
+            False,
+            "old body",
+            "alice",
+        )
+        assert legacy.parameters[0].name == "job"
+        [summary] = await store.list_revisions("legacy")
+        assert (summary.revision, summary.updated_at.isoformat(), summary.updated_by) == (1, stamp, "alice")
+        assert (await store.get_revision("legacy", 1)).instructions == "old body"
+        await store.close()
+
+    store = SQLiteSkillStore(path)
+    updated = await store.replace_skill(Skill(name="legacy", display_name="L", instructions="new"), expected_revision=1)
+    assert updated.revision == 2
+    assert [s.revision for s in await store.list_revisions("legacy")] == [2, 1]
+    await store.close()
+
+
+def test_postgres_schema_migrates_pre_revision_databases():
+    from importlib import resources
+
+    ddl = " ".join(resources.files("autolangchat.db.sql").joinpath("skill_schema.sql").read_text().split())
+    assert "ALTER TABLE skills ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;" in ddl
+    assert "REFERENCES skills (name) ON DELETE CASCADE" in ddl
+    assert "FROM skills ON CONFLICT (name, revision) DO NOTHING;" in ddl
 
 
 # ---------------------------------------------------------------------------

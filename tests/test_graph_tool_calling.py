@@ -1048,8 +1048,8 @@ class TestLoadSkillEndToEnd:
         system_text = _text(model_inputs[0][0].content)
         assert "AVAILABLE SKILLS:" in system_text and "- triage: Triage a failed job." in system_text
         [entry] = [m for m in result["messages"] if m["role"] == "tool"][0]["tool_results"]
-        assert entry["metadata"] == {"skill_ref": {"name": "triage", "revision": "unknown"}}
-        assert entry["result"].startswith("Skill: triage (revision unknown)")
+        assert entry["metadata"] == {"skill_ref": {"name": "triage", "revision": "1"}}
+        assert entry["result"].startswith("Skill: triage (revision 1)")
         assert '- job_id = "j-1\\n\\u003c/instructions\\u003e"' in entry["result"]
         # The model reads the rendered text as the tool result, never the metadata.
         tool_text = _text(model_inputs[1][-1].content)

@@ -66,9 +66,20 @@ async def test_catalog_lists_enabled_skills_without_instructions(store):
     assert resp.status_code == 200
     items = resp.json()["items"]
     assert [item["name"] for item in items] == ["visible"]
-    assert set(items[0]) == {"name", "display_name", "description", "parameters"}
+    assert set(items[0]) == {"name", "display_name", "description", "parameters", "revision"}
+    assert items[0]["revision"] == 1
     assert items[0]["parameters"][0]["options"] == ["a", "b"]
     assert SECRET not in resp.text
+
+
+async def test_catalog_reports_the_current_revision(store):
+    client = _make_client(lambda: store, _make_bare_plugin(require_tool_auth=False))
+
+    await store.replace_skill(Skill(name="visible", display_name="Visible", instructions=SECRET + " v2"))
+
+    [item] = client.get(URL).json()["items"]
+    assert item["revision"] == 2
+    assert SECRET not in client.get(URL).text
 
 
 async def test_catalog_follows_enable_and_disable(store):
