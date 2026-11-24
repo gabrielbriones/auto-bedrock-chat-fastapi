@@ -5,26 +5,26 @@ at runtime through the [Admin API](admin-api#skill-management), chat users can l
 through a [catalog endpoint](#user-catalog), and the model can [load one into a conversation](#loading-skills-in-chat)
 with the `load_skill` tool.
 
-> **Status:** this release delivers the skill **store, the admin REST API, the user catalog and model-initiated
-> loading** (`load_skill`). There is no slash-command invocation and no management UI yet. Skills are intended to
-> eventually replace [Preset Prompts](preset-prompts), which are a separate mechanism and are **unchanged** by
-> this feature: no migration, no shared ids, no seeding.
+> **Status:** this release delivers the skill **store, the admin REST API, the user catalog, model-initiated
+> loading** (`load_skill`) and **default skills seeded from [Preset Prompts](preset-prompts)**. There is no
+> slash-command invocation and no management UI yet. Preset prompts still work as before in the chat UI; each one
+> also seeds a [default skill](#default-skills-from-preset-prompts) of the same name.
 
 ---
 
 ## Skill model
 
-| Field          | Type               | Notes                                                                                           |
-| -------------- | ------------------ | ----------------------------------------------------------------------------------------------- |
-| `name`         | string             | Stable unique id. Must match `^[a-z0-9][a-z0-9_-]{0,63}$`. Immutable: a skill cannot be renamed |
-| `display_name` | string             | Required, 1–100 characters                                                                      |
-| `description`  | string             | Short, user-visible summary; limited by `skill_description_max_chars` (default 300)             |
-| `instructions` | string             | The instruction text; required, not blank; limited by `skill_instructions_max_chars` (32000)    |
-| `parameters`   | list of parameters | Ordered; at most `skill_max_parameters` (default 20); names unique within the skill             |
-| `enabled`      | boolean            | Disabled skills are hidden from the catalog. Default `true`                                     |
-| `created_at`   | timestamp          | Set on creation, never changed                                                                  |
-| `updated_at`   | timestamp          | Set on every write                                                                              |
-| `updated_by`   | string             | The admin identity (`user_id`) of the last writer; `anonymous` when `require_tool_auth=false`   |
+| Field          | Type               | Notes                                                                                                                                                                             |
+| -------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | string             | Stable unique id. Must match `^[a-z0-9][a-z0-9_-]{0,63}$`. Immutable: a skill cannot be renamed                                                                                   |
+| `display_name` | string             | Required, 1–100 characters                                                                                                                                                        |
+| `description`  | string             | Short, user-visible summary; limited by `skill_description_max_chars` (default 300)                                                                                               |
+| `instructions` | string             | The instruction text; required, not blank; limited by `skill_instructions_max_chars` (32000)                                                                                      |
+| `parameters`   | list of parameters | Ordered; at most `skill_max_parameters` (default 20); names unique within the skill                                                                                               |
+| `enabled`      | boolean            | Disabled skills are hidden from the catalog. Default `true`                                                                                                                       |
+| `created_at`   | timestamp          | Set on creation, never changed                                                                                                                                                    |
+| `updated_at`   | timestamp          | Set on every write                                                                                                                                                                |
+| `updated_by`   | string             | The admin identity (`user_id`) of the last writer; `anonymous` when `require_tool_auth=false`; `preset-seed` for an unedited [default skill](#default-skills-from-preset-prompts) |
 
 ### Parameters
 
@@ -77,6 +77,50 @@ Skills live in a single `skills` table (DDL: `autolangchat/db/sql/skill_schema.s
 
 The three content limits must be positive and are applied on every create and replace. Lowering a limit does not
 modify existing skills; they are only checked the next time they are written. The last two apply at chat time.
+
+---
+
+## Default skills from preset prompts
+
+Every [preset prompt](preset-prompts) (`preset_prompts` / `preset_prompts_file`) is the source of a **default
+skill**. At startup, right after the skill store opens, each preset that has no skill yet is created in the store,
+so the database is the single source of truth at runtime and admins manage default skills like any other.
+
+### Naming
+
+The skill name is the preset's `id`: the slug of its `label` (`Workload Analysis - IWPS` → `workload-analysis-iwps`),
+with a `-2`, `-3`, … suffix for duplicate slugs. It is the same value as the `?prompt=<id>`
+[deep link](preset-prompts#deep-linking--auto-start-via-query-string). An explicit `id` key on a preset is ignored.
+
+### Mapping
+
+| Preset                         | Skill                                                              |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `label`                        | `display_name`                                                     |
+| `description`                  | `description` (surrounding whitespace trimmed)                     |
+| `template`                     | `instructions`, with every `{{VAR}}` rewritten to `{{var}}`        |
+| each `{{VAR}}` in the template | a **required** parameter named `var` (in order of first use)       |
+| `variables:` entry for `VAR`   | the parameter's `label`, `placeholder`, `input_type` and `options` |
+
+Parameter names are lowercased to fit the skill name pattern (`JOB_ID` → `job_id`). Variables declared under
+`variables:` but not used by a template add no parameter to that skill. These preset fields have no skill
+equivalent yet and are **dropped**: `group`, and the variable fields `validate`, `detect_pattern`, `detect_flags`,
+`default`, `min`, `max` and `step`.
+
+### Seeding rules
+
+- **Create-only.** A skill that already exists is never replaced or re-enabled, so admin edits and disables
+  survive restarts and deploys.
+- **Deleted defaults come back.** A deleted default skill is created again at the next startup because its preset
+  still exists. To hide a default, disable it, or remove the preset.
+- **Renaming a label renames the command.** The next startup creates the skill under the new slug; the skill
+  under the old name stays until an admin deletes or disables it.
+- **Idempotent and safe across processes.** Several processes may start at once: a name that already exists
+  counts as seeded.
+- **Fail soft.** A preset that produces an invalid skill (name pattern, field lengths, the content limits above)
+  is logged at WARNING and skipped. Any other failure is logged and leaves chat running.
+- New skills are created with `updated_by` = `preset-seed`, and the [change counter](#enabling-and-disabling-at-runtime)
+  is bumped afterwards, so `load_skill` and the catalog include them from the first chat turn.
 
 ---
 
@@ -249,7 +293,7 @@ who can trigger the skill must not see.
 ### Enabling and disabling at runtime
 
 The skill service keeps a change counter that every successful admin write (create, replace, enable, disable,
-delete) increments. At the start of each chat turn the WebSocket handler checks it; when it changed, the
+delete) and the startup [seeding](#default-skills-from-preset-prompts) increment. At the start of each chat turn the WebSocket handler checks it; when it changed, the
 enabled catalog is re-read and the tools are rebound, so `load_skill` and the catalog appear or disappear
 **without a restart**. A failed refresh is logged and the turn continues with the previous binding.
 
@@ -284,5 +328,4 @@ Skill writes emit `bedrock.audit` records (`skill.create`, `skill.replace`, `ski
 - Slash-command invocation and `{{PLACEHOLDER}}` substitution in instructions.
 - Skill versioning: revisions, rollback and `expected_revision` checks.
 - A presentation-hints object for numeric bounds, validation and detection patterns.
-- Importing [Preset Prompts](preset-prompts) as skills. Create skills manually through the Admin API.
 - A management UI.

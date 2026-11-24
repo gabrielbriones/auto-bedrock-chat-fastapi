@@ -268,12 +268,13 @@ class AutoLangChatPlugin:
         if not self._preset_variables:
             self._preset_variables = self._infer_variables_from_templates()
 
-        # Give every preset prompt a stable, unique id so it can be targeted
-        # by a deep-link query string (?prompt=<id>&VAR=value...).
-        self._assign_preset_prompt_ids()
-
         # Setup logging configuration
         _setup_logging(self.config)
+
+        # Give every preset prompt a stable, unique id so it can be targeted
+        # by a deep-link query string (?prompt=<id>&VAR=value...) and seeded
+        # as the default skill of the same name.
+        self._assign_preset_prompt_ids()
 
         # Validate configuration
         validate_config(self.config)
@@ -508,26 +509,30 @@ class AutoLangChatPlugin:
         return list(seen.values())
 
     def _assign_preset_prompt_ids(self) -> None:
-        """Ensure every preset prompt has a stable, unique ``id``.
+        """Give every preset prompt a stable, unique ``id`` derived from its ``label``.
 
-        The ``id`` is what deep-link query strings (``?prompt=<id>``) use to
-        select a preset prompt from the client, so it must be predictable
-        and stable across restarts. When a prompt dict already defines an
-        ``id`` (e.g. set explicitly in the YAML file), it is kept as-is.
-        Otherwise one is derived by slugifying the ``label``. Collisions
-        (duplicate explicit ids, or duplicate slugs from identical/similar
-        labels) are disambiguated with a numeric suffix.
+        The ``id`` is both the deep-link key (``?prompt=<id>``) and the name of
+        the default skill seeded from the preset, so it is always the slug of
+        the label; an explicit ``id`` in the preset is ignored. Duplicate slugs
+        are disambiguated with a numeric suffix.
         """
         used_ids: set[str] = set()
         for prompt in self._preset_prompts:
-            raw_id = str(prompt.get("id") or "").strip()
-            base_id = raw_id or self._slugify(prompt.get("label", "prompt"))
+            base_id = self._slugify(prompt.get("label", "prompt"))
             candidate = base_id
             suffix = 2
             while candidate in used_ids:
                 candidate = f"{base_id}-{suffix}"
                 suffix += 1
             used_ids.add(candidate)
+            explicit_id = str(prompt.get("id") or "").strip()
+            if explicit_id and explicit_id != candidate:
+                logger.warning(
+                    "Ignoring explicit id %r of preset prompt %r; using %r derived from its label.",
+                    explicit_id,
+                    prompt.get("label"),
+                    candidate,
+                )
             prompt["id"] = candidate
 
     @staticmethod
@@ -2314,8 +2319,9 @@ class AutoLangChatPlugin:
         # 6b. Open the user-settings-store connection pool
         await self._startup_open_user_settings_store()
 
-        # 6b'. Open the skill store
+        # 6b'. Open the skill store and seed the default skills from the presets
         await self._startup_open_skill_store()
+        await self._startup_seed_preset_skills()
 
         # 6c. Schedule the background checkpoint-expiry sweep. Scheduled only
         # now (after the conversation store is opened, above) so its
@@ -2551,6 +2557,29 @@ class AutoLangChatPlugin:
             except Exception:  # pragma: no cover - defensive
                 logger.exception("Error while closing partially-opened SkillStore")
             self._skill_store = None
+
+    async def _startup_seed_preset_skills(self) -> None:
+        """Create the default skill of every preset prompt that has none.
+
+        A failure is logged and leaves chat and the other skills untouched.
+        """
+        if self._skill_store is None or not self._preset_prompts:
+            return
+        from .skills.seeding import seed_preset_skills
+
+        try:
+            await seed_preset_skills(
+                self._skill_store,
+                self._preset_prompts,
+                self._preset_variables,
+                instructions_max_chars=self.config.skill_instructions_max_chars,
+                description_max_chars=self.config.skill_description_max_chars,
+                max_parameters=self.config.skill_max_parameters,
+            )
+        except Exception as exc:
+            logger.error("Failed to seed default skills from preset prompts: %s", exc, exc_info=True)
+        if self._skill_service is not None:
+            self._skill_service.mark_changed()
 
     async def _purge_conversations_for_threads(self, thread_ids: List[str]) -> None:
         """Delete the conversation metadata row for each purged checkpoint thread_id.

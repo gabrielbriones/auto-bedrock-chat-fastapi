@@ -46,6 +46,9 @@ def _make_plugin(**overrides) -> AutoLangChatPlugin:
     plugin._conversation_store_open_failed = False
     plugin._user_settings_store = None
     plugin._skill_store = None
+    plugin._skill_service = None
+    plugin._preset_prompts = []
+    plugin._preset_variables = []
     plugin._mcp_session_manager = None
     plugin._mcp_exit_stack = None
     plugin.config = SimpleNamespace(
