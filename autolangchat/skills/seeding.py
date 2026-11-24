@@ -32,6 +32,8 @@ _VARIABLE_FIELDS = ("label", "placeholder", "input_type", "options")
 def _parameter(placeholder: str, variable: Mapping[str, Any]) -> SkillParameter:
     hints: Dict[str, Any] = {key: variable[key] for key in _VARIABLE_FIELDS if variable.get(key) is not None}
     if "options" in hints:
+        if not isinstance(hints["options"], list):
+            raise ValueError("variable options must be a list")
         hints["options"] = [str(option) for option in hints["options"]]
     return SkillParameter(name=placeholder.lower(), required=True, **hints)
 
