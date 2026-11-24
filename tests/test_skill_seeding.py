@@ -30,7 +30,12 @@ VARIABLES = [
         "default": "abc",
     },
     {"name": "NEW_JOB_ID", "label": "New Job ID", "placeholder": "e.g. 2481e62f-..."},
-    {"name": "MODE", "label": "Mode", "input_type": "select", "options": ["fast", {"value": "windows", "label": "Windows"}, 2]},
+    {
+        "name": "MODE",
+        "label": "Mode",
+        "input_type": "select",
+        "options": ["fast", {"value": "windows", "label": "Windows"}, 2],
+    },
 ]
 
 
