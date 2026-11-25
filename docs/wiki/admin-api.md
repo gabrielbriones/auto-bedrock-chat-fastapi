@@ -588,23 +588,43 @@ Registered only when `admin_enabled=true` **and** the skill store is configured 
 model, limits and `AUTOCHAT_SKILL*` settings). If the store is disabled after startup (for example because it
 failed to open), the routes stay mounted but answer `503 skills_unavailable`.
 
-| Method | Path                           | Description                                                                                     |
-| ------ | ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| GET    | `/admin/skills`                | List all skills (enabled or not) **without** `instructions`. Returns `{items: [SkillSummary]}`. |
-| POST   | `/admin/skills`                | Create a skill. Returns `201` with the `Skill`. `409 skill_exists` if the name is taken.        |
-| GET    | `/admin/skills/{name}`         | One skill, including `instructions`.                                                            |
-| PUT    | `/admin/skills/{name}`         | Replace the whole content (`display_name`, `description`, `instructions`, `parameters`).        |
-| DELETE | `/admin/skills/{name}`         | Permanently delete a skill. Returns `204`.                                                      |
-| POST   | `/admin/skills/{name}/enable`  | Enable a skill. Returns the `Skill`.                                                            |
-| POST   | `/admin/skills/{name}/disable` | Disable a skill. Returns the `Skill`.                                                           |
+| Method | Path                                        | Description                                                                                                          |
+| ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/skills`                             | List all skills (enabled or not) **without** `instructions`. Returns `{items: [SkillSummary], limits: SkillLimits}`. |
+| POST   | `/admin/skills`                             | Create a skill at revision 1. Returns `201` with the `Skill`. `409 skill_exists` if the name is taken.               |
+| GET    | `/admin/skills/{name}`                      | One skill, including `instructions`.                                                                                 |
+| PUT    | `/admin/skills/{name}`                      | Replace the whole content (`display_name`, `description`, `instructions`, `parameters`) as a new revision.           |
+| PATCH  | `/admin/skills/{name}`                      | Change some content fields as a new revision. `expected_revision` is required.                                       |
+| GET    | `/admin/skills/{name}/revisions`            | List revisions newest first: `{items: [{revision, updated_at, updated_by}]}` (no content).                           |
+| GET    | `/admin/skills/{name}/revisions/{revision}` | The full content of one revision (`SkillRevision`). `404 not_found` if it is not stored.                             |
+| POST   | `/admin/skills/{name}/rollback`             | Body `{revision, expected_revision?}`. Restores that revision's content as a new revision; returns the `Skill`.      |
+| DELETE | `/admin/skills/{name}`                      | Permanently delete a skill and its history. Returns `204`.                                                           |
+| POST   | `/admin/skills/{name}/enable`               | Enable a skill. Returns the `Skill` (revision unchanged).                                                            |
+| POST   | `/admin/skills/{name}/disable`              | Disable a skill. Returns the `Skill` (revision unchanged).                                                           |
 
 Behaviour worth knowing:
 
-- `PUT` is a **full replace**: omitted optional fields reset to their defaults, and the last write wins (there is
-  no versioning). The body may not contain `name`, so a skill cannot be renamed. `enabled` and `created_at` are
-  preserved; use the enable/disable routes to toggle availability.
+- Every `Skill`, `SkillSummary` and catalog entry carries `revision`: `1` on creation, incremented on every content
+  write (`PUT`, `PATCH`, rollback). See [Skills — Versioning](skills#versioning).
+- `PUT` is a **full replace**: omitted optional fields reset to their defaults. The body may not contain `name`, so
+  a skill cannot be renamed. `enabled` and `created_at` are preserved; use the enable/disable routes to toggle
+  availability. Without `expected_revision` the last write wins.
+- `PATCH` changes only the content fields it sends (`null` means unchanged) and needs at least one of them.
+- **Revision conflicts:** when `expected_revision` (on `PUT`, `PATCH` or rollback) differs from the stored revision,
+  nothing is written and the response is `409` with the standard envelope plus the stored skill:
+
+  ```json
+  {
+    "code": "revision_conflict",
+    "detail": "Skill 'job-triage' is at revision 4, not 3",
+    "current": { "name": "job-triage", "revision": 4, "instructions": "...", "...": "..." }
+  }
+  ```
+
+- Rollback never rewrites history: rolling back to revision 1 from revision 3 creates revision 4.
+- `limits` on the list response is `{skill_instructions_max_chars, skill_description_max_chars, skill_max_parameters}`.
 - Request bodies reject unknown fields (`422`). Exceeding a configured limit (`skill_instructions_max_chars`,
-  `skill_description_max_chars`, `skill_max_parameters`) returns `400 invalid_skill`.
+  `skill_description_max_chars`, `skill_max_parameters`) returns `400 invalid_skill`, including on rollback.
 - A name that cannot be a valid skill name is simply `404 not_found` in the path.
 - `updated_by` records the admin's `user_id`; with `require_tool_auth=false` every caller is the anonymous admin
   (see [Anonymous admin escape hatch](#anonymous-admin-escape-hatch-development-only)).
@@ -613,9 +633,13 @@ The user-facing counterpart, `GET {chat_endpoint}/skills/catalog`, is **not** an
 [Skills — User catalog](skills#user-catalog).
 
 ```bash
-curl -sS -X PUT -H 'Content-Type: application/json' -b cookies.txt \
+curl -sS -X PATCH -H 'Content-Type: application/json' -b cookies.txt \
   https://app.example.com/chat/admin/skills/job-triage \
-  -d '{"display_name": "Job triage", "instructions": "Investigate job {{job_id}}."}'
+  -d '{"expected_revision": 3, "instructions": "Investigate job {{job_id}}."}'
+
+curl -sS -X POST -H 'Content-Type: application/json' -b cookies.txt \
+  https://app.example.com/chat/admin/skills/job-triage/rollback \
+  -d '{"revision": 1, "expected_revision": 4}'
 ```
 
 ---
@@ -684,6 +708,7 @@ All admin errors share a single flat shape:
 | 409  | `invalid_status_transition`                                        | Feedback PATCH attempts a forbidden review-status transition.                                                           |
 | 409  | `kb_source_run_already_in_progress`                                | Another KB source-ingestion run is already in flight, or the same source is being deleted.                              |
 | 409  | `skill_exists`                                                     | `POST /admin/skills` with a name that is already taken.                                                                 |
+| 409  | `revision_conflict`                                                | A skill write's `expected_revision` is stale; the body also carries the stored skill under `current`.                   |
 | 422  | (validation error from FastAPI)                                    | Body / path / query failed Pydantic validation.                                                                         |
 | 422  | `no_files_uploaded` / `invalid_file_encoding` / `invalid_pdf_file` | KB source file upload has no files, one isn't UTF-8 text (and isn't a recognized PDF), or a PDF is corrupted/encrypted. |
 | 422  | `upload_too_large`                                                 | KB source file upload exceeds the per-file (10MB) or aggregate (50MB) cap.                                              |
@@ -699,17 +724,18 @@ Every state-changing admin request emits a structured log line on the
 up. Storage in a dedicated DB table is out of scope; a host that wants
 persistence can attach a logging handler.
 
-| Action                           | Where          | Payload                                                                                                   |
-| -------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `feedback.review.update`         | PATCH feedback | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`                           |
-| `kb.document.update`             | PATCH KB doc   | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts`                        |
-| `kb.document.delete`             | DELETE KB doc  | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`                          |
-| `kb.source.delete`               | DELETE source  | `actor_user_id`, `target_id` (source), `deleted_count`, `chunks_deleted`, `ts`                            |
-| `kb.source.populate`             | POST KB source | `actor_user_id`, `target_id` (`run_id`), `source_name`, `source_type`, `phase` (`start`/`complete`), `ts` |
-| `skill.create`                   | POST skill     | `actor_user_id`, `target_id` (skill name), `enabled`, `ts`                                                |
-| `skill.replace`                  | PUT skill      | `actor_user_id`, `target_id` (skill name), `ts`                                                           |
-| `skill.enable` / `skill.disable` | POST skill     | `actor_user_id`, `target_id` (skill name), `ts`                                                           |
-| `skill.delete`                   | DELETE skill   | `actor_user_id`, `target_id` (skill name), `ts`                                                           |
+| Action                           | Where           | Payload                                                                                                   |
+| -------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------- |
+| `feedback.review.update`         | PATCH feedback  | `actor_user_id`, `target_id`, full before/after `{status, tags, comment}`, `ts`                           |
+| `kb.document.update`             | PATCH KB doc    | `actor_user_id`, `target_id`, `content_hash` before/after, `content_changed`, `ts`                        |
+| `kb.document.delete`             | DELETE KB doc   | `actor_user_id`, `target_id`, before-hash + `{title, source, topic, tags}`, `ts`                          |
+| `kb.source.delete`               | DELETE source   | `actor_user_id`, `target_id` (source), `deleted_count`, `chunks_deleted`, `ts`                            |
+| `kb.source.populate`             | POST KB source  | `actor_user_id`, `target_id` (`run_id`), `source_name`, `source_type`, `phase` (`start`/`complete`), `ts` |
+| `skill.create`                   | POST skill      | `actor_user_id`, `target_id` (skill name), `revision`, `enabled`, `ts`                                    |
+| `skill.replace` / `skill.patch`  | PUT/PATCH skill | `actor_user_id`, `target_id` (skill name), `revision` (the new one), `ts`                                 |
+| `skill.rollback`                 | POST rollback   | `actor_user_id`, `target_id` (skill name), `revision` (the new one), `restored_revision`, `ts`            |
+| `skill.enable` / `skill.disable` | POST skill      | `actor_user_id`, `target_id` (skill name), `revision`, `ts`                                               |
+| `skill.delete`                   | DELETE skill    | `actor_user_id`, `target_id` (skill name), `revision` (the last one), `ts`                                |
 
 `content_hash` is SHA-256; full content is **not** logged so log lines
 stay bounded. Skill audit records never include a skill's `instructions`, and

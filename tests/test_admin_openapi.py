@@ -267,9 +267,12 @@ class TestOpenAPISkillRoutes:
         base = "/bedrock-chat/admin/skills"
 
         assert set(paths[base]) == {"get", "post"}
-        assert set(paths[f"{base}/{{name}}"]) == {"get", "put", "delete"}
+        assert set(paths[f"{base}/{{name}}"]) == {"get", "put", "patch", "delete"}
         assert "post" in paths[f"{base}/{{name}}/enable"]
         assert "post" in paths[f"{base}/{{name}}/disable"]
+        assert set(paths[f"{base}/{{name}}/revisions"]) == {"get"}
+        assert set(paths[f"{base}/{{name}}/revisions/{{revision}}"]) == {"get"}
+        assert set(paths[f"{base}/{{name}}/rollback"]) == {"post"}
 
         assert "SkillListResponse" in _schema_ref(paths[base]["get"]["responses"]["200"])
         assert "Skill" in _schema_ref(paths[base]["post"]["responses"]["201"])
@@ -277,7 +280,38 @@ class TestOpenAPISkillRoutes:
             "SkillReplaceRequest"
             in paths[f"{base}/{{name}}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
         )
+        assert (
+            "SkillPatchRequest"
+            in paths[f"{base}/{{name}}"]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        )
+        assert (
+            "SkillRollbackRequest"
+            in paths[f"{base}/{{name}}/rollback"]["post"]["requestBody"]["content"]["application/json"]["schema"][
+                "$ref"
+            ]
+        )
+        assert "SkillRevisionListResponse" in _schema_ref(
+            paths[f"{base}/{{name}}/revisions"]["get"]["responses"]["200"]
+        )
+        assert "SkillRevision" in _schema_ref(
+            paths[f"{base}/{{name}}/revisions/{{revision}}"]["get"]["responses"]["200"]
+        )
         assert "204" in paths[f"{base}/{{name}}"]["delete"]["responses"]
+
+    def test_skill_content_writes_document_the_revision_conflict(self):
+        schema = TestClient(_build_admin_app()).get("/openapi.json").json()
+        paths = schema["paths"]
+        base = "/bedrock-chat/admin/skills"
+
+        for operation in (
+            paths[f"{base}/{{name}}"]["put"],
+            paths[f"{base}/{{name}}"]["patch"],
+            paths[f"{base}/{{name}}/rollback"]["post"],
+        ):
+            assert "SkillRevisionConflictResponse" in _schema_ref(operation["responses"]["409"])
+        conflict = schema["components"]["schemas"]["SkillRevisionConflictResponse"]["properties"]
+        assert {"code", "detail", "current"} <= set(conflict)
+        assert "limits" in schema["components"]["schemas"]["SkillListResponse"]["properties"]
 
     def test_skill_write_routes_document_error_envelopes(self):
         schema = TestClient(_build_admin_app()).get("/openapi.json").json()
@@ -290,4 +324,7 @@ class TestOpenAPISkillRoutes:
         schemas = TestClient(_build_admin_app()).get("/openapi.json").json()["components"]["schemas"]
 
         assert "instructions" not in schemas["SkillSummary"]["properties"]
+        assert "instructions" not in schemas["SkillRevisionSummary"]["properties"]
         assert "instructions" in schemas["Skill"]["properties"]
+        assert "revision" in schemas["SkillSummary"]["properties"]
+        assert "revision" in schemas["Skill"]["properties"]

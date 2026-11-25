@@ -24,9 +24,18 @@ from autolangchat.skills.service import (
 )
 
 _UPDATED = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+_REVISION = 3
 
 
-def _skill(name="triage", *, enabled=True, parameters=(), instructions="Do the triage.", updated_at=_UPDATED):
+def _skill(
+    name="triage",
+    *,
+    enabled=True,
+    parameters=(),
+    instructions="Do the triage.",
+    updated_at=_UPDATED,
+    revision=_REVISION,
+):
     return Skill(
         name=name,
         display_name=name.title(),
@@ -34,6 +43,7 @@ def _skill(name="triage", *, enabled=True, parameters=(), instructions="Do the t
         instructions=instructions,
         parameters=list(parameters),
         enabled=enabled,
+        revision=revision,
         updated_at=updated_at,
     )
 
@@ -189,10 +199,10 @@ class TestRendering:
 
         loaded = await service.load("triage", {"job_id": "42"})
 
-        assert loaded.skill_ref == {"name": "triage", "revision": _UPDATED.isoformat()}
+        assert loaded.skill_ref == {"name": "triage", "revision": str(_REVISION)}
         lines = loaded.rendered_text.split("\n")
         assert lines[:5] == [
-            f"Skill: triage (revision {_UPDATED.isoformat()})",
+            f"Skill: triage (revision {_REVISION})",
             "",
             "<instructions>",
             "Do the triage.",
@@ -211,13 +221,13 @@ class TestRendering:
 
         assert (await service.load("triage")).rendered_text.endswith("</instructions>\n\nParameters: none")
 
-    async def test_missing_updated_at_is_unknown_revision(self):
-        service, _ = _service(_skill(updated_at=None))
+    async def test_revision_is_the_stored_number_not_the_timestamp(self):
+        service, _ = _service(_skill(updated_at=None, revision=7))
 
         loaded = await service.load("triage")
 
-        assert loaded.skill_ref["revision"] == "unknown"
-        assert loaded.rendered_text.startswith("Skill: triage (revision unknown)")
+        assert loaded.skill_ref["revision"] == "7"
+        assert loaded.rendered_text.startswith("Skill: triage (revision 7)")
 
     async def test_placeholders_are_not_substituted(self):
         service, _ = _service(_skill(parameters=[_JOB], instructions="Analyse {{job_id}}."))
@@ -419,7 +429,7 @@ class TestLoadSkillTool:
 
         assert isinstance(output, ToolOutput)
         assert output.result.startswith("Skill: triage")
-        assert output.metadata == {"skill_ref": {"name": "triage", "revision": _UPDATED.isoformat()}}
+        assert output.metadata == {"skill_ref": {"name": "triage", "revision": str(_REVISION)}}
         assert "actor=alice" in caplog.text
 
     @pytest.mark.parametrize(

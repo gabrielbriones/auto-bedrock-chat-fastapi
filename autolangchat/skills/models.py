@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -25,9 +25,9 @@ class SkillParameter(BaseModel):
     label: str = Field(default="", max_length=100)
     help: str = Field(default="", max_length=500)
     required: bool = False
-    default: Optional[str] = Field(default=None, max_length=1000)
+    default: str | None = Field(default=None, max_length=1000)
     input_type: SkillInputType = "text"
-    options: List[str] = Field(default_factory=list, max_length=50)
+    options: list[str] = Field(default_factory=list, max_length=50)
     placeholder: str = Field(default="", max_length=200)
     example: str = Field(default="", max_length=500)
 
@@ -40,10 +40,26 @@ class SkillParameter(BaseModel):
 
     @field_validator("options")
     @classmethod
-    def _validate_options(cls, value: List[str]) -> List[str]:
+    def _validate_options(cls, value: list[str]) -> list[str]:
         if any(not option or len(option) > 200 for option in value):
             raise ValueError("options must be non-empty strings of at most 200 characters")
         return value
+
+
+def _check_instructions(value: str) -> str:
+    if not value.strip():
+        raise ValueError("instructions must not be blank")
+    return value
+
+
+def _check_unique_parameter_names(parameters: list[SkillParameter]) -> None:
+    names = [parameter.name for parameter in parameters]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"duplicate parameter names: {', '.join(duplicates)}")
+
+
+CONTENT_FIELDS = frozenset({"display_name", "description", "instructions", "parameters"})
 
 
 class SkillContent(BaseModel):
@@ -54,21 +70,16 @@ class SkillContent(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     description: str = ""
     instructions: str = Field(min_length=1)
-    parameters: List[SkillParameter] = Field(default_factory=list)
+    parameters: list[SkillParameter] = Field(default_factory=list)
 
     @field_validator("instructions")
     @classmethod
     def _validate_instructions(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("instructions must not be blank")
-        return value
+        return _check_instructions(value)
 
     @model_validator(mode="after")
     def _validate_unique_parameter_names(self) -> "SkillContent":
-        names = [parameter.name for parameter in self.parameters]
-        duplicates = sorted({name for name in names if names.count(name) > 1})
-        if duplicates:
-            raise ValueError(f"duplicate parameter names: {', '.join(duplicates)}")
+        _check_unique_parameter_names(self.parameters)
         return self
 
 
@@ -88,9 +99,11 @@ class Skill(SkillContent):
 
     name: str
     enabled: bool = True
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[str] = None
+    # Starts at 1 and grows by one on every content change; enable/disable keeps it.
+    revision: int = Field(default=1, ge=1)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -111,7 +124,50 @@ class SkillCreateRequest(SkillContent):
 
 
 class SkillReplaceRequest(SkillContent):
-    """Body of ``PUT /admin/skills/{name}``: the complete new content of the skill."""
+    """Body of ``PUT /admin/skills/{name}``: the complete new content of the skill.
+
+    When ``expected_revision`` is set, the write is refused unless it is the stored revision.
+    """
+
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class SkillPatchRequest(BaseModel):
+    """Body of ``PATCH /admin/skills/{name}``: the content fields to change, guarded by ``expected_revision``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = None
+    instructions: str | None = Field(default=None, min_length=1)
+    parameters: list[SkillParameter] | None = None
+
+    @field_validator("instructions")
+    @classmethod
+    def _validate_instructions(cls, value: str | None) -> str | None:
+        return value if value is None else _check_instructions(value)
+
+    @model_validator(mode="after")
+    def _validate_changes(self) -> "SkillPatchRequest":
+        if self.parameters is not None:
+            _check_unique_parameter_names(self.parameters)
+        if not self.changes():
+            raise ValueError(f"at least one of {', '.join(sorted(CONTENT_FIELDS))} is required")
+        return self
+
+    def changes(self) -> dict:
+        """The content fields this patch sets (``null`` counts as not set)."""
+        return self.model_dump(include=set(CONTENT_FIELDS), exclude_none=True)
+
+
+class SkillRollbackRequest(BaseModel):
+    """Body of ``POST /admin/skills/{name}/rollback``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = Field(ge=1, description="The revision whose content is restored as a new revision")
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 class SkillSummary(BaseModel):
@@ -120,17 +176,50 @@ class SkillSummary(BaseModel):
     name: str
     display_name: str
     description: str = ""
-    parameters: List[SkillParameter] = Field(default_factory=list)
+    parameters: list[SkillParameter] = Field(default_factory=list)
     enabled: bool
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[str] = None
+    revision: int = 1
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class SkillLimits(BaseModel):
+    """The configured skill size limits, so the dashboard can validate before saving."""
+
+    skill_instructions_max_chars: int
+    skill_description_max_chars: int
+    skill_max_parameters: int
 
 
 class SkillListResponse(BaseModel):
     """Envelope returned by ``GET /admin/skills``."""
 
-    items: List[SkillSummary]
+    items: list[SkillSummary]
+    limits: SkillLimits
+
+
+class SkillRevision(SkillContent):
+    """The full content of one stored revision of a skill."""
+
+    name: str
+    revision: int
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class SkillRevisionSummary(BaseModel):
+    """A revision without its content, as listed by ``GET /admin/skills/{name}/revisions``."""
+
+    revision: int
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class SkillRevisionListResponse(BaseModel):
+    """Envelope returned by ``GET /admin/skills/{name}/revisions`` (newest first)."""
+
+    items: list[SkillRevisionSummary]
 
 
 class SkillCatalogEntry(BaseModel):
@@ -144,7 +233,8 @@ class SkillCatalogEntry(BaseModel):
     name: str
     display_name: str
     description: str = ""
-    parameters: List[SkillParameter] = Field(default_factory=list)
+    parameters: list[SkillParameter] = Field(default_factory=list)
+    revision: int = 1
 
 
 def validate_skill_limits(
@@ -166,4 +256,4 @@ def validate_skill_limits(
 class SkillCatalogResponse(BaseModel):
     """Envelope returned by ``GET {chat_endpoint}/skills/catalog``."""
 
-    items: List[SkillCatalogEntry]
+    items: list[SkillCatalogEntry]

@@ -212,6 +212,17 @@ class SkillAlreadyExistsError(SkillError):
     pass
 
 
+class SkillRevisionConflictError(SkillError):
+    """Raised when a write's ``expected_revision`` no longer matches the stored skill.
+
+    ``current`` is the stored :class:`~autolangchat.skills.models.Skill`, left unchanged.
+    """
+
+    def __init__(self, message: str, *, current: object):
+        super().__init__(message)
+        self.current = current
+
+
 # ---------------------------------------------------------------------------
 # Admin API
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ store is opened at startup; if it is unavailable by then the route answers 503.
 from __future__ import annotations
 
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 
@@ -31,7 +31,7 @@ def register_skill_catalog_route(
     app: FastAPI,
     *,
     prefix: str,
-    get_skill_store: Callable[[], Optional[BaseSkillStore]],
+    get_skill_store: Callable[[], BaseSkillStore | None],
     require_catalog_user: Callable,
 ) -> APIRouter:
     """Register ``GET {prefix}/skills/catalog`` on ``app``.
