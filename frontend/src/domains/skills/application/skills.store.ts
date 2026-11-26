@@ -109,6 +109,7 @@ export class SkillsStore {
   }
 
   async closeEditor(dirty: boolean): Promise<boolean> {
+    const session = this.#session
     if (dirty) {
       const discard = await this.#options.confirmations.confirm({
         title: COPY.editor.discardTitle,
@@ -118,6 +119,7 @@ export class SkillsStore {
       })
       if (!discard) return false
     }
+    if (session !== this.#session) return false
     this.#resetEditor()
     return true
   }
