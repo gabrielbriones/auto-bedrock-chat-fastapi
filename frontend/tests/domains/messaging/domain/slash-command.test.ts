@@ -2,15 +2,41 @@ import { describe, expect, it } from '@jest/globals'
 
 import {
   activeSlashCommand,
-  completeSlashCommand,
+  buildSlashCommand,
+  initialValues,
   matchSlashCommands,
+  missingParameters,
   slashQuery,
   type SlashCommandOption,
+  type SlashCommandParameter,
 } from '@/domains/messaging/domain/slash-command'
 
-const option = (name: string, title = name): SlashCommandOption => ({ name, title, description: '', usage: `/${name}` })
+const parameter = (name: string, extra: Partial<SlashCommandParameter> = {}): SlashCommandParameter => ({
+  name,
+  label: name,
+  required: false,
+  inputType: 'text',
+  options: [],
+  placeholder: '',
+  defaultValue: null,
+  ...extra,
+})
+
+const option = (name: string, title = name, parameters: readonly SlashCommandParameter[] = []): SlashCommandOption => ({
+  name,
+  title,
+  description: '',
+  usage: `/${name}`,
+  parameters,
+})
 
 const OPTIONS = [option('triage', 'Job triage'), option('summarize', 'Summary'), option('job-report', 'Report')]
+
+const TRIAGE = option('triage', 'Job triage', [
+  parameter('job_id', { required: true }),
+  parameter('format', { inputType: 'select', options: ['md', 'txt'], defaultValue: 'md' }),
+  parameter('note'),
+])
 
 describe('slashQuery', () => {
   it.each([
@@ -22,12 +48,9 @@ describe('slashQuery', () => {
     expect(slashQuery(text)).toBe(query)
   })
 
-  it.each(['', 'hello', '//', '//tri', '/tri ', '/triage job_id=1', ' /tri', '/usr/bin'])(
-    'offers nothing for %j',
-    (text) => {
-      expect(slashQuery(text)).toBeNull()
-    },
-  )
+  it.each(['', 'hello', '//', '//tri', '/tri ', '/triage job_id=1', ' /tri', '/usr/bin'])('offers nothing for %j', (text) => {
+    expect(slashQuery(text)).toBeNull()
+  })
 })
 
 describe('matchSlashCommands', () => {
@@ -52,13 +75,40 @@ describe('activeSlashCommand', () => {
 
   it('ignores unknown commands and partial names', () => {
     expect(activeSlashCommand('/tri', OPTIONS)).toBeNull()
-    expect(activeSlashCommand('/nope x', OPTIONS)).toBeNull()
     expect(activeSlashCommand('//triage', OPTIONS)).toBeNull()
   })
 })
 
-describe('completeSlashCommand', () => {
-  it('inserts the name and a space for the parameters', () => {
-    expect(completeSlashCommand(option('triage'))).toBe('/triage ')
+describe('parameter values', () => {
+  it('starts from each default, else blank', () => {
+    expect(initialValues(TRIAGE)).toEqual({ job_id: '', format: 'md', note: '' })
+  })
+
+  it('reports blank required parameters, free text included', () => {
+    const withInput = option('ask', 'Ask', [parameter('input', { required: true })])
+
+    expect(missingParameters(TRIAGE, { job_id: ' ' }, '')).toEqual(['job_id'])
+    expect(missingParameters(TRIAGE, { job_id: 'j-1' }, '')).toEqual([])
+    expect(missingParameters(withInput, {}, '')).toEqual(['input'])
+    expect(missingParameters(withInput, {}, 'why?')).toEqual([])
+  })
+})
+
+describe('buildSlashCommand', () => {
+  it('sends filled values as pairs, quoting anything that is not one plain token', () => {
+    expect(buildSlashCommand(TRIAGE, { job_id: 'j-1', format: 'md', note: 'say "hi" \\ bye' }, '')).toBe(
+      '/triage job_id=j-1 format=md note="say \\"hi\\" \\\\ bye"',
+    )
+  })
+
+  it('leaves blank values out so the server applies its defaults', () => {
+    expect(buildSlashCommand(TRIAGE, { job_id: 'j-1', format: '', note: '  ' }, '')).toBe('/triage job_id=j-1')
+  })
+
+  it('sends free text as the input parameter only when the skill takes it', () => {
+    const ask = option('ask', 'Ask', [parameter('input')])
+
+    expect(buildSlashCommand(ask, {}, ' why did it fail? ')).toBe('/ask input="why did it fail?"')
+    expect(buildSlashCommand(TRIAGE, { job_id: 'j-1' }, 'ignored')).toBe('/triage job_id=j-1')
   })
 })

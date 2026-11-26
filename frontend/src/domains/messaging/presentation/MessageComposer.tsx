@@ -20,8 +20,10 @@ import {
   composerKeyIntent,
   type ComposerAvailability,
 } from '@/domains/messaging/presentation/composer-policy'
+import { SkillParameterForm } from '@/domains/messaging/presentation/SkillParameterForm'
 import { SlashCommandMenu } from '@/domains/messaging/presentation/SlashCommandMenu'
-import { useSlashCommandMenu, type ComposerCommands } from '@/domains/messaging/presentation/useSlashCommandMenu'
+import { useComposerDraft } from '@/domains/messaging/presentation/useComposerDraft'
+import type { ComposerCommands } from '@/domains/messaging/presentation/useSlashCommandMenu'
 
 const { composer: COPY } = MESSAGING_COPY
 
@@ -188,45 +190,40 @@ export function MessageComposer({
   commands,
 }: MessageComposerProps) {
   const locked = !availability.enabled
-  const hasText = value.trim() !== ''
   const field = useComposerField(value, locked)
   const formRef = useComposerHeightVar()
   const hintId = useId()
-  const menu = useSlashCommandMenu(value, commands, onChange)
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-
-    if (locked || !hasText) {
-      return
-    }
-
-    onSend(value)
-    field.current?.focus()
-  }
+  const draft = useComposerDraft({ value, locked, commands, field, onChange, onSend })
 
   return (
     // FR-SHELL-018: <main> is the only scroller, so the composer stays put by sticking to its bottom
     // edge rather than by owning a scroller of its own.
-    <form ref={formRef} onSubmit={submit} className="sticky bottom-0 z-10 shrink-0 bg-background px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
+    <form ref={formRef} onSubmit={draft.submit} className="sticky bottom-0 z-10 shrink-0 bg-background px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
       <div className="relative mx-auto flex max-w-4xl flex-col gap-1 rounded-xl border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 forced-colors:focus-within:outline-2 forced-colors:focus-within:outline-offset-2 forced-colors:focus-within:outline-ring dark:bg-input/30">
-        <SlashCommandMenu menu={menu} />
+        <SlashCommandMenu menu={draft.menu} />
+        {draft.skill !== null && (
+          <SkillParameterForm skill={draft.skill} disabled={locked} onValue={draft.setValue} onCancel={draft.cancelSkill} />
+        )}
         <Textarea
           ref={field}
           rows={1}
           value={value}
           disabled={locked}
+          hidden={draft.textareaMode === 'hidden'}
+          readOnly={draft.textareaMode === 'readonly'}
           aria-label={COPY.label}
           aria-describedby={hintId}
-          {...menu.fieldProps}
-          placeholder={awaitingResponse ? COPY.waitingPlaceholder : COPY.placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => menu.handleKey(event) || handleKeyDown(event, { locked, hasText, onChange, submit })}
+          {...draft.menu.fieldProps}
+          placeholder={awaitingResponse ? COPY.waitingPlaceholder : (draft.placeholder ?? COPY.placeholder)}
+          onChange={(event) => draft.change(event.target.value)}
+          onKeyDown={(event) =>
+            draft.handleKey(event) || handleKeyDown(event, { locked, hasText: draft.ready, onChange, submit: draft.submit })
+          }
           className="min-h-11 max-h-[150px] min-w-0 resize-none rounded-none border-0 bg-transparent px-2 py-3 text-sm leading-5 shadow-none focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent"
         />
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-1">{toolbar}</div>
-          <SendButton disabled={locked || !hasText} />
+          <SendButton disabled={locked || !draft.ready} />
         </div>
       </div>
       <ComposerHint id={hintId} availability={availability} />

@@ -29,6 +29,15 @@ export const toSlashCommandOptions = (entries: readonly SkillCatalogEntry[]): re
     title: entry.displayName,
     description: entry.description,
     usage: usageOf(entry),
+    parameters: entry.parameters.map((parameter) => ({
+      name: parameter.name,
+      label: parameter.label,
+      required: parameter.required,
+      inputType: parameter.inputType,
+      options: parameter.options,
+      placeholder: parameter.placeholder || parameter.example,
+      defaultValue: parameter.default,
+    })),
   }))
 
 /** The enabled skills as composer commands, re-read when input opens and on composer focus once stale. */

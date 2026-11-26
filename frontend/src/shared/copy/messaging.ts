@@ -110,6 +110,12 @@ export const MESSAGING_COPY = {
       label: 'Skills',
       results: (count: number) => `${count} ${count === 1 ? 'skill' : 'skills'} available`,
       usage: 'Usage:',
+      parameters: (name: string) => `Parameters for /${name}`,
+      cancel: 'Remove skill',
+      choose: 'Choose…',
+      defaultOption: 'Default',
+      details: 'Add details',
+      run: (name: string) => `Press Enter to run /${name}`,
     },
   },
 

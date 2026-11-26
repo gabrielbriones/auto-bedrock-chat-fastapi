@@ -65,23 +65,34 @@ model picker, e.g. `13% context $0.3124`, updated as each answer (and each `usag
   context meter with exact token counts.
 - Answers loaded from history count too, as long as they were stored with usage.
 
-### Slash-command menu
+### Slash commands
 
 Typing `/` at the start of the composer opens a menu of the enabled [skills](skills#slash-commands), filtered as the
 name is typed (name prefixes first, then names or titles containing the text). Each entry shows the command, its
-title, description and usage, e.g. `/job-triage job_id=<Job ID> [format=md|txt]` (optional parameters in brackets,
-a `select` parameter as its options).
+title, description and usage.
 
-- **Keyboard**: ↑/↓ move the highlight, Enter or Tab inserts `/<name> `, Escape closes the menu until the text
-  changes. While the menu is open Enter never sends.
-- **Pointer**: click an entry; focus stays in the composer.
-- After the name, the menu gives way to a usage line for that skill while its parameters are typed.
-- `//` and text that does not start with `/` never open it.
+- **Menu keys**: ↑/↓ move the highlight, Enter or Tab picks the skill, Escape closes the menu until the text changes.
+  While the menu is open Enter never sends. Clicking an entry picks it too.
+- **Parameter fields**: a picked skill (or one typed in full, `/<name>` plus a space) becomes a chip above the message
+  box with one field per parameter, so nobody types `key=value`:
+  - text and number parameters get a text box (placeholder from the skill's `placeholder`, else `example`),
+    `select` parameters a drop-down of their options, `checkbox` parameters a checkbox;
+  - required parameters are marked `*`, and Send stays disabled until they are filled;
+  - fields start at the parameter's default; a blank field is left out, so the server applies its own default;
+  - the first field gets focus; Enter in a field sends, Escape or the chip's remove button drops the skill.
+- **Free text**: for a skill with an `input` parameter the message box stays and fills it (its placeholder is the
+  parameter's); Backspace in an empty box drops the skill. A skill without `input` hides the message box, and one
+  without any parameter just runs on Enter.
+- **What is sent**: the plain `chat` frame the server parses, e.g. `/job-triage job_id="job 42" format=txt`. Values
+  that are not a single plain token are double-quoted with `\` and `"` escaped; free text goes as `input="..."`.
+- A command typed or pasted with its pairs (`/job-triage job_id=1`) is sent as typed, with the skill's usage line
+  shown above the message box.
+- `//` and text that does not start with `/` never open the menu.
 - The list comes from `GET {chat_endpoint}/skills/catalog`, read when input becomes available and again on composer
   focus once it is a minute old. If it cannot be read the menu just does not appear; commands still work because the
   server parses them.
-- Screen readers: the composer keeps focus and points at the highlighted entry (`aria-activedescendant`), and the
-  number of matches is announced.
+- Screen readers: while the menu is open the composer keeps focus and points at the highlighted entry
+  (`aria-activedescendant`), and the number of matches is announced. The fields are a labelled group.
 
 ---
 

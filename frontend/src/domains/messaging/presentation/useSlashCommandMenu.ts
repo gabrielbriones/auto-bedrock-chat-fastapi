@@ -2,7 +2,6 @@ import { useId, useState, type KeyboardEvent } from 'react'
 
 import {
   activeSlashCommand,
-  completeSlashCommand,
   matchSlashCommands,
   slashQuery,
   type SlashCommandOption,
@@ -75,7 +74,7 @@ const keyHandler =
 export const useSlashCommandMenu = (
   value: string,
   commands: ComposerCommands | undefined,
-  onChange: (text: string) => void,
+  onChoose: (option: SlashCommandOption) => void,
 ): SlashCommandMenuState => {
   const options = commands?.options ?? NO_OPTIONS
   const listboxId = useId()
@@ -91,7 +90,7 @@ export const useSlashCommandMenu = (
   const highlight = (index: number) => setCursor({ query, index })
   const choose = (option: SlashCommandOption) => {
     setDismissedFor(null)
-    onChange(completeSlashCommand(option))
+    onChoose(option)
   }
 
   return {
