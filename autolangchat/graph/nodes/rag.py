@@ -104,6 +104,14 @@ def _skill_catalog_text(configurable: Dict[str, Any], chat_config: Any) -> str:
     return format_skill_catalog(entries, max_chars)
 
 
+def _incoming_message(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The last message before any slash-command skill load (``metadata.direct``) that follows it."""
+    index = len(messages) - 1
+    while index >= 0 and (messages[index].get("metadata") or {}).get("direct"):
+        index -= 1
+    return messages[index] if index >= 0 else {}
+
+
 # ---------------------------------------------------------------------------
 # Node
 # ---------------------------------------------------------------------------
@@ -130,7 +138,7 @@ async def rag_node(state: ChatState, config: RunnableConfig) -> Dict[str, Any]:
     auth_context_text: Optional[str] = configurable.get("auth_context_text")
 
     messages: List[Dict[str, Any]] = state.get("messages") or []
-    last_msg = messages[-1] if messages else {}
+    last_msg = _incoming_message(messages)
 
     # Only act on the incoming user turn.
     if last_msg.get("role") != "user":

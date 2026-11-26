@@ -46,6 +46,14 @@ from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
+from .skills.service import SkillLoadError
+from .skills.slash import (
+    DirectSkillLoad,
+    SlashCommandError,
+    is_literal_slash,
+    load_slash_command,
+    parse_slash_command,
+)
 from .usage import UsageLedger, persist_turn_usage, summarize_usage
 
 if TYPE_CHECKING:
@@ -236,6 +244,7 @@ class WebSocketChatHandler:
         user_settings_store: Optional[BaseUserSettingsStore] = None,
         sso_provider: Optional[Any] = None,
         tool_manager: Optional[ToolManager] = None,
+        skill_service: Optional[Any] = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -253,6 +262,8 @@ class WebSocketChatHandler:
         self.user_settings_store = user_settings_store
         self.sso_provider = sso_provider
         self.tool_manager = tool_manager
+        # Loads the skill of a ``/<skill> ...`` chat message; ``None`` turns slash commands off (plain text).
+        self.skill_service = skill_service
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -674,6 +685,38 @@ class WebSocketChatHandler:
             logger.info("Received user message (%d chars)", content_len)
             logger.debug("Received user message: %s", preview)
 
+            direct_load: Optional[DirectSkillLoad] = None
+            if getattr(self, "skill_service", None) is not None and is_literal_slash(user_message):
+                user_message = user_message[1:]
+            elif getattr(self, "skill_service", None) is not None:
+                try:
+                    command = parse_slash_command(user_message)
+                    if command is not None:
+                        direct_load = await load_slash_command(self.skill_service, command, actor=session.user_id)
+                except (SlashCommandError, SkillLoadError) as error:
+                    # Refused before any turn starts: nothing is checkpointed.
+                    await self._send_message(
+                        websocket,
+                        {
+                            "type": "skill_error",
+                            "code": error.code,
+                            "message": error.message,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                    )
+                    return
+            if direct_load is not None:
+                await self._send_message(
+                    websocket,
+                    {
+                        "type": "skill_loaded",
+                        "name": direct_load.name,
+                        "revision": direct_load.revision,
+                        "message_id": direct_load.message_id,
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
+
             # Send typing indicator
             await self._send_message(
                 websocket,
@@ -865,6 +908,7 @@ class WebSocketChatHandler:
                             "session_id": session.session_id,
                             "user_id": session.user_id,
                             **({"user_message_id": live_turn.user_message_id} if live_turn is not None else {}),
+                            **({"direct_messages": direct_load.messages} if direct_load is not None else {}),
                             "usage_ledger": usage_ledger,
                             "usage_finalized_later": title_pending,
                             **artifact_config,

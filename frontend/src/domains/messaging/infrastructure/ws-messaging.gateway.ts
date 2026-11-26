@@ -255,6 +255,7 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
             },
           }
     case 'error':
+    case 'skill_error':
       return { kind: 'failed', text: frame.message }
     case 'usage_updated': {
       const usage = turnUsage(frame.usage)

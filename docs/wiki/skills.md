@@ -329,6 +329,51 @@ enabled catalog is re-read and the tools are rebound, so `load_skill` and the ca
 
 ---
 
+## Slash commands
+
+A chat message starting with `/<skill>` loads that skill directly, without waiting for the model to call
+`load_skill`. The server owns the grammar, so the chat UI and scripts sending `chat` frames behave the same.
+
+```text
+/job-triage job_id=j-1 note="value with spaces"
+/summarize lang=fr the rest of the message is the input parameter
+```
+
+### Grammar
+
+| Part       | Rule                                                                                                                                                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Name       | `/` then a skill name (`^[a-z0-9][a-z0-9_-]{0,63}$`), followed by whitespace or the end of the message.                                                                                                                   |
+| Pairs      | `key=value`, separated by whitespace. Keys are case-insensitive (folded to lower case like parameter names). A duplicate key is an error.                                                                                 |
+| Bare value | Everything up to the next whitespace, `=` included (`q=a=b`). May be empty (`key=`).                                                                                                                                      |
+| Quoted     | `key="..."`. Inside the quotes a backslash makes the next character literal (`\"` is a quote, `\\` a backslash). The closing quote must be followed by whitespace or the end. An unterminated quote is an error.          |
+| Free text  | From the first token that is not `key=...`, the rest of the message (trimmed) is passed as the skill's `input` parameter. A skill without an `input` parameter refuses it, and so does a command that also sets `input=`. |
+| Plain text | A message whose `/` is followed by whitespace or anything that is not a skill name followed by whitespace (`/ hi`, `/usr/bin`, `/Triage`, `/100%`) is an ordinary message. So is any message not starting with `/`.       |
+| Escape     | A message starting with `//` is an ordinary message, sent with the first slash removed (`//triage` reaches the model as `/triage`).                                                                                       |
+
+Values are strings and go through the same validation as a model's `load_skill` call (unknown or missing
+parameters, `AUTOCHAT_SKILL_PARAM_VALUE_MAX_CHARS`, defaults for blank values). Slash commands are only
+recognised while a skill store is configured; without one every message is plain text.
+
+### What happens
+
+1. After the authentication checks, the server parses the message and loads the skill through the skill
+   service. No LLM is called.
+2. If parsing or loading fails, the server sends a [`skill_error`](websocket-client#skill_loaded-and-skill_error)
+   frame and stops: no turn starts and nothing is checkpointed. `code` is `invalid_command` (grammar),
+   `unknown_skill`, `skill_disabled`, `skills_unavailable` or `invalid_arguments`.
+3. Otherwise it sends `skill_loaded` (`name`, `revision`, `message_id`), then runs one normal turn. The
+   checkpointed user message is the command as typed; right after it the turn carries a synthetic assistant
+   message calling `load_skill` and its tool result, exactly as if the model had made that call. The
+   model's first call therefore already has the instructions.
+
+The synthetic messages and the tool result entry carry `metadata.direct: true`; otherwise conversation history
+shows the same shape as a model-initiated load (`skill_ref` included), and `message_id` in `skill_loaded` is the
+id of the synthetic assistant message. The synthetic message has no usage: only the turn's model calls are
+charged. Unlike a model-initiated load, a slash command is not checked against the turn's remaining context.
+
+---
+
 ## Capability flag
 
 `GET /admin/_capabilities` includes `skills_enabled`: `true` when the skill store is configured **and** opened
@@ -350,5 +395,6 @@ instructions. See [Audit logging](admin-api#audit-logging).
 
 ## Not included yet
 
-- Slash-command invocation and `{{PLACEHOLDER}}` substitution in instructions.
+- `{{PLACEHOLDER}}` substitution in instructions.
+- Composer autocomplete for slash commands in the chat UI.
 - A presentation-hints object for numeric bounds, validation and detection patterns.

@@ -1,5 +1,12 @@
 # Preset Prompts
 
+> **Deprecated.** Preset prompts are superseded by [skills](skills): every preset is already seeded as a
+> [default skill](#default-skills) that users run with a [slash command](skills#slash-commands)
+> (`/<preset id> var=value`). While `preset_prompts` or `preset_prompts_file` is configured, presets are still
+> served to the chat UI and a deprecation `WARNING` is logged at startup. They will be removed in a later major
+> release, introduced by a breaking-change commit (`feat!`) in the preset cleanup task and listed under its
+> version in the CHANGELOG.
+
 Preset prompts are one-click buttons displayed at the bottom of the chat UI. Clicking a button immediately sends a pre-defined message to the AI — no copy-pasting required. Templates can contain `{{VARIABLE_NAME}}` placeholders (e.g. `{{JOB_ID}}`, `{{PLATFORM}}`, `{{TENANT}}`) that are resolved from a per-session cache or by prompting the user for the missing values.
 
 ---
@@ -75,6 +82,11 @@ at startup: the template becomes the skill instructions and each placeholder a r
 create-only, so admin edits and disables of those skills are kept across restarts. See
 [Default skills from preset prompts](skills#default-skills-from-preset-prompts) for the mapping, the dropped fields
 and the rename/delete behavior.
+
+A preset maps to a slash command by its `id` and lower-cased variable names: the "Health Check" preset with
+`{{JOB_ID}}` runs as `/health-check job_id=abc123` (keys are case-insensitive, so `JOB_ID=abc123` works too).
+The same mapping applies to a [deep link](#deep-linking--auto-start-via-query-string):
+`?prompt=health-check&JOB_ID=abc123` corresponds to `/health-check JOB_ID=abc123`.
 
 ---
 

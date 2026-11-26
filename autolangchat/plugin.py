@@ -275,6 +275,13 @@ class AutoLangChatPlugin:
         # by a deep-link query string (?prompt=<id>&VAR=value...) and seeded
         # as the default skill of the same name.
         self._assign_preset_prompt_ids()
+        if self._preset_prompts:
+            logger.warning(
+                "Preset prompts (preset_prompts / preset_prompts_file) are deprecated and will be removed in a "
+                "future major release. Each preset is seeded as a default skill; users can run it with "
+                "/<skill> key=value. %d preset prompt(s) are still served to the chat UI.",
+                len(self._preset_prompts),
+            )
 
         # Validate configuration
         validate_config(self.config)
@@ -442,6 +449,7 @@ class AutoLangChatPlugin:
             conversation_store=self._conversation_store,
             user_settings_store=self._user_settings_store,
             tool_manager=self.tool_manager,
+            skill_service=self._skill_service,
         )
 
         # Check knowledge base status if RAG is enabled
