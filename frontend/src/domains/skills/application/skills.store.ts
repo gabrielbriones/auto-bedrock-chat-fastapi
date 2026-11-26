@@ -191,6 +191,7 @@ export class SkillsStore {
   async rollback(revision: number): Promise<boolean> {
     const { detail, conflict, saving } = this.#snapshot
     if (detail === null || saving) return false
+    const session = this.#session
 
     const confirmed = await this.#options.confirmations.confirm({
       title: COPY.revisions.rollbackConfirmTitle(revision),
@@ -199,8 +200,7 @@ export class SkillsStore {
     })
     if (!confirmed) return false
 
-    const session = this.#session
-    this.#patch({ saving: true, saveProblem: null })
+    if (session === this.#session) this.#patch({ saving: true, saveProblem: null })
     const base = conflict ?? detail
     const result = await this.#options.gateway.rollback(base.name, revision, base.revision)
     return this.#applyWrite(session, result, (written) => COPY.revisions.rollbackSuccess(written.revision, revision), (problem) => {
