@@ -34,6 +34,7 @@ describe('the application router', () => {
       '/dashboard/kb-browser',
       '/dashboard/kb-sources',
       '/dashboard/reviewed',
+      '/dashboard/skills',
       '/dashboard/token-usages',
       '/ui/',
       '/ui/c/$conversationId',

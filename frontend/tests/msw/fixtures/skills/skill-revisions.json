@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "revision": 3, "updated_at": "2026-11-24T16:30:00Z", "updated_by": "admin@example.com" },
+    { "revision": 2, "updated_at": "2026-11-22T12:00:00Z", "updated_by": "admin@example.com" },
+    { "revision": 1, "updated_at": "2026-11-20T10:00:00Z", "updated_by": "preset-seed" }
+  ]
+}

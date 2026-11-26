@@ -63,6 +63,7 @@ export type DebouncedFilterInputProps = {
   readonly type?: 'text' | 'search' | 'date'
   readonly placeholder?: string
   readonly delayMs?: number
+  readonly className?: string
 }
 
 // The typed value is local until it settles, so every keystroke does not become a request. The
@@ -75,6 +76,7 @@ export function DebouncedFilterInput({
   type = 'text',
   placeholder,
   delayMs = FILTER_DEBOUNCE_MS,
+  className,
 }: DebouncedFilterInputProps) {
   const [draft, setDraft] = useState(value)
 
@@ -98,6 +100,7 @@ export function DebouncedFilterInput({
       type={type}
       value={draft}
       {...(placeholder !== undefined ? { placeholder } : {})}
+      {...(className !== undefined ? { className } : {})}
       onChange={(event) => {
         setDraft(event.target.value)
       }}

@@ -1,0 +1,35 @@
+{
+  "name": "job-triage",
+  "display_name": "Job triage",
+  "description": "Triage a failed job",
+  "instructions": "Investigate job {{job_id}} at {{depth}} depth and summarise the root cause.",
+  "parameters": [
+    {
+      "name": "job_id",
+      "label": "Job ID",
+      "help": "The numeric id shown in the job list",
+      "required": true,
+      "default": null,
+      "input_type": "text",
+      "options": [],
+      "placeholder": "12345",
+      "example": "98765"
+    },
+    {
+      "name": "depth",
+      "label": "Depth",
+      "help": "",
+      "required": false,
+      "default": "summary",
+      "input_type": "select",
+      "options": ["summary", "full"],
+      "placeholder": "",
+      "example": ""
+    }
+  ],
+  "enabled": true,
+  "revision": 3,
+  "created_at": "2026-11-20T10:00:00Z",
+  "updated_at": "2026-11-24T16:30:00Z",
+  "updated_by": "admin@example.com"
+}

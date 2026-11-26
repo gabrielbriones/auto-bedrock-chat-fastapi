@@ -15,6 +15,7 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as DashboardKbBrowserRouteImport } from './routes/dashboard/kb-browser'
 import { Route as DashboardKbSourcesRouteImport } from './routes/dashboard/kb-sources'
 import { Route as DashboardReviewedRouteImport } from './routes/dashboard/reviewed'
+import { Route as DashboardSkillsRouteImport } from './routes/dashboard/skills'
 import { Route as DashboardTokenUsagesRouteImport } from './routes/dashboard/token-usages'
 import { Route as UiIndexRouteImport } from './routes/ui/index'
 import { Route as DashboardFeedbackIndexRouteImport } from './routes/dashboard/feedback.index'
@@ -51,6 +52,11 @@ const DashboardReviewedRoute = DashboardReviewedRouteImport.update({
   path: '/reviewed',
   getParentRoute: () => DashboardRouteRoute,
 } as any)
+const DashboardSkillsRoute = DashboardSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
 const DashboardTokenUsagesRoute = DashboardTokenUsagesRouteImport.update({
   id: '/token-usages',
   path: '/token-usages',
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/kb-browser': typeof DashboardKbBrowserRoute
   '/dashboard/kb-sources': typeof DashboardKbSourcesRoute
   '/dashboard/reviewed': typeof DashboardReviewedRoute
+  '/dashboard/skills': typeof DashboardSkillsRoute
   '/dashboard/token-usages': typeof DashboardTokenUsagesRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/ui/': typeof UiIndexRoute
@@ -95,6 +102,7 @@ export interface FileRoutesByTo {
   '/dashboard/kb-browser': typeof DashboardKbBrowserRoute
   '/dashboard/kb-sources': typeof DashboardKbSourcesRoute
   '/dashboard/reviewed': typeof DashboardReviewedRoute
+  '/dashboard/skills': typeof DashboardSkillsRoute
   '/dashboard/token-usages': typeof DashboardTokenUsagesRoute
   '/dashboard': typeof DashboardIndexRoute
   '/ui': typeof UiIndexRoute
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/dashboard/kb-browser': typeof DashboardKbBrowserRoute
   '/dashboard/kb-sources': typeof DashboardKbSourcesRoute
   '/dashboard/reviewed': typeof DashboardReviewedRoute
+  '/dashboard/skills': typeof DashboardSkillsRoute
   '/dashboard/token-usages': typeof DashboardTokenUsagesRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/ui/': typeof UiIndexRoute
@@ -124,6 +133,7 @@ export interface FileRouteTypes {
     | '/dashboard/kb-browser'
     | '/dashboard/kb-sources'
     | '/dashboard/reviewed'
+    | '/dashboard/skills'
     | '/dashboard/token-usages'
     | '/dashboard/'
     | '/ui/'
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
     | '/dashboard/kb-browser'
     | '/dashboard/kb-sources'
     | '/dashboard/reviewed'
+    | '/dashboard/skills'
     | '/dashboard/token-usages'
     | '/dashboard'
     | '/ui'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/dashboard/kb-browser'
     | '/dashboard/kb-sources'
     | '/dashboard/reviewed'
+    | '/dashboard/skills'
     | '/dashboard/token-usages'
     | '/dashboard/'
     | '/ui/'
@@ -208,6 +220,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardReviewedRouteImport
       parentRoute: typeof DashboardRouteRoute
     }
+    '/dashboard/skills': {
+      id: '/dashboard/skills'
+      path: '/skills'
+      fullPath: '/dashboard/skills'
+      preLoaderRoute: typeof DashboardSkillsRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
     '/dashboard/token-usages': {
       id: '/dashboard/token-usages'
       path: '/token-usages'
@@ -250,6 +269,7 @@ interface DashboardRouteRouteChildren {
   DashboardKbBrowserRoute: typeof DashboardKbBrowserRoute
   DashboardKbSourcesRoute: typeof DashboardKbSourcesRoute
   DashboardReviewedRoute: typeof DashboardReviewedRoute
+  DashboardSkillsRoute: typeof DashboardSkillsRoute
   DashboardTokenUsagesRoute: typeof DashboardTokenUsagesRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardFeedbackStatsRoute: typeof DashboardFeedbackStatsRoute
@@ -260,6 +280,7 @@ const DashboardRouteRouteChildren: DashboardRouteRouteChildren = {
   DashboardKbBrowserRoute: DashboardKbBrowserRoute,
   DashboardKbSourcesRoute: DashboardKbSourcesRoute,
   DashboardReviewedRoute: DashboardReviewedRoute,
+  DashboardSkillsRoute: DashboardSkillsRoute,
   DashboardTokenUsagesRoute: DashboardTokenUsagesRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardFeedbackStatsRoute: DashboardFeedbackStatsRoute,
