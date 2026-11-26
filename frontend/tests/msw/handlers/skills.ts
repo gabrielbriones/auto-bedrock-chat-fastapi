@@ -1,5 +1,6 @@
 import { HttpResponse, http } from 'msw'
 
+import skillCatalog from '../fixtures/skills/skill-catalog.json' with { type: 'json' }
 import skillList from '../fixtures/skills/skill-list.json' with { type: 'json' }
 import skillRevisions from '../fixtures/skills/skill-revisions.json' with { type: 'json' }
 import skill from '../fixtures/skills/skill.json' with { type: 'json' }
@@ -19,6 +20,8 @@ export const skillsHandlers = [
   http.post(`${ADMIN}/skills/:name/disable`, () => HttpResponse.json({ ...skill, enabled: false })),
   http.get(`${ADMIN}/skills/:name/revisions`, () => HttpResponse.json(skillRevisions)),
   http.delete(`${ADMIN}/skills/:name`, () => new HttpResponse(null, { status: 204 })),
+  // skills.md "User catalog": the slash-command menu's data, under the chat prefix.
+  http.get('*/chat/skills/catalog', () => HttpResponse.json(skillCatalog)),
 ]
 
 // `409 revision_conflict` as `admin_skill_routes._revision_conflict` writes it.

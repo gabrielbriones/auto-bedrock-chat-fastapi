@@ -39,3 +39,4 @@ export {
   type SkillParameterDraft,
 } from '@/domains/skills/domain/skill-draft'
 export { placeholderNames, renderPreview, sampleValue, type PreviewSegment } from '@/domains/skills/domain/skill-preview'
+export type { SkillCatalogEntry } from '@/domains/skills/domain/skill-catalog'

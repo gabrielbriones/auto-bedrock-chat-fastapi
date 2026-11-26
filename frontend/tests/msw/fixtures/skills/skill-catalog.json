@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "name": "job-triage",
+      "display_name": "Job triage",
+      "description": "Triage a failed job.",
+      "parameters": [
+        {
+          "name": "job_id",
+          "label": "Job ID",
+          "help": "",
+          "required": true,
+          "default": null,
+          "input_type": "text",
+          "options": [],
+          "placeholder": "e.g. j-123",
+          "example": ""
+        },
+        {
+          "name": "format",
+          "label": "Format",
+          "help": "",
+          "required": false,
+          "default": "md",
+          "input_type": "select",
+          "options": ["md", "txt"],
+          "placeholder": "",
+          "example": ""
+        }
+      ],
+      "revision": 3
+    }
+  ]
+}

@@ -7,3 +7,4 @@ export {
   type TransientMessage,
 } from '@/domains/messaging/domain/transcript'
 export { isUnresolved, type Turn, type TurnStatus } from '@/domains/messaging/domain/turn'
+export { type SlashCommandOption } from '@/domains/messaging/domain/slash-command'

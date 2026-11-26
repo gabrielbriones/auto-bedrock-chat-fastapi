@@ -60,7 +60,7 @@ export const skillRevisionListDtoSchema = z.object({
 type ParameterDto = z.output<typeof skillParameterDtoSchema>
 type SummaryDto = z.output<typeof skillSummaryDtoSchema>
 
-const toParameter = (dto: ParameterDto): SkillParameter => ({
+export const toParameter = (dto: ParameterDto): SkillParameter => ({
   name: dto.name,
   label: dto.label,
   help: dto.help,

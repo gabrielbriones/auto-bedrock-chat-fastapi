@@ -9,6 +9,7 @@ import { MessageComposer } from '@/domains/messaging/presentation/MessageCompose
 import { SessionUsageSummary } from '@/domains/messaging/presentation/SessionUsageSummary'
 import { Transcript } from '@/domains/messaging/presentation/Transcript'
 import { composerAvailability } from '@/domains/messaging/presentation/composer-policy'
+import type { ComposerCommands } from '@/domains/messaging/presentation/useSlashCommandMenu'
 
 export type ChatPanelProps = {
   readonly inputEnabled: boolean
@@ -23,10 +24,12 @@ export type ChatPanelProps = {
   /** FR-PROMPT-007: fired for every manually-sent message, before it goes out. */
   readonly onMessageSent?: (text: string) => void
   readonly renderFeedback?: (messageId: MessageId) => ReactNode
+  /** Skills offered when the draft starts with `/`, supplied from `src/app`. */
+  readonly commands?: ComposerCommands
 }
 
 // SPEC-012 §5: badge, preset area (Task 23), transcript, composer.
-export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessageSent, renderFeedback }: ChatPanelProps) {
+export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessageSent, renderFeedback, commands }: ChatPanelProps) {
   const { bootstrap, chatSession, notifications } = useContainer()
   const { connection, transcript, awaitingResponse } = useContainerStore('chatSession')
   const [draft, setDraft] = useState('')
@@ -69,6 +72,7 @@ export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessage
         awaitingResponse={awaitingResponse}
         onChange={setDraft}
         onSend={send}
+        commands={commands}
         toolbar={
           <>
             {composerToolbar}

@@ -65,6 +65,24 @@ model picker, e.g. `13% context $0.3124`, updated as each answer (and each `usag
   context meter with exact token counts.
 - Answers loaded from history count too, as long as they were stored with usage.
 
+### Slash-command menu
+
+Typing `/` at the start of the composer opens a menu of the enabled [skills](skills#slash-commands), filtered as the
+name is typed (name prefixes first, then names or titles containing the text). Each entry shows the command, its
+title, description and usage, e.g. `/job-triage job_id=<Job ID> [format=md|txt]` (optional parameters in brackets,
+a `select` parameter as its options).
+
+- **Keyboard**: ↑/↓ move the highlight, Enter or Tab inserts `/<name> `, Escape closes the menu until the text
+  changes. While the menu is open Enter never sends.
+- **Pointer**: click an entry; focus stays in the composer.
+- After the name, the menu gives way to a usage line for that skill while its parameters are typed.
+- `//` and text that does not start with `/` never open it.
+- The list comes from `GET {chat_endpoint}/skills/catalog`, read when input becomes available and again on composer
+  focus once it is a minute old. If it cannot be read the menu just does not appear; commands still work because the
+  server parses them.
+- Screen readers: the composer keeps focus and points at the highlighted entry (`aria-activedescendant`), and the
+  number of matches is announced.
+
 ---
 
 ## Endpoints Registered by the Plugin

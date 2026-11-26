@@ -106,6 +106,11 @@ export const MESSAGING_COPY = {
       offline: 'Disconnected — you can send again once the connection is back.',
       responding: 'Waiting for the assistant to finish responding.',
     },
+    slashMenu: {
+      label: 'Skills',
+      results: (count: number) => `${count} ${count === 1 ? 'skill' : 'skills'} available`,
+      usage: 'Usage:',
+    },
   },
 
   errors: {

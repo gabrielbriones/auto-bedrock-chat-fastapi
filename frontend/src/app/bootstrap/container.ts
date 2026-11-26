@@ -93,9 +93,8 @@ export type Container = {
   readonly kbSources: KbSourcesStore
   readonly telemetryGateway: TelemetryGateway
   readonly telemetry: TelemetryStore
-  readonly skills: ReturnType<typeof createAdminStores>['skills']
   readonly bootstrap: ChatBootstrap
-}
+} & Pick<ReturnType<typeof createAdminStores>, 'skills' | 'skillCatalog'>
 
 export type ContainerDependencies = ReplyNotificationDependencies & {
   readonly httpClient?: HttpClient
@@ -325,7 +324,7 @@ export const createContainer = (
   })
   const modelConfig = createModelConfig(bootstrap, socket, messageBus, notifications)
   const feedback = createFeedback(socket, messageBus)
-  const adminStores = createAdminStores(bootstrap, { httpClient, logger, confirmations, notifications })
+  const adminStores = createAdminStores(bootstrap, { httpClient, logger, clock, confirmations, notifications })
   const identity = createIdentity(bootstrap, authPolicy, authGateway, ssoGateway, socket)
   notifyOnSessionExpiry(identity, notifications)
 

@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { useConversationRoute } from '@/app/chat/useConversationRoute'
 import { PromptCatalogArea } from '@/app/chat/PromptCatalogArea'
+import { useSkillCommands } from '@/app/chat/slash-commands'
 import type { ConversationId, MessageId } from '@/shared/kernel/branded'
 import { PendingTurnNotice } from '@/domains/conversation/presentation/PendingTurnNotice'
 import { UnknownConversation } from '@/domains/conversation/presentation/UnknownConversation'
@@ -24,6 +25,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const { inputEnabled } = useContainerStore('identity')
   const { pendingTurn, unknownId } = useContainerStore('conversations')
   const { configuredModel } = useContainerStore('chatSession')
+  const commands = useSkillCommands()
   const navigate = useNavigate()
 
   useConversationRoute(conversationId)
@@ -65,6 +67,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         inputEnabled={inputEnabled}
         onMessageSent={onMessageSent}
         presetArea={<PromptCatalogArea />}
+        commands={commands}
         composerToolbar={bootstrap.enableConfigSidebar ? <ComposerModelPicker configuredModel={configuredModel} /> : undefined}
         {...(renderFeedback === undefined ? {} : { renderFeedback })}
       />
