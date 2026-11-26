@@ -9,6 +9,7 @@ import type { Problem } from '@/shared/http/exception'
 import { SKILLS_COPY } from '@/shared/copy/skills'
 
 import {
+  charCount,
   contentFromDraft,
   DISPLAY_NAME_MAX_CHARS,
   hasIssues,
@@ -62,7 +63,7 @@ function IdentityFields({ state, isNew, issues, disabled }: {
       <FormField label={COPY.name} {...(isNew ? { hint: COPY.nameHint } : {})} error={issueMessage(issues.fields.name)}>
         {(control) => <Input {...control} className="font-mono" value={draft.name} readOnly={!isNew} disabled={disabled} autoComplete="off" onChange={(event) => patch({ name: event.target.value })} />}
       </FormField>
-      <FormField label={COPY.displayName} error={issueMessage(issues.fields.displayName)} counter={{ used: draft.displayName.length, max: DISPLAY_NAME_MAX_CHARS }}>
+      <FormField label={COPY.displayName} error={issueMessage(issues.fields.displayName)} counter={{ used: charCount(draft.displayName), max: DISPLAY_NAME_MAX_CHARS }}>
         {(control) => <Input {...control} value={draft.displayName} disabled={disabled} onChange={(event) => patch({ displayName: event.target.value })} />}
       </FormField>
     </div>
@@ -99,11 +100,11 @@ function ContentFields({ state, limits, issues, disabled }: {
   const counter = (used: number, max: number | undefined) => (max === undefined ? null : { used, max })
   return (
     <>
-      <FormField label={COPY.description} error={issueMessage(issues.fields.description)} counter={counter(draft.description.length, limits?.descriptionMaxChars)}>
+      <FormField label={COPY.description} error={issueMessage(issues.fields.description)} counter={counter(charCount(draft.description), limits?.descriptionMaxChars)}>
         {(control) => <Textarea {...control} className="min-h-16" value={draft.description} disabled={disabled} onChange={(event) => patch({ description: event.target.value })} />}
       </FormField>
       <div className="grid gap-4 lg:grid-cols-2">
-        <FormField label={COPY.instructions} hint={COPY.instructionsHint} error={instructionsError(issues)} counter={counter(draft.instructions.length, limits?.instructionsMaxChars)}>
+        <FormField label={COPY.instructions} hint={COPY.instructionsHint} error={instructionsError(issues)} counter={counter(charCount(draft.instructions), limits?.instructionsMaxChars)}>
           {(control) => <Textarea {...control} className="min-h-64 font-mono text-sm" value={draft.instructions} disabled={disabled} onChange={(event) => state.setInstructions(event.target.value)} />}
         </FormField>
         <InstructionsPreview instructions={draft.instructions} parameters={parameters} />

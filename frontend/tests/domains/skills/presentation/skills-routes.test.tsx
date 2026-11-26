@@ -68,7 +68,7 @@ const renderAt = (gateway = createGateway(), path = PATH) => {
       <ConfirmationHost controller={container.confirmations} />
     </ContainerContext.Provider>,
   )
-  return { gateway, notifications, dom: view.container }
+  return { gateway, notifications, dom: view.container, router, skills }
 }
 
 const rowOf = async (name: string) => (await screen.findByText(name, { selector: 'td *, td' })).closest('tr') as HTMLElement
@@ -181,6 +181,24 @@ describe('skill editor', () => {
     expect(within(form).queryByRole('group', { name: PARAMS.row(2) })).not.toBeInTheDocument()
   })
 
+  it('keeps an auto-added parameter the admin renamed when the instructions change again', async () => {
+    const user = userEvent.setup()
+    renderAt()
+
+    await user.click(await screen.findByRole('button', { name: LIST.create }))
+    const form = await screen.findByRole('form', { name: EDITOR.createTitle })
+    const instructions = within(form).getByRole('textbox', { name: EDITOR.instructions })
+    await user.type(instructions, 'Use {{{{foo}}')
+    const name = within(within(form).getByRole('group', { name: PARAMS.row(1) })).getByRole('textbox', { name: PARAMS.name })
+    await user.clear(name)
+    await user.type(name, 'bar')
+    await user.type(instructions, ' now')
+
+    const row = within(form).getByRole('group', { name: PARAMS.row(1) })
+    expect(within(row).getByRole('textbox', { name: PARAMS.name })).toHaveValue('bar')
+    expect(within(row).queryByText(PARAMS.autoAdded)).not.toBeInTheDocument()
+  })
+
   it('flags a placeholder whose parameter was removed, offers to add it back, and blocks saving', async () => {
     const user = userEvent.setup()
     const { gateway } = renderAt()
@@ -281,6 +299,25 @@ describe('skill editor', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(gateway.remove).toHaveBeenCalledWith('job-triage')
+  })
+
+  it('asks before leaving the page with unsaved edits and closes the editor once the admin leaves', async () => {
+    const user = userEvent.setup()
+    const { router, skills } = renderAt()
+
+    const form = await openEditor(user)
+    const displayName = within(form).getByRole('textbox', { name: EDITOR.displayName })
+    await user.type(displayName, ' edited')
+
+    void router.navigate({ to: '/dashboard/kb-browser' })
+    await confirmWith(user, SHELL.confirmations.cancel)
+    expect(router.state.location.pathname).toBe('/dashboard/skills')
+    expect(displayName).toHaveValue('Job triage edited')
+
+    void router.navigate({ to: '/dashboard/kb-browser' })
+    await confirmWith(user, EDITOR.discardConfirmLabel)
+    await waitFor(() => expect(router.state.location.pathname).toBe('/dashboard/kb-browser'))
+    expect(skills.getSnapshot().editor.mode).toBe('closed')
   })
 
   it('has no accessibility violations', async () => {

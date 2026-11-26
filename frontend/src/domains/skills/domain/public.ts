@@ -1,4 +1,5 @@
 export {
+  charCount,
   contentOf,
   diffContent,
   DISPLAY_NAME_MAX_CHARS,

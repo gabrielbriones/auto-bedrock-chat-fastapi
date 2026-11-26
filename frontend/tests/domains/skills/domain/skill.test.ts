@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals'
 
 import {
+  charCount,
   contentFromDraft,
   contentOf,
   diffContent,
@@ -138,6 +139,13 @@ describe('validateSkillDraft', () => {
 
   it('flags display names over 100 characters', () => {
     expect(validateSkillDraft({ ...valid, displayName: 'x'.repeat(101) }, limits, true).fields.displayName)
+      .toEqual({ kind: 'too-long', max: 100 })
+  })
+
+  it('counts characters as code points, like the server, so an emoji counts once', () => {
+    expect(charCount('😀'.repeat(60))).toBe(60)
+    expect(validateSkillDraft({ ...valid, displayName: '😀'.repeat(60) }, limits, true).fields.displayName).toBeUndefined()
+    expect(validateSkillDraft({ ...valid, displayName: '😀'.repeat(101) }, limits, true).fields.displayName)
       .toEqual({ kind: 'too-long', max: 100 })
   })
 

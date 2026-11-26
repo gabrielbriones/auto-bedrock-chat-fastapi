@@ -1,4 +1,5 @@
-import { useRef, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
+import { useBlocker } from '@tanstack/react-router'
 import { Trash2Icon } from 'lucide-react'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
@@ -67,11 +68,34 @@ function EditBody({ snapshot, formRef }: { readonly snapshot: SkillsSnapshot; re
   )
 }
 
+// Closing the drawer is not a navigation (the store confirms that), but leaving the page unmounts the
+// form: confirm a dirty draft first, and clear the editor so it doesn't reopen stale on return.
+function useLeaveGuard(formRef: RefObject<SkillEditorHandle | null>) {
+  const { skills, confirmations } = useContainer()
+
+  useBlocker({
+    enableBeforeUnload: () => formRef.current?.isDirty() === true,
+    shouldBlockFn: async ({ current, next }) => {
+      if (current.pathname === next.pathname || formRef.current?.isDirty() !== true) return false
+      const discard = await confirmations.confirm({
+        title: COPY.discardTitle,
+        message: COPY.discardMessage,
+        confirmLabel: COPY.discardConfirmLabel,
+        tone: 'destructive',
+      })
+      return !discard
+    },
+  })
+
+  useEffect(() => () => { void skills.closeEditor(false) }, [skills])
+}
+
 export function SkillEditorDrawer() {
   const { skills } = useContainer()
   const snapshot = useContainerStore('skills')
   const formRef = useRef<SkillEditorHandle>(null)
   const { mode } = snapshot.editor
+  useLeaveGuard(formRef)
 
   let content: ReactNode = null
   if (mode === 'create') {

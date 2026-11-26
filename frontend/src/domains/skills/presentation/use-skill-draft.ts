@@ -42,8 +42,9 @@ export const useSkillDraft = (skill: Skill | null) => {
       parameters: syncParametersWithInstructions(current.parameters, instructions, newKey),
     })),
     isDirty: () => contentKey(draft, enabled) !== contentKey(initial, true),
+    // Any edit, a rename included, makes the row the admin's: instruction sync no longer removes it.
     changeParameter: (index: number, change: Partial<SkillParameterDraft>) =>
-      setParameters((parameters) => parameters.map((parameter, at) => (at === index ? { ...parameter, ...change } : parameter))),
+      setParameters((parameters) => parameters.map((parameter, at) => (at === index ? { ...parameter, ...change, autoAdded: false } : parameter))),
     moveParameter: (index: number, offset: -1 | 1) => setParameters((parameters) => moveParameter(parameters, index, offset)),
     removeParameter: (index: number) => setParameters((parameters) => parameters.filter((_, at) => at !== index)),
     addParameter: (name = '') => {

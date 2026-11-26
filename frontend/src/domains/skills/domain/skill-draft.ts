@@ -1,4 +1,5 @@
 import {
+  charCount,
   DISPLAY_NAME_MAX_CHARS,
   MAX_PARAMETER_OPTIONS,
   OPTION_MAX_CHARS,
@@ -109,7 +110,7 @@ export const moveParameter = (
 }
 
 const tooLong = (value: string, max: number): SkillIssue | undefined =>
-  value.length > max ? { kind: 'too-long', max } : undefined
+  charCount(value) > max ? { kind: 'too-long', max } : undefined
 
 const isUntouched = (parameter: SkillParameterDraft): boolean =>
   JSON.stringify(toParameter(parameter)) === JSON.stringify(toParameter(newParameterDraft('', parameter.name)))
@@ -151,7 +152,7 @@ const nameIssue = (name: string): SkillIssue | undefined => {
 const optionsIssue = (options: readonly string[]): SkillIssue | undefined => {
   const kept = options.filter((option) => option !== '')
   if (kept.length > MAX_PARAMETER_OPTIONS) return { kind: 'too-many', max: MAX_PARAMETER_OPTIONS }
-  return kept.some((option) => option.length > OPTION_MAX_CHARS) ? { kind: 'too-long', max: OPTION_MAX_CHARS } : undefined
+  return kept.some((option) => charCount(option) > OPTION_MAX_CHARS) ? { kind: 'too-long', max: OPTION_MAX_CHARS } : undefined
 }
 
 const compact = <K extends string>(entries: Record<K, SkillIssue | undefined>): Partial<Record<K, SkillIssue>> =>

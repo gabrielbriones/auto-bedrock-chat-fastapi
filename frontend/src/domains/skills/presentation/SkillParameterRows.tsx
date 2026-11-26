@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { SKILLS_COPY } from '@/shared/copy/skills'
 
 import {
+  charCount,
   PARAMETER_FIELD_MAX_CHARS,
   SKILL_INPUT_TYPES,
   type ParameterIssues,
@@ -32,7 +33,7 @@ type TextKey = 'label' | 'placeholder' | 'example'
 
 function TextHint({ field, label, parameter, issues, disabled, onChange }: RowProps & { readonly field: TextKey; readonly label: string }) {
   return (
-    <FormField label={label} error={issueMessage(issues[field])} counter={{ used: parameter[field].length, max: PARAMETER_FIELD_MAX_CHARS[field] }}>
+    <FormField label={label} error={issueMessage(issues[field])} counter={{ used: charCount(parameter[field]), max: PARAMETER_FIELD_MAX_CHARS[field] }}>
       {(control) => <Input {...control} value={parameter[field]} disabled={disabled} onChange={(event) => onChange({ [field]: event.target.value })} />}
     </FormField>
   )
@@ -68,12 +69,12 @@ function ValueFields(props: RowProps) {
   const setDefault = (value: string) => onChange({ default: value === '' ? null : value })
   return (
     <>
-      <FormField label={COPY.default} error={issueMessage(issues.default)} counter={{ used: parameter.default?.length ?? 0, max: PARAMETER_FIELD_MAX_CHARS.default }}>
+      <FormField label={COPY.default} error={issueMessage(issues.default)} counter={{ used: charCount(parameter.default ?? ''), max: PARAMETER_FIELD_MAX_CHARS.default }}>
         {(control) => <Input {...control} value={parameter.default ?? ''} disabled={disabled} onChange={(event) => setDefault(event.target.value)} />}
       </FormField>
       <TextHint {...props} field="placeholder" label={COPY.placeholder} />
       <TextHint {...props} field="example" label={COPY.example} />
-      <FormField label={COPY.help} error={issueMessage(issues.help)} counter={{ used: parameter.help.length, max: PARAMETER_FIELD_MAX_CHARS.help }}>
+      <FormField label={COPY.help} error={issueMessage(issues.help)} counter={{ used: charCount(parameter.help), max: PARAMETER_FIELD_MAX_CHARS.help }}>
         {(control) => <Textarea {...control} className="min-h-16" value={parameter.help} disabled={disabled} onChange={(event) => onChange({ help: event.target.value })} />}
       </FormField>
       {showOptions ? (

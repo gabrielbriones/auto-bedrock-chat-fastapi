@@ -221,6 +221,59 @@ describe('SkillsStore editing', () => {
     expect(confirmations.asked[0]?.title).toBe(SKILLS_COPY.editor.discardTitle)
     expect(store.getSnapshot().editor.mode).toBe('edit')
   })
+
+  it('updates only the row when a save lands after the admin opened another skill', async () => {
+    let release: () => void = () => {}
+    const patch = jest.fn<SkillsGateway['patch']>(() => new Promise((resolve) => {
+      release = () => resolve(ok({ ...skill, displayName: 'Changed', revision: 4 }))
+    }))
+    const get = jest.fn<SkillsGateway['get']>(async (name) => ok(name === other.name ? other : skill))
+    const { store, notifications } = await openSkill(gatewayWith({ patch, get }))
+
+    const pending = store.save({ ...contentOf(skill), displayName: 'Changed' })
+    await store.openEdit(other.name)
+    release()
+
+    expect(await pending).toBe(true)
+    expect(store.getSnapshot()).toMatchObject({ editor: { mode: 'edit', name: other.name }, detail: other, saving: false, conflict: null })
+    expect(store.getSnapshot().skills.find((row) => row.name === skill.name)).toMatchObject({ displayName: 'Changed', revision: 4 })
+    expect(notifications.messages()).toContain(SKILLS_COPY.editor.saveSuccess(4))
+  })
+
+  it('reports a failed save as a toast once its editor is gone', async () => {
+    let release: () => void = () => {}
+    const patch = jest.fn<SkillsGateway['patch']>(() => new Promise((resolve) => {
+      release = () => resolve(err({ kind: 'problem', problem: problem({ status: 503, detail: 'store down' }) }))
+    }))
+    const { store, notifications } = await openSkill(gatewayWith({ patch }))
+
+    const pending = store.save({ ...contentOf(skill), displayName: 'Changed' })
+    await store.closeEditor(false)
+    release()
+
+    expect(await pending).toBe(false)
+    expect(store.getSnapshot()).toMatchObject({ editor: { mode: 'closed' }, saveProblem: null })
+    expect(notifications.messages()).toEqual([SKILLS_COPY.editor.saveFailure(skill.name)])
+  })
+
+  it('lists a skill created after the editor moved on without replacing the newer editor', async () => {
+    let release: () => void = () => {}
+    const create = jest.fn<SkillsGateway['create']>((request) => new Promise((resolve) => {
+      release = () => resolve(ok({ ...skill, ...request, revision: 1 }))
+    }))
+    const { store, notifications } = createStore(gatewayWith({ create }))
+    await store.loadList()
+    store.openCreate()
+
+    const pending = store.create({ ...contentOf(skill), name: 'a-new', enabled: true })
+    await store.openEdit(skill.name)
+    release()
+
+    expect(await pending).toBe(true)
+    expect(store.getSnapshot()).toMatchObject({ editor: { mode: 'edit', name: skill.name }, detail: skill })
+    expect(store.getSnapshot().skills.map((row) => row.name)).toEqual(['a-new', 'job-triage', 'perf-report'])
+    expect(notifications.messages()).toContain(SKILLS_COPY.editor.createSuccess('a-new'))
+  })
 })
 
 describe('SkillsStore rollback and delete', () => {

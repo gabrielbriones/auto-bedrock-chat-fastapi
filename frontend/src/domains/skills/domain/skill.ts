@@ -70,6 +70,9 @@ export const PARAMETER_FIELD_MAX_CHARS = {
 export const MAX_PARAMETER_OPTIONS = 50
 export const OPTION_MAX_CHARS = 200
 
+// The server's limits use Python `len()` (code points), not UTF-16 units: an emoji counts once.
+export const charCount = (value: string): number => Array.from(value).length
+
 export const toSummary = (skill: Skill): SkillSummary => ({
   name: skill.name,
   displayName: skill.displayName,

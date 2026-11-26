@@ -34,6 +34,8 @@ export class SkillsStore {
   #listController: AbortController | null = null
   #detailController: AbortController | null = null
   #revisionsController: AbortController | null = null
+  // Bumped whenever the editor opens or closes, so a write that lands later can't touch a newer editor.
+  #session = 0
   #snapshot: SkillsSnapshot = createInitialSkillsSnapshot()
 
   constructor(options: SkillsStoreOptions) {
@@ -88,13 +90,13 @@ export class SkillsStore {
   }
 
   openCreate(): void {
-    this.#abortEditor()
-    this.#patch({ ...CLOSED_EDITOR, editor: { mode: 'create' } })
+    this.#resetEditor()
+    this.#patch({ editor: { mode: 'create' } })
   }
 
   async openEdit(name: string): Promise<void> {
-    this.#abortEditor()
-    this.#patch({ ...CLOSED_EDITOR, editor: { mode: 'edit', name }, detailStatus: 'loading' })
+    this.#resetEditor()
+    this.#patch({ editor: { mode: 'edit', name }, detailStatus: 'loading' })
     const controller = new AbortController()
     this.#detailController = controller
 
@@ -116,25 +118,35 @@ export class SkillsStore {
       })
       if (!discard) return false
     }
-    this.#abortEditor()
-    this.#patch(CLOSED_EDITOR)
+    this.#resetEditor()
     return true
   }
 
   async create(request: SkillCreateRequest): Promise<boolean> {
     if (this.#snapshot.saving) return false
+    const session = this.#session
     this.#patch({ saving: true, saveProblem: null })
     const result = await this.#options.gateway.create(request)
+    const current = session === this.#session
     if (isErr(result)) {
-      this.#patch({ saving: false, saveProblem: result.error })
+      if (current) {
+        this.#patch({ saving: false, saveProblem: result.error })
+      } else {
+        this.#options.notifications.error(COPY.editor.createFailure(request.name), detailOf(result.error))
+      }
       return false
     }
 
     const created = result.value
     this.#options.notifications.success(COPY.editor.createSuccess(created.name))
+    const skills = [...this.#snapshot.skills.filter((skill) => skill.name !== created.name), toSummary(created)].sort(byName)
+    if (!current) {
+      this.#patch({ skills })
+      return true
+    }
+    this.#resetEditor()
     this.#patch({
-      ...CLOSED_EDITOR,
-      skills: [...this.#snapshot.skills, toSummary(created)].sort(byName),
+      skills,
       editor: { mode: 'edit', name: created.name },
       detail: created,
       detailStatus: 'ready',
@@ -155,11 +167,16 @@ export class SkillsStore {
       return false
     }
 
+    const session = this.#session
     this.#patch({ saving: true, saveProblem: null })
     const base = conflict ?? detail
     const result = await this.#options.gateway.patch(base.name, base.revision, changes)
-    return this.#applyWrite(result, (written) => COPY.editor.saveSuccess(written.revision), (problem) => {
-      this.#patch({ saveProblem: problem })
+    return this.#applyWrite(session, result, (written) => COPY.editor.saveSuccess(written.revision), (problem, current) => {
+      if (current) {
+        this.#patch({ saveProblem: problem })
+      } else {
+        this.#options.notifications.error(COPY.editor.saveFailure(base.name), detailOf(problem))
+      }
     })
   }
 
@@ -180,10 +197,11 @@ export class SkillsStore {
     })
     if (!confirmed) return false
 
+    const session = this.#session
     this.#patch({ saving: true, saveProblem: null })
     const base = conflict ?? detail
     const result = await this.#options.gateway.rollback(base.name, revision, base.revision)
-    return this.#applyWrite(result, (written) => COPY.revisions.rollbackSuccess(written.revision, revision), (problem) => {
+    return this.#applyWrite(session, result, (written) => COPY.revisions.rollbackSuccess(written.revision, revision), (problem) => {
       this.#options.notifications.error(COPY.revisions.rollbackFailure, detailOf(problem))
     })
   }
@@ -208,8 +226,7 @@ export class SkillsStore {
 
     const { editor } = this.#snapshot
     if (editor.mode === 'edit' && editor.name === name) {
-      this.#abortEditor()
-      this.#patch(CLOSED_EDITOR)
+      this.#resetEditor()
     }
     this.#patch({ skills: this.#snapshot.skills.filter((skill) => skill.name !== name) })
     this.#options.notifications.success(COPY.list.deleteSuccess(name))
@@ -222,29 +239,36 @@ export class SkillsStore {
     this.#listeners.clear()
   }
 
+  // The list row always reflects the result; the editor only while it is still the session that wrote.
   #applyWrite(
+    session: number,
     result: Result<Skill, SkillWriteError>,
     success: (written: Skill) => string,
-    report: (problem: Problem) => void,
+    report: (problem: Problem, current: boolean) => void,
   ): boolean {
-    this.#patch({ saving: false })
+    const current = session === this.#session
+    if (current) this.#patch({ saving: false })
     if (isOk(result)) {
       const written = result.value
-      this.#patch({ detail: written, conflict: null, saveProblem: null })
       this.#updateRow(written.name, toSummary(written))
       this.#options.notifications.success(success(written))
-      void this.#loadRevisions(written.name)
+      if (current) {
+        this.#patch({ detail: written, conflict: null, saveProblem: null })
+        void this.#loadRevisions(written.name)
+      }
       return true
     }
     if (result.error.kind === 'conflict') {
-      const { current } = result.error
-      this.#patch({ conflict: current })
-      this.#updateRow(current.name, toSummary(current))
+      const { current: stored } = result.error
+      this.#updateRow(stored.name, toSummary(stored))
       this.#options.notifications.warning(COPY.conflict.toast)
-      void this.#loadRevisions(current.name)
+      if (current) {
+        this.#patch({ conflict: stored })
+        void this.#loadRevisions(stored.name)
+      }
       return false
     }
-    report(result.error.problem)
+    report(result.error.problem, current)
     return false
   }
 
@@ -257,6 +281,12 @@ export class SkillsStore {
     const result = await this.#options.gateway.listRevisions(name, controller.signal)
     if (controller.signal.aborted) return
     this.#patch(isErr(result) ? { revisionsStatus: 'error' } : { revisionsStatus: 'ready', revisions: result.value })
+  }
+
+  #resetEditor(): void {
+    this.#session += 1
+    this.#abortEditor()
+    this.#patch(CLOSED_EDITOR)
   }
 
   #abortEditor(): void {
