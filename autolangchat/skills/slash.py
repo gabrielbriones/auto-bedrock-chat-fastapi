@@ -28,13 +28,14 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .models import SKILL_NAME_PATTERN
 from .prompt import LOAD_SKILL
 from .service import INPUT_PARAMETER
 
 INVALID_COMMAND = "invalid_command"
+TOOLS_UNSUPPORTED = "tools_unsupported"
 
 _NAME_RE = re.compile(r"/(" + SKILL_NAME_PATTERN.pattern.strip("^$") + r")(?=\s|$)")
 _KEY_RE = re.compile(r"([A-Za-z0-9][A-Za-z0-9_-]*)=")
@@ -55,7 +56,7 @@ class SlashCommand:
     """A parsed ``/<name> ...`` message."""
 
     name: str
-    params: Dict[str, str] = field(default_factory=dict)
+    params: dict[str, str] = field(default_factory=dict)
     # Everything after the pairs, stripped; "" when there is none.
     text: str = ""
 
@@ -67,7 +68,7 @@ class DirectSkillLoad:
     name: str
     revision: int
     message_id: str
-    messages: List[Dict[str, Any]]
+    messages: list[dict[str, Any]]
 
 
 def is_literal_slash(text: str) -> bool:
@@ -77,7 +78,7 @@ def is_literal_slash(text: str) -> bool:
 
 def _quoted_value(text: str, start: int) -> tuple[str, int]:
     """The value of the double-quoted string opening at ``text[start]`` and the index after its closing quote."""
-    chars: List[str] = []
+    chars: list[str] = []
     index = start + 1
     while index < len(text):
         char = text[index]
@@ -94,7 +95,7 @@ def _quoted_value(text: str, start: int) -> tuple[str, int]:
     raise SlashCommandError("Unterminated quoted value.")
 
 
-def parse_slash_command(text: str) -> Optional[SlashCommand]:
+def parse_slash_command(text: str) -> SlashCommand | None:
     """Parse ``text`` as a slash command; ``None`` when it is plain text.
 
     Raises:
@@ -107,7 +108,7 @@ def parse_slash_command(text: str) -> Optional[SlashCommand]:
     if match is None:
         return None
 
-    params: Dict[str, str] = {}
+    params: dict[str, str] = {}
     index = match.end()
     while True:
         while index < len(text) and text[index].isspace():
@@ -134,8 +135,8 @@ def parse_slash_command(text: str) -> Optional[SlashCommand]:
 
 
 def direct_load_messages(
-    name: str, params: Dict[str, str], rendered_text: str, skill_ref: Dict[str, str]
-) -> List[Dict[str, Any]]:
+    name: str, params: dict[str, str], rendered_text: str, skill_ref: dict[str, str]
+) -> list[dict[str, Any]]:
     """The assistant ``load_skill`` call and its tool result, shaped like a model-initiated round.
 
     Both are flagged ``metadata.direct`` (the tool result entry too). The
@@ -166,7 +167,7 @@ def direct_load_messages(
     ]
 
 
-async def load_slash_command(service: Any, command: SlashCommand, actor: Optional[str] = None) -> DirectSkillLoad:
+async def load_slash_command(service: Any, command: SlashCommand, actor: str | None = None) -> DirectSkillLoad:
     """Load ``command``'s skill through ``service`` (a ``SkillService``) without calling a model.
 
     Raises:

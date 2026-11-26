@@ -322,18 +322,22 @@ as `null`) when Bedrock doesn't return one.
 
 #### `skill_loaded` and `skill_error`
 
-Sent in reply to a `chat` frame holding a [slash command](skills#slash-commands), before any `typing` frame.
+Sent in reply to a `chat` frame holding a [slash command](skills#slash-commands). The command's turn sends no
+`typing` frame before them.
 
 ```json
-{ "type": "skill_loaded", "name": "job-triage", "revision": 3, "message_id": "9b1e…", "timestamp": "2026-01-01T10:00:00" }
+{ "type": "skill_loaded", "name": "job-triage", "revision": 3, "message_id": "9b1e…", "conversation_id": "b16d…", "timestamp": "2026-01-01T10:00:00" }
 { "type": "skill_error", "code": "unknown_skill", "message": "Unknown skill: 'job-triag'", "timestamp": "2026-01-01T10:00:00" }
 ```
 
-- `skill_loaded`: the skill was loaded and the turn follows (`typing`, tool frames, `ai_response`). `revision` is
-  the skill's stored revision; `message_id` is the id of the synthetic `load_skill` assistant message in history.
+- `skill_loaded`: the skill was loaded and its turn is reserved; the turn follows (`typing`, tool frames,
+  `ai_response`). `revision` is the skill's stored revision; `message_id` is the id of the synthetic `load_skill`
+  assistant message in history; `conversation_id` is the turn's (`null` without conversation persistence), and
+  other tabs following the turn get the frame too. A conversation already answering refuses the command with an
+  `error` frame instead, and no `skill_loaded` is sent.
 - `skill_error`: the command was refused and **no turn runs**, so no `ai_response` follows. `code` is
-  `invalid_command`, `unknown_skill`, `skill_disabled`, `skills_unavailable` or `invalid_arguments`; `message` is
-  meant for the user.
+  `invalid_command`, `tools_unsupported` (the selected model cannot call tools), `unknown_skill`, `skill_disabled`,
+  `skills_unavailable` or `invalid_arguments`; `message` is meant for the user.
 
 #### `usage_updated`
 

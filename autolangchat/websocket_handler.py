@@ -43,12 +43,14 @@ from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo, ToolManager
 from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop, with_final_usage
 from .message_preprocessor import is_artifact_marker_entry
-from .model_capabilities import build_bedrock_kwargs
+from .model_capabilities import build_bedrock_kwargs, supports_tool_calling
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
 from .skills.service import SkillLoadError
 from .skills.slash import (
+    TOOLS_UNSUPPORTED,
     DirectSkillLoad,
+    SlashCommand,
     SlashCommandError,
     is_literal_slash,
     load_slash_command,
@@ -244,7 +246,7 @@ class WebSocketChatHandler:
         user_settings_store: Optional[BaseUserSettingsStore] = None,
         sso_provider: Optional[Any] = None,
         tool_manager: Optional[ToolManager] = None,
-        skill_service: Optional[Any] = None,
+        skill_service: Any | None = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -685,47 +687,26 @@ class WebSocketChatHandler:
             logger.info("Received user message (%d chars)", content_len)
             logger.debug("Received user message: %s", preview)
 
-            direct_load: Optional[DirectSkillLoad] = None
+            command: SlashCommand | None = None
             if getattr(self, "skill_service", None) is not None and is_literal_slash(user_message):
                 user_message = user_message[1:]
             elif getattr(self, "skill_service", None) is not None:
                 try:
                     command = parse_slash_command(user_message)
-                    if command is not None:
-                        direct_load = await load_slash_command(self.skill_service, command, actor=session.user_id)
-                except (SlashCommandError, SkillLoadError) as error:
-                    # Refused before any turn starts: nothing is checkpointed.
-                    await self._send_message(
-                        websocket,
-                        {
-                            "type": "skill_error",
-                            "code": error.code,
-                            "message": error.message,
-                            "timestamp": datetime.now().isoformat(),
-                        },
-                    )
+                except SlashCommandError as error:
+                    await self._send_skill_error(websocket, error.code, error.message)
                     return
-            if direct_load is not None:
+
+            # A slash command's typing indicator follows its skill_loaded, once its turn is reserved.
+            if command is None:
                 await self._send_message(
                     websocket,
                     {
-                        "type": "skill_loaded",
-                        "name": direct_load.name,
-                        "revision": direct_load.revision,
-                        "message_id": direct_load.message_id,
+                        "type": "typing",
+                        "message": _THINKING_MESSAGE,
                         "timestamp": datetime.now().isoformat(),
                     },
                 )
-
-            # Send typing indicator
-            await self._send_message(
-                websocket,
-                {
-                    "type": "typing",
-                    "message": "AI is thinking...",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
 
             # Auth context: format verified-user info for injection into system prompt.
             # The rag_node (inside the graph) handles the actual injection.
@@ -796,6 +777,12 @@ class WebSocketChatHandler:
                 session.metadata.get("config_overrides", {}),
                 merged_overrides,
             )
+
+            direct_load: DirectSkillLoad | None = None
+            if command is not None:
+                direct_load = await self._load_slash_command(websocket, session, command, effective_config)
+                if direct_load is None:
+                    return
 
             # Closure: send progress updates to the WebSocket client. Tagged
             # with the turn's conversation so a client that has since switched
@@ -882,6 +869,8 @@ class WebSocketChatHandler:
                 return
             if started is not None:
                 started.set()
+            if direct_load is not None:
+                await self._announce_direct_load(websocket, conversation_id, live_turn, direct_load)
             usage_ledger = UsageLedger()
             title_pending = conversation_just_created and conversation_id is not None
             unrecorded_turn_usage = _PendingTurnUsage(
@@ -3444,6 +3433,51 @@ class WebSocketChatHandler:
                 "timestamp": datetime.now().isoformat(),
             },
         )
+
+    async def _send_skill_error(self, websocket: WebSocket, code: str, message: str) -> None:
+        """Refuse a slash command; it is sent before any turn starts, so nothing is checkpointed."""
+        await self._send_message(
+            websocket,
+            {"type": "skill_error", "code": code, "message": message, "timestamp": datetime.now().isoformat()},
+        )
+
+    async def _load_slash_command(
+        self, websocket: WebSocket, session: ChatSession, command: SlashCommand, chat_config: ChatConfig
+    ) -> DirectSkillLoad | None:
+        """Load ``command``'s skill for a turn on ``chat_config``'s model; ``None`` once ``skill_error`` is sent.
+
+        A model without tool calling is refused: the load is replayed to it as a tool call and its result.
+        """
+        if not supports_tool_calling(chat_config.model_id):
+            await self._send_skill_error(
+                websocket,
+                TOOLS_UNSUPPORTED,
+                f"The selected model cannot run skills. Choose a model with tool support to use /{command.name}.",
+            )
+            return None
+        try:
+            return await load_slash_command(self.skill_service, command, actor=session.user_id)
+        except SkillLoadError as error:
+            await self._send_skill_error(websocket, error.code, error.message)
+            return None
+
+    async def _announce_direct_load(
+        self, websocket: WebSocket, conversation_id: str | None, turn: _LiveTurn | None, load: DirectSkillLoad
+    ) -> None:
+        """Send ``skill_loaded`` and the first ``typing`` of the turn ``load`` starts, which is already reserved."""
+        now = datetime.now().isoformat()
+        frames = [
+            {"type": "skill_loaded", "name": load.name, "revision": load.revision, "message_id": load.message_id},
+            {"type": "typing", "message": _THINKING_MESSAGE},
+        ]
+        try:
+            for frame in frames:
+                await self._send_turn_frame(
+                    websocket, conversation_id, {**frame, "timestamp": now, "conversation_id": conversation_id}, turn
+                )
+        except WebSocketError:
+            # The turn runs anyway; its answer is checkpointed for when the conversation is reloaded.
+            logger.debug("Could not announce the slash command of a closed connection")
 
     def _get_client_ip(self, websocket: WebSocket) -> str:
         """Extract client IP address from WebSocket"""

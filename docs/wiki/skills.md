@@ -357,12 +357,16 @@ recognised while a skill store is configured; without one every message is plain
 
 ### What happens
 
-1. After the authentication checks, the server parses the message and loads the skill through the skill
-   service. No LLM is called.
-2. If parsing or loading fails, the server sends a [`skill_error`](websocket-client#skill_loaded-and-skill_error)
+1. After the authentication checks, the server parses the message. Once the turn's effective model is known
+   (settings and per-message overrides applied), it loads the skill through the skill service. No LLM is
+   called.
+2. If parsing or loading fails, or the effective model cannot call tools (the load reaches the model as a tool
+   call and its result), the server sends a [`skill_error`](websocket-client#skill_loaded-and-skill_error)
    frame and stops: no turn starts and nothing is checkpointed. `code` is `invalid_command` (grammar),
-   `unknown_skill`, `skill_disabled`, `skills_unavailable` or `invalid_arguments`.
-3. Otherwise it sends `skill_loaded` (`name`, `revision`, `message_id`), then runs one normal turn. The
+   `tools_unsupported` (model), `unknown_skill`, `skill_disabled`, `skills_unavailable` or `invalid_arguments`.
+3. Otherwise the turn is reserved like any other (a conversation already answering in another tab refuses it
+   with an `error` frame, before any `skill_loaded`). Then it sends `skill_loaded` (`name`, `revision`,
+   `message_id`, `conversation_id`) and the first `typing`, and runs one normal turn. The
    checkpointed user message is the command as typed; right after it the turn carries a synthetic assistant
    message calling `load_skill` and its tool result, exactly as if the model had made that call. The
    model's first call therefore already has the instructions.

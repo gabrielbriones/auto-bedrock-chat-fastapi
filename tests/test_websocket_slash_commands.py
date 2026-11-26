@@ -3,7 +3,7 @@
 import asyncio
 import sys
 from types import SimpleNamespace
-from typing import Any, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +13,7 @@ for _name in [n for n in list(sys.modules) if n == "autolangchat" or n.startswit
     if getattr(sys.modules.get(_name), "__spec__", None) is None:
         del sys.modules[_name]
 
+from autolangchat import websocket_handler  # noqa: E402
 from autolangchat.graph.graph import build_chat_graph  # noqa: E402
 from autolangchat.graph.tools.manager import ToolManager  # noqa: E402
 from autolangchat.graph.tools.skill_tools import build_skill_tools  # noqa: E402
@@ -21,7 +22,7 @@ from autolangchat.skills.models import Skill, SkillCatalogEntry, SkillParameter 
 from autolangchat.skills.service import SkillService  # noqa: E402
 from autolangchat.skills.slash import load_slash_command, parse_slash_command  # noqa: E402
 from autolangchat.usage import UsageLedger  # noqa: E402
-from autolangchat.websocket_handler import WebSocketChatHandler  # noqa: E402
+from autolangchat.websocket_handler import WebSocketChatHandler, _LiveTurn  # noqa: E402
 
 _SKILL = Skill(
     name="triage",
@@ -78,7 +79,7 @@ def _make_handler(skill_service, graph_state=None):
     )
 
 
-def _send(handler, message: str) -> List[dict]:
+def _send(handler, message: str) -> list[dict]:
     websocket = MagicMock()
     websocket.send_json = AsyncMock()
     asyncio.run(handler._handle_chat_message(websocket, {"message": message}))
@@ -126,6 +127,30 @@ class TestHandler:
 
         assert [frame["type"] for frame in frames] == ["skill_error"]
         assert frames[0]["code"] == code and frames[0]["message"]
+        handler.chat_graph.ainvoke.assert_not_awaited()
+
+    def test_model_without_tool_calling_is_refused(self, monkeypatch):
+        handler = _make_handler(SkillService(lambda: _Store(_SKILL)))
+        monkeypatch.setattr(websocket_handler, "supports_tool_calling", lambda model_id: False)
+
+        frames = _send(handler, "/triage job_id=1")
+
+        assert [(f["type"], f["code"]) for f in frames] == [("skill_error", "tools_unsupported")]
+        handler.chat_graph.ainvoke.assert_not_awaited()
+
+    def test_busy_conversation_refuses_before_announcing_the_skill(self):
+        handler = _make_handler(SkillService(lambda: _Store(_SKILL)))
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        handler._conversation_persistence_active_for_session = lambda session: True
+        session = asyncio.run(handler.session_manager.get_session(websocket))
+        session.metadata["conversation_id"] = "c-1"
+        handler._live_turns["c-1"] = _LiveTurn(origin=websocket, user_id=None, user_message="hi", started_at="t")
+
+        asyncio.run(handler._handle_chat_message(websocket, {"message": "/triage job_id=1"}))
+
+        frames = [call.args[0] for call in websocket.send_json.call_args_list]
+        assert [frame["type"] for frame in frames] == ["error"]
         handler.chat_graph.ainvoke.assert_not_awaited()
 
     def test_disabled_skill_is_refused(self):
@@ -206,7 +231,7 @@ async def _run_graph(model_replies, user_message, **configurable):
     tool_manager = ToolManager(
         generated_tools={}, config=chat_config, internal_tools=build_skill_tools(service), skill_service=service
     )
-    model_inputs: List[Any] = []
+    model_inputs: list[Any] = []
 
     def reply(lc_messages, *args, **kwargs):
         model_inputs.append(lc_messages)

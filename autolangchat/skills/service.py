@@ -149,7 +149,7 @@ class SkillService:
         return self._snapshot
 
     async def load(
-        self, name: Any, params: Any = None, actor: Optional[str] = None, free_text: Optional[str] = None
+        self, name: Any, params: Any = None, actor: str | None = None, free_text: str | None = None
     ) -> LoadedSkill:
         """Validate a ``load_skill`` call and render the skill.
 

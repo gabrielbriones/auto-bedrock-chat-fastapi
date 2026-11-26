@@ -104,7 +104,7 @@ def _skill_catalog_text(configurable: Dict[str, Any], chat_config: Any) -> str:
     return format_skill_catalog(entries, max_chars)
 
 
-def _incoming_message(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _incoming_message(messages: list[dict[str, Any]]) -> dict[str, Any]:
     """The last message before any slash-command skill load (``metadata.direct``) that follows it."""
     index = len(messages) - 1
     while index >= 0 and (messages[index].get("metadata") or {}).get("direct"):
