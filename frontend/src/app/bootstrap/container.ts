@@ -93,6 +93,7 @@ export type Container = {
   readonly kbSources: KbSourcesStore
   readonly telemetryGateway: TelemetryGateway
   readonly telemetry: TelemetryStore
+  readonly skills: ReturnType<typeof createAdminStores>['skills']
   readonly bootstrap: ChatBootstrap
 }
 

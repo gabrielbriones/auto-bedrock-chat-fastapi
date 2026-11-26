@@ -11,6 +11,8 @@ import { HttpKnowledgeGateway } from '@/domains/knowledge/infrastructure/http-kn
 import { TimeoutPollScheduler } from '@/domains/knowledge/infrastructure/timeout-poll.scheduler'
 import { ReviewStore } from '@/domains/review/application/review.store'
 import { HttpReviewGateway } from '@/domains/review/infrastructure/http-review.gateway'
+import { SkillsStore } from '@/domains/skills/application/skills.store'
+import { HttpSkillsGateway } from '@/domains/skills/infrastructure/http-skills.gateway'
 import { TelemetryStore } from '@/domains/telemetry/application/telemetry.store'
 import { HttpTelemetryGateway } from '@/domains/telemetry/infrastructure/http-telemetry.gateway'
 
@@ -29,6 +31,7 @@ export const createAdminStores = (bootstrap: ChatBootstrap, parts: AdminStorePar
   const knowledgeGateway = new HttpKnowledgeGateway(bootstrap.adminPrefix, httpClient, logger)
   const kbSourcesGateway = new HttpKbSourcesGateway(bootstrap.adminPrefix, httpClient, logger)
   const telemetryGateway = new HttpTelemetryGateway(bootstrap.adminPrefix, httpClient, logger)
+  const skillsGateway = new HttpSkillsGateway(bootstrap.adminPrefix, httpClient, logger)
 
   return {
     reviewGateway,
@@ -45,5 +48,6 @@ export const createAdminStores = (bootstrap: ChatBootstrap, parts: AdminStorePar
     }),
     telemetryGateway,
     telemetry: new TelemetryStore({ gateway: telemetryGateway }),
+    skills: new SkillsStore({ gateway: skillsGateway, confirmations, notifications, logger }),
   }
 }

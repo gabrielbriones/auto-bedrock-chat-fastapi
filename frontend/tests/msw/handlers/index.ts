@@ -2,6 +2,7 @@ import { bootstrapHandlers } from './bootstrap'
 import { iamHandlers } from './iam'
 import { knowledgeHandlers } from './knowledge'
 import { reviewHandlers } from './review'
+import { skillsHandlers } from './skills'
 import { telemetryHandlers } from './telemetry'
 
 // A new context adds its own file here (e.g. `handlers/conversation.ts`) and
@@ -12,4 +13,5 @@ export const handlers = [
   ...reviewHandlers,
   ...knowledgeHandlers,
   ...telemetryHandlers,
+  ...skillsHandlers,
 ]

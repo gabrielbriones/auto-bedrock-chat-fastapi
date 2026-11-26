@@ -189,7 +189,7 @@ function HeaderCell<Row>({ column, sort, onSort }: {
       {column.sortValue === undefined ? column.header : (
         <button
           type="button"
-          className="inline-flex cursor-pointer items-center gap-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          className="inline-flex cursor-pointer items-center gap-1 uppercase hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           onClick={() => { onSort(column.id) }}
         >
           {column.header}

@@ -56,7 +56,7 @@ describe('admin capability guard', () => {
   it('renders access denied without rendering the admin subtree for a non-admin', async () => {
     renderAt('/chat/dashboard/feedback', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
+        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false, skillsEnabled: false }),
         invalidate: () => {},
       },
     })
@@ -67,9 +67,9 @@ describe('admin capability guard', () => {
   })
 
   it('retries the capability check without redirecting after identity changes', async () => {
-    const admin = { isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: true }
+    const admin = { isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: true, skillsEnabled: true }
     const probe = jest.fn<Container['capabilityProbe']['probe']>()
-      .mockResolvedValueOnce({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false })
+      .mockResolvedValueOnce({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false, skillsEnabled: false })
       // The admin nav preloads its sections on render, and each preload re-runs the guard.
       .mockResolvedValue(admin)
     const invalidate = jest.fn()
@@ -85,7 +85,7 @@ describe('admin capability guard', () => {
   it('hides and rejects Usage when token tracking is unavailable', async () => {
     renderAt('/chat/dashboard/token-usages', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false, skillsEnabled: false }),
         invalidate: () => {},
       },
     })
@@ -97,7 +97,7 @@ describe('admin capability guard', () => {
   it('hides and rejects KB sources when source ingestion is not configured', async () => {
     renderAt('/chat/dashboard/kb-sources', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: false }),
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: false, skillsEnabled: false }),
         invalidate: () => {},
       },
     })
@@ -105,6 +105,19 @@ describe('admin capability guard', () => {
     expect(await screen.findByText(IAM_COPY.kbSourcesUnavailable.title)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: SHELL.admin.kbSources })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: SHELL.admin.usage })).toBeInTheDocument()
+  })
+
+  it('hides and rejects Skills when the skill store is unavailable', async () => {
+    renderAt('/chat/dashboard/skills', {
+      capabilityProbe: {
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: false, tokenUsageEnabled: true, kbSourceIngestionEnabled: true, skillsEnabled: false }),
+        invalidate: () => {},
+      },
+    })
+
+    expect(await screen.findByText(IAM_COPY.skillsUnavailable.title)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: SHELL.admin.skills })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: SHELL.admin.kbSources })).toBeInTheDocument()
   })
 })
 
@@ -121,7 +134,7 @@ describe('the shell around the routes', () => {
   it('hides the admin dashboard button in the chat header for a non-admin', async () => {
     renderAt('/chat/ui', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false }),
+        probe: async () => ({ isAdmin: false, isAnonymousAdmin: false, tokenUsageEnabled: false, kbSourceIngestionEnabled: false, skillsEnabled: false }),
         invalidate: () => {},
       },
     })
@@ -138,7 +151,7 @@ describe('the shell around the routes', () => {
 
     expect(within(screen.getByRole('banner')).getByText('Workload Analyzer')).toBeInTheDocument()
     const nav = screen.getByRole('navigation', { name: SHELL.admin.navigation })
-    expect(within(nav).getAllByRole('link')).toHaveLength(6)
+    expect(within(nav).getAllByRole('link')).toHaveLength(7)
     expect(screen.getByRole('link', { name: SHELL.admin.backToChat })).toBeInTheDocument()
   })
 
@@ -161,7 +174,7 @@ describe('the shell around the routes', () => {
   it('shows a dismissible dev-mode warning across admin navigation', async () => {
     const { router } = renderAt('/chat/dashboard/feedback', {
       capabilityProbe: {
-        probe: async () => ({ isAdmin: true, isAnonymousAdmin: true, tokenUsageEnabled: true, kbSourceIngestionEnabled: true }),
+        probe: async () => ({ isAdmin: true, isAnonymousAdmin: true, tokenUsageEnabled: true, kbSourceIngestionEnabled: true, skillsEnabled: true }),
         invalidate: () => {},
       },
     })

@@ -145,7 +145,8 @@ equivalent yet and are **dropped**: `group`, and the variable fields `validate`,
 ## Admin API
 
 All routes require an admin; see [Admin API](admin-api#skill-management) for the full reference. They are
-registered only when `AUTOCHAT_ADMIN_ENABLED=true` and the skill store is configured.
+registered only when `AUTOCHAT_ADMIN_ENABLED=true` and the skill store is configured. The
+[admin dashboard](dashboard#skills) has a Skills page built on these routes.
 
 | Method | Path                                        | Description                                                                         |
 | ------ | ------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -351,4 +352,3 @@ instructions. See [Audit logging](admin-api#audit-logging).
 
 - Slash-command invocation and `{{PLACEHOLDER}}` substitution in instructions.
 - A presentation-hints object for numeric bounds, validation and detection patterns.
-- A management UI.

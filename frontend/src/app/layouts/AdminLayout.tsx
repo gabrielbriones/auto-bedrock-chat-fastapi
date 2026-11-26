@@ -8,6 +8,7 @@ import {
   CoinsIcon,
   DatabaseIcon,
   InboxIcon,
+  SparklesIcon,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -22,7 +23,7 @@ import { DevModeBanner } from '@/domains/iam/presentation/dev-mode-banner'
 import { PendingBadge } from '@/domains/review/presentation/PendingBadge'
 
 type NavItem = {
-  readonly to: '/dashboard/feedback' | '/dashboard/reviewed' | '/dashboard/feedback/stats' | '/dashboard/kb-browser' | '/dashboard/kb-sources' | '/dashboard/token-usages'
+  readonly to: '/dashboard/feedback' | '/dashboard/reviewed' | '/dashboard/feedback/stats' | '/dashboard/kb-browser' | '/dashboard/kb-sources' | '/dashboard/skills' | '/dashboard/token-usages'
   readonly label: string
   readonly icon: LucideIcon
   /** Sections that exist only when the deployment enables them are hidden, as the route itself rejects them. */
@@ -35,6 +36,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { to: '/dashboard/feedback/stats', label: SHELL.admin.stats, icon: BarChart3Icon },
   { to: '/dashboard/kb-browser', label: SHELL.admin.knowledge, icon: BookOpenIcon },
   { to: '/dashboard/kb-sources', label: SHELL.admin.kbSources, icon: DatabaseIcon, enabled: (capabilities) => capabilities.kbSourceIngestionEnabled },
+  { to: '/dashboard/skills', label: SHELL.admin.skills, icon: SparklesIcon, enabled: (capabilities) => capabilities.skillsEnabled },
   { to: '/dashboard/token-usages', label: SHELL.admin.usage, icon: CoinsIcon, enabled: (capabilities) => capabilities.tokenUsageEnabled },
 ]
 

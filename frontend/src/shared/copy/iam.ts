@@ -95,4 +95,9 @@ export const IAM_COPY = {
     title: 'KB sources unavailable',
     description: 'Knowledge-base source ingestion is not configured for this deployment.',
   },
+
+  skillsUnavailable: {
+    title: 'Skills unavailable',
+    description: 'The skill store is not configured for this deployment.',
+  },
 } as const

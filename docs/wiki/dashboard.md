@@ -111,6 +111,56 @@ item's visibility rule.
   reports success/failure and both the Ingested Sources table and the
   KB Browser list are refreshed automatically.
 
+### Skills
+
+Create, edit, enable/disable, roll back and delete [skills](skills.md)
+at `/chat/dashboard/skills`. The nav item is hidden unless
+`GET /admin/_capabilities` reports `skills_enabled: true`; visiting the
+URL directly without it shows a "Skills unavailable" empty state.
+
+- **Table** from `GET /admin/skills`: name, display name, description,
+  an **Enabled** switch, revision and last update. A search box filters
+  by name, display name or description (kept in the URL as `?q=`).
+- The switch calls `POST /admin/skills/{name}/enable|disable` and flips
+  immediately; if the server refuses, it flips back and a toast reports
+  the error.
+- **Delete** (row button or editor) asks for confirmation, then calls
+  `DELETE /admin/skills/{name}`. Deletion is permanent, including the
+  revision history; a default skill seeded from a preset prompt comes
+  back at the next restart, so disable it instead to hide it.
+- **New skill** and clicking a row open the editor drawer:
+  - Name (create only), display name and description, each with a
+    character counter. The description and instructions counters use
+    the server limits returned in the list's `limits`.
+  - Instructions, next to a **Preview** that replaces each
+    `{{parameter}}` with a sample value (the parameter's example,
+    default, placeholder, first option or label).
+  - Typing a `{{name}}` placeholder adds a parameter row with that name,
+    marked **From instructions**. If the placeholder is removed before
+    the row is edited, the row is removed too. A placeholder with no
+    matching parameter (for example after deleting its row) is listed in
+    a warning with an **Add parameter** button, and the skill can't be
+    saved until it is fixed.
+  - Parameter rows (name, label, input type, required, default,
+    placeholder, example, help, options) that can be added, removed and
+    moved up/down. Every presentation hint is sent back exactly as
+    stored.
+  - **Revisions** from `GET /admin/skills/{name}/revisions`; any older
+    revision can be rolled back (`POST /admin/skills/{name}/rollback`),
+    which stores its content as a new revision.
+- Client-side validation mirrors the server's checks and shows errors
+  next to each field. A `400 invalid_skill` (or `422`) is shown inline
+  under the form, `409 skill_exists` reports the taken name, `403`
+  asks the admin to sign in again, and `503 skills_unavailable` reports
+  that the store is down.
+- **Conflicts.** Saves use `PATCH` with `expected_revision` and only
+  the fields the admin changed. If another admin saved first
+  (`409 revision_conflict`), the editor keeps the admin's draft and
+  shows the stored version. **Apply my changes** re-sends the same
+  changes against the new revision, so fields the admin didn't touch
+  keep the other admin's values; **Discard my changes** reloads the
+  stored version.
+
 ### Token Usage
 
 Read-only usage analytics sourced from the four `GET /admin/tokens/*`
@@ -327,6 +377,7 @@ the Chat UI grants admin access.
 - All user-supplied strings (feedback content, KB content, user IDs) are
   set via `textContent`/`createTextNode`, never via `innerHTML`, to
   prevent stored-XSS from API content reaching other admins' browsers.
+  Skill instructions and the instructions preview follow the same rule.
 - The JSON metadata editor validates client-side before sending but the
   server is the authoritative validator.
 

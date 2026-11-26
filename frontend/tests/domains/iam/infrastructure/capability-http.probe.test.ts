@@ -28,6 +28,7 @@ describe('CapabilityHttpProbe', () => {
       anonymous: true,
       token_usage_enabled: false,
       kb_source_ingestion_enabled: true,
+      skills_enabled: true,
     }))
     const probe = new CapabilityHttpProbe('/chat/admin', { request }, logger)
 
@@ -36,6 +37,7 @@ describe('CapabilityHttpProbe', () => {
       isAnonymousAdmin: true,
       tokenUsageEnabled: false,
       kbSourceIngestionEnabled: true,
+      skillsEnabled: true,
     })
     await probe.probe()
 
@@ -71,6 +73,7 @@ describe('CapabilityHttpProbe', () => {
       isAnonymousAdmin: false,
       tokenUsageEnabled: false,
       kbSourceIngestionEnabled: false,
+      skillsEnabled: false,
     })
   })
 
@@ -79,6 +82,6 @@ describe('CapabilityHttpProbe', () => {
     const request = requestMock().mockResolvedValue(ok({ is_admin: true, anonymous: false, token_usage_enabled: true }))
     const probe = new CapabilityHttpProbe('/admin', { request }, logger)
 
-    await expect(probe.probe()).resolves.toMatchObject({ isAdmin: true, kbSourceIngestionEnabled: false })
+    await expect(probe.probe()).resolves.toMatchObject({ isAdmin: true, kbSourceIngestionEnabled: false, skillsEnabled: false })
   })
 })
