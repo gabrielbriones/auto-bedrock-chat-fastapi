@@ -84,6 +84,16 @@ describe('parameter values', () => {
     expect(initialValues(TRIAGE)).toEqual({ job_id: '', format: 'md', note: '' })
   })
 
+  it('starts a required checkbox without a default as false, an optional one as left out', () => {
+    const flags = option('flags', 'Flags', [
+      parameter('strict', { inputType: 'checkbox', required: true }),
+      parameter('verbose', { inputType: 'checkbox' }),
+    ])
+
+    expect(initialValues(flags)).toEqual({ strict: 'false', verbose: '' })
+    expect(missingParameters(flags, initialValues(flags), '')).toEqual([])
+  })
+
   it('reports blank required parameters, free text included', () => {
     const withInput = option('ask', 'Ask', [parameter('input', { required: true })])
 

@@ -39,9 +39,7 @@ export const createDeepLinks = (
   logger: Logger,
 ) => {
   const promptCatalog = createPromptCatalog(bootstrap, chatSession, urlNavigator, logger)
-  const send = (text: string) => {
-    chatSession.send(text)
-  }
+  const send = (text: string) => chatSession.send(text)
 
   return { promptCatalog, skillDeepLink: new SkillDeepLink({ urlNavigator, send, legacy: promptCatalog, logger }) }
 }

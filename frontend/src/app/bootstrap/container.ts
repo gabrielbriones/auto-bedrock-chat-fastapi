@@ -41,6 +41,7 @@ import { FeedbackStore } from '@/domains/feedback/application/feedback.store'
 import type { FeedbackGateway, SubmittedFeedbackLog } from '@/domains/feedback/application/ports'
 import { SessionStorageSubmittedFeedbackLog } from '@/domains/feedback/infrastructure/session-storage-submitted-feedback-log'
 import { WsFeedbackGateway } from '@/domains/feedback/infrastructure/ws-feedback.gateway'
+import { WsSkillCatalogGateway } from '@/domains/skills/infrastructure/ws-skill-catalog.gateway'
 import type { ReviewGateway } from '@/domains/review/application/ports'
 import type { ReviewStore } from '@/domains/review/application/review.store'
 import type { KbSourcesGateway, KnowledgeGateway } from '@/domains/knowledge/application/ports'
@@ -302,7 +303,8 @@ export const createContainer = (
   })
   const modelConfig = createModelConfig(bootstrap, socket, messageBus, notifications)
   const feedback = createFeedback(socket, messageBus)
-  const adminStores = createAdminStores(bootstrap, { httpClient, logger, clock, confirmations, notifications })
+  const skillCatalogGateway = new WsSkillCatalogGateway(socket, messageBus)
+  const adminStores = createAdminStores(bootstrap, { httpClient, logger, clock, confirmations, notifications, skillCatalogGateway })
   const identity = createIdentity(bootstrap, authPolicy, authGateway, ssoGateway, socket)
   notifyOnSessionExpiry(identity, notifications)
 

@@ -28,8 +28,8 @@ const setup = (initial: UrlState) => {
       urlNavigator.state = next
     },
   }
-  const send = jest.fn<(text: string) => void>()
-  const legacy = { tryAutoSend: jest.fn<(ready: boolean) => void>() }
+  const send = jest.fn<(text: string) => 'sent' | 'refused'>(() => 'sent')
+  const legacy = { tryAutoSend: jest.fn<(ready: boolean) => void>(), catalog: { presets: [{ id: 'old-preset' }] } }
   const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }
   const link = new SkillDeepLink({ urlNavigator, send, legacy, logger })
   return { link, urlNavigator, send, legacy, logger }
@@ -60,16 +60,40 @@ describe('SkillDeepLink', () => {
 
     expect(send).not.toHaveBeenCalled()
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(link.getSnapshot()).toEqual({ text: '/triage job_id=7' })
+    expect(link.getSnapshot().draft).toEqual({ text: '/triage job_id=7' })
+
+    link.acknowledgeDraft()
+    expect(link.getSnapshot().draft).toBeNull()
   })
 
-  it('hands a ?prompt= no skill answers to the preset deep link', () => {
-    const { link, legacy, send } = setup({ prompt: 'old-preset' })
+  it('keeps the link when the session refuses the send, and sends it on a later try', () => {
+    const { link, urlNavigator, send } = setup({ skill: 'triage' })
+    send.mockReturnValueOnce('refused')
+
+    link.resolve([TRIAGE], true)
+    expect(urlNavigator.state).toEqual({ skill: 'triage' })
+
+    link.resolve([TRIAGE], true)
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(urlNavigator.state).toEqual({})
+  })
+
+  it('hands a ?prompt= no skill answers to the preset deep link, and keeps its preset usable', () => {
+    const { link, legacy, send } = setup({ prompt: 'old-preset', autosend: '0' })
 
     link.resolve([TRIAGE], true)
 
     expect(legacy.tryAutoSend).toHaveBeenCalledWith(true)
+    expect(link.getSnapshot().presetFallback).toBe(true)
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('does not ask for presets for an unknown ?prompt=', () => {
+    const { link } = setup({ prompt: 'nothing' })
+
+    link.resolve([TRIAGE], true)
+
+    expect(link.getSnapshot().presetFallback).toBe(false)
   })
 
   it('logs an unknown ?skill= once and leaves it', () => {

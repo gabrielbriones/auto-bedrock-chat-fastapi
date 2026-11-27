@@ -5,11 +5,7 @@ import type { Logger } from '@/shared/logging/logger'
 import type { ConnectionState, Unsubscribe } from '@/shared/ws/socket-client'
 
 import { connectionView, type ConnectionView } from '@/domains/messaging/domain/connection'
-import {
-  createMessage,
-  type ChatMessage,
-  type MessageRole,
-} from '@/domains/messaging/domain/message'
+import { createMessage, type ChatMessage, type MessageRole } from '@/domains/messaging/domain/message'
 import {
   renderTranscript,
   type HistoryMessage,
@@ -120,6 +116,12 @@ export class ChatSessionStore {
     return () => {
       this.#replyListeners.delete(listener)
     }
+  }
+
+  /** The composer took the refused command back. */
+  clearRejectedCommand = (): void => {
+    this.#rejectedCommand = null
+    this.#emit()
   }
 
   // FR-MSG-013 / FR-MSG-025 / FR-MSG-009: trim, refuse an empty or concurrent send without a
@@ -285,9 +287,7 @@ export class ChatSessionStore {
       return
     }
 
-    this.#resolve(pending.id, (turn) =>
-      applyStreamingSnapshot(turn, text, classifyTypingFrame(text)),
-    )
+    this.#resolve(pending.id, (turn) => applyStreamingSnapshot(turn, text, classifyTypingFrame(text)))
   }
 
   #updatePending(transition: (turn: Turn) => TurnResult): void {

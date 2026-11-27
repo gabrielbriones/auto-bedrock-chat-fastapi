@@ -79,7 +79,8 @@ title, description and usage.
   - text and number parameters get a text box (placeholder from the skill's `placeholder`, else `example`),
     `select` parameters a drop-down of their options, `checkbox` parameters a checkbox;
   - required parameters are marked `*`, and Send stays disabled until they are filled;
-  - fields start at the parameter's default; a blank field is left out, so the server applies its own default;
+  - fields (and the message box, for `input`) start at the parameter's default; a blank field is left out, so the
+    server applies its own default; a required checkbox without a default starts unchecked, sent as `false`;
   - the first field gets focus; Enter in a field sends, Escape or the chip's remove button drops the skill.
 - **Free text**: for a skill with an `input` parameter the message box stays and fills it (its placeholder is the
   parameter's); Backspace in an empty box drops the skill. A skill without `input` hides the message box, and one
@@ -89,8 +90,9 @@ title, description and usage.
 - A command typed or pasted with its pairs (`/job-triage job_id=1`) is sent as typed, with the skill's usage line
   shown above the message box.
 - `//` and text that does not start with `/` never open the menu.
-- The list comes from `GET {chat_endpoint}/skills/catalog`, read when input becomes available and again on composer
-  focus once it is a minute old, and only when the bootstrap reports `skillsEnabled`. If it cannot be read, typing
+- The list comes from a [`skill_catalog`](websocket-client.md#skill_catalog) request on the chat socket (so it works
+  with any sign-in method), read when input becomes available and again on composer focus once it is a minute old,
+  and only when the bootstrap reports `skillsEnabled`. If it cannot be read, typing
   `/` shows "Skills could not be loaded. You can still send a command." instead of the menu; commands still work
   because the server parses them.
 - **Refused commands**: a [`skill_error`](websocket-client.md) (unknown or disabled skill, bad parameters) is shown
@@ -113,9 +115,11 @@ https://your-app.example.com/chat/ui?skill=job-triage&job_id=abc123&format=txt
   text). The command is sent as `/job-triage job_id=abc123 format=txt`.
 - `autosend=0` or `autosend=false` puts the command in the message box instead of sending it.
 - A legacy `?prompt=<id>&VAR=value` link runs the preset's default skill (same name, `VAR` lower-cased); one that
-  no enabled skill answers to falls back to the [preset deep link](preset-prompts.md#deep-linking--auto-start-via-query-string).
-- The link waits for the skill catalog and for the composer to be ready (signed in, connected), runs once, and its
-  keys are then removed from the address bar. Authentication works as for preset deep links.
+  no enabled skill answers to falls back to the [preset deep link](preset-prompts.md#deep-linking--auto-start-via-query-string),
+  and the preset bar then stays visible so its variables can be filled in.
+- The link waits for the skill catalog and for the chat to be idle (signed in, connected, no answer pending), runs
+  once, and its keys (including a `prompt` a `skill` link took priority over) are then removed from the address
+  bar. Authentication works as for preset deep links.
 
 ---
 

@@ -56,7 +56,9 @@ const keyHandler =
   ({ open, current, matches, highlight, choose, dismiss }: KeyActions) =>
   (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
     const selected = matches[current]
-    if (!open || selected === undefined || event.nativeEvent.isComposing || event.shiftKey) {
+    // Modified keys (Shift/Ctrl/Meta/Alt+Enter insert a newline) stay with the composer.
+    const modified = event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
+    if (!open || selected === undefined || event.nativeEvent.isComposing || modified) {
       return false
     }
     const actions: Readonly<Record<string, () => void>> = {

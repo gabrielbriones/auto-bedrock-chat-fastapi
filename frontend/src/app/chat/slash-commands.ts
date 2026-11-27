@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo } from 'react'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
-import type { SkillDeepLinkDraft } from '@/app/chat/skill-deep-link'
-import { MESSAGING_COPY } from '@/shared/copy/messaging'
+import type { SkillDeepLinkSnapshot } from '@/app/chat/skill-deep-link'
 import type { SlashCommandOption } from '@/domains/messaging/domain/public'
-import { composerAvailability } from '@/domains/messaging/presentation/composer-policy'
 import type { ComposerCommands } from '@/domains/messaging/presentation/useSlashCommandMenu'
 import type { SkillCatalogEntry, SkillParameter } from '@/domains/skills/domain/public'
 
@@ -76,26 +74,27 @@ export const useSkillsActive = (): boolean => {
 
 const NO_OPTIONS: readonly SlashCommandOption[] = []
 
-/** Runs a `?skill=` (or legacy `?prompt=`) link once the catalog and composer allow; returns its draft. */
-export const useSkillDeepLink = (commands: ComposerCommands | undefined): SkillDeepLinkDraft | null => {
-  const { bootstrap, skillDeepLink } = useContainer()
+export type SkillDeepLinkView = {
+  readonly draftRequest: SkillDeepLinkSnapshot['draft']
+  readonly acknowledgeDraft: () => void
+  /** Presets show unless skills replace them, or a legacy link still needs its preset. */
+  readonly showPresets: boolean
+}
+
+/** Runs a `?skill=` (or legacy `?prompt=`) link once the catalog is read and nothing is pending. */
+export const useSkillDeepLink = (commands: ComposerCommands | undefined): SkillDeepLinkView => {
+  const { skillDeepLink } = useContainer()
   const { inputEnabled } = useContainerStore('identity')
   const { connection, awaitingResponse } = useContainerStore('chatSession')
-  const draft = useContainerStore('skillDeepLink')
+  const { draft, presetFallback } = useContainerStore('skillDeepLink')
+  const skillsActive = useSkillsActive()
   const options = commands?.options ?? NO_OPTIONS
-  const { enabled } = composerAvailability(
-    {
-      inputEnabled,
-      connected: connection.kind === 'connected',
-      awaitingResponse,
-      lockWhileResponding: bootstrap.lockInputWhileResponding,
-    },
-    MESSAGING_COPY.composer.disabled,
-  )
+  // Not the composer's own availability: with input unlocked mid-turn the session still refuses a send.
+  const ready = inputEnabled && connection.kind === 'connected' && !awaitingResponse
 
   useEffect(() => {
-    skillDeepLink.resolve(options, enabled)
-  }, [skillDeepLink, options, enabled])
+    skillDeepLink.resolve(options, ready)
+  }, [skillDeepLink, options, ready])
 
-  return draft
+  return { draftRequest: draft, acknowledgeDraft: skillDeepLink.acknowledgeDraft, showPresets: !skillsActive || presetFallback }
 }

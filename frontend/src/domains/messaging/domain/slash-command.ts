@@ -64,9 +64,17 @@ export const parameterFields = (option: SlashCommandOption): readonly SlashComma
 export const freeTextParameter = (option: SlashCommandOption): SlashCommandParameter | null =>
   option.parameters.find((parameter) => parameter.name === FREE_TEXT_PARAMETER) ?? null
 
-/** Starting values: each parameter's default, else empty (left out, so the server applies its own). */
+/**
+ * Starting values: each parameter's default, else empty (left out, so the server applies its own).
+ * A required checkbox shows unchecked, so it starts as `false` rather than as missing.
+ */
 export const initialValues = (option: SlashCommandOption): SlashCommandValues =>
-  Object.fromEntries(parameterFields(option).map((parameter) => [parameter.name, parameter.defaultValue ?? '']))
+  Object.fromEntries(
+    parameterFields(option).map((parameter) => [
+      parameter.name,
+      parameter.defaultValue ?? (parameter.required && parameter.inputType === 'checkbox' ? 'false' : ''),
+    ]),
+  )
 
 /** Required parameters still blank, free text included. */
 export const missingParameters = (

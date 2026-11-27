@@ -44,6 +44,7 @@ function ParameterControl({ parameter, value, disabled, onValue, onKeyDown, inpu
     <Input
       {...shared}
       type={parameter.inputType === 'number' ? 'number' : 'text'}
+      {...(parameter.inputType === 'number' ? { step: 'any' } : {})}
       value={value}
       placeholder={parameter.placeholder}
       onChange={(event) => onValue(event.target.value)}

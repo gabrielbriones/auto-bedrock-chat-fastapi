@@ -1,5 +1,6 @@
+import { networkErrorProblem } from '@/shared/http/exception'
 import type { Clock } from '@/shared/kernel/instant'
-import { isOk } from '@/shared/kernel/result'
+import { err, isOk } from '@/shared/kernel/result'
 import type { Logger } from '@/shared/logging/logger'
 
 import type { SkillCatalogGateway } from '@/domains/skills/application/ports'
@@ -64,7 +65,12 @@ export class SkillCatalogStore {
   }
 
   async #load(startedAt: number): Promise<void> {
-    const result = await this.#gateway.list(AbortSignal.timeout(30_000))
+    let result: Awaited<ReturnType<SkillCatalogGateway['list']>>
+    try {
+      result = await this.#gateway.list(AbortSignal.timeout(30_000))
+    } catch (error) {
+      result = err(networkErrorProblem(error))
+    }
     if (isOk(result)) {
       this.#loadedAt = startedAt
       this.#set({ entries: result.value, status: 'ready' })

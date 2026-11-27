@@ -210,6 +210,42 @@ describe('MessageComposer slash commands', () => {
     expect(onFocus).toHaveBeenCalled()
   })
 
+  it('leaves Ctrl/Meta/Alt+Enter to the composer while the menu is open', async () => {
+    const user = setup()
+
+    await user.type(field(), '/tri')
+    await user.keyboard('{Control>}{Enter}{/Control}')
+
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    expect(field()).toHaveValue('/tri\n')
+  })
+
+  it('starts the message box from the free-text default and accepts decimal numbers', async () => {
+    const onSend = jest.fn()
+    const options: readonly SlashCommandOption[] = [
+      {
+        name: 'scale',
+        title: 'Scale',
+        description: '',
+        usage: '/scale factor=<n>',
+        parameters: [
+          parameter('factor', { inputType: 'number', required: true }),
+          parameter('input', { required: true, defaultValue: 'all jobs' }),
+        ],
+      },
+    ]
+    const user = setup({ onSend, options })
+
+    await user.type(field(), '/sc{Enter}')
+    expect(field()).toHaveValue('all jobs')
+    const factor = screen.getByRole('spinbutton', { name: /factor/ })
+    expect(factor).toHaveAttribute('step', 'any')
+
+    await user.type(factor, '0.5{Enter}')
+
+    expect(onSend).toHaveBeenCalledWith('/scale factor=0.5 input="all jobs"')
+  })
+
   it('says the skills could not be loaded and still sends the typed command', async () => {
     const onSend = jest.fn()
     const user = setup({ onSend, options: [], unavailable: true })

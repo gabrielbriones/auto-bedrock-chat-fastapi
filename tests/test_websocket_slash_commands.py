@@ -254,6 +254,53 @@ class TestHandler:
         assert "direct_messages" not in configurable
 
 
+def _catalog(handler) -> dict:
+    websocket = MagicMock()
+    websocket.send_json = AsyncMock()
+    asyncio.run(handler._dispatch(websocket, "skill_catalog", {"type": "skill_catalog"}))
+    (frame,) = [call.args[0] for call in websocket.send_json.call_args_list]
+    return frame
+
+
+class TestCatalogOverTheSocket:
+    def test_lists_the_enabled_skills_without_instructions(self):
+        frame = _catalog(_make_handler(SkillService(lambda: _Store(_SKILL))))
+
+        assert frame["type"] == "skill_catalog" and "error" not in frame
+        assert [item["name"] for item in frame["items"]] == ["triage"]
+        assert "instructions" not in frame["items"][0]
+
+    def test_requires_an_authenticated_socket_when_tool_auth_is_required(self):
+        handler = _make_handler(SkillService(lambda: _Store(_SKILL)))
+        handler.config.require_tool_auth = True
+
+        frame = _catalog(handler)
+
+        assert frame["items"] == [] and frame["error"]["code"] == "authentication_required"
+
+    def test_accepts_any_credential_the_socket_authenticated_with(self):
+        handler = _make_handler(SkillService(lambda: _Store(_SKILL)))
+        handler.config.require_tool_auth = True
+        session = handler.session_manager.get_session.return_value
+        session.credentials = SimpleNamespace(get_auth_type_string=lambda: "bearer_token")
+
+        assert [item["name"] for item in _catalog(handler)["items"]] == ["triage"]
+
+    @pytest.mark.parametrize("skill_service", [None, SkillService(lambda: None)])
+    def test_reports_unavailable_skills(self, skill_service):
+        frame = _catalog(_make_handler(skill_service))
+
+        assert frame["items"] == [] and frame["error"]["code"] == "skills_unavailable"
+
+    def test_reports_a_store_failure_as_unavailable(self):
+        store = _Store(_SKILL)
+        store.list_enabled_catalog = AsyncMock(side_effect=RuntimeError("db down"))
+
+        frame = _catalog(_make_handler(SkillService(lambda: store)))
+
+        assert frame["error"]["code"] == "skills_unavailable"
+
+
 # ---------------------------------------------------------------------------
 # Through the real graph (mocked model)
 # ---------------------------------------------------------------------------

@@ -10,31 +10,34 @@ import { parseSkillDeepLink, scrubSkillDeepLink } from '@/domains/prompt-catalog
 
 export type SkillDeepLinkOptions = {
   readonly urlNavigator: UrlNavigator
-  readonly send: (text: string) => void
+  /** `refused` leaves the link to be tried again. */
+  readonly send: (text: string) => 'sent' | 'empty' | 'refused' | 'dropped-closed'
   /** The preset deep link, for a `?prompt=` no skill answers to (FR-PROMPT-008). */
-  readonly legacy: { tryAutoSend(ready: boolean): void }
+  readonly legacy: {
+    tryAutoSend(ready: boolean): void
+    readonly catalog: { readonly presets: readonly { readonly id: string }[] }
+  }
   readonly logger: Logger
 }
 
-export type SkillDeepLinkDraft = { readonly text: string }
+export type SkillDeepLinkSnapshot = {
+  /** The command an `autosend=0` link put in the composer, until the composer acknowledges it. */
+  readonly draft: { readonly text: string } | null
+  /** A `?prompt=` link fell back to its preset, whose bar must then stay usable. */
+  readonly presetFallback: boolean
+}
 
 // `?skill=<name>&param=value` (and a legacy `?prompt=<id>` while skills replace presets) runs as
 // `/<name> param=value`: sent once the composer is ready, or put in it with `autosend=0|false`.
 // Acted on at most once; the keys it used are then scrubbed from the address bar.
 export class SkillDeepLink {
-  readonly #urlNavigator: UrlNavigator
-  readonly #send: (text: string) => void
-  readonly #legacy: SkillDeepLinkOptions['legacy']
-  readonly #logger: Logger
+  readonly #options: SkillDeepLinkOptions
   readonly #listeners = new Set<() => void>()
   #done = false
-  #draft: SkillDeepLinkDraft | null = null
+  #snapshot: SkillDeepLinkSnapshot = { draft: null, presetFallback: false }
 
   constructor(options: SkillDeepLinkOptions) {
-    this.#urlNavigator = options.urlNavigator
-    this.#send = options.send
-    this.#legacy = options.legacy
-    this.#logger = options.logger
+    this.#options = options
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -45,8 +48,13 @@ export class SkillDeepLink {
     }
   }
 
-  /** The command an `autosend=0` link put in the composer, if any. */
-  getSnapshot = (): SkillDeepLinkDraft | null => this.#draft
+  getSnapshot = (): SkillDeepLinkSnapshot => this.#snapshot
+
+  acknowledgeDraft = (): void => {
+    if (this.#snapshot.draft !== null) {
+      this.#set({ ...this.#snapshot, draft: null })
+    }
+  }
 
   /** Call whenever the catalog or readiness changes; waits for a non-empty catalog. */
   resolve(options: readonly SlashCommandOption[], ready: boolean): void {
@@ -54,34 +62,44 @@ export class SkillDeepLink {
       return
     }
 
-    const url = this.#urlNavigator.current()
+    const url = this.#options.urlNavigator.current()
     const targets = options.map((option) => ({ name: option.name, parameters: option.parameters.map((p) => p.name) }))
     const intent = parseSkillDeepLink(url, targets)
-    if (intent === null) {
-      if (url.skill !== undefined) {
-        this.#done = true
-        this.#logger.warn('skill_deep_link_unknown_skill', { skill: url.skill })
-      }
-      this.#legacy.tryAutoSend(ready)
+    const option = options.find((candidate) => candidate.name === intent?.skill)
+    if (intent === null || option === undefined) {
+      this.#fallBack(url.skill, url.prompt, ready)
       return
     }
     if (intent.autoSend && !ready) {
       return
     }
 
-    const option = options.find((candidate) => candidate.name === intent.skill)
-    if (option === undefined) {
-      return
-    }
     const command = buildSlashCommand(option, intent.values, intent.values[FREE_TEXT_PARAMETER] ?? '')
-
-    this.#done = true
-    this.#urlNavigator.replace(scrubSkillDeepLink(url, intent))
-    if (intent.autoSend) {
-      this.#send(command)
+    if (intent.autoSend && this.#options.send(command) === 'refused') {
       return
     }
-    this.#draft = { text: command }
+    this.#done = true
+    this.#options.urlNavigator.replace(scrubSkillDeepLink(url, intent))
+    if (!intent.autoSend) {
+      this.#set({ ...this.#snapshot, draft: { text: command } })
+    }
+  }
+
+  #fallBack(skill: string | undefined, prompt: string | undefined, ready: boolean): void {
+    if (skill !== undefined) {
+      this.#done = true
+      this.#options.logger.warn('skill_deep_link_unknown_skill', { skill })
+      return
+    }
+    const hasPreset = this.#options.legacy.catalog.presets.some((preset) => preset.id === prompt)
+    if (hasPreset && !this.#snapshot.presetFallback) {
+      this.#set({ ...this.#snapshot, presetFallback: true })
+    }
+    this.#options.legacy.tryAutoSend(ready)
+  }
+
+  #set(snapshot: SkillDeepLinkSnapshot): void {
+    this.#snapshot = snapshot
     for (const listener of this.#listeners) {
       listener()
     }

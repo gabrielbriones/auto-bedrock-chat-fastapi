@@ -481,6 +481,7 @@ describe('ServerFrameSchema', () => {
       error: 'messaging',
       skill_loaded: 'messaging',
       skill_error: 'messaging',
+      skill_catalog: 'skills',
       pong: 'messaging',
       history: 'messaging',
       history_cleared: 'messaging',

@@ -40,6 +40,8 @@ export type MessageComposerProps = {
   readonly toolbar?: ReactNode
   /** Offered in a menu while the draft is `/` plus a partial name; none means no menu. */
   readonly commands?: ComposerCommands | undefined
+  /** Bumped when `value` is replaced from outside; drops any skill chosen for the old draft. */
+  readonly draftEpoch?: number
 }
 
 const autosize = (field: HTMLTextAreaElement): void => {
@@ -188,12 +190,13 @@ export function MessageComposer({
   onSend,
   toolbar,
   commands,
+  draftEpoch = 0,
 }: MessageComposerProps) {
   const locked = !availability.enabled
   const field = useComposerField(value, locked)
   const formRef = useComposerHeightVar()
   const hintId = useId()
-  const draft = useComposerDraft({ value, locked, commands, field, onChange, onSend })
+  const draft = useComposerDraft({ value, locked, commands, field, onChange, onSend, epoch: draftEpoch })
 
   return (
     // FR-SHELL-018: <main> is the only scroller, so the composer stays put by sticking to its bottom

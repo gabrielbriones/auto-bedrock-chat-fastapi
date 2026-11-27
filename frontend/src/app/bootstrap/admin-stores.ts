@@ -14,7 +14,7 @@ import { ReviewStore } from '@/domains/review/application/review.store'
 import { HttpReviewGateway } from '@/domains/review/infrastructure/http-review.gateway'
 import { SkillsStore } from '@/domains/skills/application/skills.store'
 import { SkillCatalogStore } from '@/domains/skills/application/skill-catalog.store'
-import { HttpSkillCatalogGateway } from '@/domains/skills/infrastructure/http-skill-catalog.gateway'
+import type { SkillCatalogGateway } from '@/domains/skills/application/ports'
 import { HttpSkillsGateway } from '@/domains/skills/infrastructure/http-skills.gateway'
 import { TelemetryStore } from '@/domains/telemetry/application/telemetry.store'
 import { HttpTelemetryGateway } from '@/domains/telemetry/infrastructure/http-telemetry.gateway'
@@ -25,16 +25,15 @@ export type AdminStoreParts = {
   readonly clock: Clock
   readonly confirmations: ConfirmationPort
   readonly notifications: NotificationPort
+  /** Socket-backed: the slash-command menu's data, read with the chat's own credentials. */
+  readonly skillCatalogGateway: SkillCatalogGateway
 }
 
-// The chat prefix is the UI endpoint without `/ui`, as the router's basepath.
-const chatPrefix = (bootstrap: ChatBootstrap): string => bootstrap.uiEndpoint.replace(/\/$/, '').slice(0, -'/ui'.length)
-
-// The HTTP-backed stores (SPEC-016 §3): request/response reads rather than live socket sessions, so
-// they are built together off the same client. All but the user-facing skill catalog (the
-// slash-command menu's data, under the chat prefix) are admin-only and use the admin prefix.
+// The HTTP-backed admin stores (SPEC-016 §3): request/response reads rather than live socket
+// sessions, so they are built together off the same client. The user-facing skill catalog rides
+// along only to keep the container small.
 export const createAdminStores = (bootstrap: ChatBootstrap, parts: AdminStoreParts) => {
-  const { httpClient, logger, clock, confirmations, notifications } = parts
+  const { httpClient, logger, clock, confirmations, notifications, skillCatalogGateway } = parts
   const reviewGateway = new HttpReviewGateway(bootstrap.adminPrefix, httpClient, logger)
   const knowledgeGateway = new HttpKnowledgeGateway(bootstrap.adminPrefix, httpClient, logger)
   const kbSourcesGateway = new HttpKbSourcesGateway(bootstrap.adminPrefix, httpClient, logger)
@@ -57,10 +56,6 @@ export const createAdminStores = (bootstrap: ChatBootstrap, parts: AdminStorePar
     telemetryGateway,
     telemetry: new TelemetryStore({ gateway: telemetryGateway }),
     skills: new SkillsStore({ gateway: skillsGateway, confirmations, notifications, logger }),
-    skillCatalog: new SkillCatalogStore({
-      gateway: new HttpSkillCatalogGateway(chatPrefix(bootstrap), httpClient, logger),
-      clock,
-      logger,
-    }),
+    skillCatalog: new SkillCatalogStore({ gateway: skillCatalogGateway, clock, logger }),
   }
 }

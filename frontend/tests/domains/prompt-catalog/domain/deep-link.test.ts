@@ -74,7 +74,7 @@ describe('parseSkillDeepLink', () => {
       skill: 'triage',
       values: { job_id: 'j 1', format: 'md' },
       autoSend: true,
-      consumed: ['skill', 'autosend', 'job_id', 'format'],
+      consumed: ['skill', 'prompt', 'autosend', 'job_id', 'format'],
     })
   })
 
@@ -83,7 +83,7 @@ describe('parseSkillDeepLink', () => {
       skill: 'workload-analysis',
       values: { job_id: '123' },
       autoSend: true,
-      consumed: ['prompt', 'autosend', 'JOB_ID'],
+      consumed: ['skill', 'prompt', 'autosend', 'JOB_ID'],
     })
   })
 
@@ -103,6 +103,14 @@ describe('parseSkillDeepLink', () => {
 describe('scrubSkillDeepLink', () => {
   it('removes only the keys the link used', () => {
     const url = { prompt: 'workload-analysis', JOB_ID: '1', autosend: '0', keep: 'me' }
+    const intent = parseSkillDeepLink(url, skills)
+    if (intent === null) throw new Error('fixture must parse')
+
+    expect(scrubSkillDeepLink(url, intent)).toEqual({ keep: 'me' })
+  })
+
+  it('also removes a prompt selector a skill link took priority over', () => {
+    const url = { skill: 'triage', prompt: 'workload-analysis', keep: 'me' }
     const intent = parseSkillDeepLink(url, skills)
     if (intent === null) throw new Error('fixture must parse')
 

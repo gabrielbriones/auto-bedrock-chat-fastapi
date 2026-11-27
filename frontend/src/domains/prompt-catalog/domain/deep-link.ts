@@ -72,7 +72,8 @@ export const parseSkillDeepLink = (url: UrlState, skills: readonly SkillLinkTarg
   }
 
   const values: Record<string, string> = {}
-  const consumed = [key, 'autosend']
+  // Both selectors go: a `prompt` left behind by a `skill` link would run on the next refresh.
+  const consumed = ['skill', 'prompt', 'autosend']
   for (const parameter of skill.parameters) {
     const source = [parameter, parameter.toUpperCase()].find((candidate) => url[candidate] !== undefined)
     if (source !== undefined) {

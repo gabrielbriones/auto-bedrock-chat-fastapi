@@ -148,6 +148,21 @@ class SkillService:
             self._snapshot = SkillCatalogSnapshot(version=version, entries=entries)
         return self._snapshot
 
+    async def list_catalog(self) -> list[SkillCatalogEntry]:
+        """The enabled skills read from the store now (never cached), without instructions.
+
+        Raises:
+            SkillLoadError: ``skills_unavailable`` when there is no store or it cannot be read.
+        """
+        store = self._get_store()
+        if store is None:
+            raise SkillLoadError(SKILLS_UNAVAILABLE, "Skills are not available right now.")
+        try:
+            return list(await store.list_enabled_catalog())
+        except Exception:
+            logger.exception("Could not read the skill catalog")
+            raise SkillLoadError(SKILLS_UNAVAILABLE, "Skills are not available right now.") from None
+
     async def load(
         self, name: Any, params: Any = None, actor: str | None = None, free_text: str | None = None
     ) -> LoadedSkill:

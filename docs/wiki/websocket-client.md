@@ -197,7 +197,10 @@ running turn (`turn_started` and its frames so far) so the client can follow it.
 { "type": "get_history" }
 { "type": "clear_history" }
 { "type": "logout" }
+{ "type": "skill_catalog" }
 ```
+
+`skill_catalog` asks for the enabled skills; the reply is a [`skill_catalog`](#skill_catalog) frame.
 
 **Conversation management** (only when [conversation persistence](conversation-persistence) is enabled and the session is authenticated — see that page for the full protocol, auth model, and REST equivalent):
 
@@ -340,6 +343,22 @@ Sent in reply to a `chat` frame holding a [slash command](skills#slash-commands)
   `invalid_command`, `tools_unsupported` (the selected model cannot call tools), `unknown_skill`, `skill_disabled`,
   `skills_unavailable` (no skill store, or reading it failed) or `invalid_arguments`; `message` is meant for the
   user.
+
+#### `skill_catalog`
+
+The reply to a `skill_catalog` request: the same `items` as
+[`GET {chat_endpoint}/skills/catalog`](skills#user-catalog), read from the store on every request. It is
+authorized by the socket's own session, so any credential the session authenticated with works (the HTTP route
+only sees the SSO cookie or `Authorization` / `X-API-Key` headers).
+
+```json
+{ "type": "skill_catalog", "items": [{ "name": "job-triage", "display_name": "Job triage", "description": "", "parameters": [], "revision": 3 }], "timestamp": "2026-01-01T10:00:00" }
+{ "type": "skill_catalog", "items": [], "error": { "code": "authentication_required", "message": "Authenticate to list skills." }, "timestamp": "2026-01-01T10:00:00" }
+```
+
+A refusal carries `error` and no items: `authentication_required` (tool auth is required and the session has not
+authenticated) or `skills_unavailable` (no skill store, or reading it failed). It is never a `skill_error`, which
+refuses a chat message.
 
 #### `usage_updated`
 

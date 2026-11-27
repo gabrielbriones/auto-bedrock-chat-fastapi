@@ -1,0 +1,25 @@
+{
+  "type": "skill_catalog",
+  "timestamp": "2026-11-27T10:00:00",
+  "items": [
+    {
+      "name": "job-triage",
+      "display_name": "Job triage",
+      "description": "Triage a failed job.",
+      "parameters": [
+        {
+          "name": "job_id",
+          "label": "Job ID",
+          "help": "",
+          "required": true,
+          "default": null,
+          "input_type": "text",
+          "options": [],
+          "placeholder": "",
+          "example": "j-123"
+        }
+      ],
+      "revision": 2
+    }
+  ]
+}

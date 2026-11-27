@@ -50,6 +50,7 @@ type DraftDeps = {
   readonly field: RefObject<HTMLTextAreaElement | null>
   readonly onChange: (text: string) => void
   readonly onSend: (text: string) => void
+  readonly epoch: number
 }
 
 const NO_OPTIONS: readonly SlashCommandOption[] = []
@@ -75,14 +76,25 @@ const placeholderOf = (skill: SkillDraft | null): string | null => {
 // The textarea re-renders (shown again, or emptied) before it can take focus.
 const focusLater = (field: RefObject<HTMLTextAreaElement | null>) => requestAnimationFrame(() => field.current?.focus())
 
+// The chosen skill belongs to the draft it was chosen for; replacing the draft from outside drops it.
+const useChosenSkill = (epoch: number) => {
+  const [skill, setSkill] = useState<SkillDraft | null>(null)
+  const [seenEpoch, setSeenEpoch] = useState(epoch)
+  if (epoch !== seenEpoch) {
+    setSeenEpoch(epoch)
+    setSkill(null)
+  }
+  return [skill, setSkill] as const
+}
+
 /**
  * The composer's draft: plain text, or a chosen skill whose parameters are filled in fields and
  * sent as `/name key=value ...` (the textarea then holds the skill's free text, if it takes any).
  */
-export const useComposerDraft = ({ value, locked, commands, field, onChange, onSend }: DraftDeps): ComposerDraft => {
-  const [skill, setSkill] = useState<SkillDraft | null>(null)
+export const useComposerDraft = ({ value, locked, commands, field, onChange, onSend, epoch }: DraftDeps): ComposerDraft => {
+  const [skill, setSkill] = useChosenSkill(epoch)
   const start = (option: SlashCommandOption) => {
-    onChange('')
+    onChange(freeTextParameter(option)?.defaultValue ?? '')
     setSkill({ option, values: initialValues(option) })
     focusLater(field)
   }

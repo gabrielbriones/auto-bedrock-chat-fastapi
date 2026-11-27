@@ -66,6 +66,20 @@ describe('SkillCatalogStore', () => {
     expect(gateway.list).toHaveBeenCalledTimes(3)
   })
 
+  it('fails, keeping its entries, when the read itself throws', async () => {
+    const results: Array<() => ReturnType<SkillCatalogGateway['list']>> = [
+      async () => ok([ENTRY]),
+      () => Promise.reject(new Error('body timeout')),
+    ]
+    const { clock, store } = setup(() => (results.shift() ?? (async () => ok([])))())
+
+    await store.refresh()
+    clock.millis += SKILL_CATALOG_STALE_MS
+    await store.refresh()
+
+    expect(store.getSnapshot()).toEqual({ entries: [ENTRY], status: 'failed' })
+  })
+
   it('notifies subscribers', async () => {
     const { store } = setup(async () => ok([ENTRY]))
     const listener = jest.fn()

@@ -90,7 +90,7 @@ The same mapping applies to a [deep link](#deep-linking--auto-start-via-query-st
 
 ### Migrating to skills
 
-While skills are active (the bootstrap reports `skillsEnabled` and `GET {chat_endpoint}/skills/catalog` lists at
+While skills are active (the bootstrap reports `skillsEnabled` and the skill catalog lists at
 least one skill) the chat UI hides the preset bar and the variables panel; users type `/` in the composer instead
 (see [Slash commands](chat-ui.md#slash-commands)). Presets come back only if the catalog is empty or cannot be read.
 
