@@ -34,7 +34,11 @@ export { evaluatePreset, type PresetEvaluation } from '@/domains/prompt-catalog/
 export { detectBindings } from '@/domains/prompt-catalog/domain/detection'
 export {
   parseDeepLink,
+  parseSkillDeepLink,
   scrubDeepLink,
+  scrubSkillDeepLink,
   type DeepLinkIntent,
+  type SkillDeepLinkIntent,
+  type SkillLinkTarget,
   type UrlState,
 } from '@/domains/prompt-catalog/domain/deep-link'

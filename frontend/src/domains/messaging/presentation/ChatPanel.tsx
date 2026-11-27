@@ -25,14 +25,35 @@ export type ChatPanelProps = {
   readonly onMessageSent?: (text: string) => void
   readonly renderFeedback?: (messageId: MessageId) => ReactNode
   /** Skills offered when the draft starts with `/`, supplied from `src/app`. */
-  readonly commands?: ComposerCommands
+  readonly commands?: ComposerCommands | undefined
+  /** Replaces the draft each time a new object is passed (e.g. a deep link's command). */
+  readonly draftRequest?: { readonly text: string } | null
+}
+
+type DraftRequest = { readonly text: string } | null
+
+// Each new request replaces the draft (adjusted while rendering, not in an effect): a refused slash
+// command comes back to be corrected, and a deep link's command is put in to be reviewed.
+const useExternalDraft = (requests: readonly DraftRequest[]) => {
+  const [draft, setDraft] = useState('')
+  const [applied, setApplied] = useState(requests)
+
+  if (requests.some((request, index) => request !== applied[index])) {
+    const next = requests.find((request, index) => request !== null && request !== applied[index])
+    setApplied(requests)
+    if (next != null) {
+      setDraft(next.text)
+    }
+  }
+
+  return [draft, setDraft] as const
 }
 
 // SPEC-012 §5: badge, preset area (Task 23), transcript, composer.
-export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessageSent, renderFeedback, commands }: ChatPanelProps) {
+export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessageSent, renderFeedback, commands, draftRequest = null }: ChatPanelProps) {
   const { bootstrap, chatSession, notifications } = useContainer()
-  const { connection, transcript, awaitingResponse } = useContainerStore('chatSession')
-  const [draft, setDraft] = useState('')
+  const { connection, transcript, awaitingResponse, rejectedCommand } = useContainerStore('chatSession')
+  const [draft, setDraft] = useExternalDraft([rejectedCommand, draftRequest])
   const usage = useMemo(() => sessionUsage(transcript), [transcript])
 
   const availability = composerAvailability(
@@ -55,7 +76,7 @@ export function ChatPanel({ inputEnabled, presetArea, composerToolbar, onMessage
         notifications.error(MESSAGING_COPY.errors.dropped)
       }
     },
-    [chatSession, notifications, onMessageSent],
+    [chatSession, notifications, onMessageSent, setDraft],
   )
 
   return (

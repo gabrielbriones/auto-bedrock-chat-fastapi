@@ -116,6 +116,7 @@ export const MESSAGING_COPY = {
       defaultOption: 'Default',
       details: 'Add details',
       run: (name: string) => `Press Enter to run /${name}`,
+      unavailable: 'Skills could not be loaded. You can still send a command.',
     },
   },
 

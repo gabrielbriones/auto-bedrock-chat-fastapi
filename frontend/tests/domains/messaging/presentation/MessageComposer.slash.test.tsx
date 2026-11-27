@@ -42,7 +42,17 @@ const OPTIONS: readonly SlashCommandOption[] = [
   },
 ]
 
-const Harness = ({ onSend = jest.fn(), onFocus = jest.fn() }: { onSend?: (text: string) => void; onFocus?: () => void }) => {
+const Harness = ({
+  onSend = jest.fn(),
+  onFocus = jest.fn(),
+  options = OPTIONS,
+  unavailable = false,
+}: {
+  onSend?: (text: string) => void
+  onFocus?: () => void
+  options?: readonly SlashCommandOption[]
+  unavailable?: boolean
+}) => {
   const [draft, setDraft] = useState('')
 
   return (
@@ -55,7 +65,7 @@ const Harness = ({ onSend = jest.fn(), onFocus = jest.fn() }: { onSend?: (text: 
         setDraft('')
         onSend(text)
       }}
-      commands={{ options: OPTIONS, onFocus }}
+      commands={{ options, onFocus, unavailable }}
     />
   )
 }
@@ -198,5 +208,18 @@ describe('MessageComposer slash commands', () => {
     await user.click(field())
 
     expect(onFocus).toHaveBeenCalled()
+  })
+
+  it('says the skills could not be loaded and still sends the typed command', async () => {
+    const onSend = jest.fn()
+    const user = setup({ onSend, options: [], unavailable: true })
+
+    await user.type(field(), '/triage')
+    expect(screen.getByText(COPY.slashMenu.unavailable)).toBeInTheDocument()
+
+    await user.type(field(), ' job_id=1{Enter}')
+
+    expect(onSend).toHaveBeenCalledWith('/triage job_id=1')
+    expect(screen.queryByText(COPY.slashMenu.unavailable)).not.toBeInTheDocument()
   })
 })

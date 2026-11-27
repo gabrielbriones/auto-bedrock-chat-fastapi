@@ -29,7 +29,8 @@ release wheels by `.github/workflows/release.yml`). Build it with
 - **Conversation history** — persists within the session
 - **Authentication modal** — UI for providing credentials (bearer token, API key, basic auth, OAuth2)
 - **Session management** — clear history, ping, logout
-- **Preset prompt buttons** — one-click buttons that send pre-defined prompts; see [Preset Prompts](preset-prompts.md)
+- **Preset prompt buttons** — one-click buttons that send pre-defined prompts, hidden while skills are active; see [Preset Prompts](preset-prompts.md)
+- **Slash commands** — type `/` to pick a [skill](skills); see [below](#slash-commands)
 - **Per-message usage label** — token usage of each answer, with its estimated price on hover; see [below](#per-message-usage-label)
 
 ### Per-message usage label
@@ -89,10 +90,32 @@ title, description and usage.
   shown above the message box.
 - `//` and text that does not start with `/` never open the menu.
 - The list comes from `GET {chat_endpoint}/skills/catalog`, read when input becomes available and again on composer
-  focus once it is a minute old. If it cannot be read the menu just does not appear; commands still work because the
-  server parses them.
+  focus once it is a minute old, and only when the bootstrap reports `skillsEnabled`. If it cannot be read, typing
+  `/` shows "Skills could not be loaded. You can still send a command." instead of the menu; commands still work
+  because the server parses them.
+- **Refused commands**: a [`skill_error`](websocket-client.md) (unknown or disabled skill, bad parameters) is shown
+  as a system notice in the transcript, the command is removed from the transcript (no turn was started) and put
+  back in the message box to be corrected.
+- **Presets**: while skills are active (`skillsEnabled` and a non-empty catalog) the preset bar and variables panel
+  are hidden; they stay hidden until the catalog has been read and return if it is empty or unreadable.
 - Screen readers: while the menu is open the composer keeps focus and points at the highlighted entry
   (`aria-activedescendant`), and the number of matches is announced. The fields are a labelled group.
+
+### Deep links
+
+A link can run a skill as soon as the chat is usable:
+
+```
+https://your-app.example.com/chat/ui?skill=job-triage&job_id=abc123&format=txt
+```
+
+- `skill` names the skill; any other key matching one of its parameters fills it (an `input` key fills the free
+  text). The command is sent as `/job-triage job_id=abc123 format=txt`.
+- `autosend=0` or `autosend=false` puts the command in the message box instead of sending it.
+- A legacy `?prompt=<id>&VAR=value` link runs the preset's default skill (same name, `VAR` lower-cased); one that
+  no enabled skill answers to falls back to the [preset deep link](preset-prompts.md#deep-linking--auto-start-via-query-string).
+- The link waits for the skill catalog and for the composer to be ready (signed in, connected), runs once, and its
+  keys are then removed from the address bar. Authentication works as for preset deep links.
 
 ---
 

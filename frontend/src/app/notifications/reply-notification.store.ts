@@ -8,7 +8,8 @@ import type {
 } from '@/shared/ports/system-notification-port'
 import type { Unsubscribe } from '@/shared/ws/socket-client'
 
-import type { ChatSessionStore, SettledReply } from '@/domains/messaging/application/chat-session.store'
+import type { ChatSessionStore } from '@/domains/messaging/application/chat-session.store'
+import type { SettledReply } from '@/domains/messaging/application/settled-reply'
 import { replyPreview } from '@/app/notifications/reply-preview'
 
 export const REPLY_NOTIFICATIONS_ENABLED_KEY = 'chat.replyNotifications.enabled'

@@ -77,6 +77,7 @@ export function SlashCommandMenu({ menu }: { readonly menu: SlashCommandMenuStat
       <span className="sr-only" aria-live="polite">
         {menu.open ? COPY.results(menu.matches.length) : ''}
       </span>
+      {menu.unavailable && <p className="px-2 pt-1 text-xs text-muted-foreground">{COPY.unavailable}</p>}
       {menu.running !== null && (
         <p className="truncate px-2 pt-1 font-mono text-xs text-muted-foreground">
           <span className="sr-only">{COPY.usage} </span>

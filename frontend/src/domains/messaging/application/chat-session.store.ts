@@ -1,4 +1,4 @@
-import { conversationId, messageId, turnId, type ConversationId } from '@/shared/kernel/branded'
+import { conversationId, messageId, turnId } from '@/shared/kernel/branded'
 import type { Clock } from '@/shared/kernel/instant'
 import { isOk } from '@/shared/kernel/result'
 import type { Logger } from '@/shared/logging/logger'
@@ -36,6 +36,7 @@ import type {
 } from '@/domains/messaging/application/ports'
 import { answeredActivity, settleHistoryUsage, settleTurnUsage } from '@/domains/messaging/application/answer-activity'
 import { toHistory } from '@/domains/messaging/application/loaded-history'
+import { settledReplyOf, type SettledReply } from '@/domains/messaging/application/settled-reply'
 
 export type ChatSessionSnapshot = {
   readonly connection: ConnectionView
@@ -44,16 +45,11 @@ export type ChatSessionSnapshot = {
   readonly awaitingResponse: boolean
   readonly canSend: boolean
   readonly configuredModel: { readonly id: string; readonly name: string } | null
+  /** The latest slash command the server refused, handed back so it can be corrected. */
+  readonly rejectedCommand: { readonly text: string } | null
 }
 
 export type SendOutcome = 'sent' | 'empty' | 'refused' | 'dropped-closed'
-
-/** FR-MSG-032: a turn this session sent has just resolved with a reply the user can read. */
-export type SettledReply = {
-  readonly outcome: 'answered' | 'failed'
-  readonly text: string
-  readonly conversationId: ConversationId | null
-}
 
 export type ChatSessionStoreOptions = {
   readonly gateway: MessagingGateway
@@ -78,6 +74,7 @@ export class ChatSessionStore {
   readonly #logger: Logger
   readonly #newId: () => string
   readonly #replyListeners = new Set<(reply: SettledReply) => void>()
+  #rejectedCommand: ChatSessionSnapshot['rejectedCommand'] = null
   #seq = 0
   #sessionId: string | null = null
   #snapshot: ChatSessionSnapshot
@@ -183,6 +180,9 @@ export class ChatSessionStore {
       case 'failed':
         this.#fail(event.text)
         return
+      case 'command-rejected':
+        this.#rejectCommand(event.text)
+        return
       case 'typing':
         this.#observeTyping(event.text)
         return
@@ -247,20 +247,19 @@ export class ChatSessionStore {
     this.#announceSettled(pending.id)
   }
 
+  // The server started no turn and saved nothing, so neither does the transcript: the echo goes, the
+  // reason stays as a notice and the command goes back to the composer.
+  #rejectCommand(reason: string): void {
+    const pending = this.#pendingTurn()
+    this.#turns = this.#turns.filter((turn) => turn !== pending)
+    this.#rejectedCommand = pending === undefined ? this.#rejectedCommand : { text: pending.request.raw }
+    this.#pushTransient(this.#message('system', reason))
+  }
+
   #announceSettled(id: Turn['id']): void {
-    const turn = this.#turns.find((candidate) => candidate.id === id)
-    if (turn === undefined || turn.response === null || (turn.status !== 'answered' && turn.status !== 'failed')) {
-      return
-    }
-
-    const reply: SettledReply = {
-      outcome: turn.status,
-      text: turn.response.raw,
-      conversationId: turn.conversationId,
-    }
-
-    for (const listener of this.#replyListeners) {
-      listener(reply)
+    const reply = settledReplyOf(this.#turns.find((candidate) => candidate.id === id))
+    if (reply !== null) {
+      this.#replyListeners.forEach((listener) => listener(reply))
     }
   }
 
@@ -361,6 +360,7 @@ export class ChatSessionStore {
       awaitingResponse: this.#pendingTurn() !== undefined,
       canSend: open,
       configuredModel: this.#configuredModel,
+      rejectedCommand: this.#rejectedCommand,
     }
   }
 

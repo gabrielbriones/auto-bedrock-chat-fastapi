@@ -12,6 +12,8 @@ export type ComposerCommands = {
   readonly options: readonly SlashCommandOption[]
   /** Called whenever the composer gains focus, e.g. to refresh `options`. */
   readonly onFocus: () => void
+  /** The commands could not be read; a typed command is still sent, the server parses it. */
+  readonly unavailable?: boolean
 }
 
 export type SlashCommandMenuState = {
@@ -20,6 +22,8 @@ export type SlashCommandMenuState = {
   readonly activeIndex: number
   /** The known command the draft is running, for the usage hint; `null` while the menu is open. */
   readonly running: SlashCommandOption | null
+  /** A command is being typed but the list could not be loaded. */
+  readonly unavailable: boolean
   readonly listboxId: string
   readonly optionId: (index: number) => string
   /** Spread on the textarea: it stays focused and points at the highlighted option. */
@@ -98,6 +102,7 @@ export const useSlashCommandMenu = (
     matches,
     activeIndex: current,
     running: open ? null : activeSlashCommand(value, options),
+    unavailable: commands?.unavailable === true && query !== null && matches.length === 0,
     listboxId,
     optionId,
     fieldProps: {

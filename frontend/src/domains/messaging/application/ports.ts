@@ -33,6 +33,8 @@ export type MessagingEvent =
   /** The final usage of an answer that arrived with `final: false`, matched by its message id. */
   | { readonly kind: 'usage-updated'; readonly messageId: string; readonly usage: TurnUsage }
   | { readonly kind: 'failed'; readonly text: string }
+  /** A slash command the server refused before starting a turn (`skill_error`). */
+  | { readonly kind: 'command-rejected'; readonly text: string }
   /** A turn this tab did not send is running on the conversation it shows; its frames follow. */
   | { readonly kind: 'turn-observed'; readonly text: string; readonly conversationId: string }
   /** ADR-008 / P1: typing moves the unresolved turn into streaming; text application is T-071. */

@@ -77,6 +77,9 @@ const renderPanel = (
     typing(text: string) {
       emit?.({ kind: 'typing', text })
     },
+    reject(text: string) {
+      emit?.({ kind: 'command-rejected', text })
+    },
     reconnect(state: ConnectionState) {
       changeConnection?.(state)
     },
@@ -182,6 +185,32 @@ describe('ChatPanel', () => {
     expect(notifications.notifications).toContainEqual(
       expect.objectContaining({ kind: 'error' }),
     )
+  })
+
+  it('shows a refused slash command as a notice and puts it back in the composer', async () => {
+    const user = userEvent.setup()
+    const { reject } = renderPanel()
+
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), '/nope job_id=1{Enter}')
+    reject("Unknown skill: 'nope'")
+
+    expect(await screen.findByText("Unknown skill: 'nope'")).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: 'You' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('/nope job_id=1')
+  })
+
+  it('puts each new draft request in the composer', () => {
+    const container = fakeContainer()
+    const panel = (draftRequest: { text: string } | null) => (
+      <ContainerContext.Provider value={container}>
+        <ChatPanel inputEnabled draftRequest={draftRequest} />
+      </ContainerContext.Provider>
+    )
+    const { rerender } = render(panel(null))
+
+    rerender(panel({ text: '/triage job_id=1' }))
+
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('/triage job_id=1')
   })
 
   // NFR-A11Y-001

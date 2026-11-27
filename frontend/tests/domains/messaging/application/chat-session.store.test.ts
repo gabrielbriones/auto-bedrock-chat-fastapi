@@ -354,6 +354,34 @@ describe('ChatSessionStore', () => {
     })
   })
 
+  describe('rejected slash commands', () => {
+    it('drops the echo, shows the reason as a notice and hands the command back', () => {
+      const { store, emit } = createHarness()
+      const settled = jest.fn()
+      store.onReplySettled(settled)
+      store.send('/nope job_id=1')
+
+      emit({ kind: 'command-rejected', text: "Unknown skill: 'nope'" })
+
+      const { transcript, awaitingResponse, rejectedCommand } = store.getSnapshot()
+      expect(awaitingResponse).toBe(false)
+      expect(transcript.map((entry) => [entry.message.role, entry.message.raw, entry.transient])).toEqual([
+        ['system', "Unknown skill: 'nope'", true],
+      ])
+      expect(rejectedCommand).toEqual({ text: '/nope job_id=1' })
+      expect(settled).not.toHaveBeenCalled()
+    })
+
+    it('only shows the notice when nothing is pending', () => {
+      const { store, emit } = createHarness()
+
+      emit({ kind: 'command-rejected', text: 'Skills are not available.' })
+
+      expect(store.getSnapshot().transcript).toHaveLength(1)
+      expect(store.getSnapshot().rejectedCommand).toBeNull()
+    })
+  })
+
   describe('settled replies (FR-MSG-032)', () => {
     it('announces an answered turn with its text and conversation', () => {
       const { store, emit } = createHarness()

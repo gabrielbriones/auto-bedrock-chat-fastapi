@@ -329,13 +329,13 @@ describe('WsMessagingGateway', () => {
     ])
   })
 
-  it('ends the pending turn on skill_error and ignores skill_loaded', () => {
+  it('reports a skill_error as a rejected command and ignores skill_loaded', () => {
     const { emit, events } = createHarness()
 
     emit({ type: 'skill_loaded', timestamp: TIMESTAMP, name: 'job-triage', revision: 3, message_id: 'm-1', conversation_id: null })
     emit({ type: 'skill_error', timestamp: TIMESTAMP, code: 'unknown_skill', message: "Unknown skill: 'x'" })
 
-    expect(events).toEqual([{ kind: 'failed', text: "Unknown skill: 'x'" }])
+    expect(events).toEqual([{ kind: 'command-rejected', text: "Unknown skill: 'x'" }])
   })
 
   it('surfaces typing frames verbatim so P1 can be observed without applying them', () => {
