@@ -74,3 +74,32 @@ def test_unparseable_marker_falls_back_to_the_stored_content():
     (only,) = format_history_messages([message])
 
     assert only["content"] == "not a marker"
+
+
+def test_direct_skill_load_keeps_the_load_skill_round_and_its_flags():
+    """A slash command's skill load (XMGPLAT-11862) shows up like a model-initiated one, flagged ``direct``."""
+    entry = {
+        "tool_call_id": "direct_1",
+        "name": "load_skill",
+        "result": "Skill: triage (revision 2)",
+        "metadata": {"skill_ref": {"name": "triage", "revision": "2"}, "direct": True},
+    }
+    call = {"name": "load_skill", "args": {"name": "triage", "params": {}}, "id": "direct_1", "type": "tool_call"}
+    history = format_history_messages(
+        [
+            {"role": "user", "content": "/triage", "metadata": {"message_id": "u1"}},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [call],
+                "metadata": {"message_id": "d1", "direct": True},
+            },
+            {"role": "tool", "content": '["Skill: ..."]', "tool_results": [entry], "metadata": {"direct": True}},
+            {"role": "assistant", "content": "Done.", "metadata": {"message_id": "a1"}},
+        ]
+    )
+
+    assert [m["role"] for m in history] == ["user", "assistant", "tool", "assistant"]
+    assert history[0]["content"] == "/triage"
+    assert history[1]["tool_calls"] == [call] and history[1]["metadata"]["direct"] is True
+    assert history[2]["content"] == "" and history[2]["tool_results"] == [entry]

@@ -120,6 +120,22 @@ def _user_turn():
 
 
 @pytest.mark.asyncio
+async def test_rag_node_answers_the_user_message_a_slash_command_load_follows():
+    """A slash command's direct ``load_skill`` round (XMGPLAT-11862) sits after the user message."""
+    direct = [
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "d1"}], "metadata": {"direct": True}},
+        {"role": "tool", "content": "[]", "tool_results": [], "metadata": {"direct": True}},
+    ]
+    state = {"messages": [{"role": "user", "content": "/triage job_id=1"}, *direct], "metadata": {}}
+
+    result = await rag_node(state, _rag_config(_DummyChatConfig()))
+
+    assert result["messages"][0]["role"] == "system" and "BASE PROMPT" in result["messages"][0]["content"]
+    assert result["messages"][1:] == state["messages"]
+    assert result["kb_results"]
+
+
+@pytest.mark.asyncio
 async def test_rag_node_puts_context_first_when_prompt_caching_is_off():
     """Legacy order (pre-XMGPLAT-11867) is kept byte-for-byte when caching is off."""
     result = await rag_node(_user_turn(), _rag_config(_DummyChatConfig()))

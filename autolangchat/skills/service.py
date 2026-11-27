@@ -34,6 +34,9 @@ SKILL_DISABLED = "skill_disabled"
 SKILLS_UNAVAILABLE = "skills_unavailable"
 INVALID_SKILL_ARGUMENTS = "invalid_arguments"
 
+# The parameter that receives a slash command's free text.
+INPUT_PARAMETER = "input"
+
 
 class SkillLoadError(Exception):
     """A ``load_skill`` call that cannot be served; ``code`` is reported to the model."""
@@ -145,13 +148,19 @@ class SkillService:
             self._snapshot = SkillCatalogSnapshot(version=version, entries=entries)
         return self._snapshot
 
-    async def load(self, name: Any, params: Any = None, actor: Optional[str] = None) -> LoadedSkill:
+    async def load(
+        self, name: Any, params: Any = None, actor: str | None = None, free_text: str | None = None
+    ) -> LoadedSkill:
         """Validate a ``load_skill`` call and render the skill.
+
+        ``free_text`` (the text after a slash command's pairs) becomes the
+        ``input`` parameter, which the skill must declare.
 
         Raises:
             SkillLoadError: unknown or disabled skill, unavailable store, or
                 invalid parameters (unknown or duplicate names, non-string or
-                oversized values, missing required ones).
+                oversized values, missing required ones, free text for a
+                skill without ``input``).
         """
         if not isinstance(name, str) or not SKILL_NAME_PATTERN.fullmatch(name):
             raise SkillLoadError(UNKNOWN_SKILL, f"Unknown skill: {name!r}")
@@ -160,13 +169,28 @@ class SkillService:
         store = self._get_store()
         if store is None:
             raise SkillLoadError(SKILLS_UNAVAILABLE, "Skills are not available right now.")
-        skill = await store.get_skill(name)
+        try:
+            skill = await store.get_skill(name)
+        except Exception:
+            logger.exception("Could not read skill %r", name)
+            raise SkillLoadError(SKILLS_UNAVAILABLE, "Skills are not available right now.") from None
         if skill is None:
             raise SkillLoadError(UNKNOWN_SKILL, f"Unknown skill: {name!r}")
         if not skill.enabled:
             raise SkillLoadError(SKILL_DISABLED, f"Skill {name!r} is disabled.")
 
         declared = {parameter.name: parameter for parameter in skill.parameters}
+        if free_text is not None:
+            if INPUT_PARAMETER not in declared:
+                raise SkillLoadError(
+                    INVALID_SKILL_ARGUMENTS,
+                    f"Skill {name!r} takes no free text. Pass its parameters as key=value.",
+                )
+            if INPUT_PARAMETER in values:
+                raise SkillLoadError(
+                    INVALID_SKILL_ARGUMENTS, f"Pass {INPUT_PARAMETER!r} either as key=value or as free text, not both."
+                )
+            values = {**values, INPUT_PARAMETER: free_text}
         unknown = sorted(set(values) - set(declared))
         if unknown:
             valid = ", ".join(declared) or "none"

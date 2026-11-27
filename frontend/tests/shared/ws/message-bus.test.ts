@@ -479,6 +479,8 @@ describe('ServerFrameSchema', () => {
       ai_response: 'messaging',
       usage_updated: 'messaging',
       error: 'messaging',
+      skill_loaded: 'messaging',
+      skill_error: 'messaging',
       pong: 'messaging',
       history: 'messaging',
       history_cleared: 'messaging',

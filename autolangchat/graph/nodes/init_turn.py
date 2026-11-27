@@ -31,8 +31,9 @@ async def init_turn_node(state: ChatState, config: RunnableConfig) -> Dict[str, 
     """Append the new user message to checkpointed conversation history.
 
     Reads ``user_message`` from state, appends it as a ``{"role": "user",
-    "content": ...}`` dict to the existing ``messages`` list, then clears
-    ``user_message`` so it is not persisted in the checkpoint.
+    "content": ...}`` dict to the existing ``messages`` list, followed by any
+    ``configurable["direct_messages"]`` (a slash command's skill load), then
+    clears ``user_message`` so it is not persisted in the checkpoint.
 
     Returns a partial state update with:
     - ``messages``: full history including the new user message
@@ -60,6 +61,9 @@ async def init_turn_node(state: ChatState, config: RunnableConfig) -> Dict[str, 
         logger.debug(
             "init_turn: appended user message (%d chars), history now %d messages", len(user_message), len(messages)
         )
+        # A slash command's skill load: the load_skill round a model would have made, ahead of the first LLM call.
+        direct_messages = configurable.get("direct_messages") or []
+        messages = messages + [dict(message) for message in direct_messages]
     else:
         logger.warning("init_turn: user_message is empty, passing history through unchanged")
 

@@ -43,9 +43,19 @@ from .graph.nodes.llm_call import _generate_message_preview
 from .graph.tools.manager import AuthInfo, ToolManager
 from .history import ends_mid_tool_loop, format_history_messages, has_recent_tool_loop, with_final_usage
 from .message_preprocessor import is_artifact_marker_entry
-from .model_capabilities import build_bedrock_kwargs
+from .model_capabilities import build_bedrock_kwargs, supports_tool_calling
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
+from .skills.service import SkillLoadError
+from .skills.slash import (
+    TOOLS_UNSUPPORTED,
+    DirectSkillLoad,
+    SlashCommand,
+    SlashCommandError,
+    is_literal_slash,
+    load_slash_command,
+    parse_slash_command,
+)
 from .usage import UsageLedger, persist_turn_usage, summarize_usage
 
 if TYPE_CHECKING:
@@ -236,6 +246,7 @@ class WebSocketChatHandler:
         user_settings_store: Optional[BaseUserSettingsStore] = None,
         sso_provider: Optional[Any] = None,
         tool_manager: Optional[ToolManager] = None,
+        skill_service: Any | None = None,
     ):
         self.session_manager = session_manager
         self.config = config
@@ -253,6 +264,8 @@ class WebSocketChatHandler:
         self.user_settings_store = user_settings_store
         self.sso_provider = sso_provider
         self.tool_manager = tool_manager
+        # Loads the skill of a ``/<skill> ...`` chat message; ``None`` turns slash commands off (plain text).
+        self.skill_service = skill_service
         # Strong references to fire-and-forget background tasks (e.g.
         # conversation auto-titling) so they aren't garbage-collected
         # mid-flight; each task removes itself on completion.
@@ -674,15 +687,26 @@ class WebSocketChatHandler:
             logger.info("Received user message (%d chars)", content_len)
             logger.debug("Received user message: %s", preview)
 
-            # Send typing indicator
-            await self._send_message(
-                websocket,
-                {
-                    "type": "typing",
-                    "message": "AI is thinking...",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
+            command: SlashCommand | None = None
+            if getattr(self, "skill_service", None) is not None and is_literal_slash(user_message):
+                user_message = user_message[1:]
+            elif getattr(self, "skill_service", None) is not None:
+                try:
+                    command = parse_slash_command(user_message)
+                except SlashCommandError as error:
+                    await self._send_skill_error(websocket, error.code, error.message)
+                    return
+
+            # A slash command's typing indicator follows its skill_loaded, once its turn is reserved.
+            if command is None:
+                await self._send_message(
+                    websocket,
+                    {
+                        "type": "typing",
+                        "message": _THINKING_MESSAGE,
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
 
             # Auth context: format verified-user info for injection into system prompt.
             # The rag_node (inside the graph) handles the actual injection.
@@ -754,6 +778,12 @@ class WebSocketChatHandler:
                 merged_overrides,
             )
 
+            direct_load: DirectSkillLoad | None = None
+            if command is not None:
+                direct_load = await self._load_slash_command(websocket, session, command, effective_config)
+                if direct_load is None:
+                    return
+
             # Closure: send progress updates to the WebSocket client. Tagged
             # with the turn's conversation so a client that has since switched
             # conversations can ignore them.
@@ -794,6 +824,7 @@ class WebSocketChatHandler:
                     "artifact_store": artifact_store,
                     "artifact_scope": artifact_store.activate(session.connection_id, thread_id, session.user_id),
                 }
+            direct_frames = self._direct_load_frames(direct_load, conversation_id) if direct_load is not None else None
 
             # ------------------------------------------------------------------
             # Delegate entirely to LangGraph.
@@ -809,7 +840,9 @@ class WebSocketChatHandler:
                     if conversation_id is not None:
                         # Registered before the first await, so a cancellation while the other tabs are
                         # told still finds the turn in ``live_turn`` and removes it.
-                        live_turn = self._register_live_turn(websocket, session, conversation_id, user_message)
+                        live_turn = self._register_live_turn(
+                            websocket, session, conversation_id, user_message, direct_frames
+                        )
                         await self._send_to_viewers(
                             self._turn_viewers(live_turn, conversation_id),
                             [self._turn_started_frame(conversation_id, live_turn), *live_turn.frames],
@@ -849,6 +882,9 @@ class WebSocketChatHandler:
                 chat_config=effective_config,
             )
             try:
+                # Inside the try: a cancellation while announcing still releases the thread reservation.
+                if direct_frames is not None:
+                    await self._announce_direct_load(websocket, conversation_id, live_turn, direct_frames)
                 graph_state = await self.chat_graph.ainvoke(
                     {"user_message": user_message},
                     config={
@@ -865,6 +901,7 @@ class WebSocketChatHandler:
                             "session_id": session.session_id,
                             "user_id": session.user_id,
                             **({"user_message_id": live_turn.user_message_id} if live_turn is not None else {}),
+                            **({"direct_messages": direct_load.messages} if direct_load is not None else {}),
                             "usage_ledger": usage_ledger,
                             "usage_finalized_later": title_pending,
                             **artifact_config,
@@ -1405,9 +1442,17 @@ class WebSocketChatHandler:
         }
 
     def _register_live_turn(
-        self, websocket: WebSocket, session: ChatSession, conversation_id: str, user_message: str
+        self,
+        websocket: WebSocket,
+        session: ChatSession,
+        conversation_id: str,
+        user_message: str,
+        first_frames: list[dict[str, Any]] | None = None,
     ) -> _LiveTurn:
-        """Register the turn ``websocket`` starts on ``conversation_id``. Call with its thread lock held."""
+        """Register the turn ``websocket`` starts on ``conversation_id``. Call with its thread lock held.
+
+        ``first_frames`` replace the initial ``typing`` frame followers are sent and replayed.
+        """
         now = datetime.now().isoformat()
         live = _LiveTurn(
             origin=websocket,
@@ -1417,9 +1462,10 @@ class WebSocketChatHandler:
             sender=session,
             sender_user_id=session.user_id,
         )
-        live.record(
+        for frame in first_frames or [
             {"type": "typing", "message": _THINKING_MESSAGE, "timestamp": now, "conversation_id": conversation_id}
-        )
+        ]:
+            live.record(frame)
         self._live_turns[conversation_id] = live
         return live
 
@@ -1431,21 +1477,23 @@ class WebSocketChatHandler:
         turn: Optional[_LiveTurn],
         log_errors: bool = True,
         finish: bool = False,
+        recorded: bool = False,
     ) -> None:
         """Send a frame of ``turn`` to the socket that started it and to every tab following it.
 
         ``turn`` is ``None`` for a request that never became a live turn (no conversation, or it
         failed before it was registered): its frame goes to ``origin`` alone, and never into the
         turn another tab may be running on the same conversation. ``finish`` says the frame ends
-        the turn; it stops being live. A send to ``origin`` that fails raises ``WebSocketError``
-        once the followers have had the frame.
+        the turn; it stops being live. ``recorded`` says the turn already holds the frame and its
+        followers were sent it when it was registered: it goes to ``origin`` alone. A send to
+        ``origin`` that fails raises ``WebSocketError`` once the followers have had the frame.
         """
         if conversation_id is None or turn is None:
             await self._send_message(origin, frame, log_errors=log_errors)
             return
         async with self._thread_lock(conversation_id):
             viewers: List[WebSocket] = []
-            if self._live_turns.get(conversation_id) is turn:
+            if not recorded and self._live_turns.get(conversation_id) is turn:
                 viewers = self._turn_viewers(turn, conversation_id)
                 if finish:
                     del self._live_turns[conversation_id]
@@ -3400,6 +3448,54 @@ class WebSocketChatHandler:
                 "timestamp": datetime.now().isoformat(),
             },
         )
+
+    async def _send_skill_error(self, websocket: WebSocket, code: str, message: str) -> None:
+        """Refuse a slash command; it is sent before any turn starts, so nothing is checkpointed."""
+        await self._send_message(
+            websocket,
+            {"type": "skill_error", "code": code, "message": message, "timestamp": datetime.now().isoformat()},
+        )
+
+    async def _load_slash_command(
+        self, websocket: WebSocket, session: ChatSession, command: SlashCommand, chat_config: ChatConfig
+    ) -> DirectSkillLoad | None:
+        """Load ``command``'s skill for a turn on ``chat_config``'s model; ``None`` once ``skill_error`` is sent.
+
+        A model without tool calling is refused: the load is replayed to it as a tool call and its result.
+        """
+        if not supports_tool_calling(chat_config.model_id):
+            await self._send_skill_error(
+                websocket,
+                TOOLS_UNSUPPORTED,
+                f"The selected model cannot run skills. Choose a model with tool support to use /{command.name}.",
+            )
+            return None
+        try:
+            return await load_slash_command(self.skill_service, command, actor=session.user_id)
+        except SkillLoadError as error:
+            await self._send_skill_error(websocket, error.code, error.message)
+            return None
+
+    @staticmethod
+    def _direct_load_frames(load: DirectSkillLoad, conversation_id: str | None) -> list[dict[str, Any]]:
+        """The ``skill_loaded`` and first ``typing`` frames that open the turn ``load`` starts."""
+        common = {"timestamp": datetime.now().isoformat(), "conversation_id": conversation_id}
+        return [
+            {"type": "skill_loaded", "name": load.name, "revision": load.revision, "message_id": load.message_id}
+            | common,
+            {"type": "typing", "message": _THINKING_MESSAGE} | common,
+        ]
+
+    async def _announce_direct_load(
+        self, websocket: WebSocket, conversation_id: str | None, turn: _LiveTurn | None, frames: list[dict[str, Any]]
+    ) -> None:
+        """Send the reserved turn's ``_direct_load_frames`` to its sender; followers had them at registration."""
+        try:
+            for frame in frames:
+                await self._send_turn_frame(websocket, conversation_id, frame, turn, recorded=True)
+        except WebSocketError:
+            # The turn runs anyway; its answer is checkpointed for when the conversation is reloaded.
+            logger.debug("Could not announce the slash command of a closed connection")
 
     def _get_client_ip(self, websocket: WebSocket) -> str:
         """Extract client IP address from WebSocket"""

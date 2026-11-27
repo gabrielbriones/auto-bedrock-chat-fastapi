@@ -136,6 +136,9 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   aiResponseFrameSchema,
   usageUpdatedFrameSchema,
   serverFrame('error').extend({ message: z.string() }),
+  // A `/<skill> ...` chat message loaded its skill (the turn follows) or was refused (no turn runs).
+  serverFrame('skill_loaded').extend({ name: z.string(), revision: z.number(), message_id: z.string(), conversation_id: z.string().nullable() }),
+  serverFrame('skill_error').extend({ code: z.string(), message: z.string() }),
   serverFrame('pong'),
   serverFrame('history').extend({ messages: z.array(messageSchema) }),
   serverFrame('history_cleared').extend({ message: z.string() }),
@@ -210,6 +213,8 @@ export const FRAME_OWNER = {
   ai_response: 'messaging',
   usage_updated: 'messaging',
   error: 'messaging',
+  skill_loaded: 'messaging',
+  skill_error: 'messaging',
   pong: 'messaging',
   history: 'messaging',
   history_cleared: 'messaging',
