@@ -4,7 +4,8 @@ import { describe, expect, it, jest } from '@jest/globals'
 
 import type { Container } from '@/app/bootstrap/container'
 import { ContainerContext } from '@/app/bootstrap/container-context'
-import { useSkillsActive } from '@/app/chat/slash-commands'
+import { isOnRouteConversation, useSkillsActive } from '@/app/chat/slash-commands'
+import { conversationId } from '@/shared/kernel/branded'
 import { err, ok, type Result } from '@/shared/kernel/result'
 import { SystemClock } from '@/shared/kernel/instant'
 import type { Problem } from '@/shared/http/exception'
@@ -29,6 +30,29 @@ const render = (skillsEnabled: boolean, result: Result<readonly SkillCatalogEntr
   const hook = renderHook(() => useSkillsActive(), { wrapper })
   return { ...hook, skillCatalog }
 }
+
+describe('isOnRouteConversation', () => {
+  const A = conversationId('a')
+  const loaded = { visible: true, activeId: A, unknownId: null, pendingTurn: null }
+
+  it('is ready once the conversation the URL names is the one loaded', () => {
+    expect(isOnRouteConversation(loaded, A)).toBe(true)
+    expect(isOnRouteConversation({ ...loaded, activeId: null }, null)).toBe(true)
+  })
+
+  it.each([
+    ['another conversation is still loaded', { ...loaded, activeId: conversationId('b') }],
+    ['nothing is loaded yet', { ...loaded, activeId: null }],
+    ['the id is unknown', { ...loaded, unknownId: A }],
+    ['a turn is still running there', { ...loaded, pendingTurn: { conversationId: A } }],
+  ])('waits while %s', (_case, state) => {
+    expect(isOnRouteConversation(state, A)).toBe(false)
+  })
+
+  it('does not wait without conversations', () => {
+    expect(isOnRouteConversation({ ...loaded, visible: false, activeId: null }, A)).toBe(true)
+  })
+})
 
 describe('useSkillsActive', () => {
   it('is off when the server has no skills', () => {

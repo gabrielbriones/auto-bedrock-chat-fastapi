@@ -14,3 +14,28 @@ export const settledReplyOf = (turn: Turn | undefined): SettledReply | null =>
   turn === undefined || turn.response === null || (turn.status !== 'answered' && turn.status !== 'failed')
     ? null
     : { outcome: turn.status, text: turn.response.raw, conversationId: turn.conversationId }
+
+// FR-MSG-032. Only a pending turn settling counts: transients, abandoned turns and loaded
+// history are not a reply the user is waiting on.
+export class ReplyAnnouncer {
+  readonly #listeners = new Set<(reply: SettledReply) => void>()
+
+  subscribe = (listener: (reply: SettledReply) => void): (() => void) => {
+    this.#listeners.add(listener)
+
+    return () => {
+      this.#listeners.delete(listener)
+    }
+  }
+
+  announce(turn: Turn | undefined): void {
+    const reply = settledReplyOf(turn)
+    if (reply !== null) {
+      this.#listeners.forEach((listener) => listener(reply))
+    }
+  }
+
+  clear(): void {
+    this.#listeners.clear()
+  }
+}

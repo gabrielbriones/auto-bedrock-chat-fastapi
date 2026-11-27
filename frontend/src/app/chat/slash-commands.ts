@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react'
 
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import type { SkillDeepLinkSnapshot } from '@/app/chat/skill-deep-link'
+import type { ConversationId } from '@/shared/kernel/branded'
 import type { SlashCommandOption } from '@/domains/messaging/domain/public'
 import type { ComposerCommands } from '@/domains/messaging/presentation/useSlashCommandMenu'
 import type { SkillCatalogEntry, SkillParameter } from '@/domains/skills/domain/public'
@@ -81,16 +82,29 @@ export type SkillDeepLinkView = {
   readonly showPresets: boolean
 }
 
+type RouteConversationState = {
+  readonly visible: boolean
+  readonly activeId: ConversationId | null
+  readonly unknownId: ConversationId | null
+  readonly pendingTurn: unknown
+}
+
+// The chat frame names no conversation, so a link may only run once the one its URL names is the one
+// loaded (not a recovery state) and has no turn of its own running.
+export const isOnRouteConversation = (state: RouteConversationState, routeId: ConversationId | null): boolean =>
+  !state.visible || (state.activeId === routeId && state.unknownId === null && state.pendingTurn === null)
+
 /** Runs a `?skill=` (or legacy `?prompt=`) link once the catalog is read and nothing is pending. */
-export const useSkillDeepLink = (commands: ComposerCommands | undefined): SkillDeepLinkView => {
+export const useSkillDeepLink = (commands: ComposerCommands | undefined, routeId: ConversationId | null): SkillDeepLinkView => {
   const { skillDeepLink } = useContainer()
   const { inputEnabled } = useContainerStore('identity')
   const { connection, awaitingResponse } = useContainerStore('chatSession')
   const { draft, presetFallback } = useContainerStore('skillDeepLink')
   const skillsActive = useSkillsActive()
+  const onRoute = isOnRouteConversation(useContainerStore('conversations'), routeId)
   const options = commands?.options ?? NO_OPTIONS
   // Not the composer's own availability: with input unlocked mid-turn the session still refuses a send.
-  const ready = inputEnabled && connection.kind === 'connected' && !awaitingResponse
+  const ready = inputEnabled && connection.kind === 'connected' && !awaitingResponse && onRoute
 
   useEffect(() => {
     skillDeepLink.resolve(options, ready)

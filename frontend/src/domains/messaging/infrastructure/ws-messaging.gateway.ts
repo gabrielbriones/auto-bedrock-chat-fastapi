@@ -224,6 +224,13 @@ const toolEvent = (frame: ToolFrame): MessagingEvent | null => {
 // CONTRACT-001 §2.2. Overrides and the heartbeat join this frame in Phase 4 (`T-080`).
 const toChatFrame = (text: string): object => ({ type: 'chat', message: text })
 
+const loadedHistory = (frame: Extract<ServerFrame, { type: 'conversation_loaded' }>): MessagingEvent => ({
+  kind: 'history-loaded',
+  conversationId: frame.conversation_id,
+  messages: historyMessages(frame.messages, frame.timestamp),
+  live: frame.live === true,
+})
+
 const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
   switch (frame.type) {
     case 'connection_established':
@@ -262,15 +269,11 @@ const toMessagingEvent = (frame: ServerFrame): MessagingEvent | null => {
       return usage === null ? null : { kind: 'usage-updated', messageId: frame.message_id, usage }
     }
     case 'conversation_loaded':
-      return {
-        kind: 'history-loaded',
-        conversationId: frame.conversation_id,
-        messages: historyMessages(frame.messages, frame.timestamp),
-      }
+      return loadedHistory(frame)
     // The thread exists but its checkpoint is gone: for the transcript that is a load with nothing in it.
     case 'conversation_error':
       return frame.code === 'conversation_history_unavailable' && frame.conversation_id !== undefined
-        ? { kind: 'history-loaded', conversationId: frame.conversation_id, messages: [] }
+        ? { kind: 'history-loaded', conversationId: frame.conversation_id, messages: [], live: false }
         : null
     default:
       // Frames this context owns but does not use yet (`pong`, `history`, `history_cleared`) and

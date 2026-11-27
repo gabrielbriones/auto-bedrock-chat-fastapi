@@ -55,6 +55,8 @@ export type MessagingEvent =
       readonly kind: 'history-loaded'
       readonly conversationId: string
       readonly messages: readonly LoadedHistoryMessage[]
+      /** The conversation's running turn is replayed in the frames that follow. */
+      readonly live?: boolean
     }
 
 export interface MessagingGateway {

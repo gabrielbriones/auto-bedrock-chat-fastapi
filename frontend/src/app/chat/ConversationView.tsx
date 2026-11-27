@@ -26,10 +26,10 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const { pendingTurn, unknownId } = useContainerStore('conversations')
   const { configuredModel } = useContainerStore('chatSession')
   const commands = useSkillCommands()
-  const deepLink = useSkillDeepLink(commands)
   const navigate = useNavigate()
 
   useConversationRoute(conversationId)
+  const deepLink = useSkillDeepLink(commands, conversationId)
 
   const startNew = useCallback(() => {
     conversations.dismissUnknownId()

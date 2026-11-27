@@ -117,9 +117,11 @@ https://your-app.example.com/chat/ui?skill=job-triage&job_id=abc123&format=txt
 - A legacy `?prompt=<id>&VAR=value` link runs the preset's default skill (same name, `VAR` lower-cased); one that
   no enabled skill answers to falls back to the [preset deep link](preset-prompts.md#deep-linking--auto-start-via-query-string),
   and the preset bar then stays visible so its variables can be filled in.
-- The link waits for the skill catalog and for the chat to be idle (signed in, connected, no answer pending), runs
-  once, and its keys (including a `prompt` a `skill` link took priority over) are then removed from the address
-  bar. Authentication works as for preset deep links.
+- The link waits for the skill catalog, for the conversation in the URL (`/chat/ui/c/<id>?skill=...`) to be loaded
+  (any running turn in it replayed and finished), and for the chat to be idle (signed in, connected, no answer
+  pending). It runs once, and its keys (including a `prompt` a `skill` link took priority over) are then removed
+  from the address bar. An unknown conversation id never runs the link. Authentication works as for preset deep
+  links.
 
 ---
 

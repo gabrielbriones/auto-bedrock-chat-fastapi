@@ -354,6 +354,30 @@ describe('ChatSessionStore', () => {
     })
   })
 
+  describe('a live conversation load', () => {
+    it('awaits the replayed turn, so nothing can be sent before it starts', () => {
+      const { store, emit } = createHarness()
+
+      emit({ kind: 'history-loaded', conversationId: 'c-1', messages: [], live: true })
+      expect(store.getSnapshot().awaitingResponse).toBe(true)
+      expect(store.send('/triage')).toBe('refused')
+
+      emit({ kind: 'turn-observed', text: 'validate job', conversationId: 'c-1' })
+      emit(answered('done'))
+
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+    })
+
+    it('stops awaiting when the connection drops', () => {
+      const { store, emit, changeConnection } = createHarness()
+
+      emit({ kind: 'history-loaded', conversationId: 'c-1', messages: [], live: true })
+      changeConnection(state('reconnecting', 1))
+
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+    })
+  })
+
   describe('rejected slash commands', () => {
     it('drops the echo, shows the reason as a notice and hands the command back', () => {
       const { store, emit } = createHarness()

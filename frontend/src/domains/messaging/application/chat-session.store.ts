@@ -32,7 +32,7 @@ import type {
 } from '@/domains/messaging/application/ports'
 import { answeredActivity, settleHistoryUsage, settleTurnUsage } from '@/domains/messaging/application/answer-activity'
 import { toHistory } from '@/domains/messaging/application/loaded-history'
-import { settledReplyOf, type SettledReply } from '@/domains/messaging/application/settled-reply'
+import { ReplyAnnouncer, type SettledReply } from '@/domains/messaging/application/settled-reply'
 
 export type ChatSessionSnapshot = {
   readonly connection: ConnectionView
@@ -69,8 +69,10 @@ export class ChatSessionStore {
   readonly #listeners = new Set<() => void>()
   readonly #logger: Logger
   readonly #newId: () => string
-  readonly #replyListeners = new Set<(reply: SettledReply) => void>()
+  readonly #replies = new ReplyAnnouncer()
   #rejectedCommand: ChatSessionSnapshot['rejectedCommand'] = null
+  // A live load's turn is replayed in the frames after it; until it starts, nothing may be sent.
+  #replayExpected = false
   #seq = 0
   #sessionId: string | null = null
   #snapshot: ChatSessionSnapshot
@@ -110,13 +112,7 @@ export class ChatSessionStore {
 
   // FR-MSG-032. Only a pending turn settling counts: transients, abandoned turns and loaded
   // history are not a reply the user is waiting on.
-  onReplySettled = (listener: (reply: SettledReply) => void): Unsubscribe => {
-    this.#replyListeners.add(listener)
-
-    return () => {
-      this.#replyListeners.delete(listener)
-    }
-  }
+  onReplySettled = (listener: (reply: SettledReply) => void): Unsubscribe => this.#replies.subscribe(listener)
 
   /** The composer took the refused command back. */
   clearRejectedCommand = (): void => {
@@ -157,6 +153,7 @@ export class ChatSessionStore {
     this.#transient = []
     this.#seq = 0
     this.#configuredModel = null
+    this.#replayExpected = false
     this.#emit()
   }
 
@@ -167,7 +164,7 @@ export class ChatSessionStore {
 
     this.#subscriptions = []
     this.#listeners.clear()
-    this.#replyListeners.clear()
+    this.#replies.clear()
   }
 
   #handleEvent(event: MessagingEvent): void {
@@ -208,6 +205,7 @@ export class ChatSessionStore {
         this.#turns = []
         this.#transient = []
         this.#configuredModel = null
+        this.#replayExpected = event.live === true
         this.#emit()
     }
   }
@@ -259,15 +257,13 @@ export class ChatSessionStore {
   }
 
   #announceSettled(id: Turn['id']): void {
-    const reply = settledReplyOf(this.#turns.find((candidate) => candidate.id === id))
-    if (reply !== null) {
-      this.#replyListeners.forEach((listener) => listener(reply))
-    }
+    this.#replies.announce(this.#turns.find((candidate) => candidate.id === id))
   }
 
   // A turn another tab sent is followed from its first frame exactly like one sent here, and blocks
   // this composer too: the server runs one turn per conversation at a time.
   #observeTurn(text: string, conversation: string): void {
+    this.#replayExpected = false
     if (this.#pendingTurn() === undefined) {
       this.#turns = [...this.#turns, createTurn(turnId(this.#newId()), this.#message('user', text), conversationId(conversation))]
       this.#emit()
@@ -307,6 +303,7 @@ export class ChatSessionStore {
     }
 
     this.#sessionId = null
+    this.#replayExpected = false
     const pending = this.#pendingTurn()
 
     if (pending === undefined) {
@@ -357,7 +354,7 @@ export class ChatSessionStore {
       // I1: a session id only exists while the connection it was issued for is open.
       sessionId: open ? this.#sessionId : null,
       transcript: renderTranscript(this.#turns, this.#transient, this.#history),
-      awaitingResponse: this.#pendingTurn() !== undefined,
+      awaitingResponse: this.#pendingTurn() !== undefined || this.#replayExpected,
       canSend: open,
       configuredModel: this.#configuredModel,
       rejectedCommand: this.#rejectedCommand,
