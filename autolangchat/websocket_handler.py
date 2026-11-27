@@ -824,6 +824,7 @@ class WebSocketChatHandler:
                     "artifact_store": artifact_store,
                     "artifact_scope": artifact_store.activate(session.connection_id, thread_id, session.user_id),
                 }
+            direct_frames = self._direct_load_frames(direct_load, conversation_id) if direct_load is not None else None
 
             # ------------------------------------------------------------------
             # Delegate entirely to LangGraph.
@@ -839,7 +840,9 @@ class WebSocketChatHandler:
                     if conversation_id is not None:
                         # Registered before the first await, so a cancellation while the other tabs are
                         # told still finds the turn in ``live_turn`` and removes it.
-                        live_turn = self._register_live_turn(websocket, session, conversation_id, user_message)
+                        live_turn = self._register_live_turn(
+                            websocket, session, conversation_id, user_message, direct_frames
+                        )
                         await self._send_to_viewers(
                             self._turn_viewers(live_turn, conversation_id),
                             [self._turn_started_frame(conversation_id, live_turn), *live_turn.frames],
@@ -869,8 +872,6 @@ class WebSocketChatHandler:
                 return
             if started is not None:
                 started.set()
-            if direct_load is not None:
-                await self._announce_direct_load(websocket, conversation_id, live_turn, direct_load)
             usage_ledger = UsageLedger()
             title_pending = conversation_just_created and conversation_id is not None
             unrecorded_turn_usage = _PendingTurnUsage(
@@ -881,6 +882,9 @@ class WebSocketChatHandler:
                 chat_config=effective_config,
             )
             try:
+                # Inside the try: a cancellation while announcing still releases the thread reservation.
+                if direct_frames is not None:
+                    await self._announce_direct_load(websocket, conversation_id, live_turn, direct_frames)
                 graph_state = await self.chat_graph.ainvoke(
                     {"user_message": user_message},
                     config={
@@ -1438,9 +1442,17 @@ class WebSocketChatHandler:
         }
 
     def _register_live_turn(
-        self, websocket: WebSocket, session: ChatSession, conversation_id: str, user_message: str
+        self,
+        websocket: WebSocket,
+        session: ChatSession,
+        conversation_id: str,
+        user_message: str,
+        first_frames: list[dict[str, Any]] | None = None,
     ) -> _LiveTurn:
-        """Register the turn ``websocket`` starts on ``conversation_id``. Call with its thread lock held."""
+        """Register the turn ``websocket`` starts on ``conversation_id``. Call with its thread lock held.
+
+        ``first_frames`` replace the initial ``typing`` frame followers are sent and replayed.
+        """
         now = datetime.now().isoformat()
         live = _LiveTurn(
             origin=websocket,
@@ -1450,9 +1462,10 @@ class WebSocketChatHandler:
             sender=session,
             sender_user_id=session.user_id,
         )
-        live.record(
+        for frame in first_frames or [
             {"type": "typing", "message": _THINKING_MESSAGE, "timestamp": now, "conversation_id": conversation_id}
-        )
+        ]:
+            live.record(frame)
         self._live_turns[conversation_id] = live
         return live
 
@@ -1464,21 +1477,23 @@ class WebSocketChatHandler:
         turn: Optional[_LiveTurn],
         log_errors: bool = True,
         finish: bool = False,
+        recorded: bool = False,
     ) -> None:
         """Send a frame of ``turn`` to the socket that started it and to every tab following it.
 
         ``turn`` is ``None`` for a request that never became a live turn (no conversation, or it
         failed before it was registered): its frame goes to ``origin`` alone, and never into the
         turn another tab may be running on the same conversation. ``finish`` says the frame ends
-        the turn; it stops being live. A send to ``origin`` that fails raises ``WebSocketError``
-        once the followers have had the frame.
+        the turn; it stops being live. ``recorded`` says the turn already holds the frame and its
+        followers were sent it when it was registered: it goes to ``origin`` alone. A send to
+        ``origin`` that fails raises ``WebSocketError`` once the followers have had the frame.
         """
         if conversation_id is None or turn is None:
             await self._send_message(origin, frame, log_errors=log_errors)
             return
         async with self._thread_lock(conversation_id):
             viewers: List[WebSocket] = []
-            if self._live_turns.get(conversation_id) is turn:
+            if not recorded and self._live_turns.get(conversation_id) is turn:
                 viewers = self._turn_viewers(turn, conversation_id)
                 if finish:
                     del self._live_turns[conversation_id]
@@ -3461,20 +3476,23 @@ class WebSocketChatHandler:
             await self._send_skill_error(websocket, error.code, error.message)
             return None
 
-    async def _announce_direct_load(
-        self, websocket: WebSocket, conversation_id: str | None, turn: _LiveTurn | None, load: DirectSkillLoad
-    ) -> None:
-        """Send ``skill_loaded`` and the first ``typing`` of the turn ``load`` starts, which is already reserved."""
-        now = datetime.now().isoformat()
-        frames = [
-            {"type": "skill_loaded", "name": load.name, "revision": load.revision, "message_id": load.message_id},
-            {"type": "typing", "message": _THINKING_MESSAGE},
+    @staticmethod
+    def _direct_load_frames(load: DirectSkillLoad, conversation_id: str | None) -> list[dict[str, Any]]:
+        """The ``skill_loaded`` and first ``typing`` frames that open the turn ``load`` starts."""
+        common = {"timestamp": datetime.now().isoformat(), "conversation_id": conversation_id}
+        return [
+            {"type": "skill_loaded", "name": load.name, "revision": load.revision, "message_id": load.message_id}
+            | common,
+            {"type": "typing", "message": _THINKING_MESSAGE} | common,
         ]
+
+    async def _announce_direct_load(
+        self, websocket: WebSocket, conversation_id: str | None, turn: _LiveTurn | None, frames: list[dict[str, Any]]
+    ) -> None:
+        """Send the reserved turn's ``_direct_load_frames`` to its sender; followers had them at registration."""
         try:
             for frame in frames:
-                await self._send_turn_frame(
-                    websocket, conversation_id, {**frame, "timestamp": now, "conversation_id": conversation_id}, turn
-                )
+                await self._send_turn_frame(websocket, conversation_id, frame, turn, recorded=True)
         except WebSocketError:
             # The turn runs anyway; its answer is checkpointed for when the conversation is reloaded.
             logger.debug("Could not announce the slash command of a closed connection")

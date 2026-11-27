@@ -169,7 +169,11 @@ class SkillService:
         store = self._get_store()
         if store is None:
             raise SkillLoadError(SKILLS_UNAVAILABLE, "Skills are not available right now.")
-        skill = await store.get_skill(name)
+        try:
+            skill = await store.get_skill(name)
+        except Exception:
+            logger.exception("Could not read skill %r", name)
+            raise SkillLoadError(SKILLS_UNAVAILABLE, "Skills are not available right now.") from None
         if skill is None:
             raise SkillLoadError(UNKNOWN_SKILL, f"Unknown skill: {name!r}")
         if not skill.enabled:

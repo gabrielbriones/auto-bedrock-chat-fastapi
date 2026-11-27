@@ -333,11 +333,13 @@ Sent in reply to a `chat` frame holding a [slash command](skills#slash-commands)
 - `skill_loaded`: the skill was loaded and its turn is reserved; the turn follows (`typing`, tool frames,
   `ai_response`). `revision` is the skill's stored revision; `message_id` is the id of the synthetic `load_skill`
   assistant message in history; `conversation_id` is the turn's (`null` without conversation persistence), and
-  other tabs following the turn get the frame too. A conversation already answering refuses the command with an
+  other tabs following the turn get the frame too, right after `turn_started` and before its `typing` (also when
+  they join late and the turn is replayed). A conversation already answering refuses the command with an
   `error` frame instead, and no `skill_loaded` is sent.
 - `skill_error`: the command was refused and **no turn runs**, so no `ai_response` follows. `code` is
   `invalid_command`, `tools_unsupported` (the selected model cannot call tools), `unknown_skill`, `skill_disabled`,
-  `skills_unavailable` or `invalid_arguments`; `message` is meant for the user.
+  `skills_unavailable` (no skill store, or reading it failed) or `invalid_arguments`; `message` is meant for the
+  user.
 
 #### `usage_updated`
 

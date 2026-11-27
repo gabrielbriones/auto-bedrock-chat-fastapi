@@ -168,6 +168,62 @@ class TestHandler:
 
         assert [(f["type"], f["code"]) for f in frames] == [("skill_error", "skills_unavailable")]
 
+    def test_failing_store_read_is_refused(self):
+        store = _Store(_SKILL)
+        store.get_skill = AsyncMock(side_effect=RuntimeError("database is locked"))
+        handler = _make_handler(SkillService(lambda: store))
+
+        frames = _send(handler, "/triage job_id=1")
+
+        assert [(f["type"], f["code"]) for f in frames] == [("skill_error", "skills_unavailable")]
+        handler.chat_graph.ainvoke.assert_not_awaited()
+
+    def _conversation_handler(self, follower=None):
+        handler = _make_handler(SkillService(lambda: _Store(_SKILL)))
+        handler._conversation_persistence_active_for_session = lambda session: True
+        handler._turn_viewers = lambda live, conversation_id: [follower] if follower is not None else []
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        session = asyncio.run(handler.session_manager.get_session(websocket))
+        session.metadata["conversation_id"] = "c-1"
+        return handler, websocket
+
+    def test_followers_and_replay_get_skill_loaded_before_typing(self):
+        follower = MagicMock()
+        follower.send_json = AsyncMock()
+        handler, websocket = self._conversation_handler(follower)
+        replayed: list[str] = []
+
+        async def ainvoke(*args, **kwargs):
+            replayed.extend(frame["type"] for frame in handler._live_turns["c-1"].frames)
+            return {"messages": [_assistant_answer()], "metadata": {}, "kb_results": []}
+
+        handler.chat_graph.ainvoke.side_effect = ainvoke
+        asyncio.run(handler._handle_chat_message(websocket, {"message": "/triage job_id=1"}))
+
+        followed = [call.args[0]["type"] for call in follower.send_json.call_args_list]
+        assert followed[:3] == ["turn_started", "skill_loaded", "typing"]
+        assert replayed == ["skill_loaded", "typing"]
+        sent = [call.args[0]["type"] for call in websocket.send_json.call_args_list]
+        assert sent[:2] == ["skill_loaded", "typing"]
+        assert sent.count("skill_loaded") == 1 and followed.count("skill_loaded") == 1
+
+    def test_cancelled_announcement_releases_the_conversation(self):
+        handler, websocket = self._conversation_handler()
+
+        async def send_json(frame):
+            if frame["type"] == "skill_loaded":
+                raise asyncio.CancelledError
+
+        websocket.send_json.side_effect = send_json
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(handler._handle_chat_message(websocket, {"message": "/triage job_id=1"}))
+
+        assert not handler.in_progress("c-1")
+        assert "c-1" not in handler._live_turns
+        handler.chat_graph.ainvoke.assert_not_awaited()
+
     def test_double_slash_is_plain_text_without_the_escape(self):
         handler = _make_handler(SkillService(lambda: _Store(_SKILL)))
 
