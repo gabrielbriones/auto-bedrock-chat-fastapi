@@ -1,6 +1,6 @@
 # Docker configuration for auto-bedrock-chat-fastapi
 # Multi-stage build: Node builds the React SPA, Python builds the venv, slim runtime serves both.
-FROM node:24-alpine AS frontend
+FROM node:26-alpine AS frontend
 
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
