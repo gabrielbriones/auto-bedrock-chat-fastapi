@@ -445,18 +445,18 @@ uvloop = ["uvloop (>=0.15.2)"]
 
 [[package]]
 name = "boto3"
-version = "1.44.9"
+version = "1.44.12"
 description = "The AWS SDK for Python (Boto3)"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "boto3-1.44.9-py3-none-any.whl", hash = "sha256:aff889e8ca6f6006f0b5658b712941471d21e4675d6d48421974a20a5a17a918"},
-    {file = "boto3-1.44.9.tar.gz", hash = "sha256:da4199076833547445a7181e38e833f476808142df95084b2b46c8b2a107aa66"},
+    {file = "boto3-1.44.12-py3-none-any.whl", hash = "sha256:9f1cf241303edb523af912ebdc001e0563301d9ba8eef076d25fe9a8bfb6efaf"},
+    {file = "boto3-1.44.12.tar.gz", hash = "sha256:7459cd7a476eef9a5a8044f5cd6b2dfa47cef0fcb74aefa951e154c5102b1199"},
 ]
 
 [package.dependencies]
-botocore = ">=1.44.9,<1.45.0"
+botocore = ">=1.44.12,<1.45.0"
 jmespath = ">=0.7.1,<2.0.0"
 s3transfer = ">=0.19.0,<0.20.0"
 
@@ -465,14 +465,14 @@ crt = ["botocore[crt] (>=1.21.0,<2.0a0)"]
 
 [[package]]
 name = "botocore"
-version = "1.44.9"
+version = "1.44.12"
 description = "Low-level, data-driven core of boto 3."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "botocore-1.44.9-py3-none-any.whl", hash = "sha256:6966752d38514a8e457ea062ea171b2b320c55bad23c8ae4f74f88296e00890d"},
-    {file = "botocore-1.44.9.tar.gz", hash = "sha256:1f783e0b31f0053f41f4239b7a7e2e73957f25cdc6b2f45d113f1b575a4db10b"},
+    {file = "botocore-1.44.12-py3-none-any.whl", hash = "sha256:d5df4cf868f2c4050999a0e6bc94e0a039017e719f4e27b2a8e87053856787b9"},
+    {file = "botocore-1.44.12.tar.gz", hash = "sha256:5806bb66bf167fa3172f4ddf78b088db9b22653702537b19969d02d2c3301ee5"},
 ]
 
 [package.dependencies]
@@ -1466,14 +1466,14 @@ trio = ["trio (>=0.22.0,<1.0)"]
 
 [[package]]
 name = "httpx"
-version = "0.28.1"
+version = "0.29.0"
 description = "The next generation HTTP client."
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.10"
 groups = ["main", "dev"]
 files = [
-    {file = "httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"},
-    {file = "httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc"},
+    {file = "httpx-0.29.0-py3-none-any.whl", hash = "sha256:6734dcf742ced6e8018e45d3f9f7728975b6b3e1085a24f3e2c056069d858bd1"},
+    {file = "httpx-0.29.0.tar.gz", hash = "sha256:700928ee6c1f4213795e67c47eba8f8553639069fea89199f71d654e38edc593"},
 ]
 
 [package.dependencies]
@@ -1484,7 +1484,7 @@ idna = "*"
 
 [package.extras]
 brotli = ["brotli ; platform_python_implementation == \"CPython\"", "brotlicffi ; platform_python_implementation != \"CPython\""]
-cli = ["click (==8.*)", "pygments (==2.*)", "rich (>=10,<14)"]
+cli = ["click (==8.*)", "pygments (==2.*)", "rich (>=10,<15)"]
 http2 = ["h2 (>=3,<5)"]
 socks = ["socksio (==1.*)"]
 zstd = ["zstandard (>=0.18.0)"]
@@ -1761,15 +1761,15 @@ uuid-utils = ">=0.12.0"
 
 [[package]]
 name = "langchain-core"
-version = "1.8.4"
+version = "1.8.5"
 description = "Building applications with LLMs through composability"
 optional = false
 python-versions = "<4.0.0,>=3.11.0"
 groups = ["main"]
 markers = "python_version >= \"3.14\""
 files = [
-    {file = "langchain_core-1.8.4-py3-none-any.whl", hash = "sha256:5755dee8f8b0c709cd22436dea3689c74a3f6e9dc4251590797dcd66bcd1ef67"},
-    {file = "langchain_core-1.8.4.tar.gz", hash = "sha256:af8976d6df0b3338dc7c830ebf1c505c0fc05a0e3eb564f4901ed7546a418ab6"},
+    {file = "langchain_core-1.8.5-py3-none-any.whl", hash = "sha256:4eb6ee72e5ef130ab0aef0d7dc3ea0f1ab8f974339c271c4c8a8b92f148fcfac"},
+    {file = "langchain_core-1.8.5.tar.gz", hash = "sha256:f0391367c1058ccec34dc248238415d8fccfa42db1727b937357888ff1da75cb"},
 ]
 
 [package.dependencies]
@@ -1787,28 +1787,11 @@ uuid-utils = ">=0.12.0"
 
 [[package]]
 name = "langchain-protocol"
-version = "0.0.20"
-description = "Python bindings for the LangChain agent streaming protocol"
-optional = false
-python-versions = "<4.0.0,>=3.10.0"
-groups = ["main"]
-markers = "python_version < \"3.14\""
-files = [
-    {file = "langchain_protocol-0.0.20-py3-none-any.whl", hash = "sha256:3c935e5e46b0f6f9cb52f45ba7cfa53d1b9fa80c82c4a277d47f03e07f7385b1"},
-    {file = "langchain_protocol-0.0.20.tar.gz", hash = "sha256:0f5bd002474265648e91161771a9e0438fe9480bd55a416e51af0f60070637ec"},
-]
-
-[package.dependencies]
-typing-extensions = ">=4.13.0,<5.0.0"
-
-[[package]]
-name = "langchain-protocol"
 version = "0.0.22"
 description = "Python bindings for the LangChain agent streaming protocol"
 optional = false
 python-versions = "<4.0.0,>=3.10.0"
 groups = ["main"]
-markers = "python_version >= \"3.14\""
 files = [
     {file = "langchain_protocol-0.0.22-py3-none-any.whl", hash = "sha256:d264998a507b735320c15a7b366051cbf41e21f771bea1b03a911f2c58af02e7"},
     {file = "langchain_protocol-0.0.22.tar.gz", hash = "sha256:61267bc9f478c9df35ccdafd9fdf556b2698435232d59def54b3809bb02585bb"},
@@ -2818,7 +2801,7 @@ description = "comprehensive password hashing framework supporting over 30 schem
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "extra == \"sso\""
+markers = "python_version < \"3.14\" and extra == \"sso\""
 files = [
     {file = "passlib-1.7.4-py2.py3-none-any.whl", hash = "sha256:aa6bca462b8d8bda89c70b382f0c298a20b5560af6cbfa2dce410c0a2fb669f1"},
     {file = "passlib-1.7.4.tar.gz", hash = "sha256:defd50f72b65c5402ab2c573830a6978e5f202ad0d984793c8dde2c4152ebe04"},
@@ -2832,6 +2815,27 @@ argon2 = ["argon2-cffi (>=18.2.0)"]
 bcrypt = ["bcrypt (>=3.1.0)"]
 build-docs = ["cloud-sptheme (>=1.10.1)", "sphinx (>=1.6)", "sphinxcontrib-fulltoc (>=1.2.0)"]
 totp = ["cryptography"]
+
+[[package]]
+name = "passlib"
+version = "1.9.5"
+description = "Comprehensive password hashing framework supporting over 30 schemes"
+optional = true
+python-versions = ">=3.11"
+groups = ["main"]
+markers = "python_version >= \"3.14\" and extra == \"sso\""
+files = [
+    {file = "passlib-1.9.5-py3-none-any.whl", hash = "sha256:c9dac9b4c56322a2b386f8d7d5d2f5056a20ed21c491a7ff24f0b2747f57c28e"},
+    {file = "passlib-1.9.5.tar.gz", hash = "sha256:15d39a9b2044a86f341a2e443170e4e9a6d71fe0266fe28b91032a8ca723f8aa"},
+]
+
+[package.dependencies]
+bcrypt = {version = ">=3.1.0", optional = true, markers = "extra == \"bcrypt\""}
+
+[package.extras]
+argon2 = ["argon2-cffi (>=18.2.0)"]
+bcrypt = ["bcrypt (>=3.1.0)"]
+totp = ["cryptography (>=43.0.1)"]
 
 [[package]]
 name = "pathspec"
