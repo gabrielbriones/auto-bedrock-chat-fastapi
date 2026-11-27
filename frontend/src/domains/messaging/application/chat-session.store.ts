@@ -1,15 +1,11 @@
-import { conversationId, messageId, turnId, type ConversationId } from '@/shared/kernel/branded'
+import { conversationId, messageId, turnId } from '@/shared/kernel/branded'
 import type { Clock } from '@/shared/kernel/instant'
 import { isOk } from '@/shared/kernel/result'
 import type { Logger } from '@/shared/logging/logger'
 import type { ConnectionState, Unsubscribe } from '@/shared/ws/socket-client'
 
 import { connectionView, type ConnectionView } from '@/domains/messaging/domain/connection'
-import {
-  createMessage,
-  type ChatMessage,
-  type MessageRole,
-} from '@/domains/messaging/domain/message'
+import { createMessage, type ChatMessage, type MessageRole } from '@/domains/messaging/domain/message'
 import {
   renderTranscript,
   type HistoryMessage,
@@ -36,6 +32,7 @@ import type {
 } from '@/domains/messaging/application/ports'
 import { answeredActivity, settleHistoryUsage, settleTurnUsage } from '@/domains/messaging/application/answer-activity'
 import { toHistory } from '@/domains/messaging/application/loaded-history'
+import { ReplyAnnouncer, type SettledReply } from '@/domains/messaging/application/settled-reply'
 
 export type ChatSessionSnapshot = {
   readonly connection: ConnectionView
@@ -44,16 +41,11 @@ export type ChatSessionSnapshot = {
   readonly awaitingResponse: boolean
   readonly canSend: boolean
   readonly configuredModel: { readonly id: string; readonly name: string } | null
+  /** The latest slash command the server refused, handed back so it can be corrected. */
+  readonly rejectedCommand: { readonly text: string } | null
 }
 
 export type SendOutcome = 'sent' | 'empty' | 'refused' | 'dropped-closed'
-
-/** FR-MSG-032: a turn this session sent has just resolved with a reply the user can read. */
-export type SettledReply = {
-  readonly outcome: 'answered' | 'failed'
-  readonly text: string
-  readonly conversationId: ConversationId | null
-}
 
 export type ChatSessionStoreOptions = {
   readonly gateway: MessagingGateway
@@ -77,7 +69,10 @@ export class ChatSessionStore {
   readonly #listeners = new Set<() => void>()
   readonly #logger: Logger
   readonly #newId: () => string
-  readonly #replyListeners = new Set<(reply: SettledReply) => void>()
+  readonly #replies = new ReplyAnnouncer()
+  #rejectedCommand: ChatSessionSnapshot['rejectedCommand'] = null
+  // A live load's turn is replayed in the frames after it; until it starts, nothing may be sent.
+  #replayExpected = false
   #seq = 0
   #sessionId: string | null = null
   #snapshot: ChatSessionSnapshot
@@ -117,12 +112,12 @@ export class ChatSessionStore {
 
   // FR-MSG-032. Only a pending turn settling counts: transients, abandoned turns and loaded
   // history are not a reply the user is waiting on.
-  onReplySettled = (listener: (reply: SettledReply) => void): Unsubscribe => {
-    this.#replyListeners.add(listener)
+  onReplySettled = (listener: (reply: SettledReply) => void): Unsubscribe => this.#replies.subscribe(listener)
 
-    return () => {
-      this.#replyListeners.delete(listener)
-    }
+  /** The composer took the refused command back. */
+  clearRejectedCommand = (): void => {
+    this.#rejectedCommand = null
+    this.#emit()
   }
 
   // FR-MSG-013 / FR-MSG-025 / FR-MSG-009: trim, refuse an empty or concurrent send without a
@@ -158,6 +153,7 @@ export class ChatSessionStore {
     this.#transient = []
     this.#seq = 0
     this.#configuredModel = null
+    this.#replayExpected = false
     this.#emit()
   }
 
@@ -168,7 +164,7 @@ export class ChatSessionStore {
 
     this.#subscriptions = []
     this.#listeners.clear()
-    this.#replyListeners.clear()
+    this.#replies.clear()
   }
 
   #handleEvent(event: MessagingEvent): void {
@@ -182,6 +178,9 @@ export class ChatSessionStore {
         return
       case 'failed':
         this.#fail(event.text)
+        return
+      case 'command-rejected':
+        this.#rejectCommand(event.text)
         return
       case 'typing':
         this.#observeTyping(event.text)
@@ -206,6 +205,7 @@ export class ChatSessionStore {
         this.#turns = []
         this.#transient = []
         this.#configuredModel = null
+        this.#replayExpected = event.live === true
         this.#emit()
     }
   }
@@ -247,26 +247,23 @@ export class ChatSessionStore {
     this.#announceSettled(pending.id)
   }
 
+  // The server started no turn and saved nothing, so neither does the transcript: the echo goes, the
+  // reason stays as a notice and the command goes back to the composer.
+  #rejectCommand(reason: string): void {
+    const pending = this.#pendingTurn()
+    this.#turns = this.#turns.filter((turn) => turn !== pending)
+    this.#rejectedCommand = pending === undefined ? this.#rejectedCommand : { text: pending.request.raw }
+    this.#pushTransient(this.#message('system', reason))
+  }
+
   #announceSettled(id: Turn['id']): void {
-    const turn = this.#turns.find((candidate) => candidate.id === id)
-    if (turn === undefined || turn.response === null || (turn.status !== 'answered' && turn.status !== 'failed')) {
-      return
-    }
-
-    const reply: SettledReply = {
-      outcome: turn.status,
-      text: turn.response.raw,
-      conversationId: turn.conversationId,
-    }
-
-    for (const listener of this.#replyListeners) {
-      listener(reply)
-    }
+    this.#replies.announce(this.#turns.find((candidate) => candidate.id === id))
   }
 
   // A turn another tab sent is followed from its first frame exactly like one sent here, and blocks
   // this composer too: the server runs one turn per conversation at a time.
   #observeTurn(text: string, conversation: string): void {
+    this.#replayExpected = false
     if (this.#pendingTurn() === undefined) {
       this.#turns = [...this.#turns, createTurn(turnId(this.#newId()), this.#message('user', text), conversationId(conversation))]
       this.#emit()
@@ -286,9 +283,7 @@ export class ChatSessionStore {
       return
     }
 
-    this.#resolve(pending.id, (turn) =>
-      applyStreamingSnapshot(turn, text, classifyTypingFrame(text)),
-    )
+    this.#resolve(pending.id, (turn) => applyStreamingSnapshot(turn, text, classifyTypingFrame(text)))
   }
 
   #updatePending(transition: (turn: Turn) => TurnResult): void {
@@ -308,6 +303,7 @@ export class ChatSessionStore {
     }
 
     this.#sessionId = null
+    this.#replayExpected = false
     const pending = this.#pendingTurn()
 
     if (pending === undefined) {
@@ -358,9 +354,10 @@ export class ChatSessionStore {
       // I1: a session id only exists while the connection it was issued for is open.
       sessionId: open ? this.#sessionId : null,
       transcript: renderTranscript(this.#turns, this.#transient, this.#history),
-      awaitingResponse: this.#pendingTurn() !== undefined,
+      awaitingResponse: this.#pendingTurn() !== undefined || this.#replayExpected,
       canSend: open,
       configuredModel: this.#configuredModel,
+      rejectedCommand: this.#rejectedCommand,
     }
   }
 

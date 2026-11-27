@@ -29,6 +29,7 @@ export const bootstrapConfigFixture: Record<string, unknown> = {
   adminPrefix: '/chat/admin',
   dashboardUrl: '/chat/dashboard',
   conversationPersistenceEnabled: true,
+  skillsEnabled: false,
   enableConfigSidebar: true,
   allowedDynamicOverrides: null,
   availableModels: [

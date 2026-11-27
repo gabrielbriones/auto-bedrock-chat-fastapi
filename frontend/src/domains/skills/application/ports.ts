@@ -3,6 +3,7 @@ import type { Result } from '@/shared/kernel/result'
 
 import type {
   Skill,
+  SkillCatalogEntry,
   SkillContentPatch,
   SkillCreateRequest,
   SkillLimits,
@@ -31,4 +32,9 @@ export interface SkillsGateway {
   setEnabled(name: string, enabled: boolean): Promise<Result<Skill, Problem>>
   remove(name: string): Promise<Result<void, Problem>>
   listRevisions(name: string, signal: AbortSignal): Promise<Result<readonly SkillRevisionSummary[], Problem>>
+}
+
+// skills.md "User catalog": the enabled skills any chat user may run as slash commands.
+export interface SkillCatalogGateway {
+  list(signal: AbortSignal): Promise<Result<readonly SkillCatalogEntry[], Problem>>
 }

@@ -354,6 +354,58 @@ describe('ChatSessionStore', () => {
     })
   })
 
+  describe('a live conversation load', () => {
+    it('awaits the replayed turn, so nothing can be sent before it starts', () => {
+      const { store, emit } = createHarness()
+
+      emit({ kind: 'history-loaded', conversationId: 'c-1', messages: [], live: true })
+      expect(store.getSnapshot().awaitingResponse).toBe(true)
+      expect(store.send('/triage')).toBe('refused')
+
+      emit({ kind: 'turn-observed', text: 'validate job', conversationId: 'c-1' })
+      emit(answered('done'))
+
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+    })
+
+    it('stops awaiting when the connection drops', () => {
+      const { store, emit, changeConnection } = createHarness()
+
+      emit({ kind: 'history-loaded', conversationId: 'c-1', messages: [], live: true })
+      changeConnection(state('reconnecting', 1))
+
+      expect(store.getSnapshot().awaitingResponse).toBe(false)
+    })
+  })
+
+  describe('rejected slash commands', () => {
+    it('drops the echo, shows the reason as a notice and hands the command back', () => {
+      const { store, emit } = createHarness()
+      const settled = jest.fn()
+      store.onReplySettled(settled)
+      store.send('/nope job_id=1')
+
+      emit({ kind: 'command-rejected', text: "Unknown skill: 'nope'" })
+
+      const { transcript, awaitingResponse, rejectedCommand } = store.getSnapshot()
+      expect(awaitingResponse).toBe(false)
+      expect(transcript.map((entry) => [entry.message.role, entry.message.raw, entry.transient])).toEqual([
+        ['system', "Unknown skill: 'nope'", true],
+      ])
+      expect(rejectedCommand).toEqual({ text: '/nope job_id=1' })
+      expect(settled).not.toHaveBeenCalled()
+    })
+
+    it('only shows the notice when nothing is pending', () => {
+      const { store, emit } = createHarness()
+
+      emit({ kind: 'command-rejected', text: 'Skills are not available.' })
+
+      expect(store.getSnapshot().transcript).toHaveLength(1)
+      expect(store.getSnapshot().rejectedCommand).toBeNull()
+    })
+  })
+
   describe('settled replies (FR-MSG-032)', () => {
     it('announces an answered turn with its text and conversation', () => {
       const { store, emit } = createHarness()

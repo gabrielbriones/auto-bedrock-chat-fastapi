@@ -46,7 +46,7 @@ from .message_preprocessor import is_artifact_marker_entry
 from .model_capabilities import build_bedrock_kwargs, supports_tool_calling
 from .models import FeedbackEntry, Rating
 from .session_manager import ChatSession, ChatSessionManager
-from .skills.service import SkillLoadError
+from .skills.service import SKILLS_UNAVAILABLE, SkillLoadError
 from .skills.slash import (
     TOOLS_UNSUPPORTED,
     DirectSkillLoad,
@@ -559,6 +559,8 @@ class WebSocketChatHandler:
             await self._handle_config_reset(websocket, message_data)
         elif message_type == "refresh_session_token":
             await self._handle_refresh_session_token(websocket, message_data)
+        elif message_type == "skill_catalog":
+            await self._handle_skill_catalog(websocket)
         else:
             await self._send_error(websocket, f"Unknown message type: {message_type}")
 
@@ -3455,6 +3457,31 @@ class WebSocketChatHandler:
             websocket,
             {"type": "skill_error", "code": code, "message": message, "timestamp": datetime.now().isoformat()},
         )
+
+    async def _handle_skill_catalog(self, websocket: WebSocket) -> None:
+        """Answer ``skill_catalog`` with the enabled skills, as ``GET {chat}/skills/catalog`` does.
+
+        Served on the socket so any credential the socket authenticated with (not only the SSO
+        cookie the HTTP route can see) is enough. A refusal is a ``skill_catalog`` frame with an
+        ``error`` and no items, never ``skill_error``, which would refuse a chat message.
+        """
+        session = await self.session_manager.get_session(websocket)
+        if not session:
+            await self._send_error(websocket, "Session not found")
+            return
+
+        frame: Dict[str, Any] = {"type": "skill_catalog", "items": [], "timestamp": datetime.now().isoformat()}
+        authenticated = session.credentials is not None and session.credentials.get_auth_type_string() != "none"
+        if self.config.require_tool_auth and not authenticated:
+            frame["error"] = {"code": "authentication_required", "message": "Authenticate to list skills."}
+        elif getattr(self, "skill_service", None) is None:
+            frame["error"] = {"code": SKILLS_UNAVAILABLE, "message": "Skills are not available right now."}
+        else:
+            try:
+                frame["items"] = [entry.model_dump(mode="json") for entry in await self.skill_service.list_catalog()]
+            except SkillLoadError as error:
+                frame["error"] = {"code": error.code, "message": error.message}
+        await self._send_message(websocket, frame)
 
     async def _load_slash_command(
         self, websocket: WebSocket, session: ChatSession, command: SlashCommand, chat_config: ChatConfig

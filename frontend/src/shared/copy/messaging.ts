@@ -106,6 +106,18 @@ export const MESSAGING_COPY = {
       offline: 'Disconnected — you can send again once the connection is back.',
       responding: 'Waiting for the assistant to finish responding.',
     },
+    slashMenu: {
+      label: 'Skills',
+      results: (count: number) => `${count} ${count === 1 ? 'skill' : 'skills'} available`,
+      usage: 'Usage:',
+      parameters: (name: string) => `Parameters for /${name}`,
+      cancel: 'Remove skill',
+      choose: 'Choose…',
+      defaultOption: 'Default',
+      details: 'Add details',
+      run: (name: string) => `Press Enter to run /${name}`,
+      unavailable: 'Skills could not be loaded. You can still send a command.',
+    },
   },
 
   errors: {

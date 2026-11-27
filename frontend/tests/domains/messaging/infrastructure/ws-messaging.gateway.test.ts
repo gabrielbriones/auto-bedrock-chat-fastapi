@@ -329,13 +329,13 @@ describe('WsMessagingGateway', () => {
     ])
   })
 
-  it('ends the pending turn on skill_error and ignores skill_loaded', () => {
+  it('reports a skill_error as a rejected command and ignores skill_loaded', () => {
     const { emit, events } = createHarness()
 
     emit({ type: 'skill_loaded', timestamp: TIMESTAMP, name: 'job-triage', revision: 3, message_id: 'm-1', conversation_id: null })
     emit({ type: 'skill_error', timestamp: TIMESTAMP, code: 'unknown_skill', message: "Unknown skill: 'x'" })
 
-    expect(events).toEqual([{ kind: 'failed', text: "Unknown skill: 'x'" }])
+    expect(events).toEqual([{ kind: 'command-rejected', text: "Unknown skill: 'x'" }])
   })
 
   it('surfaces typing frames verbatim so P1 can be observed without applying them', () => {
@@ -420,6 +420,7 @@ describe('WsMessagingGateway', () => {
             activity: null,
           },
         ],
+        live: false,
       },
     ])
   })
@@ -458,6 +459,7 @@ describe('WsMessagingGateway', () => {
             activity: null,
           },
         ],
+        live: false,
       },
     ])
   })
@@ -681,7 +683,15 @@ describe('WsMessagingGateway', () => {
     })
     emit({ type: 'conversation_error', timestamp: TIMESTAMP, code: 'conversation_not_found', message: 'nope' })
 
-    expect(events).toEqual([{ kind: 'history-loaded', conversationId: 'c-1', messages: [] }])
+    expect(events).toEqual([{ kind: 'history-loaded', conversationId: 'c-1', messages: [], live: false }])
+  })
+
+  it('marks a load whose running turn is replayed next as live', () => {
+    const { emit, events } = createHarness()
+
+    emit({ type: 'conversation_loaded', timestamp: TIMESTAMP, conversation_id: 'c-1', conversation: {}, messages: [], live: true })
+
+    expect(events).toEqual([expect.objectContaining({ kind: 'history-loaded', live: true })])
   })
 
   it('ignores frames owned by other contexts and ones this slice does not use', () => {

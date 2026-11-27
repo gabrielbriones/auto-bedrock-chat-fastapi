@@ -214,6 +214,7 @@ def _build_bootstrap_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         "adminPrefix": context["admin_prefix"],
         "dashboardUrl": context["dashboard_url"],
         "conversationPersistenceEnabled": context["conversation_persistence_enabled"],
+        "skillsEnabled": context["skills_enabled"],
         "enableConfigSidebar": context["enable_config_sidebar"],
         "allowedDynamicOverrides": context["allowed_dynamic_overrides"],
         "availableModels": context["available_models"],
@@ -676,6 +677,8 @@ class AutoLangChatPlugin:
             "admin_prefix": (f"{self.config.chat_endpoint}/admin" if self.config.admin_enabled else ""),
             "dashboard_url": dashboard_path(self.config.ui_endpoint) if self.config.admin_enabled else "",
             "conversation_persistence_enabled": conversation_persistence_enabled,
+            # Same gate as ``/admin/_capabilities``; the SPA swaps the preset bar for slash commands.
+            "skills_enabled": getattr(self, "_skill_store", None) is not None,
             # Dynamic parameter overrides settings sidebar.
             "enable_config_sidebar": bool(self.config.enable_config_sidebar and self.config.enable_dynamic_overrides),
             "allowed_dynamic_overrides": self.config.allowed_dynamic_overrides,

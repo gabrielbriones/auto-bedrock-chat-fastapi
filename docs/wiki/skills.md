@@ -180,7 +180,8 @@ curl -sS -X POST https://app.example.com/chat/admin/skills \
 
 `GET {chat_endpoint}/skills/catalog` (for example `/chat/skills/catalog`) lists the **enabled** skills so a chat
 client can offer them. It is a regular user feature and is registered whenever the skill store exists,
-independent of `admin_enabled`.
+independent of `admin_enabled`. The same list is available on the chat socket as a
+[`skill_catalog`](websocket-client#skill_catalog) request, which is what the chat UI uses.
 
 ```json
 {

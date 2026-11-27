@@ -12,6 +12,8 @@ import { BrowserConnectivityPort } from '@/app/adapters/browser-connectivity-por
 import { ConfirmationController } from '@/app/adapters/confirmation-controller'
 import { SonnerNotificationPort } from '@/app/adapters/sonner-notification-port'
 import { browserUrlNavigator } from '@/app/browser-location'
+import type { SkillDeepLink } from '@/app/chat/skill-deep-link'
+import { createDeepLinks } from '@/app/bootstrap/deep-links'
 import type { ChatBootstrap } from '@/app/bootstrap/chat-bootstrap'
 import { toAuthPolicy, type AuthPolicy } from '@/domains/iam/domain/auth-policy'
 import { IdentityStore } from '@/domains/iam/application/identity.store'
@@ -27,9 +29,8 @@ import { WsMessagingGateway } from '@/domains/messaging/infrastructure/ws-messag
 import { ConversationStore } from '@/domains/conversation/application/conversation.store'
 import type { ConversationGateway } from '@/domains/conversation/application/ports'
 import { IntervalPendingTurnScheduler } from '@/domains/conversation/infrastructure/interval-pending-turn.scheduler'
-import { PromptCatalogStore } from '@/domains/prompt-catalog/application/prompt-catalog.store'
+import type { PromptCatalogStore } from '@/domains/prompt-catalog/application/prompt-catalog.store'
 import type { UrlNavigator } from '@/domains/prompt-catalog/application/ports'
-import { parsePromptCatalog } from '@/domains/prompt-catalog/domain/public'
 import { WsConversationGateway } from '@/domains/conversation/infrastructure/ws-conversation.gateway'
 import { ModelConfigStore } from '@/domains/model-config/application/model-config.store'
 import type { ConfigurationGateway } from '@/domains/model-config/application/ports'
@@ -40,6 +41,7 @@ import { FeedbackStore } from '@/domains/feedback/application/feedback.store'
 import type { FeedbackGateway, SubmittedFeedbackLog } from '@/domains/feedback/application/ports'
 import { SessionStorageSubmittedFeedbackLog } from '@/domains/feedback/infrastructure/session-storage-submitted-feedback-log'
 import { WsFeedbackGateway } from '@/domains/feedback/infrastructure/ws-feedback.gateway'
+import { WsSkillCatalogGateway } from '@/domains/skills/infrastructure/ws-skill-catalog.gateway'
 import type { ReviewGateway } from '@/domains/review/application/ports'
 import type { ReviewStore } from '@/domains/review/application/review.store'
 import type { KbSourcesGateway, KnowledgeGateway } from '@/domains/knowledge/application/ports'
@@ -78,6 +80,7 @@ export type Container = {
   readonly conversationGateway: ConversationGateway
   readonly conversations: ConversationStore
   readonly promptCatalog: PromptCatalogStore
+  readonly skillDeepLink: SkillDeepLink
   readonly configurationGateway: ConfigurationGateway
   readonly modelConfig: ModelConfigStore
   readonly feedbackGateway: FeedbackGateway
@@ -93,9 +96,8 @@ export type Container = {
   readonly kbSources: KbSourcesStore
   readonly telemetryGateway: TelemetryGateway
   readonly telemetry: TelemetryStore
-  readonly skills: ReturnType<typeof createAdminStores>['skills']
   readonly bootstrap: ChatBootstrap
-}
+} & Pick<ReturnType<typeof createAdminStores>, 'skills' | 'skillCatalog'>
 
 export type ContainerDependencies = ReplyNotificationDependencies & {
   readonly httpClient?: HttpClient
@@ -172,30 +174,6 @@ const createIdentity = (
       ssoUserDisplay: bootstrap.ssoUserDisplay,
     },
   })
-
-// SPEC-013 §3: the anti-corruption boundary — the prompt-catalog store hands over a composed
-// prompt and never touches the messaging store beyond calling `send`.
-const createPromptCatalog = (
-  bootstrap: ChatBootstrap,
-  chatSession: ChatSessionStore,
-  urlNavigator: UrlNavigator,
-  logger: Logger,
-): PromptCatalogStore => {
-  const catalog = parsePromptCatalog(bootstrap.presetPrompts, bootstrap.variables)
-
-  // FR-PROMPT-004a: parse-time diagnostics (an uncompilable `validate` regex) are data until now —
-  // this is the one place they're actually logged, once each, at startup.
-  for (const diagnostic of catalog.diagnostics) {
-    logger.warn('prompt_catalog_diagnostic', { message: diagnostic })
-  }
-
-  return new PromptCatalogStore({
-    catalog,
-    sink: { submit: (composed) => { chatSession.send(composed.text) } },
-    urlNavigator,
-    logger,
-  })
-}
 
 // The two socket-backed stores the chat view lives on, built together because they share one
 // socket and one clock (ADR-004).
@@ -325,7 +303,8 @@ export const createContainer = (
   })
   const modelConfig = createModelConfig(bootstrap, socket, messageBus, notifications)
   const feedback = createFeedback(socket, messageBus)
-  const adminStores = createAdminStores(bootstrap, { httpClient, logger, confirmations, notifications })
+  const skillCatalogGateway = new WsSkillCatalogGateway(socket, messageBus)
+  const adminStores = createAdminStores(bootstrap, { httpClient, logger, clock, confirmations, notifications, skillCatalogGateway })
   const identity = createIdentity(bootstrap, authPolicy, authGateway, ssoGateway, socket)
   notifyOnSessionExpiry(identity, notifications)
 
@@ -345,7 +324,7 @@ export const createContainer = (
     identity,
     ...chatStores,
     replyNotifications: createReplyNotifications(bootstrap, chatStores, deps),
-    promptCatalog: createPromptCatalog(bootstrap, chatStores.chatSession, deps.urlNavigator ?? browserUrlNavigator, logger),
+    ...createDeepLinks(bootstrap, chatStores.chatSession, deps.urlNavigator ?? browserUrlNavigator, logger),
     ...modelConfig,
     ...feedback,
     ...adminStores,

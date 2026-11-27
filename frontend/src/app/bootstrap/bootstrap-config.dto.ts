@@ -64,6 +64,8 @@ const bootstrapConfigSchema = z.object({
   adminPrefix: z.string(),
   dashboardUrl: z.string(),
   conversationPersistenceEnabled: z.boolean(),
+  // Older backends omit it, and have no skill catalog either.
+  skillsEnabled: z.boolean().default(false),
   enableConfigSidebar: z.boolean(),
   allowedDynamicOverrides: z.array(z.string()).nullable(),
   availableModels: z.array(availableModelSchema),

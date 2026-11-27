@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useContainer, useContainerStore } from '@/app/bootstrap/container-context'
 import { useConversationRoute } from '@/app/chat/useConversationRoute'
 import { PromptCatalogArea } from '@/app/chat/PromptCatalogArea'
+import { useSkillCommands, useSkillDeepLink } from '@/app/chat/slash-commands'
 import type { ConversationId, MessageId } from '@/shared/kernel/branded'
 import { PendingTurnNotice } from '@/domains/conversation/presentation/PendingTurnNotice'
 import { UnknownConversation } from '@/domains/conversation/presentation/UnknownConversation'
@@ -24,9 +25,11 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
   const { inputEnabled } = useContainerStore('identity')
   const { pendingTurn, unknownId } = useContainerStore('conversations')
   const { configuredModel } = useContainerStore('chatSession')
+  const commands = useSkillCommands()
   const navigate = useNavigate()
 
   useConversationRoute(conversationId)
+  const deepLink = useSkillDeepLink(commands, conversationId)
 
   const startNew = useCallback(() => {
     conversations.dismissUnknownId()
@@ -64,7 +67,10 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       <ChatPanel
         inputEnabled={inputEnabled}
         onMessageSent={onMessageSent}
-        presetArea={<PromptCatalogArea />}
+        presetArea={deepLink.showPresets ? <PromptCatalogArea /> : undefined}
+        commands={commands}
+        draftRequest={deepLink.draftRequest}
+        onDraftRequestApplied={deepLink.acknowledgeDraft}
         composerToolbar={bootstrap.enableConfigSidebar ? <ComposerModelPicker configuredModel={configuredModel} /> : undefined}
         {...(renderFeedback === undefined ? {} : { renderFeedback })}
       />

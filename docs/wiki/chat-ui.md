@@ -29,7 +29,8 @@ release wheels by `.github/workflows/release.yml`). Build it with
 - **Conversation history** — persists within the session
 - **Authentication modal** — UI for providing credentials (bearer token, API key, basic auth, OAuth2)
 - **Session management** — clear history, ping, logout
-- **Preset prompt buttons** — one-click buttons that send pre-defined prompts; see [Preset Prompts](preset-prompts.md)
+- **Preset prompt buttons** — one-click buttons that send pre-defined prompts, hidden while skills are active; see [Preset Prompts](preset-prompts.md)
+- **Slash commands** — type `/` to pick a [skill](skills); see [below](#slash-commands)
 - **Per-message usage label** — token usage of each answer, with its estimated price on hover; see [below](#per-message-usage-label)
 
 ### Per-message usage label
@@ -64,6 +65,63 @@ model picker, e.g. `13% context $0.3124`, updated as each answer (and each `usag
 - **Card** (hover or click): the estimate, total input/output, cache read/write, the number of answers counted and the
   context meter with exact token counts.
 - Answers loaded from history count too, as long as they were stored with usage.
+
+### Slash commands
+
+Typing `/` at the start of the composer opens a menu of the enabled [skills](skills#slash-commands), filtered as the
+name is typed (name prefixes first, then names or titles containing the text). Each entry shows the command, its
+title, description and usage.
+
+- **Menu keys**: ↑/↓ move the highlight, Enter or Tab picks the skill, Escape closes the menu until the text changes.
+  While the menu is open Enter never sends. Clicking an entry picks it too.
+- **Parameter fields**: a picked skill (or one typed in full, `/<name>` plus a space) becomes a chip above the message
+  box with one field per parameter, so nobody types `key=value`:
+  - text and number parameters get a text box (placeholder from the skill's `placeholder`, else `example`),
+    `select` parameters a drop-down of their options, `checkbox` parameters a checkbox;
+  - required parameters are marked `*`, and Send stays disabled until they are filled;
+  - fields (and the message box, for `input`) start at the parameter's default; a blank field is left out, so the
+    server applies its own default; a required checkbox without a default starts unchecked, sent as `false`;
+  - the first field gets focus; Enter in a field sends, Escape or the chip's remove button drops the skill.
+- **Free text**: for a skill with an `input` parameter the message box stays and fills it (its placeholder is the
+  parameter's); Backspace in an empty box drops the skill. A skill without `input` hides the message box, and one
+  without any parameter just runs on Enter.
+- **What is sent**: the plain `chat` frame the server parses, e.g. `/job-triage job_id="job 42" format=txt`. Values
+  that are not a single plain token are double-quoted with `\` and `"` escaped; free text goes as `input="..."`.
+- A command typed or pasted with its pairs (`/job-triage job_id=1`) is sent as typed, with the skill's usage line
+  shown above the message box.
+- `//` and text that does not start with `/` never open the menu.
+- The list comes from a [`skill_catalog`](websocket-client.md#skill_catalog) request on the chat socket (so it works
+  with any sign-in method), read when input becomes available and again on composer focus once it is a minute old,
+  and only when the bootstrap reports `skillsEnabled`. If it cannot be read, typing
+  `/` shows "Skills could not be loaded. You can still send a command." instead of the menu; commands still work
+  because the server parses them.
+- **Refused commands**: a [`skill_error`](websocket-client.md) (unknown or disabled skill, bad parameters) is shown
+  as a system notice in the transcript, the command is removed from the transcript (no turn was started) and put
+  back in the message box to be corrected.
+- **Presets**: while skills are active (`skillsEnabled` and a non-empty catalog) the preset bar and variables panel
+  are hidden; they stay hidden until the catalog has been read and return if it is empty or unreadable.
+- Screen readers: while the menu is open the composer keeps focus and points at the highlighted entry
+  (`aria-activedescendant`), and the number of matches is announced. The fields are a labelled group.
+
+### Deep links
+
+A link can run a skill as soon as the chat is usable:
+
+```
+https://your-app.example.com/chat/ui?skill=job-triage&job_id=abc123&format=txt
+```
+
+- `skill` names the skill; any other key matching one of its parameters fills it (an `input` key fills the free
+  text). The command is sent as `/job-triage job_id=abc123 format=txt`.
+- `autosend=0` or `autosend=false` puts the command in the message box instead of sending it.
+- A legacy `?prompt=<id>&VAR=value` link runs the preset's default skill (same name, `VAR` lower-cased); one that
+  no enabled skill answers to falls back to the [preset deep link](preset-prompts.md#deep-linking--auto-start-via-query-string),
+  and the preset bar then stays visible so its variables can be filled in.
+- The link waits for the skill catalog, for the conversation in the URL (`/chat/ui/c/<id>?skill=...`) to be loaded
+  (any running turn in it replayed and finished), and for the chat to be idle (signed in, connected, no answer
+  pending). It runs once, and its keys (including a `prompt` a `skill` link took priority over) are then removed
+  from the address bar. An unknown conversation id never runs the link. Authentication works as for preset deep
+  links.
 
 ---
 

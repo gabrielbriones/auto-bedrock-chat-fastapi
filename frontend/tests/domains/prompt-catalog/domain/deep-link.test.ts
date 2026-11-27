@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 
-import { parseDeepLink, scrubDeepLink } from '@/domains/prompt-catalog/domain/deep-link'
+import { parseDeepLink, parseSkillDeepLink, scrubDeepLink, scrubSkillDeepLink } from '@/domains/prompt-catalog/domain/deep-link'
 import { parsePromptCatalog } from '@/domains/prompt-catalog/domain/prompt-catalog'
 
 const catalog = parsePromptCatalog(
@@ -60,5 +60,60 @@ describe('scrubDeepLink', () => {
 
     // workload-analysis never consumed NEW_JOB_ID, so scrubbing it must survive.
     expect(scrubDeepLink(url, intent)).toEqual({ NEW_JOB_ID: 'unrelated-to-this-preset' })
+  })
+})
+
+const skills = [
+  { name: 'workload-analysis', parameters: ['job_id'] },
+  { name: 'triage', parameters: ['job_id', 'format', 'input'] },
+]
+
+describe('parseSkillDeepLink', () => {
+  it('reads the canonical ?skill= form with its parameters', () => {
+    expect(parseSkillDeepLink({ skill: 'triage', job_id: 'j 1', format: 'md', keep: 'me' }, skills)).toEqual({
+      skill: 'triage',
+      values: { job_id: 'j 1', format: 'md' },
+      autoSend: true,
+      consumed: ['skill', 'prompt', 'autosend', 'job_id', 'format'],
+    })
+  })
+
+  it('maps a legacy ?prompt=<id> to the default skill, with VAR keys lowercased', () => {
+    expect(parseSkillDeepLink({ prompt: 'workload-analysis', JOB_ID: '123' }, skills)).toEqual({
+      skill: 'workload-analysis',
+      values: { job_id: '123' },
+      autoSend: true,
+      consumed: ['skill', 'prompt', 'autosend', 'JOB_ID'],
+    })
+  })
+
+  it('prefers ?skill= over ?prompt=', () => {
+    expect(parseSkillDeepLink({ skill: 'triage', prompt: 'workload-analysis' }, skills)?.skill).toBe('triage')
+  })
+
+  it.each(['0', 'false'])('autosend=%s suppresses auto-send', (value) => {
+    expect(parseSkillDeepLink({ skill: 'triage', autosend: value }, skills)?.autoSend).toBe(false)
+  })
+
+  it.each([{}, { skill: 'unknown' }, { prompt: 'unknown' }])('parses %j to null', (url) => {
+    expect(parseSkillDeepLink(url, skills)).toBeNull()
+  })
+})
+
+describe('scrubSkillDeepLink', () => {
+  it('removes only the keys the link used', () => {
+    const url = { prompt: 'workload-analysis', JOB_ID: '1', autosend: '0', keep: 'me' }
+    const intent = parseSkillDeepLink(url, skills)
+    if (intent === null) throw new Error('fixture must parse')
+
+    expect(scrubSkillDeepLink(url, intent)).toEqual({ keep: 'me' })
+  })
+
+  it('also removes a prompt selector a skill link took priority over', () => {
+    const url = { skill: 'triage', prompt: 'workload-analysis', keep: 'me' }
+    const intent = parseSkillDeepLink(url, skills)
+    if (intent === null) throw new Error('fixture must parse')
+
+    expect(scrubSkillDeepLink(url, intent)).toEqual({ keep: 'me' })
   })
 })

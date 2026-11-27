@@ -315,6 +315,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
         "admin_prefix": "",
         "dashboard_url": "",
         "conversation_persistence_enabled": False,
+        "skills_enabled": True,
         "enable_config_sidebar": False,
         "allowed_dynamic_overrides": None,
         "available_models": [{"id": "m1", "name": "Model 1"}],
@@ -332,6 +333,7 @@ def test_build_bootstrap_payload_maps_all_contract_001_keys():
     assert payload["appTitle"] == "Test App"
     assert payload["modelDisplayName"] == "Claude Sonnet 5 (US)"
     assert payload["uiWelcomeMessage"] == "Welcome"
+    assert payload["skillsEnabled"] is True
     # Published rather than derived by the client from ssoLoginUrl (CONTRACT-002 BC-009).
     assert payload["ssoLogoutUrl"] == "/chat/auth/sso/logout"
     assert payload["ssoRefreshUrl"] == "/chat/auth/sso/refresh"

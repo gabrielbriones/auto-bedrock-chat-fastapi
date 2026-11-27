@@ -1,10 +1,11 @@
 import { z } from 'zod'
 
 import type { LogContext, Logger } from '@/shared/logging/logger'
+import { skillFrameSchemas } from '@/shared/ws/skill-frames'
 import { toolCallEndFrameSchema, toolCallStartFrameSchema } from '@/shared/ws/tool-frames'
 import { usageSchema, usageUpdatedFrameSchema } from '@/shared/ws/usage-frames'
 
-export type ContextId = 'iam' | 'messaging' | 'feedback' | 'model-config' | 'conversation'
+export type ContextId = 'iam' | 'messaging' | 'feedback' | 'model-config' | 'conversation' | 'skills'
 
 const serverFrame = <Type extends string>(type: Type) =>
   z
@@ -136,9 +137,7 @@ export const ServerFrameSchema = z.discriminatedUnion('type', [
   aiResponseFrameSchema,
   usageUpdatedFrameSchema,
   serverFrame('error').extend({ message: z.string() }),
-  // A `/<skill> ...` chat message loaded its skill (the turn follows) or was refused (no turn runs).
-  serverFrame('skill_loaded').extend({ name: z.string(), revision: z.number(), message_id: z.string(), conversation_id: z.string().nullable() }),
-  serverFrame('skill_error').extend({ code: z.string(), message: z.string() }),
+  ...skillFrameSchemas,
   serverFrame('pong'),
   serverFrame('history').extend({ messages: z.array(messageSchema) }),
   serverFrame('history_cleared').extend({ message: z.string() }),
@@ -215,6 +214,7 @@ export const FRAME_OWNER = {
   error: 'messaging',
   skill_loaded: 'messaging',
   skill_error: 'messaging',
+  skill_catalog: 'skills',
   pong: 'messaging',
   history: 'messaging',
   history_cleared: 'messaging',

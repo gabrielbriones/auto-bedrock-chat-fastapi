@@ -13,7 +13,7 @@ import { MESSAGING_COPY } from '@/shared/copy/messaging'
 import { SystemClock } from '@/shared/kernel/instant'
 import type { ConnectionState } from '@/shared/ws/socket-client'
 
-import { ChatPanel } from '@/domains/messaging/presentation/ChatPanel'
+import { ChatPanel, type ChatPanelProps } from '@/domains/messaging/presentation/ChatPanel'
 
 const OPEN: ConnectionState = { status: 'open', attempt: 0, nextRetryAt: null }
 
@@ -21,6 +21,7 @@ const renderPanel = (
   sendResult: 'sent' | 'dropped-closed' = 'sent',
   connectionState: ConnectionState = OPEN,
   inputEnabled = true,
+  extra: Partial<ChatPanelProps> = {},
 ) => {
   const sendChat = jest.fn<(text: string) => 'sent' | 'dropped-closed'>(() => sendResult)
   const notifications = new RecordingNotificationPort()
@@ -49,15 +50,18 @@ const renderPanel = (
   })
 
   const container: Container = fakeContainer({ chatSession, notifications })
-
-  const view = render(
+  const panel = (props: Partial<ChatPanelProps>) => (
     <ContainerContext.Provider value={container}>
-      <ChatPanel inputEnabled={inputEnabled} />
-    </ContainerContext.Provider>,
+      <ChatPanel inputEnabled={inputEnabled} {...props} />
+    </ContainerContext.Provider>
   )
+
+  const view = render(panel(extra))
 
   return {
     ...view,
+    setProps: (props: Partial<ChatPanelProps>) => view.rerender(panel(props)),
+    chatSession,
     notifications,
     sendChat,
     answer(text: string) {
@@ -76,6 +80,9 @@ const renderPanel = (
     },
     typing(text: string) {
       emit?.({ kind: 'typing', text })
+    },
+    reject(text: string) {
+      emit?.({ kind: 'command-rejected', text })
     },
     reconnect(state: ConnectionState) {
       changeConnection?.(state)
@@ -182,6 +189,54 @@ describe('ChatPanel', () => {
     expect(notifications.notifications).toContainEqual(
       expect.objectContaining({ kind: 'error' }),
     )
+  })
+
+  it('shows a refused slash command as a notice and puts it back in the composer', async () => {
+    const user = userEvent.setup()
+    const { reject, chatSession } = renderPanel()
+
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), '/nope job_id=1{Enter}')
+    reject("Unknown skill: 'nope'")
+
+    expect(await screen.findByText("Unknown skill: 'nope'")).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: 'You' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('/nope job_id=1')
+    // Taken back, so a remount does not put it in again.
+    expect(chatSession.getSnapshot().rejectedCommand).toBeNull()
+  })
+
+  it('puts each new draft request in the composer, including one there at mount, and acknowledges it', () => {
+    const container = fakeContainer()
+    const acknowledge = jest.fn()
+    const panel = (draftRequest: { text: string } | null) => (
+      <ContainerContext.Provider value={container}>
+        <ChatPanel inputEnabled draftRequest={draftRequest} onDraftRequestApplied={acknowledge} />
+      </ContainerContext.Provider>
+    )
+    const { rerender, unmount } = render(panel({ text: '/first' }))
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('/first')
+    expect(acknowledge).toHaveBeenCalledTimes(1)
+
+    rerender(panel({ text: '/triage job_id=1' }))
+
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('/triage job_id=1')
+    unmount()
+  })
+
+  it('drops a chosen skill when the draft is replaced from outside', async () => {
+    const user = userEvent.setup()
+    const commands = {
+      options: [{ name: 'run', title: 'Run', description: '', usage: '/run', parameters: [] }],
+      onFocus: () => {},
+    }
+    const { setProps } = renderPanel('sent', OPEN, true, { commands })
+    await user.type(screen.getByLabelText('Message', { selector: 'textarea' }), '/ru{Enter}')
+    expect(screen.getByRole('group')).toBeInTheDocument()
+
+    setProps({ commands, draftRequest: { text: '/other x=1' } })
+
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('/other x=1')
   })
 
   // NFR-A11Y-001

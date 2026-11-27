@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from '@jest/glob
 
 import { isOk } from '@/shared/kernel/result'
 import { toSkill, toSkillList, toSkillRevisions } from '@/domains/skills/infrastructure/dto/skill.dto'
+import { toSkillCatalog } from '@/domains/skills/infrastructure/dto/skill-catalog.dto'
 
 import { server } from './server'
 
@@ -21,6 +22,16 @@ const fetchJson = async (path: string, init?: RequestInit, status = 200): Promis
 }
 
 describe('skills REST contract', () => {
+  it('GET {chat}/skills/catalog parses into catalog entries', async () => {
+    const response = await fetch('http://localhost/chat/skills/catalog')
+    const result = toSkillCatalog(await response.json())
+
+    expect(result).toMatchObject({
+      kind: 'ok',
+      value: [{ name: 'job-triage', displayName: 'Job triage', revision: 3 }],
+    })
+  })
+
   it('GET /skills parses into summaries and limits', async () => {
     const result = toSkillList(await fetchJson('/skills'))
 

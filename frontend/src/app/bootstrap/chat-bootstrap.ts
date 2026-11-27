@@ -50,6 +50,7 @@ export type ChatBootstrap = {
   readonly adminPrefix: string;
   readonly dashboardUrl: string;
   readonly conversationPersistenceEnabled: boolean;
+  readonly skillsEnabled: boolean;
   readonly enableConfigSidebar: boolean;
   readonly allowedDynamicOverrides: readonly string[] | null;
   readonly availableModels: readonly AvailableModel[];

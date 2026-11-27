@@ -88,6 +88,18 @@ A preset maps to a slash command by its `id` and lower-cased variable names: the
 The same mapping applies to a [deep link](#deep-linking--auto-start-via-query-string):
 `?prompt=health-check&JOB_ID=abc123` corresponds to `/health-check JOB_ID=abc123`.
 
+### Migrating to skills
+
+While skills are active (the bootstrap reports `skillsEnabled` and the skill catalog lists at
+least one skill) the chat UI hides the preset bar and the variables panel; users type `/` in the composer instead
+(see [Slash commands](chat-ui.md#slash-commands)). Presets come back only if the catalog is empty or cannot be read.
+
+- Existing `?prompt=<id>&VAR=value` links keep working: they run the default skill of that preset (see
+  [Deep links](chat-ui.md#deep-links)). A `?prompt=` that no enabled skill answers to falls back to the preset.
+- New links should use `?skill=<name>&param=value`.
+- To finish the migration, edit the seeded default skills in the dashboard if needed, then remove
+  `preset_prompts` / `preset_prompts_file` from the configuration.
+
 ---
 
 ## Template Placeholders
@@ -248,6 +260,9 @@ AUTOCHAT_PRESET_PROMPTS_FILE=/etc/myapp/prompts.yaml
 ---
 
 ## Deep Linking / Auto-Start via Query String
+
+> While skills are active, these links run the preset's default skill instead; see
+> [Deep links](chat-ui.md#deep-links) and [Migrating to skills](#migrating-to-skills).
 
 A preset prompt can be triggered directly from a URL, so an external tool or notification can send someone a link that opens the chat UI, pre-fills a prompt's variables, and sends it automatically — no manual clicking required.
 
